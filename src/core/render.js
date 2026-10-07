@@ -1,0 +1,540 @@
+// ASH Draw Studio - scene building and Canvas2D drawing.
+// Works with the browser canvas and with @napi-rs/canvas in Node (same CanvasRenderingContext2D API).
+//
+//   const scene = buildScene(doc);            // flatten entities (blocks exploded) into drawable items
+//   drawScene(ctx, scene, view, opts);        // view = { cx, cy, zoom, width, height }  (zoom = pixels per unit)
+//
+// Path "ops" are flat number arrays in WORLD coordinates (Y up):
+//   0 M x y | 1 L x y | 2 A cx cy r a0 sweep | 3 E cx cy rx ry rot t0 sweep | 4 Z
+// They are converted to screen space in JS doubles at draw time (Canvas paths are float32, so big
+// drawing coordinates would otherwise lose precision when zoomed in).
+import { resolveColor } from './aci.js';
+import {
+  DEG, compose, translation, rotation, scaling, apply, isSimilarity, matScale, transformEntity, bulgeToArc,
+  ccwSweep, tessellate, ellipsePoint, unionBox, growBox,
+} from './geom.js';
+import { plainText } from './dxfRead.js';
+import { patternLines, hasPattern } from './patterns.js';
+
+const TAU = Math.PI * 2;
+const OP_M = 0, OP_L = 1, OP_A = 2, OP_E = 3, OP_Z = 4;
+const MAX_DEPTH = 8;
+
+// ---------------------------------------------------------------------------------------------
+// scene building
+function lineweightOf(e, layer, inherit) {
+  let lw = e.lineweight;
+  if (lw === undefined || lw === -1) lw = layer ? layer.lineweight : -3;
+  if (lw === -2) lw = inherit ? inherit.lw : -3;
+  return lw;
+}
+function linetypeOf(e, layer, inherit) {
+  let lt = e.linetype && e.linetype !== 'BYLAYER' ? e.linetype : (layer ? layer.linetype : 'CONTINUOUS');
+  if (String(lt).toUpperCase() === 'BYBLOCK') lt = inherit ? inherit.lt : 'CONTINUOUS';
+  return lt;
+}
+
+class Builder {
+  constructor(doc) {
+    this.doc = doc;
+    this.items = [];
+    this.byId = new Map();
+    this.bbox = null;
+    this.globalLt = doc.header.ltscale || 1;
+  }
+
+  layerOf(e, inherit) {
+    let name = e.layer;
+    if ((name === '0' || name === undefined) && inherit) name = inherit.layerName;
+    return { name: name ?? '0', layer: this.doc.layers.get(name ?? '0') ?? null };
+  }
+
+  /** emit drawable items for entity e under matrix m; inherit = resolved style of the enclosing INSERT */
+  emit(e, m, inherit, rootId, depth) {
+    if (e.invisible) return;
+    const { name, layer } = this.layerOf(e, inherit);
+    if (layer && (layer.visible === false || layer.frozen)) return;
+    if (e.type === 'INSERT') { this.emitInsert(e, m, inherit, rootId, depth, name, layer); return; }
+    if (e.type === 'DIMENSION') {
+      const blk = this.doc.blocks.get(e.block);
+      if (blk) this.emitBlockContent(blk, m, this.styleFor(e, layer, inherit, name), rootId, depth);
+      return;
+    }
+    const style = this.styleFor(e, layer, inherit, name);
+    const sim = isSimilarity(m);
+    let ent = e;
+    let mm = m;
+    if (!sim) {
+      try { ent = transformEntity(e, m); mm = null; } catch { return; }
+    }
+    this.build(ent, mm, style, rootId);
+  }
+
+  styleFor(e, layer, inherit, layerName) {
+    const insertColor = inherit ? inherit.color : null;
+    const color = resolveColor(e, layer, insertColor);
+    const lw = lineweightOf(e, layer, inherit);
+    const lt = linetypeOf(e, layer, inherit);
+    const lts = (e.ltscale ?? 1) * this.globalLt;
+    return { color, lw, lt, lts, layerName };
+  }
+
+  emitInsert(e, m, inherit, rootId, depth, layerName, layer) {
+    if (depth >= MAX_DEPTH) return;
+    const blk = this.doc.blocks.get(e.block);
+    if (!blk) return;
+    const style = this.styleFor(e, layer, inherit, layerName);
+    const cols = Math.max(1, e.cols || 1), rows = Math.max(1, e.rows || 1);
+    const rot = (e.rot || 0) * DEG;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const local = compose(translation(e.p.x, e.p.y), compose(rotation(rot),
+          compose(translation(c * (e.colSp || 0), r * (e.rowSp || 0)), compose(scaling(e.sx ?? 1, e.sy ?? 1), translation(-blk.base.x, -blk.base.y)))));
+        this.emitBlockContent(blk, compose(m, local), style, rootId, depth + 1);
+      }
+    }
+  }
+
+  emitBlockContent(blk, m, style, rootId, depth) {
+    for (const be of blk.entities) this.emit(be, m, style, rootId, depth);
+  }
+
+  push(item, rootId) {
+    item.id = rootId;
+    this.items.push(item);
+    let list = this.byId.get(rootId);
+    if (!list) this.byId.set(rootId, (list = []));
+    list.push(item);
+    if (item.bbox) this.bbox = unionBox(this.bbox, item.bbox);
+  }
+
+  /** ops builders; `m` is a similarity matrix (or null when e is already in world coordinates) */
+  build(e, m, style, rootId) {
+    const P = (p) => (m ? apply(m, p) : p);
+    const s = m ? matScale(m) : 1;
+    const flip = m ? m[0] * m[3] - m[1] * m[2] < 0 : false;
+    const ang = m ? Math.atan2(m[1], m[0]) : 0;
+    const ops = [];
+    let bbox = null;
+    const grow = (x, y) => { bbox = growBox(bbox, { x, y }); };
+    const M = (p) => { ops.push(OP_M, p.x, p.y); grow(p.x, p.y); };
+    const L = (p) => { ops.push(OP_L, p.x, p.y); grow(p.x, p.y); };
+    const arcOp = (c, r, a0, sweep) => {
+      ops.push(OP_A, c.x, c.y, r, a0, sweep);
+      grow(c.x - r, c.y - r); grow(c.x + r, c.y + r);
+    };
+    const mapArc = (c, r, a0, sweep) => {
+      const cc = P(c);
+      let na0 = a0 + ang, ns = sweep;
+      if (flip) { na0 = -a0 + ang; ns = -sweep; }
+      return [cc, r * s, na0, ns];
+    };
+    const mkItem = (kind, extra = {}) => ({ kind, ops, style, bbox, ...extra });
+
+    switch (e.type) {
+      case 'LINE': M(P(e.p1)); L(P(e.p2)); this.push(mkItem('path'), rootId); return;
+      case 'CIRCLE': {
+        const [c, r] = mapArc(e.c, e.r, 0, TAU);
+        M({ x: c.x + r, y: c.y }); arcOp(c, r, 0, TAU); this.push(mkItem('path'), rootId); return;
+      }
+      case 'ARC': {
+        const sw = ccwSweep(e.a0 * DEG, e.a1 * DEG);
+        const [c, r, a0, ns] = mapArc(e.c, e.r, e.a0 * DEG, sw);
+        M({ x: c.x + r * Math.cos(a0), y: c.y + r * Math.sin(a0) });
+        arcOp(c, r, a0, ns); this.push(mkItem('path'), rootId); return;
+      }
+      case 'ELLIPSE': {
+        const full = Math.abs((e.a1 ?? TAU) - (e.a0 ?? 0)) >= TAU - 1e-9;
+        const sw = full ? TAU : ccwSweep(e.a0 ?? 0, e.a1);
+        const maj = m ? { x: m[0] * e.major.x + m[2] * e.major.y, y: m[1] * e.major.x + m[3] * e.major.y } : e.major;
+        const c = P(e.c);
+        const rx = Math.hypot(maj.x, maj.y), ry = rx * e.ratio, rot = Math.atan2(maj.y, maj.x);
+        // a mirrored ellipse runs the other way round: parameter t becomes -t
+        const t0 = flip ? -(e.a0 ?? 0) : (e.a0 ?? 0);
+        M(ellipsePoint({ c, major: maj, ratio: e.ratio }, t0));
+        ops.push(OP_E, c.x, c.y, rx, ry, rot, t0, flip ? -sw : sw);
+        grow(c.x - rx, c.y - rx); grow(c.x + rx, c.y + rx);
+        this.push(mkItem('path'), rootId); return;
+      }
+      case 'LWPOLYLINE': {
+        const v = e.vertices;
+        if (!v || v.length < 2) return;
+        M(P(v[0]));
+        const n = e.closed ? v.length : v.length - 1;
+        for (let i = 0; i < n; i++) {
+          const p1 = v[i], p2 = v[(i + 1) % v.length];
+          if (p1.bulge && Math.abs(p1.bulge) > 1e-12) {
+            const a = bulgeToArc(p1, p2, p1.bulge);
+            const [c, r, a0, ns] = mapArc(a.c, a.r, a.a0, a.sweep);
+            arcOp(c, r, a0, ns);
+          } else L(P(p2));
+        }
+        if (e.closed) ops.push(OP_Z);
+        this.push(mkItem('path'), rootId); return;
+      }
+      case 'SPLINE': {
+        const pls = tessellate(e, this.doc, 0);
+        const pl = pls[0];
+        if (!pl || pl.length < 2) return;
+        M(P(pl[0])); for (let i = 1; i < pl.length; i++) L(P(pl[i]));
+        if (e.closed) ops.push(OP_Z);
+        this.push(mkItem('path'), rootId); return;
+      }
+      case 'LEADER': {
+        if (!e.pts || e.pts.length < 2) return;
+        M(P(e.pts[0])); for (let i = 1; i < e.pts.length; i++) L(P(e.pts[i]));
+        const it = mkItem('path');
+        if (e.arrow !== false) it.arrow = [P(e.pts[1]), P(e.pts[0])];
+        this.push(it, rootId); return;
+      }
+      case 'SOLID': {
+        const p = tessellate(e)[0];
+        if (!p) return;
+        M(P(p[0])); for (let i = 1; i < p.length - 1; i++) L(P(p[i]));
+        ops.push(OP_Z);
+        this.push(mkItem('fill'), rootId); return;
+      }
+      case 'POINT': { const p = P(e.p); grow(p.x, p.y); this.push({ kind: 'point', p, style, bbox }, rootId); return; }
+      case 'HATCH': { this.buildHatch(e, m, style, rootId); return; }
+      case 'TEXT': case 'MTEXT': {
+        const p = P(e.p);
+        const h = (e.height || 1) * s;
+        const rot = ((e.rot || 0) * DEG) + ang;
+        const raw = plainText(e.text);
+        if (!raw) return;
+        const lines = raw.split('\n');
+        const w = Math.max(...lines.map((l) => l.length)) * h * 0.6 * (e.widthFactor || 1);
+        // conservative bbox around the (rotated) text block
+        let box = null;
+        for (const [x, y] of [[0, -h * lines.length * 1.4], [w, -h * lines.length * 1.4], [w, h], [0, h]]) {
+          box = growBox(box, { x: p.x + x * Math.cos(rot) - y * Math.sin(rot), y: p.y + x * Math.sin(rot) + y * Math.cos(rot) });
+        }
+        this.push({
+          kind: 'text', p, h, rot, lines, wf: e.widthFactor || 1, style, bbox: box, mtext: e.type === 'MTEXT', attach: e.attach || 1,
+          boxW: e.type === 'MTEXT' ? (e.width || 0) * s : 0, hAlign: e.hAlign || 0, vAlign: e.vAlign || 0,
+          font: this.doc.textStyles.get(String(e.style || 'STANDARD').toUpperCase())?.font || 'Arial',
+        }, rootId);
+        return;
+      }
+      default: return;
+    }
+  }
+
+  buildHatch(e, m, style, rootId) {
+    const P = (p) => (m ? apply(m, p) : p);
+    const ops = [];
+    let bbox = null;
+    for (const loop of e.loops) {
+      let pts;
+      if (loop.pts) {
+        const tess = tessellate({ type: 'LWPOLYLINE', vertices: loop.pts, closed: true });
+        pts = tess[0];
+      } else {
+        pts = tessellate({ type: 'HATCH', loops: [loop] })[0];
+      }
+      if (!pts || pts.length < 3) continue;
+      const q = pts.map(P);
+      ops.push(OP_M, q[0].x, q[0].y);
+      bbox = growBox(bbox, q[0]);
+      for (let i = 1; i < q.length; i++) { ops.push(OP_L, q[i].x, q[i].y); bbox = growBox(bbox, q[i]); }
+      ops.push(OP_Z);
+    }
+    if (!ops.length) return;
+    const solid = !!e.solid || e.pattern === 'SOLID';
+    let lines = null;
+    if (!solid) {
+      lines = e.patLines && e.patLines.length ? e.patLines : (hasPattern(e.pattern) ? patternLines(e.pattern, e.scale || 1, e.angle || 0) : null);
+      if (lines && m) {
+        const a = Math.atan2(m[1], m[0]) / DEG, sc = matScale(m);
+        lines = lines.map((l) => ({
+          angle: l.angle + a, base: apply(m, l.base), offset: { x: (m[0] * l.offset.x + m[2] * l.offset.y), y: (m[1] * l.offset.x + m[3] * l.offset.y) },
+          dashes: l.dashes.map((d) => d * sc),
+        }));
+      }
+    }
+    this.push({ kind: 'hatch', ops, style, bbox, solid, lines }, rootId);
+  }
+}
+
+export function buildScene(doc) {
+  const b = new Builder(doc);
+  for (const e of doc.entities) b.emit(e, [1, 0, 0, 1, 0, 0], null, e.id, 0);
+  return { items: b.items, byId: b.byId, bbox: b.bbox, doc, version: 0 };
+}
+
+/** rebuild just the given entity ids (after edits); unknown ids are removed */
+export function updateScene(scene, ids) {
+  const set = new Set(ids);
+  const doc = scene.doc;
+  scene.items = scene.items.filter((it) => !set.has(it.id));
+  for (const id of set) scene.byId.delete(id);
+  const b = new Builder(doc);
+  for (const id of set) { const e = doc.entities.find((x) => x.id === id); if (e) b.emit(e, [1, 0, 0, 1, 0, 0], null, id, 0); }
+  for (const it of b.items) { scene.items.push(it); let l = scene.byId.get(it.id); if (!l) scene.byId.set(it.id, (l = [])); l.push(it); }
+  scene.bbox = null;
+  for (const it of scene.items) if (it.bbox) scene.bbox = unionBox(scene.bbox, it.bbox);
+  scene.version++;
+  return scene;
+}
+
+// ---------------------------------------------------------------------------------------------
+// drawing
+const rgbCss = (rgb) => `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+const luminance = (hex) => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return 0;
+  const n = parseInt(m[1], 16);
+  return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
+};
+
+function dashFor(doc, style, zoom) {
+  const name = String(style.lt ?? 'CONTINUOUS').toUpperCase();
+  if (name === 'CONTINUOUS' || name === 'BYLAYER') return null;
+  const def = doc.linetypes.get(name);
+  if (!def || !def.pattern.length) return null;
+  const k = style.lts * zoom;
+  const period = def.pattern.reduce((a, b) => a + Math.abs(b), 0) * k;
+  if (period < 2.5) return null;       // too small to be visible: draw solid
+  const arr = def.pattern.map((d) => (d === 0 ? 1 : Math.max(Math.abs(d) * k, 0.5)));  // dots get a 1px mark
+  return arr.length % 2 ? [...arr, ...arr] : arr;
+}
+
+export function drawScene(ctx, scene, view, opts = {}) {
+  const { width: W, height: H, zoom: z } = view;
+  const bg = opts.background ?? '#1b1f23';
+  const dark = luminance(bg) < 0.5;
+  const doc = scene.doc;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  const sx = (x) => (x - view.cx) * z + W / 2;
+  const sy = (y) => H / 2 - (y - view.cy) * z;
+  const minx = view.cx - W / 2 / z, maxx = view.cx + W / 2 / z, miny = view.cy - H / 2 / z, maxy = view.cy + H / 2 / z;
+  const visible = (it) => !it.bbox || !(it.bbox.maxx < minx || it.bbox.minx > maxx || it.bbox.maxy < miny || it.bbox.miny > maxy);
+  const hi = opts.highlight instanceof Set ? opts.highlight : null;
+  const colorOf = (st) => (st.color.auto ? (dark ? '#ffffff' : '#000000') : rgbCss(st.color.rgb));
+  const lwPx = (st) => {
+    if (!opts.showLineweight) return 1;
+    const mm = st.lw >= 0 ? st.lw : 0.25;
+    return Math.min(8, Math.max(1, mm * (opts.pixelsPerMm ?? 3.78)));
+  };
+
+  const tracePath = (ops) => {
+    for (let i = 0; i < ops.length;) {
+      const op = ops[i];
+      if (op === OP_M) { ctx.moveTo(sx(ops[i + 1]), sy(ops[i + 2])); i += 3; }
+      else if (op === OP_L) { ctx.lineTo(sx(ops[i + 1]), sy(ops[i + 2])); i += 3; }
+      else if (op === OP_A) {
+        const r = ops[i + 3] * z;
+        const a0 = ops[i + 4], sw = ops[i + 5];
+        if (r < 0.01) { i += 6; continue; }
+        ctx.arc(sx(ops[i + 1]), sy(ops[i + 2]), r, -a0, -(a0 + sw), sw > 0);
+        i += 6;
+      } else if (op === OP_E) {
+        const rx = ops[i + 3] * z, ry = ops[i + 4] * z;
+        if (rx < 0.01) { i += 8; continue; }
+        const t0 = ops[i + 6], sw = ops[i + 7];
+        ctx.ellipse(sx(ops[i + 1]), sy(ops[i + 2]), rx, Math.max(ry, 0.01), -ops[i + 5], -t0, -(t0 + sw), sw > 0);
+        i += 8;
+      } else if (op === OP_Z) { ctx.closePath(); i += 1; } else break;
+    }
+  };
+
+  // 1. hatches and solid fills
+  const fillAlphaPattern = opts.patternFallbackAlpha ?? 0.25;
+  for (const it of scene.items) {
+    if (it.kind !== 'hatch' && it.kind !== 'fill') continue;
+    if (!visible(it)) continue;
+    const col = colorOf(it.style);
+    if (it.kind === 'fill' || it.solid) {
+      ctx.beginPath(); tracePath(it.ops);
+      ctx.fillStyle = col; ctx.fill('evenodd');
+    } else if (it.lines) {
+      drawPatternHatch(ctx, it, view, col, tracePath, sx, sy, fillAlphaPattern);
+    } else {
+      ctx.beginPath(); tracePath(it.ops); ctx.save(); ctx.globalAlpha = fillAlphaPattern; ctx.fillStyle = col; ctx.fill('evenodd'); ctx.restore();
+    }
+  }
+
+  // 2. line work, batched by style
+  const batches = new Map();
+  for (const it of scene.items) {
+    if (it.kind !== 'path' && it.kind !== 'hatchOutline') continue;
+    if (!visible(it)) continue;
+    const st = it.style;
+    const key = `${st.color.auto ? 'a' : st.color.rgb.join(',')}|${lwPx(st)}|${st.lt}|${st.lts}`;
+    let b = batches.get(key);
+    if (!b) batches.set(key, (b = { st, items: [] }));
+    b.items.push(it);
+  }
+  for (const { st, items } of batches.values()) {
+    ctx.beginPath();
+    for (const it of items) tracePath(it.ops);
+    ctx.strokeStyle = colorOf(st);
+    ctx.lineWidth = lwPx(st);
+    const dash = dashFor(doc, st, z);
+    ctx.setLineDash(dash ?? []);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // leader arrow heads and points
+  for (const it of scene.items) {
+    if (!visible(it)) continue;
+    if (it.arrow) {
+      ctx.fillStyle = colorOf(it.style);
+      const a = it.arrow[0], b = it.arrow[1];
+      const dx = sx(b.x) - sx(a.x), dy = sy(b.y) - sy(a.y), l = Math.hypot(dx, dy) || 1;
+      const ux = dx / l, uy = dy / l, size = 9;
+      ctx.beginPath(); ctx.moveTo(sx(b.x), sy(b.y));
+      ctx.lineTo(sx(b.x) - ux * size + uy * size * 0.2, sy(b.y) - uy * size - ux * size * 0.2);
+      ctx.lineTo(sx(b.x) - ux * size - uy * size * 0.2, sy(b.y) - uy * size + ux * size * 0.2);
+      ctx.closePath(); ctx.fill();
+    } else if (it.kind === 'point') {
+      const x = sx(it.p.x), y = sy(it.p.y);
+      ctx.strokeStyle = colorOf(it.style); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x - 3, y); ctx.lineTo(x + 3, y); ctx.moveTo(x, y - 3); ctx.lineTo(x, y + 3); ctx.stroke();
+    }
+  }
+
+  // 3. text
+  for (const it of scene.items) {
+    if (it.kind !== 'text' || !visible(it)) continue;
+    drawText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style));
+  }
+
+  // 4. highlight / selection overlay
+  if (hi && hi.size) {
+    ctx.save();
+    ctx.strokeStyle = opts.highlightColor ?? '#4dd2ff';
+    ctx.fillStyle = opts.highlightColor ?? '#4dd2ff';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 3]);
+    for (const id of hi) {
+      const list = scene.byId.get(id);
+      if (!list) continue;
+      for (const it of list) {
+        if (it.kind === 'path' || it.kind === 'hatch' || it.kind === 'fill') { ctx.beginPath(); tracePath(it.ops); ctx.stroke(); }
+        else if (it.kind === 'text' || it.kind === 'point') {
+          const b = it.bbox;
+          if (b) ctx.strokeRect(sx(b.minx) - 2, sy(b.maxy) - 2, (b.maxx - b.minx) * z + 4, (b.maxy - b.miny) * z + 4);
+        }
+      }
+    }
+    ctx.restore();
+  }
+}
+
+function drawText(ctx, it, x, y, z, color) {
+  const px = it.h * z;
+  const lineH = px * (it.mtext ? 1.25 : 1);
+  if (px < 2) {
+    // too small to read: a thin bar the width of the text keeps the layout visible
+    const w = Math.max(...it.lines.map((l) => l.length)) * px * 0.6 * it.wf;
+    ctx.strokeStyle = color; ctx.globalAlpha = 0.5; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + w * Math.cos(it.rot), y - w * Math.sin(it.rot)); ctx.stroke();
+    ctx.globalAlpha = 1;
+    return;
+  }
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(-it.rot);
+  ctx.scale(it.wf, 1);
+  ctx.font = `${px}px "${it.font}", Arial, "Segoe UI", sans-serif`;
+  ctx.fillStyle = color;
+  let lines = it.lines;
+  if (it.mtext && it.boxW > 0) lines = wrapLines(ctx, lines, it.boxW * z / it.wf);
+  const n = lines.length;
+  // MTEXT attachment: 1-3 top, 4-6 middle, 7-9 bottom ; left/centre/right = 1,2,3 mod 3
+  let hAlign = it.hAlign, vOff = 0;
+  if (it.mtext) {
+    const col = ((it.attach - 1) % 3), row = Math.floor((it.attach - 1) / 3);
+    hAlign = col === 0 ? 0 : col === 1 ? 1 : 2;
+    ctx.textBaseline = 'alphabetic';
+    vOff = row === 0 ? px * 0.9 : row === 1 ? px * 0.9 - (n * lineH) / 2 + px * 0.0 : px * 0.9 - n * lineH + lineH * 0.9;
+  } else {
+    ctx.textBaseline = 'alphabetic';
+    const v = it.vAlign; // 0 baseline, 1 bottom, 2 middle, 3 top
+    vOff = v === 1 ? -px * 0.2 : v === 2 || hAlign === 4 ? px * 0.35 : v === 3 ? px * 0.8 : 0;
+  }
+  ctx.textAlign = hAlign === 1 || hAlign === 4 ? 'center' : hAlign === 2 ? 'right' : 'left';
+  for (let i = 0; i < n; i++) ctx.fillText(lines[i], 0, vOff + i * lineH);
+  ctx.restore();
+}
+
+function wrapLines(ctx, lines, maxW) {
+  const out = [];
+  for (const line of lines) {
+    if (ctx.measureText(line).width <= maxW) { out.push(line); continue; }
+    let cur = '';
+    for (const word of line.split(' ')) {
+      const t = cur ? `${cur} ${word}` : word;
+      if (ctx.measureText(t).width > maxW && cur) { out.push(cur); cur = word; } else cur = t;
+    }
+    out.push(cur);
+  }
+  return out;
+}
+
+/** Pattern hatch: clip to the boundary, then draw each pattern line family across the bounding box. */
+function drawPatternHatch(ctx, it, view, color, tracePath, sx, sy, fallbackAlpha) {
+  const z = view.zoom;
+  ctx.save();
+  ctx.beginPath(); tracePath(it.ops); ctx.clip('evenodd');
+  ctx.strokeStyle = color; ctx.lineWidth = 1;
+  const vminx = view.cx - view.width / 2 / z, vmaxx = view.cx + view.width / 2 / z;
+  const vminy = view.cy - view.height / 2 / z, vmaxy = view.cy + view.height / 2 / z;
+  const b = it.bbox;
+  const bx0 = Math.max(b.minx, vminx), bx1 = Math.min(b.maxx, vmaxx), by0 = Math.max(b.miny, vminy), by1 = Math.min(b.maxy, vmaxy);
+  if (bx1 <= bx0 || by1 <= by0) { ctx.restore(); return; }
+  const cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2, R = Math.hypot(bx1 - bx0, by1 - by0) / 2 + 1e-9;
+  let dense = false;
+  for (const L of it.lines) {
+    const a = L.angle * DEG, dx = Math.cos(a), dy = Math.sin(a), nx = -dy, ny = dx;
+    const spacing = Math.abs(L.offset.x * nx + L.offset.y * ny);
+    if (spacing * z < 3) { dense = true; break; }
+  }
+  if (dense) { ctx.globalAlpha = fallbackAlpha; ctx.fillStyle = color; ctx.fillRect(0, 0, view.width, view.height); ctx.restore(); return; }
+  ctx.beginPath();
+  for (const L of it.lines) {
+    const a = L.angle * DEG, dx = Math.cos(a), dy = Math.sin(a), nx = -dy, ny = dx;
+    const spacing = L.offset.x * nx + L.offset.y * ny;
+    if (Math.abs(spacing) < 1e-9) continue;
+    const d0 = (cx - L.base.x) * nx + (cy - L.base.y) * ny; // perpendicular distance of box centre from the base line
+    const k0 = Math.floor((d0 - R) / spacing), k1 = Math.ceil((d0 + R) / spacing);
+    const lo = Math.min(k0, k1) - 1, hi = Math.max(k0, k1) + 1;
+    if (hi - lo > 4000) continue;
+    for (let k = lo; k <= hi; k++) {
+      const ox = L.base.x + k * L.offset.x, oy = L.base.y + k * L.offset.y;
+      const t0 = (cx - ox) * dx + (cy - oy) * dy;
+      ctx.moveTo(sx(ox + dx * (t0 - R)), sy(oy + dy * (t0 - R)));
+      ctx.lineTo(sx(ox + dx * (t0 + R)), sy(oy + dy * (t0 + R)));
+    }
+    if (L.dashes && L.dashes.length) {
+      // dashes apply along each line; draw per family
+      ctx.setLineDash(L.dashes.map((d) => Math.max(Math.abs(d) * z, 0.5)));
+    }
+    ctx.stroke(); ctx.beginPath();
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------------------------------------
+// view helpers
+export function fitView(bbox, width, height, margin = 0.05) {
+  if (!bbox) return { cx: 0, cy: 0, zoom: 1, width, height };
+  const w = Math.max(bbox.maxx - bbox.minx, 1e-9), h = Math.max(bbox.maxy - bbox.miny, 1e-9);
+  const zoom = Math.min(width / w, height / h) * (1 - margin * 2);
+  return { cx: (bbox.minx + bbox.maxx) / 2, cy: (bbox.miny + bbox.maxy) / 2, zoom, width, height };
+}
+export const screenToWorld = (view, sx, sy) => ({ x: view.cx + (sx - view.width / 2) / view.zoom, y: view.cy - (sy - view.height / 2) / view.zoom });
+export const worldToScreen = (view, p) => ({ x: (p.x - view.cx) * view.zoom + view.width / 2, y: view.height / 2 - (p.y - view.cy) * view.zoom });
+export function zoomAt(view, sx, sy, factor) {
+  const before = screenToWorld(view, sx, sy);
+  const zoom = Math.min(1e9, Math.max(1e-9, view.zoom * factor));
+  const v = { ...view, zoom };
+  const after = screenToWorld(v, sx, sy);
+  return { ...v, cx: v.cx + (before.x - after.x), cy: v.cy + (before.y - after.y) };
+}
