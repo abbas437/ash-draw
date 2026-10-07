@@ -136,7 +136,12 @@ class App {
     try { files = await api.openFiles({ filters: OPEN_FILTERS }); } catch (err) { toast(`Could not open: ${err.message}`); return; }
     if (files?.[0]) await this.loadFile(files[0]);
   }
-  async openFromFile(f) { if (await this.confirmDiscard()) await this.loadFile(f); }
+  /** a file handed over by the desktop shell (double-click, "Open with", second launch): {path, name} without bytes */
+  async openFromFile(f) {
+    if (!(await this.confirmDiscard())) return;
+    try { if (!f.bytes) f = { ...f, bytes: await api.readFile(f.path) }; } catch (err) { await message('Cannot open this file', err.message || String(err)); return; }
+    await this.loadFile(f);
+  }
   async loadFile(f) {
     toast(`Opening ${f.name} …`, 60000);
     try {
