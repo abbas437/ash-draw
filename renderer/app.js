@@ -256,9 +256,12 @@ class App {
     let dwg = 'not available in this browser preview';
     try { const a = await api.dwgAvailable(); dwg = a.available ? `LibreDWG ${a.version}` : `not available (${a.reason})`; } catch { /* ignore */ }
     await message('About ASH Draw Studio', `Version ${v}. Free drawing viewer and editor for DXF and DWG files.`, el('div', {},
+      el('img', { class: 'brand-logo lt about-logo', src: 'assets/brand/ash-logo-horizontal.svg', alt: 'ASH Technical & Project Management Services' }),
+      el('img', { class: 'brand-logo rev about-logo', src: 'assets/brand/ash-logo-horizontal-reversed.svg', alt: '' }),
       el('p', { text: 'Copyright © 2026 ASH Technical & Project Management Services (ASH PMCS). Released under the MIT licence.' }),
       el('p', { text: `DWG converter: ${dwg}. LibreDWG is free software under the GNU GPL v3 and runs as a separate program; its source is available from https://www.gnu.org/software/libredwg/ .` }),
       el('p', { text: 'Not affiliated with or endorsed by Autodesk. “AutoCAD”, “DWG” and “DXF” are trademarks of Autodesk, Inc. and are used only to describe file compatibility.' }),
+      el('p', { class: 'about-tm', text: 'The ASH logo and icon are trademarks of ASH Technical & Project Management Services and are not covered by the MIT licence.' }),
       el('p', { text: 'Source code and licence notices: https://github.com/abbas437/ash-draw' })));
   }
   async limitations() {
@@ -352,6 +355,7 @@ class App {
   showCursor(p) { document.getElementById('coord').textContent = p ? `X ${p.x.toFixed(3)}   Y ${p.y.toFixed(3)}` : ''; }
   refreshStatus() {
     document.getElementById('sel').textContent = this.vp.selection.size ? `${this.vp.selection.size} selected` : `${this.doc.entities.length.toLocaleString()} objects`;
+    document.getElementById('stage').classList.toggle('empty', this.doc.entities.length === 0);
     document.getElementById('units').textContent = `Units: ${UNIT_NAMES[this.doc.units] ?? this.doc.units}`;
   }
   updateTitle() {

@@ -17,7 +17,6 @@
     "start:dev": "node scripts/vendor.js && electron . --dev",
     "vendor": "node scripts/vendor.js",
     "fetch:libredwg": "node scripts/fetch-libredwg.mjs",
-    "icon": "node scripts/make-icon.js",
     "licenses": "node scripts/licenses.js",
     "test": "node --test \"test/**/*.test.{js,mjs,cjs}\"",
     "test:electron": "node --test \"electron/**/*.test.mjs\"",

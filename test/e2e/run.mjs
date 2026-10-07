@@ -14,7 +14,7 @@ const CHROME = process.env.CHROME_PATH || '/opt/pw-browsers/chromium-1194/chrome
 const SHOTS = process.env.E2E_SHOTS || '';
 const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
 const rgbOf = (css) => css.match(/[\d.]+/g).slice(0, 3).map(Number);
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml' };
 
 const server = http.createServer(async (req, res) => {
   const rel = decodeURIComponent(new URL(req.url, 'http://x').pathname);
@@ -243,6 +243,23 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme ?? 'light'), 'light');
     assert.equal(await page.evaluate(() => window.api.settingsGet('theme')), 'light');
     if (!SHOTS) await fs.rm(shotDir, { recursive: true, force: true });
+  }
+
+  step = 'about logo';
+  {
+    const menu = async (top, item) => { await page.locator('#menubar .menu > button', { hasText: top }).click(); await page.locator('#menubar .drop button', { hasText: item }).click(); };
+    const aboutLogo = async (theme) => {
+      await menu('Help', 'About');
+      await page.waitForSelector('.about-logo', { state: 'attached' });
+      const r = await page.evaluate(() => [...document.querySelectorAll('img.about-logo')].filter((i) => i.offsetParent !== null).map((i) => [i.complete, i.naturalWidth, i.getAttribute('src')]));
+      assert.ok(r.length === 1 && r[0][0] && r[0][1] > 0, `About logo not loaded (${theme}): ${JSON.stringify(r)}`);
+      assert.ok(r[0][2].includes(theme === 'dark' ? 'reversed' : 'horizontal.svg'), `wrong About logo variant for ${theme}`);
+      await page.keyboard.press('Escape');
+    };
+    await aboutLogo('light');
+    await page.evaluate(() => window.app.setTheme('dark'));
+    await aboutLogo('dark');
+    await page.evaluate(() => window.app.setTheme('light'));
   }
 
   step = 'csp';
