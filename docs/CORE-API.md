@@ -50,6 +50,17 @@ Commands return `{done, failed:[{id,reason}], created?}`; they never throw for a
 ## patterns.js
 `patternLines(name, scale, angleDeg)`, `hasPattern`, `PATTERN_NAMES`.
 
+## pick.js
+`new SpatialIndex(doc,{isVisible?})` → `.query(box)`, `.update(ids)`, `.rebuild()` (call after layer visibility/order changes), `.bboxOf(e)`.
+`pickEntity(index,p,tol,{exclude,skipLocked})` → entity|null · `selectInBox(index,box,crossing,{skipLocked})` → ids ·
+`findSnap(index,p,tol,{kinds:Set,from,exclude})` → `{x,y,kind,id}|null` (kinds end,int,mid,cen,quad,node,ins,per,near; `SNAP_KINDS` = priority order) ·
+`orthoPoint(base,p)` · `polarPoint(base,p,stepDeg,tolDeg)` → `{x,y,angle,snapped}`. Tolerances are WORLD units (pixels / zoom).
+
+## exportSvg.js / exportPdf.js
+`exportSvg(doc,{scene,background,monochrome,lineweights,unitsPerMm,margin})` → string. Pass `unitsPerMm` (drawing units per plotted mm) or thin lines vanish in metre drawings.
+`await exportPdf(doc,{pageSize:'fit'|'A4'|'A3'|'A2'|'A1'|'A0'|'Letter',orientation,margin,scale,monochrome,lineweights,unicodeFont,scene})` → `{bytes,warnings}`.
+Vector output. Text outside WinAnsi needs `unicodeFont` bytes (TTF/OTF) else becomes `?` with a warning; Arabic is not shaped. `@pdf-lib/fontkit` is imported dynamically (needs the import-map entry).
+
 ## Known limits (shown to users)
 Model space only (paper-space/layouts dropped on save); unsupported entities (3DFACE, XLINE, RAY, REGION, 3DSOLID, MLINE, MULTILEADER, TOLERANCE …) are skipped and counted in `doc.skipped`;
 ATTRIB becomes plain TEXT; DWG *writing* goes through LibreDWG’s DXF import and is lossy (text rotation/width, some hatch edges) – the app verifies the saved DWG and warns.
