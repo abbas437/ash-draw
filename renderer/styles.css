@@ -86,3 +86,13 @@ dialog label { display:block; margin:6px 0 2px; color:var(--dim); }
 .popmenu { position:fixed; z-index:50; background:var(--panel2); border:1px solid var(--line); padding:4px 0; box-shadow:0 6px 18px var(--shadow); }
 .popmenu button { display:block; width:100%; border:none; background:none; text-align:left; padding:3px 12px; }
 @media print { #menubar, #tools, #side, #cmdbar, #status, #zoombar { display:none !important; } #main { display:block; } }
+
+/* ASH brand logo: light-background SVG by default, reversed SVG in the dark theme. Trademark: see assets/brand/README.md. */
+.brand-logo { display: block; height: 40px; width: auto; }
+.brand-logo.rev, [data-theme="dark"] .brand-logo.lt { display: none; }
+[data-theme="dark"] .brand-logo.rev { display: block; }
+#stage-logo { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); opacity:.22; pointer-events:none; display:none; }
+#stage.empty #stage-logo { display:block; }
+#stage-logo .brand-logo { height:56px; }
+.about-logo { height:48px; margin:0 0 12px; }
+.about-tm { font-size:11px; opacity:.7; }
