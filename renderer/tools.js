@@ -36,7 +36,7 @@ class Tool {
     if (r.failed?.length) this.h.toast(`${verb}: ${r.failed.length} object(s) could not be processed (${[...new Set(r.failed.map((f) => f.reason))].join(', ')})`);
   }
   line(c, a, b) { const A = this.vp.toScreen(a), B = this.vp.toScreen(b); c.beginPath(); c.moveTo(A.x, A.y); c.lineTo(B.x, B.y); c.stroke(); }
-  dyn(c, text, p) { const s = this.vp.toScreen(p); c.fillStyle = '#ffd400'; c.font = '12px "Segoe UI", sans-serif'; c.fillText(text, s.x + 14, s.y + 18); }
+  dyn(c, text, p) { const s = this.vp.toScreen(p); c.fillStyle = this.vp.inkColor; c.font = '12px "Segoe UI", sans-serif'; c.fillText(text, s.x + 14, s.y + 18); }
   poly(c, pts, closed = false) {
     if (pts.length < 2) return;
     c.beginPath();
@@ -102,7 +102,7 @@ class LineTool extends Tool {
   key(e) { if (e.key === 'Enter' || e.key === 'Escape') { if (this.last) { this.finish(); return true; } if (e.key === 'Escape') this.cancel(); return true; } return false; }
   draw(c) {
     if (!this.last) return;
-    c.strokeStyle = '#ffd400'; c.setLineDash([4, 3]); this.line(c, this.last, this.vp.cursor);
+    c.strokeStyle = this.vp.inkColor; c.setLineDash([4, 3]); this.line(c, this.last, this.vp.cursor);
     this.dyn(c, `${fmt(dist(this.last, this.vp.cursor))} < ${fmt(((angleOf(this.last, this.vp.cursor) / DEG) + 360) % 360)}°`, this.vp.cursor);
   }
 }
@@ -128,7 +128,7 @@ class PolylineTool extends Tool {
   }
   draw(c) {
     if (!this.pts.length) return;
-    c.strokeStyle = '#ffd400'; c.setLineDash([4, 3]); this.poly(c, [...this.pts, this.vp.cursor]);
+    c.strokeStyle = this.vp.inkColor; c.setLineDash([4, 3]); this.poly(c, [...this.pts, this.vp.cursor]);
   }
 }
 
@@ -144,7 +144,7 @@ class RectTool extends Tool {
   draw(c) {
     if (!this.a) return;
     const q = this.vp.cursor;
-    c.strokeStyle = '#ffd400'; c.setLineDash([4, 3]);
+    c.strokeStyle = this.vp.inkColor; c.setLineDash([4, 3]);
     this.poly(c, [this.a, { x: q.x, y: this.a.y }, q, { x: this.a.x, y: q.y }], true);
     this.dyn(c, `${fmt(Math.abs(q.x - this.a.x))} × ${fmt(Math.abs(q.y - this.a.y))}`, q);
   }
@@ -168,7 +168,7 @@ class CircleTool extends Tool {
   draw(c) {
     if (!this.c) return;
     const r = dist(this.c, this.vp.cursor), s = this.vp.toScreen(this.c);
-    c.strokeStyle = '#ffd400'; c.setLineDash([4, 3]); c.beginPath(); c.arc(s.x, s.y, r * this.vp.view.zoom, 0, Math.PI * 2); c.stroke();
+    c.strokeStyle = this.vp.inkColor; c.setLineDash([4, 3]); c.beginPath(); c.arc(s.x, s.y, r * this.vp.view.zoom, 0, Math.PI * 2); c.stroke();
     this.line(c, this.c, this.vp.cursor); this.dyn(c, `R ${fmt(r)}`, this.vp.cursor);
   }
 }
@@ -204,7 +204,7 @@ class ArcTool extends Tool {
   }
   key(e) { if (e.key === 'Escape') { if (this.pts.length) { this.pts = []; this.vp.lastPoint = null; } else this.cancel(); return true; } return e.key === 'Enter'; }
   draw(c) {
-    const q = this.vp.cursor; c.strokeStyle = '#ffd400'; c.setLineDash([4, 3]);
+    const q = this.vp.cursor; c.strokeStyle = this.vp.inkColor; c.setLineDash([4, 3]);
     if (this.pts.length === 1) this.line(c, this.pts[0], q);
     if (this.pts.length === 2) {
       const a = arcFrom3(this.pts[0], this.pts[1], q);
@@ -229,7 +229,7 @@ class EllipseTool extends Tool {
   }
   key(e) { if (e.key === 'Escape') { if (this.pts.length) { this.pts = []; this.vp.lastPoint = null; } else this.cancel(); return true; } return e.key === 'Enter'; }
   draw(c) {
-    const q = this.vp.cursor; c.strokeStyle = '#ffd400'; c.setLineDash([4, 3]);
+    const q = this.vp.cursor; c.strokeStyle = this.vp.inkColor; c.setLineDash([4, 3]);
     if (this.pts.length === 1) this.line(c, this.pts[0], q);
     if (this.pts.length === 2) {
       const [cc, m] = this.pts, major = { x: m.x - cc.x, y: m.y - cc.y }, L = Math.hypot(major.x, major.y);
@@ -324,7 +324,7 @@ class MeasureTool extends Tool {
 // modify tools
 function ghost(vp, ids, m) {
   return (c) => {
-    c.strokeStyle = '#ffd400'; c.setLineDash([4, 3]); c.lineWidth = 1;
+    c.strokeStyle = vp.inkColor; c.setLineDash([4, 3]); c.lineWidth = 1;
     let n = 0;
     for (const id of ids) {
       if (n++ > 400) break;
@@ -388,7 +388,7 @@ class MoveTool extends ModifyTool {
     if (this.phase === 'go' && this.base) {
       const q = this.vp.cursor;
       ghost(this.vp, this.ids, translation(q.x - this.base.x, q.y - this.base.y))(c);
-      c.strokeStyle = '#ffd400'; this.line(c, this.base, q);
+      c.strokeStyle = this.vp.inkColor; this.line(c, this.base, q);
     }
   }
 }
@@ -409,7 +409,7 @@ class RotateTool extends ModifyTool {
     if (this.phase === 'go' && this.base) {
       const a = angleOf(this.base, this.vp.cursor);
       ghost(this.vp, this.ids, rotation(a, this.base.x, this.base.y))(c);
-      c.strokeStyle = '#ffd400'; this.line(c, this.base, this.vp.cursor); this.dyn(c, `${fmt(((a / DEG) + 360) % 360)}°`, this.vp.cursor);
+      c.strokeStyle = this.vp.inkColor; this.line(c, this.base, this.vp.cursor); this.dyn(c, `${fmt(((a / DEG) + 360) % 360)}°`, this.vp.cursor);
     }
   }
 }
@@ -455,7 +455,7 @@ class MirrorTool extends ModifyTool {
   draw(c) {
     if (this.phase === 'go' && this.a && dist(this.a, this.vp.cursor) > 1e-12) {
       ghost(this.vp, this.ids, mirrorLine(this.a, this.vp.cursor))(c);
-      c.strokeStyle = '#ffd400'; this.line(c, this.a, this.vp.cursor);
+      c.strokeStyle = this.vp.inkColor; this.line(c, this.a, this.vp.cursor);
     }
   }
 }
@@ -503,7 +503,7 @@ class OffsetTool extends Tool {
     if (e.key === 'Escape') { if (this.id) { this.id = null; this.vp.setSelection([]); } else this.cancel(); return true; }
     return e.key === 'Enter';
   }
-  draw(c) { if (this.dp) { c.strokeStyle = '#ffd400'; this.line(c, this.dp, this.vp.cursor); } }
+  draw(c) { if (this.dp) { c.strokeStyle = this.vp.inkColor; this.line(c, this.dp, this.vp.cursor); } }
 }
 
 class TrimTool extends Tool {

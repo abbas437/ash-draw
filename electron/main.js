@@ -123,7 +123,7 @@ async function createWindow() {
   const state = await loadJson('window-state.json');
   const bounds = visibleBounds(state.bounds) ?? { width: 1400, height: 900 };
   win = new BrowserWindow({
-    ...bounds, minWidth: 640, minHeight: 480, show: false, backgroundColor: '#12261f', title: 'ASH Draw Studio',
+    ...bounds, minWidth: 640, minHeight: 480, show: false, backgroundColor: '#e9edef', title: 'ASH Draw Studio',
     icon: path.join(APP_ROOT, 'build', 'icon.png'),
     webPreferences: {
       preload: path.join(APP_ROOT, 'electron', 'preload.js'),

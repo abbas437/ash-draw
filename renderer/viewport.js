@@ -8,6 +8,8 @@ import { getEntity } from '../src/core/model.js';
 const DEFAULT_KINDS = new Set(['end', 'int', 'mid', 'cen', 'quad', 'node', 'ins', 'per']);
 const SNAP_PX = 12;
 const PICK_PX = 6;
+/** drawing-area background per theme; settings.dark picks one (it follows the app theme unless overridden) */
+export const CANVAS_BG = { light: '#ffffff', dark: '#1b1f23' };
 
 export class Viewport {
   constructor(canvas) {
@@ -22,7 +24,7 @@ export class Viewport {
     this.rawCursor = { x: 0, y: 0 };
     this.snapMarker = null;
     this.lastPoint = null;             // last point entered (for relative input and ortho)
-    this.settings = { snap: true, ortho: false, polar: false, polarStep: 45, lineweights: false, dark: true, kinds: new Set(DEFAULT_KINDS) };
+    this.settings = { snap: true, ortho: false, polar: false, polarStep: 45, lineweights: false, dark: false, kinds: new Set(DEFAULT_KINDS) };
     this.preview = null;               // (ctx, view, vp) => void drawn above the scene
     this.rubber = null;                // selection rectangle {a,b,crossing} in world coordinates
     this._raf = 0;
@@ -30,6 +32,8 @@ export class Viewport {
     this._pan = null;
     this._bind();
   }
+  /** colour for previews and snap markers: yellow on the dark canvas, dark amber on the light one */
+  get inkColor() { return this.settings.dark ? '#ffd400' : '#b35c00'; }
 
   on(name, fn) { (this.listeners.get(name) ?? this.listeners.set(name, []).get(name)).push(fn); return () => this.off(name, fn); }
   off(name, fn) { const l = this.listeners.get(name); if (l) this.listeners.set(name, l.filter((f) => f !== fn)); }
@@ -143,7 +147,7 @@ export class Viewport {
     if (!this.scene) return;
     const { ctx, view } = this;
     drawScene(ctx, this.scene, view, {
-      background: this.settings.dark ? '#1b1f23' : '#ffffff',
+      background: this.settings.dark ? CANVAS_BG.dark : CANVAS_BG.light,
       showLineweight: this.settings.lineweights,
       highlight: this.selection,
       highlightColor: this.settings.dark ? '#4dd2ff' : '#0a6fd1',
@@ -181,7 +185,7 @@ export class Viewport {
   }
   _drawSnapMarker() {
     const m = this.snapMarker, s = this.toScreen(m), c = this.ctx;
-    c.save(); c.strokeStyle = '#ffd400'; c.lineWidth = 1.5; c.beginPath();
+    c.save(); c.strokeStyle = this.inkColor; c.lineWidth = 1.5; c.beginPath();
     const r = 6;
     switch (m.kind) {
       case 'end': c.rect(s.x - r, s.y - r, 2 * r, 2 * r); break;
@@ -193,7 +197,7 @@ export class Viewport {
       default: c.rect(s.x - r, s.y - r, 2 * r, 2 * r); c.moveTo(s.x - r, s.y - r); c.lineTo(s.x + r, s.y + r);
     }
     c.stroke();
-    c.fillStyle = '#ffd400'; c.font = '11px "Segoe UI", sans-serif';
+    c.fillStyle = this.inkColor; c.font = '11px "Segoe UI", sans-serif';
     c.fillText(SNAP_LABEL[m.kind] ?? m.kind, s.x + r + 3, s.y - r - 2);
     c.restore();
   }
