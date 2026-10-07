@@ -1,6 +1,6 @@
 {
   "name": "ash-draw",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "ASH Draw Studio - free DXF/DWG drawing viewer and editor for Windows",
   "type": "module",
   "license": "MIT",
