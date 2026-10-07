@@ -1,0 +1,275 @@
+// ASH Draw Studio - canvas viewport: view state, pan/zoom, snapping, selection, overlays.
+// The active tool receives world-space events through vp.tool (see tools.js).
+import { buildScene, updateScene, drawScene, fitView, screenToWorld, worldToScreen, zoomAt } from '../src/core/render.js';
+import { SpatialIndex, findSnap, orthoPoint, polarPoint, pickEntity, selectInBox } from '../src/core/pick.js';
+import { snapPoints, bboxOf, growBox } from '../src/core/geom.js';
+import { getEntity } from '../src/core/model.js';
+
+const DEFAULT_KINDS = new Set(['end', 'int', 'mid', 'cen', 'quad', 'node', 'ins', 'per']);
+const SNAP_PX = 12;
+const PICK_PX = 6;
+
+export class Viewport {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.view = { cx: 0, cy: 0, zoom: 1, width: 800, height: 600 };
+    this.dpr = window.devicePixelRatio || 1;
+    this.selection = new Set();
+    this.listeners = new Map();
+    this.tool = null;
+    this.cursor = { x: 0, y: 0 };      // last resolved (snapped) world point
+    this.rawCursor = { x: 0, y: 0 };
+    this.snapMarker = null;
+    this.lastPoint = null;             // last point entered (for relative input and ortho)
+    this.settings = { snap: true, ortho: false, polar: false, polarStep: 45, lineweights: false, dark: true, kinds: new Set(DEFAULT_KINDS) };
+    this.preview = null;               // (ctx, view, vp) => void drawn above the scene
+    this.rubber = null;                // selection rectangle {a,b,crossing} in world coordinates
+    this._raf = 0;
+    this._spaceDown = false;
+    this._pan = null;
+    this._bind();
+  }
+
+  on(name, fn) { (this.listeners.get(name) ?? this.listeners.set(name, []).get(name)).push(fn); return () => this.off(name, fn); }
+  off(name, fn) { const l = this.listeners.get(name); if (l) this.listeners.set(name, l.filter((f) => f !== fn)); }
+  emit(name, ...a) { for (const f of this.listeners.get(name) ?? []) f(...a); }
+
+  // ---- document ------------------------------------------------------------------------------
+  setSession(session, { fit = true } = {}) {
+    this.session = session;
+    this.doc = session.doc;
+    this.scene = buildScene(this.doc);
+    this.index = new SpatialIndex(this.doc);
+    this.selection.clear();
+    session.onChange = (info) => this._changed(info);
+    if (fit) this.zoomExtents(); else this.requestRender();
+    this.emit('selection', this.selection);
+    this.emit('doc');
+  }
+
+  _changed(info) {
+    if (info.structure) {
+      this.scene = buildScene(this.doc);
+      this.index.rebuild();
+    } else {
+      updateScene(this.scene, info.ids);
+      this.index.update(info.ids);
+    }
+    let pruned = false;
+    for (const id of [...this.selection]) if (!getEntity(this.doc, id)) { this.selection.delete(id); pruned = true; }
+    this.requestRender();
+    this.emit('change', info);
+    if (pruned) this.emit('selection', this.selection);
+  }
+
+  /** layer visibility changes do not go through the session; call this after editing doc.layers directly */
+  refreshStructure() {
+    this.scene = buildScene(this.doc);
+    this.index.rebuild();
+    this.requestRender();
+  }
+
+  // ---- view ----------------------------------------------------------------------------------
+  resize() {
+    const r = this.canvas.getBoundingClientRect();
+    const w = Math.max(10, Math.round(r.width)), h = Math.max(10, Math.round(r.height));
+    this.dpr = window.devicePixelRatio || 1;
+    this.canvas.width = Math.round(w * this.dpr);
+    this.canvas.height = Math.round(h * this.dpr);
+    this.view = { ...this.view, width: w, height: h };
+    this.requestRender();
+  }
+  zoomExtents() {
+    const b = this.scene?.bbox;
+    this.view = fitView(b, this.view.width, this.view.height, 0.04);
+    this.requestRender();
+    this.emit('view');
+  }
+  zoomBox(b) {
+    this.view = fitView(b, this.view.width, this.view.height, 0.04);
+    this.requestRender(); this.emit('view');
+  }
+  zoomBy(f, sx = this.view.width / 2, sy = this.view.height / 2) {
+    this.view = zoomAt(this.view, sx, sy, f);
+    this.requestRender(); this.emit('view');
+  }
+  panPixels(dx, dy) {
+    this.view = { ...this.view, cx: this.view.cx - dx / this.view.zoom, cy: this.view.cy + dy / this.view.zoom };
+    this.requestRender(); this.emit('view');
+  }
+  toWorld(sx, sy) { return screenToWorld(this.view, sx, sy); }
+  toScreen(p) { return worldToScreen(this.view, p); }
+  get tolWorld() { return SNAP_PX / this.view.zoom; }
+
+  // ---- selection -----------------------------------------------------------------------------
+  setSelection(ids) {
+    this.selection = new Set(ids);
+    this.requestRender();
+    this.emit('selection', this.selection);
+  }
+  selectedEntities() { return [...this.selection].map((id) => getEntity(this.doc, id)).filter(Boolean); }
+  pick(p, opts = {}) { return pickEntity(this.index, p, PICK_PX / this.view.zoom, { skipLocked: true, ...opts }); }
+  box(a, b, crossing) {
+    return selectInBox(this.index, { minx: Math.min(a.x, b.x), miny: Math.min(a.y, b.y), maxx: Math.max(a.x, b.x), maxy: Math.max(a.y, b.y) }, crossing, { skipLocked: true });
+  }
+  selectionBox() {
+    let b = null;
+    for (const e of this.selectedEntities()) { const eb = bboxOf(e, this.doc); if (eb) { b = growBox(b, { x: eb.minx, y: eb.miny }); b = growBox(b, { x: eb.maxx, y: eb.maxy }); } }
+    return b;
+  }
+
+  // ---- point resolution (snap / ortho / polar) -------------------------------------------------
+  resolve(sx, sy, { from = this.lastPoint, snap = this.settings.snap, exclude } = {}) {
+    const raw = this.toWorld(sx, sy);
+    let p = raw, marker = null;
+    if (snap && this.index) {
+      const s = findSnap(this.index, raw, this.tolWorld, { kinds: this.settings.kinds, from: from ?? undefined, exclude });
+      if (s) { p = { x: s.x, y: s.y }; marker = s; }
+    }
+    if (!marker && from) {
+      if (this.settings.ortho) p = orthoPoint(from, raw);
+      else if (this.settings.polar) { const r = polarPoint(from, raw, this.settings.polarStep); p = { x: r.x, y: r.y }; }
+    }
+    return { p, raw, marker };
+  }
+
+  // ---- rendering -----------------------------------------------------------------------------
+  requestRender() {
+    if (this._raf) return;
+    this._raf = requestAnimationFrame(() => { this._raf = 0; this.render(); });
+  }
+  render() {
+    if (!this.scene) return;
+    const { ctx, view } = this;
+    drawScene(ctx, this.scene, view, {
+      background: this.settings.dark ? '#1b1f23' : '#ffffff',
+      showLineweight: this.settings.lineweights,
+      highlight: this.selection,
+      highlightColor: this.settings.dark ? '#4dd2ff' : '#0a6fd1',
+      dpr: this.dpr,
+    });
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    this._drawGrips();
+    if (this.preview) { ctx.save(); this.preview(ctx, view, this); ctx.restore(); }
+    if (this.rubber) this._drawRubber();
+    if (this.snapMarker) this._drawSnapMarker();
+    this._drawCrosshair();
+  }
+
+  _drawGrips() {
+    if (!this.selection.size || this.selection.size > 300) return;
+    const { ctx } = this;
+    ctx.fillStyle = '#2d7dff'; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1;
+    for (const e of this.selectedEntities()) {
+      for (const sp of snapPoints(e, this.doc)) {
+        if (sp.kind !== 'end' && sp.kind !== 'cen' && sp.kind !== 'mid') continue;
+        const s = this.toScreen(sp);
+        ctx.fillRect(s.x - 3, s.y - 3, 6, 6); ctx.strokeRect(s.x - 3.5, s.y - 3.5, 7, 7);
+      }
+    }
+  }
+  _drawRubber() {
+    const { ctx } = this, r = this.rubber;
+    const a = this.toScreen(r.a), b = this.toScreen(r.b);
+    ctx.save();
+    ctx.fillStyle = r.crossing ? 'rgba(60,200,100,0.15)' : 'rgba(60,140,255,0.15)';
+    ctx.strokeStyle = r.crossing ? '#3cc864' : '#3c8cff';
+    ctx.setLineDash(r.crossing ? [5, 3] : []);
+    ctx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y); ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+    ctx.restore();
+  }
+  _drawSnapMarker() {
+    const m = this.snapMarker, s = this.toScreen(m), c = this.ctx;
+    c.save(); c.strokeStyle = '#ffd400'; c.lineWidth = 1.5; c.beginPath();
+    const r = 6;
+    switch (m.kind) {
+      case 'end': c.rect(s.x - r, s.y - r, 2 * r, 2 * r); break;
+      case 'mid': c.moveTo(s.x - r, s.y + r); c.lineTo(s.x + r, s.y + r); c.lineTo(s.x, s.y - r); c.closePath(); break;
+      case 'cen': c.arc(s.x, s.y, r, 0, Math.PI * 2); break;
+      case 'quad': c.moveTo(s.x, s.y - r); c.lineTo(s.x + r, s.y); c.lineTo(s.x, s.y + r); c.lineTo(s.x - r, s.y); c.closePath(); break;
+      case 'int': c.moveTo(s.x - r, s.y - r); c.lineTo(s.x + r, s.y + r); c.moveTo(s.x + r, s.y - r); c.lineTo(s.x - r, s.y + r); break;
+      case 'per': c.moveTo(s.x - r, s.y - r); c.lineTo(s.x - r, s.y + r); c.lineTo(s.x + r, s.y + r); break;
+      default: c.rect(s.x - r, s.y - r, 2 * r, 2 * r); c.moveTo(s.x - r, s.y - r); c.lineTo(s.x + r, s.y + r);
+    }
+    c.stroke();
+    c.fillStyle = '#ffd400'; c.font = '11px "Segoe UI", sans-serif';
+    c.fillText(SNAP_LABEL[m.kind] ?? m.kind, s.x + r + 3, s.y - r - 2);
+    c.restore();
+  }
+  _drawCrosshair() {
+    if (!this.showCross) return;
+    const c = this.ctx, s = this.toScreen(this.cursor);
+    c.save(); c.strokeStyle = this.settings.dark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.55)'; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(s.x - 10, s.y); c.lineTo(s.x + 10, s.y); c.moveTo(s.x, s.y - 10); c.lineTo(s.x, s.y + 10); c.stroke();
+    c.restore();
+  }
+
+  // ---- input ---------------------------------------------------------------------------------
+  _bind() {
+    const cv = this.canvas;
+    cv.addEventListener('contextmenu', (e) => e.preventDefault());
+    cv.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const r = cv.getBoundingClientRect();
+      this.zoomBy(e.deltaY < 0 ? 1.25 : 0.8, e.clientX - r.left, e.clientY - r.top);
+      this._moved(e.clientX - r.left, e.clientY - r.top, e);
+    }, { passive: false });
+    cv.addEventListener('pointerdown', (e) => {
+      cv.focus();
+      const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
+      if (e.button === 1 || (e.button === 0 && this._spaceDown)) {
+        this._pan = { x: e.clientX, y: e.clientY };
+        cv.setPointerCapture(e.pointerId);
+        cv.style.cursor = 'grabbing';
+        return;
+      }
+      const res = this.resolve(sx, sy);
+      this.cursor = res.p; this.snapMarker = res.marker;
+      if (e.button === 2) { this.tool?.rightClick?.(res.p, mk(e, res.raw, sx, sy)); this.requestRender(); return; }
+      if (e.button !== 0) return;
+      cv.setPointerCapture(e.pointerId);
+      this._down = { sx, sy, p: res.p, raw: res.raw, moved: false };
+      this.tool?.down?.(res.p, mk(e, res.raw, sx, sy));
+      this.requestRender();
+    });
+    cv.addEventListener('pointermove', (e) => {
+      const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
+      if (this._pan) {
+        this.panPixels(e.clientX - this._pan.x, e.clientY - this._pan.y);
+        this._pan = { x: e.clientX, y: e.clientY };
+        return;
+      }
+      this._moved(sx, sy, e);
+    });
+    cv.addEventListener('pointerup', (e) => {
+      if (this._pan) { this._pan = null; cv.style.cursor = ''; return; }
+      if (e.button !== 0 || !this._down) return;
+      const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
+      const res = this.resolve(sx, sy);
+      this.tool?.up?.(res.p, mk(e, res.raw, sx, sy, { dragged: this._down.moved }));
+      this._down = null;
+      this.requestRender();
+    });
+    cv.addEventListener('pointerleave', () => { this.showCross = false; this.snapMarker = null; this.requestRender(); this.emit('cursor', null); });
+    cv.addEventListener('pointerenter', () => { this.showCross = true; });
+    window.addEventListener('keydown', (e) => { if (e.code === 'Space' && document.activeElement === cv) { this._spaceDown = true; cv.style.cursor = 'grab'; } });
+    window.addEventListener('keyup', (e) => { if (e.code === 'Space') { this._spaceDown = false; cv.style.cursor = ''; } });
+    new ResizeObserver(() => this.resize()).observe(cv);
+  }
+
+  _moved(sx, sy, e) {
+    this.showCross = true;
+    const res = this.resolve(sx, sy);
+    this.cursor = res.p; this.rawCursor = res.raw; this.snapMarker = res.marker;
+    if (this._down && Math.hypot(sx - this._down.sx, sy - this._down.sy) > 4) this._down.moved = true;
+    this.tool?.move?.(res.p, mk(e, res.raw, sx, sy, { dragging: !!this._down?.moved }));
+    this.emit('cursor', res.p);
+    this.requestRender();
+  }
+}
+
+/** plain event object for tools (PointerEvent properties are prototype getters and do not survive a spread) */
+const mk = (e, raw, sx, sy, extra = {}) => ({ button: e.button, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey, raw, sx, sy, ...extra });
+
+const SNAP_LABEL = { end: 'Endpoint', mid: 'Midpoint', cen: 'Center', quad: 'Quadrant', int: 'Intersection', node: 'Node', ins: 'Insertion', per: 'Perpendicular', near: 'Nearest' };

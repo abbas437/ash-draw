@@ -304,7 +304,8 @@ export function drawScene(ctx, scene, view, opts = {}) {
   const bg = opts.background ?? '#1b1f23';
   const dark = luminance(bg) < 0.5;
   const doc = scene.doc;
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const dpr = opts.dpr ?? 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // view.width/height are CSS pixels
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';

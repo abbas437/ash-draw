@@ -1,3 +1,66 @@
-/* Placeholder - the UI agent replaces this file. */
-html, body { margin: 0; height: 100%; font-family: "Segoe UI", system-ui, sans-serif; background: #12261f; color: #e9e4d8; }
-#app { display: grid; place-items: center; height: 100%; font-size: 1.4rem; }
+:root { --bg:#14181b; --panel:#1e2428; --panel2:#262d32; --line:#36414a; --text:#e6e9ea; --dim:#9aa6ad; --accent:#3f9a73; --accent2:#2f7a5a; --warn:#ffd400; }
+* { box-sizing: border-box; }
+html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font:13px "Segoe UI", system-ui, sans-serif; overflow:hidden; }
+#app { display:grid; grid-template-rows: 30px 1fr 30px 24px; height:100%; }
+button { font:inherit; color:var(--text); background:var(--panel2); border:1px solid var(--line); border-radius:3px; padding:3px 8px; cursor:pointer; }
+button:hover { background:#2f383e; }
+button.primary { background:var(--accent2); border-color:var(--accent); }
+button:disabled { opacity:.4; cursor:default; }
+input, select, textarea { font:inherit; color:var(--text); background:#0f1316; border:1px solid var(--line); border-radius:3px; padding:3px 5px; }
+input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px solid var(--accent); outline-offset:0; }
+#menubar { display:flex; align-items:center; background:var(--panel); border-bottom:1px solid var(--line); padding:0 6px; gap:2px; position:relative; z-index:20; }
+#menubar .menu { position:relative; }
+#menubar .menu > button { background:none; border:none; padding:5px 10px; }
+#menubar .menu:hover > button, #menubar .menu.open > button { background:var(--panel2); }
+#menubar .drop { display:none; position:absolute; top:100%; left:0; min-width:230px; background:var(--panel2); border:1px solid var(--line); box-shadow:0 6px 18px #0008; padding:4px 0; }
+#menubar .menu.open .drop { display:block; }
+#menubar .drop button { display:flex; justify-content:space-between; gap:24px; width:100%; border:none; background:none; text-align:left; border-radius:0; padding:5px 14px; }
+#menubar .drop button:hover { background:var(--accent2); }
+#menubar .drop hr { border:none; border-top:1px solid var(--line); margin:4px 0; }
+#menubar .drop kbd { color:var(--dim); font:inherit; }
+#menubar .title { margin-left:auto; color:var(--dim); padding-right:8px; }
+#main { display:grid; grid-template-columns: 92px 1fr 260px; min-height:0; }
+#tools { background:var(--panel); border-right:1px solid var(--line); overflow:auto; padding:4px; display:flex; flex-direction:column; gap:2px; }
+#tools .group { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.06em; margin:8px 2px 2px; }
+#tools button { width:100%; padding:5px 2px; text-align:center; font-size:12px; }
+#tools button.active { background:var(--accent2); border-color:var(--accent); }
+#stage { position:relative; min-width:0; min-height:0; background:#1b1f23; }
+#cv { width:100%; height:100%; display:block; cursor:none; touch-action:none; outline:none; }
+#zoombar { position:absolute; right:10px; bottom:10px; display:flex; gap:4px; }
+#toast { position:absolute; left:50%; transform:translateX(-50%); bottom:14px; max-width:80%; background:#000c; border:1px solid var(--warn); color:var(--warn); padding:6px 12px; border-radius:4px; opacity:0; pointer-events:none; transition:opacity .2s; }
+#toast.show { opacity:1; }
+#drop { display:none; position:absolute; inset:10px; border:3px dashed var(--accent); background:#0a1a14cc; align-items:center; justify-content:center; font-size:20px; z-index:5; }
+#stage.dragover #drop { display:flex; }
+#side { background:var(--panel); border-left:1px solid var(--line); overflow:auto; display:flex; flex-direction:column; }
+.panel { border-bottom:1px solid var(--line); padding:6px; }
+.phead { display:flex; align-items:center; gap:4px; font-weight:600; margin-bottom:6px; }
+.phead .spacer, .spacer { flex:1; }
+.phead button { padding:0 7px; }
+#layers { max-height:220px; overflow:auto; }
+.layer { display:flex; align-items:center; gap:4px; padding:2px 0; }
+.layer.current { background:#2c4a3d; }
+.layer .lname { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:default; }
+.layer .cur { color:var(--accent); width:22px; text-align:center; }
+button.icon { border:none; background:none; padding:0 3px; width:22px; }
+.swatch { display:inline-block; width:14px; height:14px; border:1px solid #fff6; vertical-align:middle; cursor:pointer; }
+#props label { display:grid; grid-template-columns:80px 1fr; align-items:center; gap:6px; margin:4px 0; color:var(--dim); }
+#props label select, #props label textarea { color:var(--text); width:100%; }
+#props .info { display:flex; justify-content:space-between; padding:1px 0; color:var(--dim); }
+#props .info b { color:var(--text); font-weight:500; }
+#cmdbar { display:flex; align-items:center; gap:8px; background:var(--panel); border-top:1px solid var(--line); padding:0 8px; }
+#prompt { color:var(--warn); white-space:nowrap; max-width:55%; overflow:hidden; text-overflow:ellipsis; }
+#cmd { flex:1; min-width:120px; background:#0f1316; }
+#status { display:flex; align-items:center; gap:4px; background:var(--panel); border-top:1px solid var(--line); padding:0 8px; color:var(--dim); }
+#status .coord { min-width:210px; font-variant-numeric: tabular-nums; }
+#status button { padding:0 8px; border-radius:2px; }
+#status button.on { background:var(--accent2); color:#fff; border-color:var(--accent); }
+dialog { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:16px 20px; max-width:560px; width:90%; box-shadow:0 12px 40px #000a; }
+dialog::backdrop { background:#0008; }
+dialog h2 { margin:0 0 10px; font-size:16px; }
+dialog p { margin:6px 0; line-height:1.45; }
+dialog ul { margin:6px 0; padding-left:20px; }
+dialog label { display:block; margin:6px 0 2px; color:var(--dim); }
+.dlg-btns { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
+.popmenu { position:fixed; z-index:50; background:var(--panel2); border:1px solid var(--line); padding:4px 0; }
+.popmenu button { display:block; width:100%; border:none; background:none; text-align:left; padding:3px 12px; }
+@media print { #menubar, #tools, #side, #cmdbar, #status, #zoombar { display:none !important; } #main { display:block; } }
