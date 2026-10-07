@@ -6,13 +6,18 @@ Built with Electron by ASH Technical & Project Management Services (ASH PMCS).
 
 ## Features
 
-- **Open** DXF (ASCII) and DWG drawings; drag-and-drop, File > Open, or "Open with" from Explorer.
-- **View**: pan and zoom around the drawing.
-- **Edit** existing entities and create new ones.
-- **Layers** panel.
-- **Object snaps** for precise drawing.
-- **Draw and modify tools** for everyday 2D drafting.
-- **Export** to PDF, SVG, PNG, DXF and DWG (DWG output in R2000 or R14 format).
+- **Open** DXF (ASCII, R12 to R2018) and DWG drawings; drag-and-drop, File > Open, or "Open with" from Explorer.
+- **View**: wheel zoom, middle-mouse or Space + drag to pan, zoom to fit, light or dark background, optional lineweights.
+  Layers, colours (ACI and true colour), linetypes, blocks and block arrays, hatches (solid and common patterns), text and
+  multiline text, splines, ellipses, dimensions (as drawn) and leaders are displayed.
+- **Draw**: line, polyline, rectangle, circle, arc (3 points), ellipse, point, text, hatch (click inside a closed shape).
+- **Modify**: move, copy, rotate, scale, mirror, offset, trim, extend, explode, erase; copy/paste; unlimited undo and redo.
+- **Precision**: object snaps (endpoint, intersection, midpoint, centre, quadrant, node, insertion, perpendicular),
+  ortho and polar tracking, and an AutoCAD-style command line (`L`, `PL`, `C`, `M`, `CO`, `RO`, `TR` ... and typed
+  coordinates such as `10,20`, `@5,0`, `@10<45`).
+- **Layers and properties** panels, including layer on/off and lock, colour, linetype and lineweight; measure tool.
+- **Save and convert**: DXF (R2000, lossless for everything the program supports), DWG (experimental, verified after saving),
+  and export to PDF (vector), SVG and PNG.
 
 ## Download and install
 
@@ -109,14 +114,24 @@ affiliated with or endorsed by Autodesk. See `docs/COPYRIGHT-REVIEW.md`.
 
 ## Limitations
 
-- **DWG writing** is limited to the R2000 and R14 formats that LibreDWG can write.
-- **DWG reading** quality depends on LibreDWG; newer proprietary objects and proxy entities
-  are not shown.
-- **Autodesk SHX fonts are not available**; text is drawn with system fonts, so spacing and
-  appearance may differ from the original.
-- **3D solids** (ACIS bodies and similar) are not displayed.
+Please read these before relying on the program for important work.
+
+- **Model space only.** Paper-space layouts and viewports are ignored (the count is reported when a file is opened).
+- **Unsupported objects are skipped and reported on opening**: 3D solids, regions, 3D faces, xlines/rays, multilines,
+  multileaders, tolerances, images and OLE objects. Attributes become plain text.
+- **Dimensions** are displayed from their stored drawing and can be moved, copied and exploded, but not edited as dimensions.
+- **DWG reading** quality depends on LibreDWG; newer proprietary objects and proxy entities are not shown.
+- **DWG saving is experimental.** DWG is written through LibreDWG's DXF import, which can lose text rotation, width factor and
+  alignment and some hatch edges. The program reads the saved DWG back, compares it with your drawing and warns about
+  differences. DXF is the reliable format. Only the R2000 and R14 DWG formats can be written.
+- **Autodesk SHX fonts are not available**; text is drawn with system fonts, so spacing and appearance differ from the original.
+- **PDF export** draws text in Western Latin characters only (no Arabic or other scripts yet); everything else is vector.
 - **Binary DXF** is not supported; save as ASCII DXF.
 - **Unsigned executables**: Windows SmartScreen warns on first run (see above).
+
+Developer documentation of the drawing engine: `docs/CORE-API.md`. Tests: `npm test` (unit), `npm run test:e2e`
+(headless browser UI test; needs Chromium and `node scripts/vendor.js`), and `test/e2e/electron.mjs` (the real desktop app,
+needs a display).
 
 ## Support
 
