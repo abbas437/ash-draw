@@ -12,6 +12,8 @@ import { chromium } from 'playwright-core';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CHROME = process.env.CHROME_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const SHOTS = process.env.E2E_SHOTS || '';
+const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+const rgbOf = (css) => css.match(/[\d.]+/g).slice(0, 3).map(Number);
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
 
 const server = http.createServer(async (req, res) => {
@@ -48,6 +50,10 @@ try {
 
   step = 'ui present';
   assert.ok(await page.locator('#menubar .menu').count() >= 4);
+  step = 'first run uses the light theme';
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme ?? 'light'), 'light');
+  assert.ok(lum(rgbOf(await page.evaluate(() => getComputedStyle(document.body).backgroundColor))) > 0.7, 'body background is not light');
+  assert.equal(await page.evaluate(() => window.app.vp.settings.dark), false);
   assert.ok(await page.locator('#tools button').count() >= 20);
 
   step = 'draw a line with the mouse';
@@ -107,10 +113,11 @@ try {
     assert.ok(await count() > 0, `${f} opened empty`);
     await page.waitForTimeout(100);
     await shot(`open_${f.replace('.dxf', '')}`);
-    // the canvas must contain drawn pixels other than the background
+    // the canvas must contain drawn pixels other than the background (white on the default light canvas)
     const painted = await page.evaluate(() => {
       const c = document.getElementById('cv'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
-      let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 60 || d[i + 1] > 60 || d[i + 2] > 60) n++;
+      const bg = window.app.vp.settings.dark ? [27, 31, 35] : [255, 255, 255];
+      let n = 0; for (let i = 0; i < d.length; i += 4) if (Math.max(Math.abs(d[i] - bg[0]), Math.abs(d[i + 1] - bg[1]), Math.abs(d[i + 2] - bg[2])) > 60) n++;
       return n;
     });
     assert.ok(painted > 200, `${f}: canvas looks blank (${painted})`);
@@ -147,6 +154,95 @@ try {
     await d.saveAs(p);
     assert.equal((await fs.readFile(p)).subarray(0, 4).toString(), '%PDF');
     await fs.rm(p, { force: true });
+  }
+
+  step = 'theme: dark theme switches and is remembered; ACI 7 follows the canvas; text contrast';
+  {
+    const shotDir = SHOTS || await fs.mkdtemp(path.join(os.tmpdir(), 'ash-e2e-theme-'));
+    const menu = async (top, item) => { await page.locator('#menubar .menu > button', { hasText: top }).click(); await page.locator('#menubar .drop button', { hasText: item }).click(); };
+    // the ACI-7 line drawn by drawAci7Line() (cy offset by half a pixel so the 1px line is crisp): returns the line pixel (most different from the background) and the background
+    const aci7Line = async () => {
+      await page.evaluate(() => { const vp = window.app.vp; vp.view = { ...vp.view, cx: 50, cy: 0.125, zoom: 4 }; vp.selection.clear(); vp.render(); });
+      await page.mouse.move(2, 2);
+      return page.evaluate(() => {
+        const vp = window.app.vp; vp.showCross = false; vp.render();
+        const s = vp.toScreen({ x: 50, y: 0 }), k = vp.dpr;
+        const px = vp.ctx.getImageData(Math.round(s.x * k) - 3, Math.round(s.y * k) - 3, 7, 7).data, bg = vp.ctx.getImageData(3, 3, 1, 1).data;
+        let best = null, bd = -1;
+        for (let i = 0; i < px.length; i += 4) { const dd = Math.abs(px[i] - bg[0]) + Math.abs(px[i + 1] - bg[1]) + Math.abs(px[i + 2] - bg[2]); if (dd > bd) { bd = dd; best = [px[i], px[i + 1], px[i + 2]]; } }
+        return { line: best, bg: [bg[0], bg[1], bg[2]] };
+      });
+    };
+    const drawAci7Line = async () => {
+      await page.evaluate(() => { const l = window.app.doc.layers.get('0'); if (l) l.color = 7; window.app.state.layer = '0'; window.app.state.color = 256; });
+      await page.click('#tools button[data-tool=line]');
+      await typeCmd('0,0'); await typeCmd('100,0'); await page.keyboard.press('Escape');
+      await page.click('#tools button[data-tool=select]');
+    };
+    // minimum WCAG contrast of every text-bearing element under the selectors, against its effective background
+    const minContrast = (sels) => page.evaluate((list) => {
+      const rgb = (c) => { const m = c.match(/[\d.]+/g).map(Number); return { c: m.slice(0, 3), a: m.length > 3 ? m[3] : 1 }; };
+      const L = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+      const bgOf = (n) => { for (; n; n = n.parentElement) { const b = rgb(getComputedStyle(n).backgroundColor); if (b.a > 0.5) return b.c; } return [255, 255, 255]; };
+      let worst = { ratio: Infinity, what: '' }, n = 0;
+      for (const sel of list) for (const root of document.querySelectorAll(sel)) for (const e of [root, ...root.querySelectorAll('*')]) {
+        if (![...e.childNodes].some((t) => t.nodeType === 3 && t.textContent.trim())) continue;
+        if (!e.getClientRects().length) continue;
+        n++;
+        const a = L(rgb(getComputedStyle(e).color).c), b = L(bgOf(e)), r = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+        if (r < worst.ratio) worst = { ratio: r, what: `${sel} ${e.tagName}#${e.id}.${e.className} "${e.textContent.trim().slice(0, 30)}"` };
+      }
+      return { ...worst, n };
+    }, sels);
+    const checkContrast = async (theme) => {
+      await page.locator('#menubar .menu > button', { hasText: 'View' }).click();
+      const m = await minContrast(['#menubar', '#status', '#cmdbar']);
+      await shot(`theme_${theme}_menu`); await page.screenshot({ path: path.join(shotDir, `theme_${theme}.png`) });
+      await page.keyboard.press('Escape'); await page.mouse.click(700, 400);
+      const opened = page.evaluate(() => window.app.limitations());
+      await page.waitForSelector('#dlg[open]');
+      const d = await minContrast(['#dlg']);
+      await page.screenshot({ path: path.join(shotDir, `theme_${theme}_dialog.png`) });
+      await page.locator('#dlg button.primary').click(); await opened;
+      for (const [where, r] of [['menu/status', m], ['dialog', d]]) assert.ok(r.n > 3 && r.ratio >= 4.5, `${theme} ${where} contrast ${r.ratio.toFixed(2)} at ${r.what}`);
+    };
+
+    // the PDF export may leave its warnings message open
+    await page.waitForTimeout(300);
+    if (await page.locator('#dlg[open]').count()) await page.locator('#dlg button.primary').click();
+    // light (default): ACI 7 is dark on the white canvas
+    await page.evaluate(() => window.app.newDrawing(true));
+    await drawAci7Line();
+    let px = await aci7Line();
+    assert.ok(lum(px.bg) > 0.9 && lum(px.line) < 0.2, `light canvas: ACI 7 ${px.line} on ${px.bg}`);
+    await checkContrast('light');
+
+    // View > Dark theme: whole UI dark, canvas dark, ACI 7 light, remembered after a reload
+    await menu('View', 'Dark theme');
+    assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'dark');
+    assert.ok(lum(rgbOf(await page.evaluate(() => getComputedStyle(document.body).backgroundColor))) < 0.05);
+    await page.evaluate(() => window.app.newDrawing(true)); // nothing unsaved, so no beforeunload prompt
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => window.app && window.app.doc && document.documentElement.dataset.theme === 'dark', null, { timeout: 10000 });
+    assert.equal(await page.evaluate(() => window.app.vp.settings.dark), true);
+    assert.equal(await page.locator('#theme-btn.on').count(), 1);
+    await drawAci7Line();
+    px = await aci7Line();
+    assert.ok(lum(px.bg) < 0.05 && lum(px.line) > 0.8, `dark canvas: ACI 7 ${px.line} on ${px.bg}`);
+    await checkContrast('dark');
+
+    // the canvas-only override still works inside a theme
+    await menu('View', 'Light / dark background');
+    px = await aci7Line();
+    assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'dark');
+    assert.ok(lum(px.bg) > 0.9 && lum(px.line) < 0.2, `dark theme, light canvas: ACI 7 ${px.line} on ${px.bg}`);
+    await menu('View', 'Light / dark background');
+
+    // back to light from the status bar toggle; that choice is saved too
+    await page.click('#theme-btn');
+    assert.equal(await page.evaluate(() => document.documentElement.dataset.theme ?? 'light'), 'light');
+    assert.equal(await page.evaluate(() => window.api.settingsGet('theme')), 'light');
+    if (!SHOTS) await fs.rm(shotDir, { recursive: true, force: true });
   }
 
   step = 'csp';

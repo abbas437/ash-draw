@@ -3,7 +3,7 @@ import { newDocument } from '../src/core/model.js';
 import { Session, eraseEntities, copyToClipboard, pasteEntities } from '../src/core/edit.js';
 import { parseCoordinate } from '../src/core/coords.js';
 import { PATTERN_NAMES } from '../src/core/patterns.js';
-import { Viewport } from './viewport.js';
+import { Viewport, CANVAS_BG } from './viewport.js';
 import { createTools, TOOL_ALIASES } from './tools.js';
 import { el, message, modal, confirmDialog, textDialog, toast, renderLayers, renderProperties } from './ui.js';
 import {
@@ -26,6 +26,8 @@ class App {
     this.file = { path: null, name: 'Untitled.dxf', format: 'dxf' };
     this.clip = [];
     this.lastTool = 'line';
+    this.theme = 'light';        // UI theme; light by default, the choice is saved as setting 'theme'
+    this.canvasOverride = false; // true once View > Light / dark background makes the canvas differ from the theme
     this.vp = new Viewport(document.getElementById('cv'));
     this.tools = createTools(this);
     this.toolId = null;
@@ -49,6 +51,8 @@ class App {
     window.addEventListener('beforeunload', (e) => { if (this.session?.dirty) { e.preventDefault(); e.returnValue = ''; } });
     this.newDrawing(true);
     this.setTool('select');
+    this.setTheme('light', false);
+    api.settingsGet?.('theme').then((t) => { if (t === 'dark') this.setTheme('dark', false); }).catch(() => {});
     api.onOpenFile?.((f) => this.openFromFile(f));
     api.getLaunchFiles?.().then((files) => { if (files?.[0]) this.openFromFile(files[0]); }).catch(() => {});
   }
@@ -275,13 +279,22 @@ class App {
         ['Export PDF…', '', () => this.exportPdf()], ['Export SVG…', '', () => this.exportSvg()], ['Export PNG image…', '', () => this.exportPng()]]],
       ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Paste', 'Ctrl+V', () => this.paste()], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()]]],
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-',
-        ['Show lineweights', 'F9', () => this.toggle('lineweights')], ['Light / dark background', '', () => this.toggle('dark')]]],
+        ['Show lineweights', 'F9', () => this.toggle('lineweights')], ['Light / dark background', '', () => this.toggle('dark')], '-',
+        ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark']]],
       ['Help', [['What this program can and cannot do', '', () => this.limitations()], ['About', '', () => this.about()]]],
     ];
     const bar = document.getElementById('menubar');
     for (const [label, items] of M) {
-      const menu = el('div', { class: 'menu' }, el('button', { onclick: (e) => { e.stopPropagation(); const open = menu.classList.contains('open'); closeMenus(); if (!open) menu.classList.add('open'); } }, label),
-        el('div', { class: 'drop' }, items.map((it) => (it === '-' ? el('hr') : el('button', { onclick: () => { closeMenus(); it[2](); } }, el('span', { text: it[0] }), el('kbd', { text: it[1] }))))));
+      // an item's optional 4th element makes it a checkable item: () => checked
+      const checks = [];
+      const item = (it) => {
+        const chk = it[3] ? el('span', { class: 'chk' }) : null;
+        const b = el('button', { role: it[3] ? 'menuitemcheckbox' : null, onclick: () => { closeMenus(); it[2](); } }, el('span', {}, chk, it[0]), el('kbd', { text: it[1] }));
+        if (chk) checks.push(() => { const on = !!it[3](); chk.textContent = on ? '\u2713' : ''; b.setAttribute('aria-checked', String(on)); });
+        return b;
+      };
+      const menu = el('div', { class: 'menu' }, el('button', { onclick: (e) => { e.stopPropagation(); const open = menu.classList.contains('open'); closeMenus(); if (!open) { checks.forEach((f) => f()); menu.classList.add('open'); } } }, label),
+        el('div', { class: 'drop' }, items.map((it) => (it === '-' ? el('hr') : item(it)))));
       bar.append(menu);
     }
     bar.append(el('span', { class: 'title', id: 'title' }));
@@ -306,18 +319,36 @@ class App {
     const s = document.getElementById('status');
     const tog = (label, key, title) => { const b = el('button', { title, onclick: () => this.toggle(key) }, label); b.dataset.key = key; return b; };
     s.append(el('span', { class: 'coord', id: 'coord' }), tog('SNAP', 'snap', 'Object snap (F3)'), tog('ORTHO', 'ortho', 'Ortho (F8)'), tog('POLAR', 'polar', 'Polar tracking 45° (F10)'), tog('LWT', 'lineweights', 'Show lineweights (F9)'),
-      el('span', { class: 'spacer' }), el('span', { id: 'sel' }), el('span', { id: 'units', style: 'margin-left:12px' }));
+      el('span', { class: 'spacer' }), el('span', { id: 'sel' }), el('span', { id: 'units', style: 'margin-left:12px' }),
+      el('button', { id: 'theme-btn', title: 'Dark theme (View menu)', onclick: () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark') }, 'DARK'));
     this.refreshToggles();
   }
   toggle(key) {
     const st = this.vp.settings;
+    if (key === 'dark') { this.setCanvasDark(!st.dark); this.canvasOverride = st.dark !== (this.theme === 'dark'); return; }
     st[key] = !st[key];
     if (key === 'ortho' && st.ortho) st.polar = false;
     if (key === 'polar' && st.polar) st.ortho = false;
     this.refreshToggles(); this.vp.requestRender();
-    if (key === 'dark') document.getElementById('stage').style.background = st.dark ? '#1b1f23' : '#fff';
   }
-  refreshToggles() { for (const b of document.querySelectorAll('#status button')) b.classList.toggle('on', !!this.vp.settings[b.dataset.key]); }
+  refreshToggles() {
+    for (const b of document.querySelectorAll('#status button[data-key]')) b.classList.toggle('on', !!this.vp.settings[b.dataset.key]);
+    document.getElementById('theme-btn')?.classList.toggle('on', this.theme === 'dark');
+  }
+  /** switch the UI theme; the drawing canvas follows it unless the user has overridden the canvas background */
+  setTheme(theme, save = true) {
+    this.theme = theme === 'dark' ? 'dark' : 'light';
+    if (this.theme === 'dark') document.documentElement.dataset.theme = 'dark'; else delete document.documentElement.dataset.theme;
+    if (this.canvasOverride && this.vp.settings.dark === (this.theme === 'dark')) this.canvasOverride = false;
+    if (!this.canvasOverride) this.setCanvasDark(this.theme === 'dark');
+    this.refreshToggles();
+    if (save) api.settingsSet?.('theme', this.theme)?.catch?.(() => {});
+  }
+  setCanvasDark(dark) {
+    this.vp.settings.dark = dark;
+    document.getElementById('stage').style.background = dark ? CANVAS_BG.dark : CANVAS_BG.light;
+    this.vp.requestRender();
+  }
   showCursor(p) { document.getElementById('coord').textContent = p ? `X ${p.x.toFixed(3)}   Y ${p.y.toFixed(3)}` : ''; }
   refreshStatus() {
     document.getElementById('sel').textContent = this.vp.selection.size ? `${this.vp.selection.size} selected` : `${this.doc.entities.length.toLocaleString()} objects`;
