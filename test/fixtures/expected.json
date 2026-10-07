@@ -1,0 +1,196 @@
+{
+  "basic_r2000.dxf": {
+    "version": "AC1015",
+    "entityCounts": {
+      "LINE": 3,
+      "CIRCLE": 2,
+      "ARC": 2,
+      "ELLIPSE": 2,
+      "POINT": 1,
+      "SOLID": 1
+    },
+    "layers": [
+      "0",
+      "Defpoints",
+      "WALLS",
+      "DIMS",
+      "HIDDEN",
+      "FROZEN"
+    ],
+    "notes": "HIDDEN layer off, FROZEN layer frozen (one entity each); arcs: one crosses 0deg, one wraps a0>a1; ellipse full + elliptical arc"
+  },
+  "polylines_r2000.dxf": {
+    "version": "AC1015",
+    "entityCounts": {
+      "LWPOLYLINE": 4,
+      "POLYLINE": 1
+    },
+    "layers": [
+      "0",
+      "Defpoints"
+    ],
+    "notes": "4 LWPOLYLINE (open, closed, bulges 1/-0.5/0.3, const width 0.4) + 1 heavy 2D POLYLINE (lineweight 80)"
+  },
+  "splines_r2000.dxf": {
+    "version": "AC1015",
+    "entityCounts": {
+      "SPLINE": 4
+    },
+    "layers": [
+      "0",
+      "Defpoints"
+    ],
+    "notes": "SPLINEs: control-point degree 3, rational with weights, fit-point, closed (fit points)"
+  },
+  "text_r2000.dxf": {
+    "version": "AC1015",
+    "entityCounts": {
+      "TEXT": 3,
+      "MTEXT": 1
+    },
+    "layers": [
+      "0",
+      "Defpoints"
+    ],
+    "notes": "TEXT x3 (rotated+width factor 0.8, centred, %%c %%d %%p codes), MTEXT with \\P, bold font run, \\U+00B0, \\H2x; ; STYLE NOTES"
+  },
+  "blocks_r2000.dxf": {
+    "version": "AC1015",
+    "entityCounts": {
+      "INSERT": 5
+    },
+    "layers": [
+      "0",
+      "Defpoints"
+    ],
+    "notes": "5 INSERTs: 3 BOX (scale1, scale2/rot30, mirrored xscale -1), 1 nested ROOM(BOX), 1 array 3 cols x 2 rows; unreferenced block *U1"
+  },
+  "hatch_r2000.dxf": {
+    "version": "AC1015",
+    "entityCounts": {
+      "HATCH": 3
+    },
+    "layers": [
+      "0",
+      "Defpoints"
+    ],
+    "notes": "3 HATCH: solid polyline boundary; ANSI31 with edge-path incl. arc; solid with island (outer+inner loop)"
+  },
+  "dims_r2000.dxf": {
+    "version": "AC1015",
+    "entityCounts": {
+      "DIMENSION": 5,
+      "CIRCLE": 2,
+      "LEADER": 1
+    },
+    "layers": [
+      "0",
+      "Defpoints"
+    ],
+    "notes": "5 DIMENSIONs rendered to anonymous blocks (*D..) + LEADER"
+  },
+  "colors_r2000.dxf": {
+    "version": "AC1015",
+    "entityCounts": {
+      "LINE": 15,
+      "INSERT": 2
+    },
+    "layers": [
+      "0",
+      "Defpoints"
+    ],
+    "notes": "ACI 1,7,30,140,250, BYLAYER(256), truecolor, lineweights 25/50/-1, 4 linetypes, entity ltscale 0.5, global LTSCALE 0.5, BYBLOCK entities in block BYB"
+  },
+  "r12_ac1009.dxf": {
+    "version": "AC1009",
+    "entityCounts": {
+      "LINE": 2,
+      "CIRCLE": 1,
+      "ARC": 1,
+      "POLYLINE": 1,
+      "TEXT": 1
+    },
+    "layers": [
+      "0",
+      "Defpoints"
+    ],
+    "notes": "R12: ASCII only, POLYLINE instead of LWPOLYLINE"
+  },
+  "r2007_ac1021.dxf": {
+    "version": "AC1021",
+    "entityCounts": {
+      "LINE": 2,
+      "CIRCLE": 1,
+      "ARC": 1,
+      "LWPOLYLINE": 1,
+      "TEXT": 1
+    },
+    "layers": [
+      "0",
+      "Defpoints"
+    ],
+    "notes": "non-ASCII text: e-acute, u-umlaut, Arabic alef"
+  },
+  "r2018_ac1032.dxf": {
+    "version": "AC1032",
+    "entityCounts": {
+      "LINE": 2,
+      "CIRCLE": 1,
+      "ARC": 1,
+      "LWPOLYLINE": 1,
+      "TEXT": 1
+    },
+    "layers": [
+      "0",
+      "Defpoints"
+    ],
+    "notes": "non-ASCII text: e-acute, u-umlaut, Arabic alef"
+  },
+  "extrusion_r2000.dxf": {
+    "version": "AC1015",
+    "entityCounts": {
+      "CIRCLE": 1,
+      "ARC": 1,
+      "LWPOLYLINE": 1,
+      "LINE": 1
+    },
+    "layers": [
+      "0",
+      "Defpoints"
+    ],
+    "notes": "CIRCLE/ARC/LWPOLYLINE with extrusion (0,0,-1) => mirrored OCS (x flips); LINE at z=5 for 3D flattening"
+  },
+  "unsupported_r2000.dxf": {
+    "version": "AC1015",
+    "entityCounts": {
+      "3DFACE": 1,
+      "POLYLINE": 1,
+      "XLINE": 1,
+      "RAY": 1,
+      "LINE": 2
+    },
+    "layers": [
+      "0",
+      "Defpoints"
+    ],
+    "notes": "Skippable: 3DFACE, XLINE, RAY, polyface/polymesh POLYLINE; 2 LINEs must still load. MESH and IMAGEDEF omitted."
+  },
+  "binary_sentinel.dxf": {
+    "version": null,
+    "entityCounts": {},
+    "layers": [],
+    "notes": "22-byte binary DXF sentinel + random bytes; importer must reject as BINARY_DXF"
+  },
+  "big_grid_r2000.dxf": {
+    "version": "AC1015",
+    "entityCounts": {
+      "LINE": 20000,
+      "CIRCLE": 2000
+    },
+    "layers": [
+      "0",
+      "Defpoints"
+    ],
+    "notes": "performance: 20000 LINE + 2000 CIRCLE"
+  }
+}

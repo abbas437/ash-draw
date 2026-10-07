@@ -1,0 +1,105 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write   # needed only by the tag-build release step
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run licenses
+      # Download + SHA-256-verify the LibreDWG converters first so the DWG round-trip tests run on the real Windows binaries.
+      - run: npm run fetch:libredwg
+      - name: npm test
+        shell: bash
+        env:
+          ASH_LIBREDWG_DIR: ${{ github.workspace }}/build/libredwg
+        run: |
+          set +e
+          npm test > test-out.txt 2>&1
+          code=$?
+          cat test-out.txt
+          if [ $code -ne 0 ]; then
+            msg=$(tail -c 3500 test-out.txt | tr -d '\r' | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')
+            echo "::error title=npm test failed::$msg"
+          fi
+          exit $code
+      - name: electron bridge tests
+        shell: bash
+        run: |
+          set +e
+          node --test "electron/**/*.test.mjs" > bridge-out.txt 2>&1
+          code=$?
+          cat bridge-out.txt
+          if [ $code -ne 0 ]; then
+            msg=$(tail -c 3500 bridge-out.txt | tr -d '\r' | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')
+            echo "::error title=bridge tests failed::$msg"
+          fi
+          exit $code
+      - name: Build installer and portable exe
+        shell: bash
+        run: |
+          set +e
+          npm run dist > dist-out.txt 2>&1
+          code=$?
+          cat dist-out.txt
+          if [ $code -ne 0 ]; then
+            msg=$(tail -c 3500 dist-out.txt | tr -d '\r' | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')
+            echo "::error title=electron-builder failed::$msg"
+          fi
+          exit $code
+      - name: LibreDWG corresponding source (GPL) for the release
+        run: node scripts/fetch-libredwg.mjs --source dist/
+      - name: SHA256SUMS.txt
+        shell: bash
+        working-directory: dist
+        run: |
+          shopt -s nullglob
+          files=(ASH-Draw-Studio-Setup-*.exe ASH-Draw-Studio-Portable-*.exe)
+          if [ "${#files[@]}" -ne 2 ]; then echo "expected 2 .exe files, found ${#files[@]}"; exit 1; fi
+          sha256sum "${files[@]}" | sed 's/ \*/  /' > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ASH-Draw-Studio-windows-x64
+          path: |
+            dist/ASH-Draw-Studio-Setup-*.exe
+            dist/ASH-Draw-Studio-Portable-*.exe
+            dist/SHA256SUMS.txt
+            dist/libredwg-0.13.3.tar.xz
+          if-no-files-found: error
+      - name: GitHub Release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/ASH-Draw-Studio-Setup-*.exe \
+            dist/ASH-Draw-Studio-Portable-*.exe \
+            dist/SHA256SUMS.txt \
+            dist/libredwg-0.13.3.tar.xz \
+            --title "ASH Draw Studio $GITHUB_REF_NAME" \
+            --generate-notes
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: pip install ezdxf
+      - run: npm ci && npm run vendor && npm test

@@ -1,0 +1,105 @@
+{
+  "name": "ash-draw",
+  "version": "0.1.0",
+  "description": "ASH Draw Studio - free DXF/DWG drawing viewer and editor for Windows",
+  "type": "module",
+  "license": "MIT",
+  "author": "ASH Technical & Project Management Services (ASH PMCS)",
+  "private": true,
+  "productName": "ASH Draw Studio",
+  "main": "electron/main.js",
+  "copyright": "Copyright (c) 2026 ASH Technical & Project Management Services (ASH PMCS)",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node scripts/vendor.js && electron .",
+    "start:dev": "node scripts/vendor.js && electron . --dev",
+    "vendor": "node scripts/vendor.js",
+    "fetch:libredwg": "node scripts/fetch-libredwg.mjs",
+    "icon": "node scripts/make-icon.js",
+    "licenses": "node scripts/licenses.js",
+    "test": "node --test \"test/**/*.test.{js,mjs,cjs}\"",
+    "test:electron": "node --test \"electron/**/*.test.mjs\"",
+    "test:e2e": "node -e \"process.exit(require('fs').existsSync('test/e2e/run.mjs')?1:0)\" || node test/e2e/run.mjs",
+    "smoke": "node scripts/smoke-browser.mjs",
+    "dist": "npm run fetch:libredwg && npm run vendor && npm run licenses && electron-builder --win nsis portable --x64 --publish never"
+  },
+  "dependencies": {
+    "@pdf-lib/fontkit": "^1.1.1",
+    "pdf-lib": "^1.17.1"
+  },
+  "devDependencies": {
+    "@napi-rs/canvas": "^1.0.10",
+    "electron": "^44.6.0",
+    "electron-builder": "^26.15.3",
+    "playwright-core": "^1.63.0"
+  },
+  "build": {
+    "appId": "com.ashpmcs.drawstudio",
+    "productName": "ASH Draw Studio",
+    "copyright": "Copyright (c) 2026 ASH Technical & Project Management Services (ASH PMCS)",
+    "asar": true,
+    "compression": "maximum",
+    "npmRebuild": false,
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**",
+      "!electron/**/*.test.mjs",
+      "renderer/**",
+      "src/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/libredwg",
+        "to": "libredwg",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "THIRD-PARTY-NOTICES.md",
+        "to": "THIRD-PARTY-NOTICES.md"
+      },
+      {
+        "from": "LICENSE",
+        "to": "LICENSE.txt"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "ASH Draw Studio",
+      "license": "LICENSE",
+      "include": "build/installer.nsh",
+      "artifactName": "ASH-Draw-Studio-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "ASH-Draw-Studio-Portable-${version}.${ext}"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+// Sandboxed preload (runs as a classic CommonJS-style script; ESM is not supported
+// in sandboxed preloads). Exposes the minimal window.api contract documented in README.md.
+const { contextBridge, ipcRenderer } = require('electron');
+
+const invoke = (channel, ...args) => ipcRenderer.invoke(channel, ...args);
+
+contextBridge.exposeInMainWorld('api', {
+  isElectron: true,
+  version: () => invoke('app:version'),
+  openFiles: (opts) => invoke('dialog:open', opts),
+  readFile: (p) => invoke('file:read', p),
+  saveFile: (opts) => invoke('dialog:save', opts),
+  writeFile: (p, bytes) => invoke('file:write', { path: p, bytes }),
+  getLaunchFiles: () => invoke('app:launchFiles'),
+  onOpenFile: (cb) => {
+    if (typeof cb !== 'function') throw new TypeError('callback must be a function');
+    const listener = (_event, file) => cb(file);
+    ipcRenderer.on('app:openFile', listener);
+    return () => ipcRenderer.removeListener('app:openFile', listener);
+  },
+  print: () => invoke('app:print'),
+  setTitle: (t) => invoke('app:setTitle', t),
+  showItem: (p) => invoke('shell:showItem', p),
+  settingsGet: (k) => invoke('app:settingsGet', k),
+  settingsSet: (k, v) => invoke('app:settingsSet', k, v),
+  dwgAvailable: () => invoke('dwg:available'),
+  dwgToDxf: (bytes) => invoke('dwg:toDxf', bytes),
+  dxfToDwg: (dxfBytes, version) => invoke('dwg:fromDxf', { dxfBytes, version }),
+});

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- script-src carries the SHA-256 of the inline import map below; recompute it if the map changes
+     (printf '%s' '<map>' | openssl dgst -sha256 -binary | base64). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'sha256-grgUmfIrH5NOwtJD5i9fm+LSAqSopgXV6au9JSD26Vo='; connect-src 'self' blob: data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ASH Draw Studio</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="styles.css">
+<script type="importmap">{"imports":{"pdf-lib":"./vendor/pdf-lib.esm.js","@pdf-lib/fontkit":"./vendor/fontkit.esm.js"}}</script>
+<script src="shim.js"></script>
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<div id="app"></div>
+</body>
+</html>
