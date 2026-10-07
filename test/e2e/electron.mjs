@@ -51,6 +51,15 @@ try {
   await win.waitForTimeout(300);
   assert.ok((await fs.stat(dxfOut)).mtimeMs >= before);
 
+  step = 'Save over a file that would lose content asks first';
+  await win.evaluate(() => { window.app.doc.skipped = { XLINE: 1 }; });
+  const saving = win.evaluate(() => window.app.save());
+  await win.waitForSelector('#dlg[open] h2');
+  assert.match(await win.locator('#dlg').innerText(), /Overwrite the original file\?[\s\S]*1 XLINE/);
+  await win.locator('#dlg button', { hasText: 'Cancel' }).click();
+  assert.equal(await saving, false);
+  await win.evaluate(() => { window.app.doc.skipped = {}; });
+
   step = 'save as DWG, verified by read-back';
   const dwgOut = path.join(tmp, 'out.dwg');
   await app.evaluate(({ dialog }, p) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: p }); }, dwgOut);

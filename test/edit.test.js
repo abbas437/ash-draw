@@ -166,3 +166,21 @@ test('addEntity via model then Session undo does not touch unrelated entities', 
   s.undo();
   assert.equal(s.doc.entities.length, 1);
 });
+
+test('dirty: save, undo, then a different edit is still unsaved changes', () => {
+  const s = session();
+  assert.equal(s.dirty, false);
+  addEntities(s, [makeLine({ x: 0, y: 0 }, { x: 1, y: 0 })]);
+  assert.equal(s.dirty, true);
+  s.markSaved();
+  assert.equal(s.dirty, false);
+  s.undo();
+  assert.equal(s.dirty, true);
+  s.redo();
+  assert.equal(s.dirty, false); // back at the saved state
+  s.undo();
+  addEntities(s, [makeCircle({ x: 0, y: 0 }, 1)]); // revision counter would equal the saved one here
+  assert.equal(s.dirty, true);
+  s.undo();
+  assert.equal(s.dirty, true); // empty document differs from the saved one-line document
+});

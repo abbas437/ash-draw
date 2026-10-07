@@ -151,3 +151,29 @@ test('hit testing and snap points', () => {
   assert.equal(ck.filter((k) => k === 'quad').length, 4);
   assert.ok(ck.includes('cen'));
 });
+
+test('INSERT array spacing follows scale, rotation and mirror', async () => {
+  const { transformEntity: te, scaling: sc, mirrorLine: ml, rotation: ro } = await import('../src/core/geom.js');
+  const ins = { id: 1, type: 'INSERT', layer: '0', block: 'B', p: { x: 0, y: 0 }, sx: 1, sy: 1, rot: 0, cols: 3, rows: 2, colSp: 10, rowSp: 4 };
+  const a = te(ins, sc(2, 2));
+  assert.deepEqual([a.sx, a.sy, a.colSp, a.rowSp], [2, 2, 20, 8]);
+  // columns of a mirrored array must still run to the mirrored side: world direction of column k = k*colSp along the new frame x axis
+  const worldCol = (e) => { const r = (e.rot * Math.PI) / 180; return { x: Math.cos(r) * e.colSp, y: Math.sin(r) * e.colSp }; };
+  const m = te(ins, ml({ x: 0, y: 0 }, { x: 0, y: 1 }));
+  const w = worldCol(m);
+  assert.ok(Math.abs(w.x + 10) < 1e-9 && Math.abs(w.y) < 1e-9, `mirrored column step ${JSON.stringify(w)}`);
+  const r90 = te(ins, ro(Math.PI / 2));
+  const w2 = worldCol(r90);
+  assert.ok(Math.abs(w2.x) < 1e-9 && Math.abs(w2.y - 10) < 1e-9);
+});
+
+test('mirrored TEXT stays readable (MIRRTEXT=0): only the insertion point is mirrored', async () => {
+  const { transformEntity: te, mirrorLine: ml } = await import('../src/core/geom.js');
+  const t = { id: 1, type: 'TEXT', layer: '0', p: { x: 5, y: 0 }, height: 2, text: 'ABC', rot: 0, widthFactor: 1 };
+  const a = te(t, ml({ x: 0, y: 0 }, { x: 0, y: 1 }));
+  assert.ok(Math.abs(a.p.x + 5) < 1e-9 && Math.abs(a.p.y) < 1e-9 && Math.abs(a.rot) < 1e-9, JSON.stringify(a));
+  const b = te({ ...t, rot: 90 }, ml({ x: 0, y: 0 }, { x: 0, y: 1 }));
+  assert.equal(Math.round(b.rot), 90);
+  const c = te({ ...t, rot: 30 }, ml({ x: 0, y: 0 }, { x: 1, y: 0 }));
+  assert.ok(Math.abs(c.rot - 330) < 1e-9 || Math.abs(c.rot + 30) < 1e-9, `rot ${c.rot}`);
+});

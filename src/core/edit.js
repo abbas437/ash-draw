@@ -85,11 +85,14 @@ export class Session {
     this.redoStack = [];
     this.onChange = null;
     this.revision = 0;      // increments on every change (also undo/redo)
-    this.savedRevision = 0; // revision at the last save
+    this.stepSeq = 0;
+    this.savedStep = 0;     // id of the undo step that was on top when the document was last saved (0 = none)
   }
 
-  get dirty() { return this.revision !== this.savedRevision; }
-  markSaved() { this.savedRevision = this.revision; }
+  /** unsaved changes? Compares the top undo step with the one recorded at save, so
+   *  "save, undo, make a different edit" is correctly dirty (a plain counter would say clean). */
+  get dirty() { return (this.undoStack.at(-1)?.id ?? 0) !== this.savedStep; }
+  markSaved() { this.savedStep = this.undoStack.at(-1)?.id ?? 0; }
   get canUndo() { return this.undoStack.length > 0; }
   get canRedo() { return this.redoStack.length > 0; }
   get undoLabel() { return this.undoStack.at(-1)?.label ?? ''; }
@@ -104,7 +107,7 @@ export class Session {
       throw err;
     }
     if (tx.ops.length) {
-      this.undoStack.push({ label, ops: tx.ops });
+      this.undoStack.push({ id: ++this.stepSeq, label, ops: tx.ops });
       if (this.undoStack.length > UNDO_LIMIT) this.undoStack.shift();
       this.redoStack = [];
       this.revision++;

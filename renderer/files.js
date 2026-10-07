@@ -62,7 +62,8 @@ export async function saveDxf(api, doc, { path, name }) {
 }
 
 /** Write the document as DWG through LibreDWG and verify it by reading the result back. */
-export async function saveDwg(api, doc, { name, version = 'r2000' }) {
+/** `confirmDifferences(verification)` is asked (when the read-back differs) BEFORE the save dialog; return false to abort. */
+export async function saveDwg(api, doc, { name, version = 'r2000', confirmDifferences }) {
   if (!api.isElectron) throw new Error('Saving DWG needs the desktop app.');
   const av = await api.dwgAvailable();
   if (!av.available) throw new Error(`The DWG converter is not available: ${av.reason ?? 'unknown reason'}.`);
@@ -73,6 +74,7 @@ export async function saveDwg(api, doc, { name, version = 'r2000' }) {
     const back = readDxf((await api.dwgToDxf(dwgBytes)).dxfBytes);
     verification = compareDocuments(doc, back);
   } catch (err) { verification = { ok: false, error: String(err.message || err) }; }
+  if (!verification.ok && confirmDifferences && !(await confirmDifferences(verification))) return null;
   const res = await api.saveFile({ defaultPath: `${baseName(name)}.dwg`, filters: [{ name: 'AutoCAD DWG', extensions: ['dwg'] }], bytes: dwgBytes });
   if (!res) return null;
   return { path: res.path ?? null, verification, report: doc.lastWriteReport };

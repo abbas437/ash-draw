@@ -154,8 +154,26 @@ class App {
       await message('Cannot open this file', err.message || String(err));
     }
   }
+  /** objects that were read but cannot be written back (they would vanish from an overwritten file) */
+  droppedContent() {
+    const sk = Object.entries(this.doc.skipped || {}).map(([k, v]) => `${v} ${k}`);
+    const ps = this.doc.header?.paperSpaceEntities;
+    if (ps) sk.push(`${ps} paper-space (layout) object(s)`);
+    return sk;
+  }
   async save() {
-    if (this.file.format === 'dxf' && this.file.path) return this.writeDxfTo(this.file.path);
+    if (this.file.format === 'dxf' && this.file.path) {
+      const dropped = this.droppedContent();
+      if (dropped.length) {
+        const r = await modal('Overwrite the original file?', el('div', {},
+          el('p', { text: `${this.file.name} contains objects this program cannot keep: ${dropped.join(', ')}.` }),
+          el('p', { text: 'Overwriting the original would remove them from the file. Save a new copy instead to keep the original intact.' })),
+        [{ label: 'Save as new file…', value: 'copy', primary: true }, { label: 'Overwrite original', value: 'over' }, { label: 'Cancel', value: null }]);
+        if (r === 'copy') return this.saveAs('dxf');
+        if (r !== 'over') return false;
+      }
+      return this.writeDxfTo(this.file.path);
+    }
     return this.saveAs('dxf');
   }
   async writeDxfTo(path) {
@@ -171,9 +189,10 @@ class App {
     if (rep?.skipped && Object.keys(rep.skipped).length) toast(`Saved. Not written: ${Object.entries(rep.skipped).map(([k, v]) => `${v} ${k}`).join(', ')}`, 6000);
     else toast('Saved', 1500);
   }
-  afterSave(path, format) {
+  afterSave(path, format, { clean = true } = {}) {
     this.file = { path, name: path ? path.replace(/^.*[\\/]/, '') : `${baseName(this.file.name)}.${format}`, format };
-    this.session.markSaved(); this.updateTitle();
+    if (clean) this.session.markSaved();
+    this.updateTitle();
   }
   async saveAs(kind) {
     try {
@@ -181,9 +200,13 @@ class App {
         const ok = await confirmDialog('Save as DWG (experimental)',
           'DWG is written through the free LibreDWG converter. Text rotation and some hatch details can be lost, so the program re-reads the saved file and tells you if anything differs. DXF keeps everything this program supports. Save as DWG anyway?', 'Save as DWG', 'Cancel', null);
         if (ok !== 'yes') return false;
-        const r = await saveDwg(api, this.doc, { name: this.file.name });
+        const r = await saveDwg(api, this.doc, {
+          name: this.file.name,
+          confirmDifferences: async (v) => (await confirmDialog('The DWG does not match your drawing', `${verificationMessage(v)}\n\nSave this DWG anyway? (Your drawing stays open and unsaved, so you can still save it as DXF.)`, 'Save DWG anyway', 'Cancel', null)) === 'yes',
+        });
         if (!r) return false;
-        this.afterSave(r.path, 'dwg');
+        // a DWG that differs from the drawing is not a faithful save: keep the document marked as having unsaved changes
+        this.afterSave(r.path, 'dwg', { clean: !!r.verification.ok });
         await message(r.verification.ok ? 'DWG saved' : 'DWG saved — please check', verificationMessage(r.verification));
         return true;
       }

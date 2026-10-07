@@ -433,6 +433,13 @@ export function transformEntity(e, m) {
     }
     case 'TEXT': case 'MTEXT':
       c.p = apply(m, e.p); c.height = e.height * s; c.rot = ((e.rot || 0) + linearAngle(m) / DEG);
+      if (det(m) < 0) {
+        // mirrored: keep the text readable and not backwards (like MIRRTEXT = 0); only the insertion point is mirrored
+        const a = (e.rot || 0) * DEG, v = applyVec(m, { x: Math.cos(a), y: Math.sin(a) });
+        let r = (((Math.atan2(v.y, v.x) / DEG) % 360) + 360) % 360;
+        if (r > 90 && r <= 270) r -= 180;
+        c.rot = r;
+      }
       if (e.type === 'MTEXT' && e.width) c.width = e.width * s;
       break;
     case 'HATCH':
@@ -447,7 +454,10 @@ export function transformEntity(e, m) {
       const Lins = compose([m[0], m[1], m[2], m[3], 0, 0], compose(rotation(rot), scaling(e.sx ?? 1, e.sy ?? 1)));
       const d = decompose(Lins);
       c.p = apply(m, e.p); c.rot = d.rot / DEG; c.sx = d.sx; c.sy = d.sy;
-      c.colSp = (e.colSp || 0); c.rowSp = (e.rowSp || 0);
+      // array spacing lives in the (rotated, unscaled) insert frame: carry the offsets through m into the new frame
+      const toNew = compose(rotation(-d.rot), compose([m[0], m[1], m[2], m[3], 0, 0], rotation(rot)));
+      c.colSp = applyVec(toNew, { x: e.colSp || 0, y: 0 }).x;
+      c.rowSp = applyVec(toNew, { x: 0, y: e.rowSp || 0 }).y;
       break;
     }
     case 'DIMENSION': {
