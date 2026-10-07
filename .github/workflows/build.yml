@@ -5,6 +5,11 @@ on:
     branches: [main]
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Publish a GitHub Release with this tag, e.g. v0.1.0 (leave empty to only build)'
+        required: false
+        default: ''
 
 jobs:
   windows:
@@ -91,6 +96,20 @@ jobs:
             dist/SHA256SUMS.txt \
             dist/libredwg-0.13.3.tar.xz \
             --title "ASH Draw Studio $GITHUB_REF_NAME" \
+            --generate-notes
+      - name: GitHub Release (manual run with a version)
+        if: github.event_name == 'workflow_dispatch' && inputs.release_version != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.release_version }}
+        run: |
+          gh release create "$VERSION" --target "$GITHUB_SHA" \
+            dist/ASH-Draw-Studio-Setup-*.exe \
+            dist/ASH-Draw-Studio-Portable-*.exe \
+            dist/SHA256SUMS.txt \
+            dist/libredwg-0.13.3.tar.xz \
+            --title "ASH Draw Studio $VERSION" \
             --generate-notes
 
   smoke:
