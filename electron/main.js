@@ -133,6 +133,15 @@ async function createWindow() {
   });
   if (state.maximized) win.maximize();
   win.once('ready-to-show', () => win.show());
+  // The renderer sets a beforeunload guard while there are unsaved changes; without this handler Electron would
+  // silently refuse to close the window. Ask the user instead.
+  win.webContents.on('will-prevent-unload', (event) => {
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'warning', buttons: ['Keep working', 'Discard changes and close'], defaultId: 0, cancelId: 0, noLink: true,
+      title: 'Unsaved changes', message: 'There are unsaved changes.', detail: 'If you close now, they will be lost.',
+    });
+    if (choice === 1) event.preventDefault(); // preventDefault = ignore the guard and unload
+  });
   win.on('close', () => {
     saveJson('window-state.json', { bounds: win.getNormalBounds(), maximized: win.isMaximized() }).catch(() => {});
   });
