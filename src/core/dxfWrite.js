@@ -147,7 +147,20 @@ export function writeDxf(doc, opts = {}) {
     return k;
   }
 
+  // XDATA (kept applications only) goes after the entity's own data; INSERT / MLEADER / DIMENSION write sub-records
+  const XD_TYPES = new Set(['LINE', 'CIRCLE', 'ARC', 'ELLIPSE', 'LWPOLYLINE', 'SPLINE', 'TEXT', 'MTEXT', 'POINT', 'LEADER', 'HATCH']);
+  const xdApps = new Set();
   function writeEntity(o, e, owner) {
+    const ok = writeEntityBody(o, e, owner);
+    if (ok && e.xdata && XD_TYPES.has(e.type)) {
+      for (const [app, tags] of Object.entries(e.xdata)) {
+        xdApps.add(app); o.s(1001, app);
+        for (const [c, v] of tags) if (c >= 1000 && c <= 1009) o.s(c, v); else o.p(c, v);
+      }
+    }
+    return ok;
+  }
+  function writeEntityBody(o, e, owner) {
     switch (e.type) {
       case 'LINE':
         head(o, e, 'LINE', owner); o.p(100, 'AcDbLine'); o.pt(10, e.p1.x, e.p1.y); o.pt(11, e.p2.x, e.p2.y); return true;
@@ -435,7 +448,8 @@ export function writeDxf(doc, opts = {}) {
 
   table('VIEW', 0); out.p(0, 'ENDTAB');
   table('UCS', 0); out.p(0, 'ENDTAB');
-  table('APPID', 1); rec('APPID', 'ACAD', 'AcDbRegAppTableRecord', 'APPID'); out.p(70, 0); out.p(0, 'ENDTAB');
+  const apps = ['ACAD', ...[...xdApps].filter((a) => a !== 'ACAD')];
+  table('APPID', apps.length); for (const a of apps) { rec('APPID', a, 'AcDbRegAppTableRecord', 'APPID'); out.p(70, 0); } out.p(0, 'ENDTAB');
 
   const dimNames = ['Standard'];
   for (const n of [...(doc.header.dimStyles ?? []), ...(doc.dimStyles?.keys() ?? []), doc.header.currentDimStyle || 'Standard']) if (!dimNames.some((d) => d.toLowerCase() === n.toLowerCase())) dimNames.push(n);
