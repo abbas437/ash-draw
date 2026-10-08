@@ -1110,6 +1110,24 @@ try {
   await page.locator('#dlg button.primary').click();
   await page.waitForSelector('#dlg[open]', { state: 'hidden' });
 
+  step = 'SHX text: a romans.shx TEXT renders as stroke paths (no fillText), Arial text still uses fillText';
+  const shx = await page.evaluate(async () => {
+    const M = await import('/src/core/model.js');
+    const R = await import('/src/core/render.js');
+    const doc = M.newDocument();
+    M.addTextStyle(doc, { name: 'RS', font: 'romans' }).fontFile = 'romans.shx';
+    M.addEntity(doc, M.makeText({ x: 0, y: 0 }, 2.5, 'ABC %%c50', { style: 'RS' }));
+    M.addEntity(doc, M.makeText({ x: 0, y: -5 }, 2.5, 'Arial text'));
+    const scene = R.buildScene(doc);
+    const cv = document.createElement('canvas'); cv.width = 400; cv.height = 200;
+    const c = cv.getContext('2d'), filled = [];
+    const fill = c.fillText.bind(c); c.fillText = (t, ...a) => { filled.push(t); fill(t, ...a); };
+    R.drawScene(c, scene, { ...R.fitView(scene.bbox, 400, 200) }, { background: '#ffffff' });
+    return { kinds: scene.items.map((it) => it.kind), filled };
+  });
+  assert.deepEqual(shx.kinds, ['path', 'text']);
+  assert.deepEqual(shx.filled, ['Arial text']);
+
   step = 'csp';
   assert.deepEqual(await page.evaluate(() => window.__csp), []);
   assert.deepEqual(problems, []);

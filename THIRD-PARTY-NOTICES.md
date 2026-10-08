@@ -175,3 +175,23 @@ The application runtime is Electron (MIT, Copyright (c) Electron contributors,
 Copyright (c) 2013-2020 GitHub Inc.), which embeds Chromium, Node.js and their
 dependencies under their own licences. Electron ships the complete notices with every
 build as `LICENSE.electron.txt` and `LICENSES.chromium.html` in the installation folder.
+
+## Hershey Fonts - Roman Simplex glyph data (public domain font; distribution notice below)
+
+`src/core/hersheyFutural.js` holds the glyphs of `futural.jhf` (ASCII 32-127, about 5 KB) from the
+Hershey Fonts distribution (https://github.com/kamalmostafa/hershey-fonts), used as the stroke substitute
+for AutoCAD SHX fonts (see docs/FONTS.md). Distribution notice:
+
+```text
+This distribution of the Hershey Fonts may be used by anyone for any purpose, commercial or otherwise,
+providing that:
+  1. The following acknowledgements must be distributed with the font data:
+     - The Hershey Fonts were originally created by Dr. A. V. Hershey while working at the U. S.
+       National Bureau of Standards.
+     - The format of the Font data in this distribution was originally created by
+       James Hurt, Cognition, Inc., 900 Technology Park Drive, Billerica, MA 01821
+       (mit-eddie!ci-dandelion!hurt)
+  2. The font data in this distribution may be converted into any other format *EXCEPT* the format
+     distributed by the U.S. NTIS (which organization holds the rights to the distribution and use of
+     the font data in that particular format).
+```

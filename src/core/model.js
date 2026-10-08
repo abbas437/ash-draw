@@ -114,7 +114,7 @@ export const makeRect = (p1, p2, o = {}) => makePolyline(
 export const makePoint = (p, o = {}) => ({ ...base('POINT', o), p: pt(p) });
 export const makeText = (p, height, text, o = {}) => ({
   ...base('TEXT', o), p: pt(p), height, text, rot: o.rot ?? 0, widthFactor: o.widthFactor ?? 1,
-  style: o.style ?? 'STANDARD', hAlign: o.hAlign ?? 0, vAlign: o.vAlign ?? 0,
+  style: o.style ?? 'STANDARD', hAlign: o.hAlign ?? 0, vAlign: o.vAlign ?? 0, ...(o.oblique ? { oblique: o.oblique } : {}),
 });
 export const makeMText = (p, height, text, o = {}) => ({
   ...base('MTEXT', o), p: pt(p), height, text, width: o.width ?? 0, rot: o.rot ?? 0,
