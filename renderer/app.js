@@ -14,6 +14,7 @@ import { FindPanel } from './find.js';
 import { plotDialog } from './plot.js';
 import { initLayouts, restoreSpace, renderSpaceBar } from './layouts-ui.js';
 import { ComparePanel, runCompare } from './compare.js';
+import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
 import { el, message, modal, confirmDialog, textDialog, toast, renderLayers, renderProperties } from './ui.js';
 import {
   OPEN_FILTERS, loadDrawing, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, baseName, extOf, UNIT_NAMES,
@@ -39,6 +40,7 @@ const TOOL_BUTTONS = [
     ['mleader', 'Multileader', 'MLD', 'M2 14 7 6h6M2 14l2-.5M2 14l.5-2M9 4h5M9 8h5'],
     ['dimcontinue', 'Continue', 'DCO', 'M1 4v8M8 4v8M15 4v8M1 8h14'], ['dimbaseline', 'Baseline', 'DBA', 'M1 3v11M8 7v7M15 3v11M1 9h7M1 5h14']]],
   ['Inquiry', [['measure', 'Measure', 'MEA'], ['area', 'Area', 'AREA']]],
+  ['Markup', [['mkc', 'Markup circle', 'MKC', 'M1 8a7 7 0 1 0 14 0A7 7 0 1 0 1 8'], ['mkr', 'Markup rectangle', 'MKR', 'M2 3h12v10H2z'], ['mkt', 'Markup note', 'MKT', 'M2 3h12v8H7l-3 3v-3H2z']]],
 ];
 
 /** 16 px line icon for a toolbar button (one SVG path, drawn in the button's text colour). */
@@ -71,6 +73,7 @@ class App {
     this.find = new FindPanel(this);
     initLayouts(this);
     this.comparePanel = new ComparePanel(this);
+    this.markupPanel = new MarkupPanel(this);
     this.cmd = document.getElementById('cmd');
     this.cmd.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); const v = this.cmd.value; this.cmd.value = ''; this.vp.canvas.focus(); this.submit(v); }
@@ -367,7 +370,8 @@ class App {
       ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Paste', 'Ctrl+V', () => this.paste()], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()], ['Find and replace…', 'Ctrl+F', () => this.find.open()]]],
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-',
         ['Show lineweights', 'F9', () => this.toggle('lineweights')], ['Light / dark background', '', () => this.toggle('dark')], '-',
-        ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark']]],
+        ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark'], '-',
+        ['Show markups', '', () => toggleMarkups(this), () => markupsShown(this.doc)]]],
       ['Dimension', [...TOOL_BUTTONS.find(([g]) => g === 'Dimension')[1].map(([id, label, alias]) => [label, alias, () => this.setTool(id)]), '-', ['Dimension style…', 'D', () => this.dimStyles()]]],
       ['Help', [['What this program can and cannot do', '', () => this.limitations()], ['About', '', () => this.about()]]],
     ];

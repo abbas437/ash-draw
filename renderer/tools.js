@@ -22,6 +22,7 @@ import { createDimTools } from './tools-dims.js';
 import { createBlockTools } from './tools-blocks.js';
 import { createMTextTools } from './mtext-editor.js';
 import { createMLeaderTools } from './tools-mleader.js';
+import { createMarkupTools } from './markup.js';
 import { tessellate, transformEntity, translation, rotation, scaling, mirrorLine, dist, DEG } from '../src/core/geom.js';
 
 const num = (s) => { const v = Number(String(s).trim().replace(',', '.')); return Number.isFinite(v) && String(s).trim() !== '' ? v : null; };
@@ -591,6 +592,7 @@ export function createTools(h) {
     ...createBlockTools(h, { Tool, ModifyTool }),
     ...createMTextTools(h, { Tool }),
     ...createMLeaderTools(h, { Tool }),
+    ...createMarkupTools(h, { Tool }),
     matchprop: new MatchPropTool(h),
   };
 }
@@ -611,4 +613,5 @@ export const TOOL_ALIASES = {
   mld: 'mleader', mleader: 'mleader', ma: 'matchprop', matchprop: 'matchprop', painter: 'matchprop',
   b: 'block', block: 'block', bmake: 'block', att: 'attdef', attdef: 'attdef', i: 'insert', insert: 'insert', ddinsert: 'insert',
   ate: 'eattedit', eattedit: 'eattedit', attedit: 'eattedit', ddatte: 'eattedit',
+  mkc: 'mkc', mkr: 'mkr', mkt: 'mkt',
 };
