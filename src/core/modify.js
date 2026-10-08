@@ -9,6 +9,7 @@
 // Failures throw Error with code 'GEOMETRY' (no solution for this input) or 'UNSUPPORTED' (entity type not handled).
 import {
   DEG, dist, mid, normAngle, ccwSweep, bulgeToArc, transformEntity, translation, rotation, compose, bboxOf, unionBox, tessellate,
+  plSegs, segPoint, segParam, plParamOf, plSegAt, plSlice,
 } from './geom.js';
 
 const TAU = Math.PI * 2;
@@ -254,63 +255,10 @@ export function chamferPolyline(e, { d1, d2 = d1, angle = null } = {}, index = n
   return polyCorners(e, index, (c) => ({ t1: d1, t2: chamferSecond(c.u1, c.u2, d1, d2, angle), bulge: 0 }));
 }
 
-// ---- polyline parameterisation (s = segment index + fraction; arc fractions are angle fractions) ----
-function plSegs(e) {
-  const v = e.vertices, n = v.length, m = e.closed ? n : n - 1, segs = [];
-  for (let i = 0; i < m; i++) {
-    const a = v[i], b = v[(i + 1) % n], bulge = a.bulge || 0;
-    const arc = Math.abs(bulge) > 1e-12 && dist(a, b) > EPS ? bulgeToArc(a, b, bulge) : null;
-    segs.push({ a, b, bulge, arc, len: arc ? Math.abs(arc.sweep) * arc.r : dist(a, b) });
-  }
-  return segs;
-}
-function segPoint(sg, f) {
-  if (!sg.arc) return { x: sg.a.x + (sg.b.x - sg.a.x) * f, y: sg.a.y + (sg.b.y - sg.a.y) * f };
-  if (f <= 0) return P(sg.a);
-  if (f >= 1) return P(sg.b);
-  return polar(sg.arc.c, sg.arc.r, sg.arc.a0 + sg.arc.sweep * f);
-}
+// ---- polyline parameterisation: plSegs/segPoint/segParam/plParamOf/plSegAt/plSlice live in geom.js ----
 function segDir(sg, f) {
   if (!sg.arc) return unit(sub(sg.b, sg.a));
   return mul(ccwTan(sg.arc.a0 + sg.arc.sweep * f), Math.sign(sg.arc.sweep));
-}
-function segParam(sg, p) {
-  if (!sg.arc) {
-    const d = sub(sg.b, sg.a), l2 = dot(d, d);
-    return l2 < 1e-24 ? 0 : Math.max(0, Math.min(1, dot(sub(p, sg.a), d) / l2));
-  }
-  const { c, a0, sweep } = sg.arc, sw = Math.abs(sweep);
-  const rel = sweep > 0 ? normAngle(ang(sub(p, c)) - a0) : normAngle(a0 - ang(sub(p, c)));
-  if (rel <= sw) return rel / sw;
-  return rel - sw < TAU - rel ? 1 : 0;
-}
-function plParamOf(segs, p) {
-  let best = 0, bd = Infinity;
-  segs.forEach((sg, i) => { const f = segParam(sg, p), d = dist(segPoint(sg, f), p); if (d < bd - 1e-12) { bd = d; best = i + f; } });
-  return best;
-}
-function plSegAt(segs, s) {
-  const m = segs.length;
-  let i = Math.floor(s + 1e-12);
-  let f = s - i;
-  if (i >= m) { i = m - 1; f = 1; }
-  if (f < 0) f = 0;
-  return { sg: segs[((i % m) + m) % m], f, i };
-}
-/** Vertices of the open piece from s0 to s1 (s0 < s1; for closed polylines s1 may exceed the segment count). */
-function plSlice(segs, s0, s1) {
-  const m = segs.length, out = [];
-  let s = s0;
-  while (s < s1 - 1e-12) {
-    const i = Math.floor(s + 1e-12), f0 = Math.max(0, s - i), e = Math.min(s1, i + 1), f1 = e - i;
-    const sg = segs[i % m];
-    out.push({ ...segPoint(sg, f0), bulge: sg.arc ? Math.tan((sg.arc.sweep * (f1 - f0)) / 4) : 0 });
-    s = e;
-  }
-  const end = s1 >= m ? (s1 - m * Math.floor((s1 - 1e-12) / m)) : s1;
-  const { sg, f } = plSegAt(segs, end);
-  out.push({ ...segPoint(sg, f), bulge: 0 });
-  return out;
 }
 
 // ---- BREAK ----------------------------------------------------------------------------------
