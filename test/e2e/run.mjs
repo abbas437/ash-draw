@@ -477,6 +477,38 @@ try {
   const xs = (await ents()).find((e) => e.type === 'LWPOLYLINE').vertices.map((q) => q.x);
   near(Math.max(...xs) - Math.min(...xs), 40, 'rectangle width after STRETCH');
 
+  step = 'dimensions: DLI on a 100-long line, DCO 50 further, DRA on a circle r 25';
+  await typeCmd('new');
+  await page.evaluate(() => { const vp = window.app.vp; vp.view = { ...vp.view, cx: 60, cy: -20, zoom: 4 }; vp.render(); });
+  const dims = () => page.evaluate(() => window.app.doc.entities.filter((e) => e.type === 'DIMENSION').map((e) => ({ m: e.measurement, t: e.dimText, layer: e.layer })));
+  await typeCmd('l'); await typeCmd('0,0'); await typeCmd('100,0'); await typeCmd('');
+  await typeCmd('dli'); await typeCmd('0,0'); await typeCmd('100,0'); await typeCmd('50,20');
+  assert.deepEqual(await dims(), [{ m: 100, t: '100', layer: '0' }]);
+  await typeCmd('dco'); await typeCmd('150,0'); await typeCmd('');
+  assert.deepEqual((await dims()).map((d) => d.t), ['100', '50']);
+  await typeCmd('c'); await typeCmd('0,-60'); await typeCmd('25');
+  await typeCmd('dra'); await clickWorld(25, -60); await typeCmd('40,-60');
+  assert.deepEqual((await dims()).map((d) => d.t), ['100', '50', 'R25']);
+  await shot('dimensions');
+
+  step = 'dimensions: style decimals 2 regenerates the texts; Undo restores';
+  await page.evaluate(async () => {
+    const { setDimStyle } = await import('/src/core/edit.js'); const { resolveDimStyle } = await import('/src/core/dimsStyle.js');
+    const st = resolveDimStyle(window.app.doc, 'ISO-25');
+    setDimStyle(window.app.session, st.name, { ...st, DIMDEC: 2, DIMZIN: 0, DIMDSEP: 46 });
+  });
+  assert.deepEqual((await dims()).map((d) => d.t), ['100.00', '50.00', 'R25.00']);
+  await page.keyboard.press('Control+z');
+  assert.deepEqual((await dims()).map((d) => d.t), ['100', '50', 'R25']);
+
+  step = 'dimensions: save DXF and reopen keeps the dimensions';
+  const reopened = await page.evaluate(async () => {
+    const { writeDxf } = await import('/src/core/dxfWrite.js'); const { readDxf } = await import('/src/core/dxfRead.js');
+    const back = readDxf(new TextEncoder().encode(writeDxf(window.app.doc)));
+    return back.entities.filter((e) => e.type === 'DIMENSION').map((e) => back.blocks.get(e.block)?.entities.find((x) => x.type === 'MTEXT')?.text);
+  });
+  assert.deepEqual(reopened, ['100', '50', 'R25']);
+
   step = 'csp';
   assert.deepEqual(await page.evaluate(() => window.__csp), []);
   assert.deepEqual(problems, []);
