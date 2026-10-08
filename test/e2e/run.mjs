@@ -441,6 +441,7 @@ try {
   const ents = () => page.evaluate(() => window.app.doc.entities.map((e) => ({ ...e, len: e.type === 'LINE' ? Math.hypot(e.p2.x - e.p1.x, e.p2.y - e.p1.y) : null })));
   const lens = async () => (await ents()).filter((e) => e.type === 'LINE').map((e) => Math.round(e.len * 1e6) / 1e6).sort((x, y) => x - y);
   const near = (x, y, msg) => assert.ok(Math.abs(x - y) < 1e-6, `${msg}: ${x} != ${y}`);
+  const nearPt = (p, x, y, msg = 'point') => { near(p.x, x, `${msg} x`); near(p.y, y, `${msg} y`); };
   await typeCmd('l'); await typeCmd('0,0'); await typeCmd('40,0'); await typeCmd('');
   await typeCmd('l'); await typeCmd('0,0'); await typeCmd('0,30'); await typeCmd('');
   await typeCmd('f'); await typeCmd('r'); await typeCmd('5');
@@ -618,6 +619,67 @@ try {
   const mad = (await ents()).find((e) => e.id === ma2.id);
   assert.deepEqual([mad.layer, mad.color], ['A', 1], 'destination took the source layer and colour');
   assert.equal(await page.evaluate(() => window.app.toolId), 'select');
+
+  step = 'blocks: ATTDEF + BLOCK (convert) + INSERT with attribute values';
+  await typeCmd('new');
+  await page.evaluate(() => { const vp = window.app.vp; vp.view = { ...vp.view, cx: 60, cy: 30, zoom: 6 }; vp.render(); });
+  const dlgOk = () => page.locator('#dlg button.primary').click();
+  await typeCmd('rec'); await typeCmd('0,0'); await typeCmd('20,10');
+  await typeCmd('att');
+  await page.locator('#dlg input[name=tag]').fill('TAG1'); await page.locator('#dlg input[name=default]').fill('X');
+  await page.locator('#dlg input[name=height]').fill('2'); await dlgOk();
+  await typeCmd('5,4');
+  assert.deepEqual(await types(), ['LWPOLYLINE', 'TEXT']);
+  await page.evaluate(() => window.app.vp.setSelection(window.app.doc.entities.map((e) => e.id)));
+  await typeCmd('b');
+  await page.locator('#dlg input[name=name]').fill('TAGBOX'); await dlgOk();
+  assert.deepEqual(await types(), ['INSERT'], 'convert replaces the objects by an INSERT');
+  const insVals = () => page.evaluate(() => window.app.doc.entities.filter((e) => e.type === 'INSERT').map((e) => ({ id: e.id, p: e.p, rot: e.rot, a: e.attribs?.map((x) => ({ text: x.text, p: x.p, rot: x.rot })) })));
+  assert.equal((await insVals())[0].a[0].text, 'X');
+  for (const [pt, v] of [['100,0', 'A'], ['100,50', 'B']]) {
+    await typeCmd('i');
+    assert.equal(await page.locator('#dlg select[name=block]').inputValue(), 'TAGBOX');
+    assert.ok(await page.evaluate(() => { const c = document.querySelector('#dlg canvas.block-thumb'); return c.getContext('2d').getImageData(0, 0, c.width, c.height).data.some((x) => x); }), 'preview thumbnail drawn');
+    await dlgOk(); await typeCmd(pt);
+    await page.locator('#dlg input[name=att-TAG1]').fill(v); await dlgOk();
+  }
+  let iv = await insVals();
+  assert.deepEqual(iv.map((x) => x.a[0].text), ['X', 'A', 'B']);
+  nearPt(iv[2].a[0].p, 105, 54);
+
+  step = 'blocks: double-click an INSERT edits its attribute, one undo step';
+  await page.keyboard.press('Escape');
+  const sB = await scr(110, 50);
+  await page.mouse.dblclick(sB.x, sB.y);
+  await page.locator('#dlg[open] input[name=att-TAG1]').fill('C'); await dlgOk();
+  assert.equal((await insVals())[2].a[0].text, 'C');
+  await page.keyboard.press('Control+z');
+  assert.equal((await insVals())[2].a[0].text, 'B', 'undo restores B');
+
+  step = 'blocks: rotation set in Properties carries the attribute';
+  await page.evaluate((id) => window.app.vp.setSelection([id]), iv[2].id);
+  await page.locator('#props input[data-prop="Rotation"]').fill('90');
+  await page.locator('#props input[data-prop="Rotation"]').press('Enter');
+  iv = await insVals();
+  near(iv[2].rot, 90, 'insert rotation'); near(iv[2].a[0].rot, 90, 'attribute rotation'); nearPt(iv[2].a[0].p, 96, 55);
+  await page.keyboard.press('Escape');
+
+  step = 'blocks: attribute values survive save DXF + reopen';
+  {
+    const dl = page.waitForEvent('download');
+    await page.locator('#menubar .menu > button', { hasText: 'File' }).click();
+    await page.locator('#menubar .drop button', { hasText: 'Save as DXF…' }).click();
+    const fname = `ash-e2e-blocks-${process.pid}.dxf`, p = path.join(os.tmpdir(), fname);
+    await (await dl).saveAs(p);
+    const chooser = new Promise((r) => { chooserWaiter = r; });
+    await page.keyboard.press('Control+o');
+    await (await chooser).setFiles(p);
+    await page.waitForFunction((n) => window.app.file.name === n, fname, { timeout: 8000 });
+    await fs.rm(p, { force: true });
+    iv = await insVals();
+    assert.deepEqual(iv.map((x) => x.a[0].text), ['X', 'A', 'B']);
+    near(iv[2].a[0].rot, 90, 'attribute rotation after reopen');
+  }
 
   step = 'csp';
   assert.deepEqual(await page.evaluate(() => window.__csp), []);

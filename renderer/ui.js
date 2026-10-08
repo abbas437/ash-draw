@@ -189,6 +189,11 @@ function geometryFields(app, e) {
       return [...xy('Center', (x) => x.c), field('Major radius', R, (c, v) => { c.major = { x: (e.major.x / R) * v, y: (e.major.y / R) * v }; }, pos),
         field('Ratio', e.ratio, (c, v) => { c.ratio = v; }, (v) => v > 0 && v <= 1)];
     }
+    case 'INSERT': { // editEntity carries the ATTRIBs to the new placement
+      const nz = (v) => Number.isFinite(v) && v !== 0;
+      return [...xy('Position', (x) => x.p), field('Scale X', e.sx ?? 1, (c, v) => { c.sx = v; }, nz), field('Scale Y', e.sy ?? 1, (c, v) => { c.sy = v; }, nz),
+        field('Rotation', e.rot ?? 0, (c, v) => { c.rot = v; })];
+    }
     case 'TEXT': case 'MTEXT': return [field('Height', e.height, (c, v) => { c.height = v; }, pos), field('Rotation', e.rot ?? 0, (c, v) => { c.rot = v; })];
     case 'LWPOLYLINE': {
       if (polyVertex.id !== e.id || polyVertex.i >= e.vertices.length) Object.assign(polyVertex, { id: e.id, i: 0 });

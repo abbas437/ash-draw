@@ -19,6 +19,7 @@ import { MeasureGeomTool } from './tools-measure.js';
 import { gripsOf, applyGrip, gripEdit, matchProps } from './grips.js';
 import { createModifyTools } from './tools-modify.js';
 import { createDimTools } from './tools-dims.js';
+import { createBlockTools } from './tools-blocks.js';
 import { tessellate, transformEntity, translation, rotation, scaling, mirrorLine, dist, DEG } from '../src/core/geom.js';
 
 const num = (s) => { const v = Number(String(s).trim().replace(',', '.')); return Number.isFinite(v) && String(s).trim() !== '' ? v : null; };
@@ -585,6 +586,7 @@ export function createTools(h) {
     offset: new OffsetTool(h), trim: new TrimTool(h), extend: new TrimTool(h, true), erase: new EraseTool(h), explode: new ExplodeTool(h),
     ...createModifyTools(h, { Tool, ModifyTool }),
     ...createDimTools(h, { Tool }),
+    ...createBlockTools(h, { Tool, ModifyTool }),
     matchprop: new MatchPropTool(h),
   };
 }
@@ -603,4 +605,6 @@ export const TOOL_ALIASES = {
   dli: 'dimlinear', dimlinear: 'dimlinear', dal: 'dimaligned', dimaligned: 'dimaligned', dan: 'dimangular', dimangular: 'dimangular', dra: 'dimradius', dimradius: 'dimradius',
   ddi: 'dimdiameter', dimdiameter: 'dimdiameter', dco: 'dimcontinue', dimcontinue: 'dimcontinue', dba: 'dimbaseline', dimbaseline: 'dimbaseline',
   ma: 'matchprop', matchprop: 'matchprop', painter: 'matchprop',
+  b: 'block', block: 'block', bmake: 'block', att: 'attdef', attdef: 'attdef', i: 'insert', insert: 'insert', ddinsert: 'insert',
+  ate: 'eattedit', eattedit: 'eattedit', attedit: 'eattedit', ddatte: 'eattedit',
 };
