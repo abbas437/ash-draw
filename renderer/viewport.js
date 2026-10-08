@@ -350,6 +350,6 @@ export class Viewport {
 }
 
 /** plain event object for tools (PointerEvent properties are prototype getters and do not survive a spread) */
-const mk = (e, raw, sx, sy, extra = {}) => ({ button: e.button, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey, raw, sx, sy, ...extra });
+const mk = (e, raw, sx, sy, extra = {}) => ({ button: e.button, clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey, raw, sx, sy, ...extra });
 
 const SNAP_LABEL = { end: 'Endpoint', mid: 'Midpoint', cen: 'Center', quad: 'Quadrant', int: 'Intersection', node: 'Node', ins: 'Insertion', per: 'Perpendicular', near: 'Nearest' };

@@ -110,6 +110,16 @@ export function renderLayers(app) {
   };
 }
 
+/** context menu at the pointer: items = [[label, fn]]; closes on the next pointerdown */
+export function popMenu(ev, items) {
+  document.querySelector('.popmenu')?.remove();
+  const m = el('div', { class: 'popmenu', style: `left:${ev.clientX}px;top:${ev.clientY}px` },
+    items.map(([label, fn]) => el('button', { onclick: () => { m.remove(); fn(); } }, label)));
+  document.body.append(m);
+  setTimeout(() => document.addEventListener('pointerdown', () => m.remove(), { once: true }), 0);
+  return m;
+}
+
 function colorMenu(ev, pick) {
   document.querySelector('.popmenu')?.remove();
   const m = el('div', { class: 'popmenu', style: `left:${ev.clientX}px;top:${ev.clientY}px` },

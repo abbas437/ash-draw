@@ -16,8 +16,8 @@ import {
   offsetCommand, trimCommand, extendCommand,
 } from '../src/core/edit.js';
 import { MeasureGeomTool } from './tools-measure.js';
-import { gripsOf, applyGrip, gripEdit, gripsStretch, matchPropsEdit, nextGripMode, gripMatrix, gripModeEdit, MATCH_SETTINGS, defaultMatchSettings } from './grips.js';
-import { el, modal } from './ui.js';
+import { gripsOf, applyGrip, gripEdit, gripsStretch, matchPropsEdit, nextGripMode, GRIP_MODES, gripMatrix, gripModeEdit, MATCH_SETTINGS, defaultMatchSettings } from './grips.js';
+import { el, modal, popMenu } from './ui.js';
 import { createModifyTools } from './tools-modify.js';
 import { createDimTools } from './tools-dims.js';
 import { createBlockTools } from './tools-blocks.js';
@@ -160,6 +160,16 @@ class SelectTool extends Tool {
     return false;
   }
   cancel() { if (this.hot) this.endGrip(); this.setMulti([]); this.vp.setSelection([]); }
+  rightClick(p, ev) {
+    if (!this.hot) { this.key({ key: 'Enter' }); return; }
+    const go = (m) => () => { this.mode = m; this.pickBase = false; this.h.refreshPrompt(); this.vp.requestRender(); };
+    popMenu(ev, [
+      ...GRIP_MODES.map((m) => [m[0] + m.slice(1).toLowerCase(), go(m)]),
+      ['Base point', () => { this.pickBase = true; this.h.refreshPrompt(); }],
+      [this.copy ? 'Copy (on)' : 'Copy', () => { this.copy = !this.copy; this.h.refreshPrompt(); }],
+      ['Exit', () => this.endGrip()],
+    ]);
+  }
   deactivate() { super.deactivate(); this.sel.start = null; this.hot = null; this.setMulti([]); this.vp.gripHot = null; this.vp.gripHover = null; }
   draw(c) {
     if (!this.hot || this.pickBase) return;
