@@ -505,6 +505,7 @@ export function parseDxf(text) {
       if (name === '$ACADVER') doc.header.version = vals[j];
       else if (name === '$INSUNITS') doc.units = parseInt(vals[j], 10) || 0;
       else if (name === '$DWGCODEPAGE') doc.header.codepage = vals[j];
+      else if (name === '$DIMSTYLE') doc.header.currentDimStyle = vals[j];
       else if (name === '$LTSCALE') doc.header.ltscale = parseFloat(vals[j]) || 1;
       else if (name === '$EXTMIN' && first === 10) doc.header.extmin = { x: parseFloat(vals[j]), y: parseFloat(vals[j + 1]) };
       else if (name === '$EXTMAX' && first === 10) doc.header.extmax = { x: parseFloat(vals[j]), y: parseFloat(vals[j + 1]) };

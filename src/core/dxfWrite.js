@@ -296,7 +296,7 @@ export function writeDxf(doc, opts = {}) {
   out.p(9, '$CLAYER'); out.p(8, '0');
   out.p(9, '$CELTYPE'); out.p(6, 'ByLayer');
   out.p(9, '$CECOLOR'); out.p(62, 256);
-  out.p(9, '$DIMSTYLE'); out.p(2, 'Standard');
+  out.p(9, '$DIMSTYLE'); out.s(2, doc.header.currentDimStyle || 'Standard');
   out.p(9, '$LUNITS'); out.p(70, 2);
   out.p(9, '$LUPREC'); out.p(70, 4);
   out.p(9, '$AUNITS'); out.p(70, 0);
@@ -374,7 +374,7 @@ export function writeDxf(doc, opts = {}) {
   table('APPID', 1); rec('APPID', 'ACAD', 'AcDbRegAppTableRecord', 'APPID'); out.p(70, 0); out.p(0, 'ENDTAB');
 
   const dimNames = ['Standard'];
-  for (const n of [...(doc.header.dimStyles ?? []), ...(doc.dimStyles?.keys() ?? [])]) if (!dimNames.some((d) => d.toLowerCase() === n.toLowerCase())) dimNames.push(n);
+  for (const n of [...(doc.header.dimStyles ?? []), ...(doc.dimStyles?.keys() ?? []), doc.header.currentDimStyle || 'Standard']) if (!dimNames.some((d) => d.toLowerCase() === n.toLowerCase())) dimNames.push(n);
   const dimModel = (n) => [...(doc.dimStyles?.values() ?? [])].find((st) => st.name.toLowerCase() === n.toLowerCase());
   const dimHandle = (k, v) => {
     const u = String(v).toUpperCase();

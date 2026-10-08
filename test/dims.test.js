@@ -156,3 +156,12 @@ test('every dimension type is read by ezdxf as a real dimension', { skip: !ezdxf
     assert.equal(g.style, 'ISO-25');
   });
 });
+
+test('current dimension style ($DIMSTYLE header) survives a DXF round trip, and its table record is written', () => {
+  const doc = M.newDocument();
+  doc.header.currentDimStyle = 'ASH-1';
+  const back = readDxf(new TextEncoder().encode(writeDxf(doc)));
+  assert.equal(back.header.currentDimStyle, 'ASH-1');
+  assert.ok(back.header.dimStyles.includes('ASH-1'));
+  assert.equal(readDxf(new TextEncoder().encode(writeDxf(M.newDocument()))).header.currentDimStyle, 'Standard');
+});

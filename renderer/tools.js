@@ -600,7 +600,7 @@ export const TOOL_ALIASES = {
   f: 'fillet', fillet: 'fillet', cha: 'chamfer', chamfer: 'chamfer', br: 'break', break: 'break', j: 'join', join: 'join',
   len: 'lengthen', lengthen: 'lengthen', str: 'stretch', stretch: 'stretch', ar: 'arrayrect', arrayrect: 'arrayrect',
   arraypolar: 'arraypolar', arraypath: 'arraypath',
-  dli: 'dimlinear', dimlinear: 'dimlinear', dal: 'dimaligned', dimaligned: 'dimaligned', dra: 'dimradius', dimradius: 'dimradius',
+  dli: 'dimlinear', dimlinear: 'dimlinear', dal: 'dimaligned', dimaligned: 'dimaligned', dan: 'dimangular', dimangular: 'dimangular', dra: 'dimradius', dimradius: 'dimradius',
   ddi: 'dimdiameter', dimdiameter: 'dimdiameter', dco: 'dimcontinue', dimcontinue: 'dimcontinue', dba: 'dimbaseline', dimbaseline: 'dimbaseline',
   ma: 'matchprop', matchprop: 'matchprop', painter: 'matchprop',
 };

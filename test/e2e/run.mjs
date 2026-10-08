@@ -528,6 +528,48 @@ try {
   });
   assert.deepEqual(reopened, ['100', '50', 'R25']);
 
+  step = 'DIMANGULAR: two lines at 90 degrees, then 3-point (Enter) at 45 degrees';
+  const dimTexts = () => page.evaluate(() => window.app.doc.entities.filter((e) => e.type === 'DIMENSION').map((e) => e.dimText));
+  await page.evaluate(() => { const vp = window.app.vp; vp.setSelection([]); vp.view = { ...vp.view, cx: 70, cy: -150, zoom: 4 }; vp.render(); });
+  await typeCmd('l'); await typeCmd('0,-150'); await typeCmd('40,-150'); await typeCmd('');
+  await typeCmd('l'); await typeCmd('0,-150'); await typeCmd('0,-110'); await typeCmd('');
+  await typeCmd('dan'); await clickWorld(20, -150); await clickWorld(0, -130); await typeCmd('15,-135');
+  assert.equal((await dimTexts()).at(-1), '90°');
+  await typeCmd('dan'); await typeCmd(''); await typeCmd('100,-150'); await typeCmd('140,-150'); await typeCmd('140,-110'); await typeCmd('125,-145');
+  assert.equal((await dimTexts()).at(-1), '45°');
+
+  step = 'DIMSTYLE: New "ASH-1" from ISO-25 (text 5, 2 decimals, period), set current, DLI shows 100.00';
+  const dlgBtn = (t) => page.locator('#dlg button', { hasText: t }).first();
+  await typeCmd('d');
+  await page.locator('#dlg select[name=styles]').selectOption('ISO-25');
+  await dlgBtn('New').click();
+  await page.locator('#dlg input').fill('ASH-1'); await page.locator('#dlg button.primary').click();
+  await page.locator('#dlg input[name=DIMTXT]').fill('5'); await page.locator('#dlg input[name=DIMDEC]').fill('2');
+  await page.locator('#dlg select[name=DIMDSEP]').selectOption('46'); await page.locator('#dlg input[name=DIMZIN]').uncheck();
+  await page.locator('#dlg button.primary').click();
+  assert.equal(await page.locator('#dlg select[name=styles]').inputValue(), 'ASH-1');
+  await dlgBtn('Set current').click(); await dlgBtn('Close').click();
+  assert.equal(await page.locator('#dimstyle').inputValue(), 'ASH-1');
+  await typeCmd('dli'); await typeCmd('0,-200'); await typeCmd('100,-200'); await typeCmd('50,-190');
+  const ash = await page.evaluate(() => { const d = window.app.doc, e = d.entities.at(-1); return { t: e.dimText, style: e.style, h: d.blocks.get(e.block).entities.find((x) => x.type === 'MTEXT')?.height }; });
+  assert.deepEqual(ash, { t: '100.00', style: 'ASH-1', h: 5 });
+
+  step = 'DIMSTYLE: Modify ISO-25 decimals regenerates its dimensions; Undo restores';
+  await typeCmd('d');
+  await page.locator('#dlg select[name=styles]').selectOption('ISO-25');
+  await dlgBtn('Modify').click();
+  await page.locator('#dlg input[name=DIMDEC]').fill('3'); await page.locator('#dlg input[name=DIMZIN]').uncheck();
+  await page.locator('#dlg button.primary').click(); await dlgBtn('Close').click();
+  assert.deepEqual(await dimTexts(), ['100,000', '50,000', 'R25,000', '90°', '45°', '100.00']);
+  await typeCmd('u');
+  assert.deepEqual(await dimTexts(), ['100', '50', 'R25', '90°', '45°', '100.00']);
+
+  step = 'DIMSTYLE: save DXF and reopen keeps the current style';
+  assert.equal(await page.evaluate(async () => {
+    const { writeDxf } = await import('/src/core/dxfWrite.js'); const { readDxf } = await import('/src/core/dxfRead.js'); const { dimVarsOf } = await import('/renderer/tools-dims.js');
+    return dimVarsOf(readDxf(new TextEncoder().encode(writeDxf(window.app.doc)))).style;
+  }), 'ASH-1');
+
   step = 'grips: drag a line end grip to a snapped endpoint, undo';
   await page.evaluate(() => { const vp = window.app.vp; vp.setSelection([]); vp.view = { ...vp.view, cx: 260, cy: 210, zoom: 8 }; vp.render(); });
   await typeCmd('l'); await typeCmd('200,200'); await typeCmd('240,200'); await typeCmd('');
