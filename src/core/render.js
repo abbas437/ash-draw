@@ -464,7 +464,10 @@ export function drawScene(ctx, scene, view, opts = {}) {
   const fills = [], marks = [], texts = [], batches = new Map(), dots = new Map(), tints = new Map(), bars = new Map();
   const lwSig = opts.showLineweight ? (opts.pixelsPerMm ?? 3.78) : 0;
   const bucket = (map, key) => { let l = map.get(key); if (!l) map.set(key, (l = [])); return l; };
-  for (const it of visibleItems(scene, minx, miny, maxx, maxy)) {
+  const prof = opts.profile; // optional (phase, info) callback after each phase (scripts/bench.mjs)
+  const vis = visibleItems(scene, minx, miny, maxx, maxy);
+  prof?.('query', vis.length);
+  for (const it of vis) {
     const k = it.kind;
     if (it.arrow || k === 'point') marks.push(it);
     if (k === 'point') continue;
@@ -487,6 +490,10 @@ export function drawScene(ctx, scene, view, opts = {}) {
       else texts.push(it);
     }
   }
+  if (prof) {
+    const n = (m) => { let c = 0; for (const v of m.values()) c += (v.items ?? v).length; return c; };
+    prof('bucket', { fills: fills.length, tints: n(tints), dots: n(dots), lines: n(batches), batches: batches.size, marks: marks.length, bars: n(bars), texts: texts.length });
+  }
 
   // 1. hatches and solid fills; LOD tints first (one fill per colour), then the per-item fills and patterns
   const fillAlphaPattern = opts.patternFallbackAlpha ?? 0.25;
@@ -502,6 +509,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
     }
     ctx.restore();
   }
+  prof?.('tints');
   for (const it of fills) {
     const col = colorOf(it.style);
     if (it.kind === 'fill' || it.solid) {
@@ -513,6 +521,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
       ctx.beginPath(); tracePath(it.ops); ctx.save(); ctx.globalAlpha = fillAlphaPattern; ctx.fillStyle = col; ctx.fill('evenodd'); ctx.restore();
     }
   }
+  prof?.('fills');
 
   // LOD dots: one 1-px rect per covered pixel and colour, one fill per colour
   if (dots.size) {
@@ -533,6 +542,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
       ctx.fillStyle = col; ctx.fill();
     }
   }
+  prof?.('dots');
 
   // 2. line work, batched by style
   for (const { st, items } of batches.values()) {
@@ -545,6 +555,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
     ctx.stroke();
   }
   ctx.setLineDash([]);
+  prof?.('lines');
 
   // leader arrow heads and points
   for (const it of marks) {
@@ -564,6 +575,8 @@ export function drawScene(ctx, scene, view, opts = {}) {
     }
   }
 
+  prof?.('marks');
+
   // 3. text; LOD bars (text under 2 px) as one stroke per colour
   if (bars.size) {
     ctx.save(); ctx.globalAlpha = 0.5; ctx.lineWidth = 1;
@@ -578,10 +591,12 @@ export function drawScene(ctx, scene, view, opts = {}) {
     }
     ctx.restore();
   }
+  prof?.('bars');
   for (const it of texts) {
     if (it.mt) drawMText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style), dark);
     else drawText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style));
   }
+  prof?.('text');
 
   // 4. highlight / selection overlay
   if (hi && hi.size) {

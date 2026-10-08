@@ -52,3 +52,24 @@ Parse and scene build were not changed on this branch; their difference is run-t
 The fit view is still above the 300 ms target: it has not been profiled per stage after these changes; the remaining
 per-frame work at fit is the line strokes of items 1-4 px long (most of the 200k LINEs and 20k ARCs) and the
 rasterisation of the batched paths.
+
+## Fit frame by phase (branch perf4, 2026-10-08, full case, 5-frame average)
+
+`scripts/bench.mjs` now passes a `profile` callback to `drawScene`, which calls it after each phase; the bench flushes
+the canvas (1-pixel read-back) at each call, so each phase includes its own rasterisation. The canvas clear is
+counted in `query`.
+
+| phase | what | ms |
+|-------|------|---:|
+| query | clear + `visibleItems` (fit: all 345k items pass the bbox test) | 83 |
+| bucket | one pass sorting items into tints / dots / line batches / bars | 141 |
+| tints | pattern hatches under 2 px spacing, one fill per colour | 34 |
+| fills | per-item fills and patterns | 0 |
+| dots | sub-pixel items as per-pixel dots, one fill per colour | 89 |
+| lines | trace + stroke of the 10 per-style line batches | 333 |
+| bars | text under 2 px as bars, one stroke per colour | 20 |
+| text / marks | | 0 |
+| total | | 700 |
+
+The line batches (LINEs and ARCs 1-4 px on screen) are half of the fit frame, then the bucketing pass and the
+grid query, which are plain JavaScript over every item.

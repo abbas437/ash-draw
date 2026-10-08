@@ -83,6 +83,22 @@ async function benchInPage({ scale }) {
   const avg = (a) => a.reduce((s, x) => s + x, 0) / a.length;
   const r1 = (x) => Math.round(x * 10) / 10;
 
+  /** per-phase time of the fit frame (drawScene's profile hook; each phase flushed with a 1-px read-back) */
+  function profile(scene, view, n = 5) {
+    const acc = {};
+    let info = null, items = 0;
+    for (let i = 0; i < n; i++) {
+      let t = performance.now();
+      R.drawScene(ctx, scene, view, {
+        background: '#ffffff',
+        profile: (ph, x) => { flush(); const now = performance.now(); acc[ph] = (acc[ph] ?? 0) + now - t; t = now; if (ph === 'bucket') info = x; if (ph === 'query') items = x; },
+      });
+    }
+    const phases = {};
+    for (const k in acc) phases[k] = r1(acc[k] / n);
+    return { phases, total: r1(Object.values(acc).reduce((a, b) => a + b, 0) / n), visible: items, buckets: info };
+  }
+
   function viewSeries(scene, view0) {
     // 30 pan steps of 25 px, then 10 zoom steps alternating in/out around the centre
     let v = view0;
@@ -109,6 +125,7 @@ async function benchInPage({ scale }) {
     out.items = scene.items.length;
     const fit = R.fitView(scene.bbox, 1400, 850, 0.04);
     out.first = r1(frame(scene, fit));
+    out.profile = profile(scene, fit);
     out.fit = viewSeries(scene, fit);
     out.z10 = viewSeries(scene, { ...fit, zoom: fit.zoom * 10 });
     // one-entity edit: change an entity and refresh the scene
@@ -143,6 +160,7 @@ else {
   for (const r of results) {
     console.log(`[${r.name}] entities ${r.entities}, scene items ${r.items}${r.dxfMB ? `, DXF ${r.dxfMB} MB, parse ${r.parse} ms` : ''}`);
     console.log(`  scene build ${r.build} ms, first frame ${r.first} ms, edit 1 entity ${r.edit} ms`);
+    if (r.profile) console.log(`  fit frame by phase (ms): ${Object.entries(r.profile.phases).map(([k, v]) => `${k} ${v}`).join(', ')} = ${r.profile.total}; visible ${r.profile.visible}, buckets ${JSON.stringify(r.profile.buckets)}`);
     for (const k of ['fit', 'z10']) console.log(`  ${k === 'fit' ? 'fit ' : '10x '}: pan avg ${r[k].pan} ms (max ${r[k].panMax}), zoom avg ${r[k].zoom} ms`);
   }
 }
