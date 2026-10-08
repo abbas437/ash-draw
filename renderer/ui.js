@@ -126,7 +126,8 @@ function colorMenu(ev, pick) {
   const m = el('div', { class: 'popmenu', style: `left:${ev.clientX}px;top:${ev.clientY}px` },
     ACI_CHOICES.filter(([c]) => c !== 256).map(([c, label]) => el('button', { onclick: () => { m.remove(); pick(c); } }, el('span', { class: 'swatch', style: `background:${cssOfAci(c)}` }), ` ${label}`)));
   document.body.append(m);
-  setTimeout(() => document.addEventListener('pointerdown', () => m.remove(), { once: true }), 0);
+  const away = (e) => { if (m.contains(e.target)) return; m.remove(); document.removeEventListener('pointerdown', away); };   // not before the item's own click
+  setTimeout(() => document.addEventListener('pointerdown', away), 0);
 }
 
 // ---------------------------------------------------------------------------------------------
