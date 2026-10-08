@@ -9,7 +9,7 @@ import { readDxf } from '../src/core/dxfRead.js';
 import { writeDxf } from '../src/core/dxfWrite.js';
 import { defaultDimStyle, DIMVARS } from '../src/core/dimsStyle.js';
 import {
-  buildDimension, formatLinear, continueDimension, baselineDimension, createDimension, regenerateDimension,
+  buildDimension, formatLinear, continueDimension, baselineDimension, createDimension, regenerateDimension, dimensionTags,
 } from '../src/core/dims.js';
 import { ezdxfAvailable, validateWithEzdxf } from './helpers.js';
 
@@ -164,4 +164,82 @@ test('current dimension style ($DIMSTYLE header) survives a DXF round trip, and 
   assert.equal(back.header.currentDimStyle, 'ASH-1');
   assert.ok(back.header.dimStyles.includes('ASH-1'));
   assert.equal(readDxf(new TextEncoder().encode(writeDxf(M.newDocument()))).header.currentDimStyle, 'Standard');
+});
+
+// ---- ordinate dimensions ------------------------------------------------------------------------
+const linesOf = (r) => r.entities.filter((e) => e.type === 'LINE');
+const mtextOf = (r) => r.entities.find((e) => e.type === 'MTEXT');
+
+test('ordinate X datum: vertical leader without jog, value = X of the feature point', () => {
+  const r = buildDimension({ kind: 'ordinate', feature: P(37.5, 10), end: P(37.5, 30), xType: true }, ISO);
+  assert.equal(r.dimType, 6 | 64);
+  near(r.measurement, 37.5); assert.equal(r.text, '37,5');
+  const l = linesOf(r);
+  assert.equal(l.length, 1);
+  near(l[0].p1.x, 37.5); near(l[0].p1.y, 10 + ISO.DIMEXO); near(l[0].p2.x, 37.5); near(l[0].p2.y, 30);
+  near(r.P10.x, 0); near(r.P10.y, 0);
+  assert.equal(mtextOf(r).text, '37,5'); near(r.textRot, 90); near(r.textMid.x, 37.5); assert.ok(r.textMid.y > 30);
+});
+
+test('ordinate Y datum: horizontal leader, value = Y; offset end gives a three-segment jogged leader', () => {
+  const r = buildDimension({ kind: 'ordinate', feature: P(10, 20), end: P(40, 20), xType: false }, ISO);
+  assert.equal(r.dimType, 6);
+  near(r.measurement, 20); assert.equal(r.text, '20');
+  assert.equal(linesOf(r).length, 1);
+  near(r.textRot, 0); assert.ok(r.textMid.x > 40); near(r.textMid.y, 20);
+  const j = buildDimension({ kind: 'ordinate', feature: P(10, 20), end: P(40, 26), xType: false }, ISO);
+  const l = linesOf(j);
+  assert.equal(l.length, 3);
+  near(l[0].p1.y, 20); near(l[0].p2.y, 20); near(l[1].p1.y, 20); near(l[1].p2.y, 26); near(l[2].p1.y, 26); near(l[2].p2.x, 40);
+  near(l[0].p2.x, l[1].p1.x); near(l[1].p2.x, l[2].p1.x);
+  assert.ok(l[1].p2.x > l[1].p1.x, 'jog is a diagonal');
+  // X datum, leader pointing down with a sideways offset
+  const d = linesOf(buildDimension({ kind: 'ordinate', feature: P(5, 0), end: P(9, -30), xType: true }, ISO));
+  assert.equal(d.length, 3); near(d[0].p1.y, -ISO.DIMEXO); near(d[2].p2.x, 9); near(d[2].p2.y, -30);
+});
+
+test('ordinate is measured from the origin and formatted by the dimstyle (precision, suffix, scale)', () => {
+  const def = { kind: 'ordinate', feature: P(112.3456, 50), end: P(112.3456, 70), xType: true, origin: P(100, 0) };
+  assert.equal(buildDimension(def, ISO).text, '12,35');
+  const st = { ...ISO, DIMDEC: 3, DIMDSEP: 46, DIMPOST: '<> mm', DIMLFAC: 2 };
+  const r = buildDimension(def, st);
+  near(r.measurement, 24.6912); assert.equal(r.text, '24.691 mm');
+  near(r.P10.x, 100);
+  assert.equal(buildDimension({ ...def, text: 'X=<>' }, { ...ISO, DIMDEC: 0 }).text, 'X=12');
+});
+
+test('ordinate DXF round trip keeps type 6 with the 64 (X) bit, points and the block', () => {
+  const doc = M.newDocument();
+  const x = createDimension(doc, { kind: 'ordinate', feature: P(37.5, 10), end: P(40, 30), xType: true, origin: P(5, 6) });
+  const y = createDimension(doc, { kind: 'ordinate', feature: P(10, 20), end: P(40, 26), xType: false });
+  assert.deepEqual(dimensionTags(x).find(([c]) => c === 70), [70, 6 | 64 | 32]);
+  assert.deepEqual(dimensionTags(y).find(([c]) => c === 70), [70, 6 | 32]);
+  const back = readDxf(Buffer.from(writeDxf(doc)));
+  const [bx, by] = back.entities.filter((e) => e.type === 'DIMENSION');
+  assert.equal(bx.dimType & 7, 6); assert.equal(bx.dimType & 64, 64);
+  assert.equal(by.dimType & 7, 6); assert.equal(by.dimType & 64, 0);
+  assert.deepEqual(bx.def, { kind: 'ordinate', feature: P(37.5, 10), end: P(40, 30), origin: P(5, 6), xType: true, text: '' });
+  assert.equal(by.def.xType, false); assert.deepEqual(by.def.feature, P(10, 20)); assert.deepEqual(by.def.end, P(40, 26));
+  assert.ok(back.blocks.get(bx.block).entities.some((e) => e.type === 'MTEXT' && e.text === '32,5'));
+  // regenerating from the read def reproduces the same text
+  regenerateDimension(back, bx);
+  assert.ok(back.blocks.get(bx.block).entities.some((e) => e.type === 'MTEXT' && e.text === '32,5'));
+});
+
+test('ordinate dimension is read by ezdxf as an ordinate dimension', { skip: !ezdxfAvailable() && 'ezdxf not installed' }, (t) => {
+  const doc = M.newDocument();
+  createDimension(doc, { kind: 'ordinate', feature: P(37.5, 10), end: P(40, 30), xType: true });
+  createDimension(doc, { kind: 'ordinate', feature: P(10, 20), end: P(40, 26), xType: false });
+  const dir = mkdtempSync(path.join(tmpdir(), 'ashord-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'ord.dxf');
+  writeFileSync(file, writeDxf(doc));
+  assert.equal(validateWithEzdxf(file).audit_errors, 0);
+  const py = ['import ezdxf, json, sys', 'doc = ezdxf.readfile(sys.argv[1])',
+    'print(json.dumps([[d.dimtype, bool(d.dxf.dimtype & 64)] for d in doc.modelspace().query("DIMENSION")]))'].join('\n');
+  const r = spawnSync(ezdxfAvailable(), ['-c', py, file], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const got = JSON.parse(r.stdout);
+  assert.equal(got.length, 2);
+  assert.equal(got[0][1], true); assert.equal(got[1][1], false);
 });

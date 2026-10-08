@@ -1,4 +1,4 @@
-// ASH Draw Studio - DIMLINEAR, DIMALIGNED, DIMANGULAR, DIMRADIUS, DIMDIAMETER, DIMCONTINUE, DIMBASELINE and the
+// ASH Draw Studio - DIMLINEAR, DIMALIGNED, DIMANGULAR, DIMRADIUS, DIMDIAMETER, DIMORDINATE, DIMCONTINUE, DIMBASELINE and the
 // DIMSTYLE manager: the UI over
 // src/core/dims.js. Prompts and options follow AutoCAD LT. tools.js owns the Tool base class and passes it to
 // createDimTools (a factory, so this module does not import tools.js back).
@@ -276,6 +276,31 @@ export function createDimTools(h, { Tool }) {
     }
   }
 
+  // ---- DIMORDINATE: feature point, then the leader endpoint; the leader direction picks the datum -----------
+  class DimOrdinateTool extends DimTool {
+    constructor(host) { super(host); this.name = 'DIMORDINATE'; }
+    activate() { super.activate(); this.feature = null; this.force = null; }
+    get prompt() { return this.feature ? `${this.name}  leader endpoint or [Xdatum/Ydatum]` : `${this.name}  specify feature location`; }
+    // a vertical leader measures X (X datum), a horizontal one measures Y, as in AutoCAD
+    def(end) {
+      const f = this.feature, xType = this.force ? this.force === 'x' : Math.abs(end.y - f.y) >= Math.abs(end.x - f.x);
+      return { kind: 'ordinate', feature: f, end, xType };
+    }
+    click(p) {
+      if (!this.feature) { this.feature = p; this.vp.lastPoint = p; return; }
+      this.place(this.def(p));
+      this.h.setTool('select');
+    }
+    text(s) {
+      if (!this.feature) return false;
+      const o = opt(s);
+      if (o === 'x' || o === 'xdatum') { this.force = 'x'; return true; }
+      if (o === 'y' || o === 'ydatum') { this.force = 'y'; return true; }
+      return false;
+    }
+    draw(c) { if (this.feature) this.drawDef(c, this.def(this.vp.cursor)); }
+  }
+
   // ---- DIMCONTINUE / DIMBASELINE ---------------------------------------------------------------
   class DimChainTool extends DimTool {
     constructor(host, mode) { super(host); this.mode = mode; this.name = mode === 'continue' ? 'DIMCONTINUE' : 'DIMBASELINE'; }
@@ -303,7 +328,7 @@ export function createDimTools(h, { Tool }) {
 
   return {
     dimlinear: new DimLinearTool(h, 'linear'), dimaligned: new DimLinearTool(h, 'aligned'),
-    dimangular: new DimAngularTool(h),
+    dimangular: new DimAngularTool(h), dimordinate: new DimOrdinateTool(h),
     dimradius: new DimRadialTool(h, 'radius'), dimdiameter: new DimRadialTool(h, 'diameter'),
     dimcontinue: new DimChainTool(h, 'continue'), dimbaseline: new DimChainTool(h, 'baseline'),
   };

@@ -100,3 +100,15 @@ test('INSERT placement edits (properties, grips) carry the attributes with them'
   s.undo();
   nearPt(M.getEntity(doc, id).attribs[0].p, 98, 4);
 });
+
+test('ordinate dimension grips: feature point and leader end are editable, the text grip moves the leader end', async () => {
+  const { createDimension } = await import('../src/core/dims.js');
+  const { newDocument } = await import('../src/core/model.js');
+  const doc = newDocument();
+  const e = createDimension(doc, { kind: 'ordinate', feature: { x: 10, y: 5 }, end: { x: 10, y: 25 }, xType: true });
+  const g = gripsOf(e);
+  assert.deepEqual(g.slice(0, 2).map((q) => [q.x, q.y]), [[10, 5], [10, 25]]);
+  assert.deepEqual(applyGrip(e, 0, { x: 12, y: 5 }).def.feature, { x: 12, y: 5 });
+  assert.deepEqual(applyGrip(e, 1, { x: 12, y: 30 }).def.end, { x: 12, y: 30 });
+  assert.deepEqual(applyGrip(e, g.length - 1, { x: e.p.x + 3, y: e.p.y }).def.end, { x: 13, y: 25 });
+});

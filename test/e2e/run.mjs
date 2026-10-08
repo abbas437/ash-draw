@@ -529,6 +529,13 @@ try {
   });
   assert.deepEqual(reopened, ['100', '50', 'R25']);
 
+  step = 'DIMORDINATE: DOR, click a point, click above: vertical leader = X datum, text is the X coordinate';
+  await typeCmd('dor'); await clickWorld(62.5, -30); await clickWorld(62.5, -10);
+  const ord = (await page.evaluate(() => window.app.doc.entities.filter((e) => e.type === 'DIMENSION').at(-1)).then((e) => ({ k: e.def.kind, x: e.def.xType, t: e.dimText, m: e.measurement, dt: e.dimType })));
+  assert.deepEqual(ord, { k: 'ordinate', x: true, t: '62,5', m: 62.5, dt: 70 });
+  await page.keyboard.press('Control+z'); // leave the drawing as the following steps expect it
+  assert.equal((await dims()).length, 3);
+
   step = 'DIMANGULAR: two lines at 90 degrees, then 3-point (Enter) at 45 degrees';
   const dimTexts = () => page.evaluate(() => window.app.doc.entities.filter((e) => e.type === 'DIMENSION').map((e) => e.dimText));
   await page.evaluate(() => { const vp = window.app.vp; vp.setSelection([]); vp.view = { ...vp.view, cx: 70, cy: -150, zoom: 4 }; vp.render(); });

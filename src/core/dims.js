@@ -8,6 +8,8 @@
 //   { kind:'angular3', vertex, p1, p2, at }
 //   { kind:'radius',   center, p }           p on the curve
 //   { kind:'diameter', center, p }           p on the curve (the opposite point is mirrored through center)
+//   { kind:'ordinate', feature, end, xType, origin? }   feature = measured point, end = leader endpoint (text side),
+//                                            xType = X-datum (vertical leader, measures X); origin defaults to the WCS origin
 //   optional on every def: text (override; '' or '<>' = measured, '<>' inside is substituted, ' ' = no text)
 //
 //   buildDimension(def, style) -> { measurement, text, textMid, textRot, dimType, entities }
@@ -34,7 +36,9 @@ const perp = (a) => ({ x: -a.y, y: a.x });
 const polar = (c, r, a) => ({ x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a) });
 const normAng = (a) => ((a % TAU) + TAU) % TAU;
 
-export const DIM_TYPE = { linear: 0, aligned: 1, angular: 2, diameter: 3, radius: 4, angular3: 5 };
+export const DIM_TYPE = { linear: 0, aligned: 1, angular: 2, diameter: 3, radius: 4, angular3: 5, ordinate: 6 };
+/** DXF group 70 type bits of a def (without the +32 'block is anonymous' flag): ordinate X-datum adds 64 */
+export const dimTypeBits = (def) => DIM_TYPE[def.kind] | (def.kind === 'ordinate' && def.xType ? 64 : 0);
 
 // ---- number formatting -----------------------------------------------------------------------
 function fmtDecimal(x, dec, zin, sep = 46) {
@@ -289,13 +293,34 @@ export function buildDimension(def, st) {
       P10 = q;
       break;
     }
+    case 'ordinate': {
+      const z = sizes(st);
+      const org = def.origin ?? { x: 0, y: 0 }, xT = !!def.xType;
+      measurement = (xT ? def.feature.x - org.x : def.feature.y - org.y) * lf;
+      text = composeText(formatLinear(measurement, st), st, def.text);
+      // leader axis: vertical for an X-datum, horizontal for a Y-datum; P(a, l) = axial a / lateral l from the feature point
+      const ax = xT ? { x: 0, y: 1 } : { x: 1, y: 0 }, lt = { x: ax.y, y: ax.x };
+      const v = sub(def.end, def.feature), av = dot(v, ax), lv = dot(v, lt), s = av < 0 ? -1 : 1;
+      const P = (a, l) => add(def.feature, add(mul(ax, a), mul(lt, l)));
+      const a0 = s * Math.min(z.exo, Math.abs(av));
+      if (Math.abs(lv) < 1e-9) entities.push(makeLine(P(a0, 0), P(av, 0), o.dim));
+      else { // jog: the leader steps sideways over a short stretch half way along
+        const m = (a0 + av) / 2, jl = Math.min(z.asz, Math.abs(av - a0) / 3);
+        entities.push(makeLine(P(a0, 0), P(m - s * jl / 2, 0), o.dim), makeLine(P(m - s * jl / 2, 0), P(m + s * jl / 2, lv), o.dim), makeLine(P(m + s * jl / 2, lv), P(av, lv), o.dim));
+      }
+      const rot = xT && !st.DIMTIH ? 90 : 0;
+      const ext = xT && rot === 0 ? z.h : textWidth(text, z.h);
+      tp = { p: P(av + s * (ext / 2 + z.gap), lv), rot };
+      P10 = { ...org };
+      break;
+    }
     default: throw new Error(`unsupported dimension kind "${def.kind}"`);
   }
   if (text) {
     const z = sizes(st);
     entities.push(makeMText(tp.p, z.h, text, { ...o.text, rot: tp.rot, attach: 5, style: st.DIMTXSTY || 'Standard' }));
   }
-  return { measurement, text, textMid: tp.p, textRot: tp.rot, dimType: DIM_TYPE[def.kind], entities, P10 };
+  return { measurement, text, textMid: tp.p, textRot: tp.rot, dimType: dimTypeBits(def), entities, P10 };
 }
 
 // ---- continue / baseline -----------------------------------------------------------------------
@@ -382,7 +407,7 @@ export function rebuildDimension(doc, e, def = e.def, st = resolveDimStyle(doc, 
 export function transformDimension(doc, e, m) {
   const P = (p) => ({ x: m[0] * p.x + m[2] * p.y + m[4], y: m[1] * p.x + m[3] * p.y + m[5] });
   const d = e.def, nd = { ...d };
-  for (const k of ['p1', 'p2', 'at', 'vertex', 'center', 'p']) if (d[k]) nd[k] = P(d[k]);
+  for (const k of ['p1', 'p2', 'at', 'vertex', 'center', 'p', 'feature', 'end', 'origin']) if (d[k]) nd[k] = P(d[k]);
   if (d.l1) nd.l1 = d.l1.map(P);
   if (d.l2) nd.l2 = d.l2.map(P);
   if (d.kind === 'linear') {
@@ -398,7 +423,7 @@ const P3 = (code, p) => [[code, p.x], [code + 10, p.y], [code + 20, 0]];
 /** DIMENSION body (after the AcDbEntity head) for a dimension built by this module */
 export function dimensionTags(e) {
   const d = e.def;
-  const t = [[100, 'AcDbDimension'], [2, e.block], ...P3(10, e.defPoint), ...P3(11, e.p), [70, DIM_TYPE[d.kind] | 32], [71, 5],
+  const t = [[100, 'AcDbDimension'], [2, e.block], ...P3(10, e.defPoint), ...P3(11, e.p), [70, dimTypeBits(d) | 32], [71, 5],
     [42, e.measurement], [1, e.text ?? ''], [3, e.style || 'Standard']];
   switch (d.kind) {
     case 'linear': t.push([100, 'AcDbAlignedDimension'], ...P3(13, d.p1), ...P3(14, d.p2), [50, d.angle ?? 0], [100, 'AcDbRotatedDimension']); break;
@@ -407,12 +432,13 @@ export function dimensionTags(e) {
     case 'angular3': t.push([100, 'AcDb3PointAngularDimension'], ...P3(13, d.p1), ...P3(14, d.p2), ...P3(15, d.vertex)); break;
     case 'radius': t.push([100, 'AcDbRadialDimension'], ...P3(15, d.p), [40, 0]); break;
     case 'diameter': t.push([100, 'AcDbDiametricDimension'], ...P3(15, d.p), [40, 0]); break;
+    case 'ordinate': t.push([100, 'AcDbOrdinateDimension'], ...P3(13, d.feature), ...P3(14, d.end)); break;
     default: break;
   }
   return t;
 }
 
-/** def from the DIMENSION group pairs of a file (null for ordinate / unknown) */
+/** def from the DIMENSION group pairs of a file (null for unknown) */
 export function dimDefFromTags(tags) {
   const first = new Map();
   for (const [c, v] of tags) if (!first.has(c)) first.set(c, v);
@@ -426,6 +452,7 @@ export function dimDefFromTags(tags) {
     case 3: return { kind: 'diameter', center: mul(add(P(10), P(15)), 0.5), p: P(15), text };
     case 4: return { kind: 'radius', center: P(10), p: P(15), text };
     case 5: return { kind: 'angular3', vertex: P(15), p1: P(13), p2: P(14), at: P(10), text };
+    case 6: return { kind: 'ordinate', feature: P(13), end: P(14), origin: P(10), xType: (Math.trunc(n(70)) & 64) !== 0, text };
     default: return null;
   }
 }

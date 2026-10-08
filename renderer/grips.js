@@ -40,7 +40,7 @@ function segMid(a, b) {
   return polar(k.c, k.r, k.a0 + k.sweep / 2);
 }
 
-const DIM_KEYS = { linear: ['p1', 'p2', 'at'], aligned: ['p1', 'p2', 'at'], angular3: ['vertex', 'p1', 'p2', 'at'], radius: ['center', 'p'], diameter: ['center', 'p'] };
+const DIM_KEYS = { linear: ['p1', 'p2', 'at'], aligned: ['p1', 'p2', 'at'], angular3: ['vertex', 'p1', 'p2', 'at'], radius: ['center', 'p'], ordinate: ['feature', 'end'], diameter: ['center', 'p'] };
 function dimRefs(def) {
   if (def.kind === 'angular') return [[def.l1, 0], [def.l1, 1], [def.l2, 0], [def.l2, 1], [def, 'at']];
   return (DIM_KEYS[def.kind] ?? []).filter((k) => def[k]).map((k) => [def, k]);
@@ -124,7 +124,7 @@ export function applyGrip(e, i, p) {
       c.pts[i] = P(p); return c;
     case 'DIMENSION': {
       const refs = dimRefs(c.def);
-      if (i < refs.length) { const [o, k] = refs[i]; o[k] = P(p); } else c.def.at = shift(e.def.at); // text grip moves the dimension line
+      if (i < refs.length) { const [o, k] = refs[i]; o[k] = P(p); } else if (c.def.kind === 'ordinate') c.def.end = shift(e.def.end); else c.def.at = shift(e.def.at); // text grip moves the dimension line (ordinate: the leader end)
       return c;
     }
     default: return null;

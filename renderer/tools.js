@@ -609,7 +609,7 @@ export const TOOL_ALIASES = {
   len: 'lengthen', lengthen: 'lengthen', str: 'stretch', stretch: 'stretch', ar: 'arrayrect', arrayrect: 'arrayrect',
   arraypolar: 'arraypolar', arraypath: 'arraypath',
   dli: 'dimlinear', dimlinear: 'dimlinear', dal: 'dimaligned', dimaligned: 'dimaligned', dan: 'dimangular', dimangular: 'dimangular', dra: 'dimradius', dimradius: 'dimradius',
-  ddi: 'dimdiameter', dimdiameter: 'dimdiameter', dco: 'dimcontinue', dimcontinue: 'dimcontinue', dba: 'dimbaseline', dimbaseline: 'dimbaseline',
+  ddi: 'dimdiameter', dimdiameter: 'dimdiameter', dor: 'dimordinate', dimordinate: 'dimordinate', dco: 'dimcontinue', dimcontinue: 'dimcontinue', dba: 'dimbaseline', dimbaseline: 'dimbaseline',
   mld: 'mleader', mleader: 'mleader', ma: 'matchprop', matchprop: 'matchprop', painter: 'matchprop',
   b: 'block', block: 'block', bmake: 'block', att: 'attdef', attdef: 'attdef', i: 'insert', insert: 'insert', ddinsert: 'insert',
   ate: 'eattedit', eattedit: 'eattedit', attedit: 'eattedit', ddatte: 'eattedit',
