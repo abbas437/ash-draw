@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createDwgBridge, DWG_OUT_VERSIONS } from './dwgBridge.js';
 import { cleanSession, isPathString, pushRecent, startupModeOf } from './sessionLists.js';
+import { xrefCandidates } from '../src/core/xref.js';
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCHEME = 'app';
@@ -248,6 +249,20 @@ function registerIpc() {
     return out;
   });
   handle('file:read', (p) => readGranted(grantedPath(p)));
+  // An external reference of an open drawing: the host must be a granted file; only the .dxf/.dwg files that the xref
+  // search order yields (host folder + relative path, the path itself, the file name in the host folder) are read.
+  // The renderer never names an arbitrary file, and the xref is not granted. DWG comes back converted to DXF.
+  handle('xref:read', async (hostPath, refPath) => {
+    const host = grantedPath(hostPath);
+    if (typeof refPath !== 'string' || !refPath || refPath.length > 1024 || refPath.includes('\0')) throw new TypeError('invalid xref path');
+    for (const p of xrefCandidates(host, refPath, path)) {
+      const ext = path.extname(p).toLowerCase();
+      if ((ext !== '.dxf' && ext !== '.dwg') || !(await isFile(p))) continue;
+      const bytes = await readGranted(p);
+      return { path: p, name: path.basename(p), format: ext.slice(1), bytes: ext === '.dwg' ? (await dwg.toDxf(bytes)).dxfBytes : bytes };
+    }
+    return null;
+  });
   handle('dialog:save', async (opts) => {
     const o = plainObject(opts);
     const bytes = asBytes(o.bytes);

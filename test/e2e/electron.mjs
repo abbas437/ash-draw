@@ -44,6 +44,17 @@ try {
   await win.waitForTimeout(300);
   if (process.env.E2E_SHOTS) await win.screenshot({ path: path.join(process.env.E2E_SHOTS, 'electron_dwg.png') });
 
+  setStep('xref:read resolves only xref files of a granted host');
+  const viaXref = (host, ref) => win.evaluate(([h, r]) => window.api.xrefRead(h, r).then((x) => (x ? { name: x.name, format: x.format, dxf: new TextDecoder().decode(x.bytes.slice(0, 400)) } : null), (e) => ({ error: e.message })), [host, ref]);
+  const sib = await viaXref(dwgIn, 'some\\folder\\Constraints.dwg'); // not there -> same file name in the host folder
+  assert.equal(sib?.name, 'Constraints.dwg', JSON.stringify(sib));
+  assert.match(sib.dxf, /SECTION/, 'a DWG xref comes back as DXF');
+  assert.equal(await viaXref(dwgIn, path.join(path.dirname(dwgIn), 'Arc.jpg')), null, 'only .dxf/.dwg files are read');
+  assert.equal(await viaXref(dwgIn, '/etc/passwd'), null);
+  assert.equal(await viaXref(dwgIn, 'no-such-xref.dxf'), null);
+  const notGranted = await viaXref(path.join(tmp, 'not-opened.dxf'), dwgIn);
+  assert.match(notGranted?.error ?? '', /not opened or chosen/, `a host that was not opened is refused: ${JSON.stringify(notGranted)}`);
+
   setStep('save as DXF (native dialog stubbed)');
   const dxfOut = path.join(tmp, 'out.dxf');
   await app.evaluate(({ dialog }, p) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: p }); }, dxfOut);
