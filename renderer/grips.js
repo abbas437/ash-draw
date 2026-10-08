@@ -4,10 +4,12 @@
 //   applyGrip(e, i, p)         -> edited COPY of e with grip i dragged to p (null when the edit is impossible)
 //   gripEdit(session, id, i, p)-> one undo step; DIMENSIONs are regenerated into a fresh *D block
 //   editEntity(session, id, fn, label) -> one undo step replacing the entity by fn(copy)
-//   matchProps(src, dst)       -> copy of dst carrying src's layer/colour/linetype/ltscale/lineweight (+ text height/style, dim style)
+//   matchProps(src, dst, settings) -> copy of dst carrying the property groups of src that `settings` (MATCH_SETTINGS keys) leave on
+//   GRIP_MODES / nextGripMode(m) / gripMatrix(mode, base, arg) / gripModeEdit(s, ids, mode, base, arg, opts) -> grip MOVE/ROTATE/SCALE/MIRROR
 import { getEntity } from '../src/core/model.js';
+import { transformEntities } from '../src/core/edit.js';
 import { regenerateDimension } from '../src/core/dims.js';
-import { bulgeToArc, ccwSweep, DEG, compose, translation, rotation, scaling, invert, transformEntity } from '../src/core/geom.js';
+import { bulgeToArc, ccwSweep, DEG, compose, translation, rotation, scaling, invert, transformEntity, mirrorLine } from '../src/core/geom.js';
 
 const P = (p) => ({ x: p.x, y: p.y });
 const add = (a, b) => ({ x: a.x + b.x, y: a.y + b.y });
@@ -162,12 +164,68 @@ export function editEntity(s, id, fn, label = 'Properties') {
 
 export const gripEdit = (s, id, i, p) => editEntity(s, id, (c) => applyGrip(c, i, p), 'Grip edit');
 
-export const MATCH_KEYS = ['layer', 'color', 'linetype', 'ltscale', 'lineweight'];
-export function matchProps(src, dst) {
+// ---- grip modes (AutoCAD: Space / Enter cycles STRETCH -> MOVE -> ROTATE -> SCALE -> MIRROR) ------------------
+export const GRIP_MODES = ['STRETCH', 'MOVE', 'ROTATE', 'SCALE', 'MIRROR'];
+export const nextGripMode = (m) => GRIP_MODES[(GRIP_MODES.indexOf(m) + 1) % GRIP_MODES.length];
+/** transform of a grip mode about `base`. arg = {p} (picked point) or {value} (typed: degrees for ROTATE, factor for SCALE).
+ *  MOVE: base -> p; ROTATE: angle base->p; SCALE: distance base-p is the factor (unit reference, as AutoCAD); MIRROR: line base-p.
+ *  null when degenerate. */
+export function gripMatrix(mode, base, arg) {
+  const p = arg.p, v = arg.value;
+  switch (mode) {
+    case 'MOVE': return p ? translation(p.x - base.x, p.y - base.y) : null;
+    case 'ROTATE': {
+      const rad = v != null ? v * DEG : p && Math.hypot(p.x - base.x, p.y - base.y) > 1e-12 ? Math.atan2(p.y - base.y, p.x - base.x) : null;
+      return rad == null ? null : rotation(rad, base.x, base.y);
+    }
+    case 'SCALE': {
+      const k = v != null ? v : p ? Math.hypot(p.x - base.x, p.y - base.y) : 0;
+      return k > 1e-12 && Number.isFinite(k) ? scaling(k, k, base.x, base.y) : null;
+    }
+    case 'MIRROR': return p && Math.hypot(p.x - base.x, p.y - base.y) > 1e-12 ? mirrorLine(base, p) : null;
+    default: return null;
+  }
+}
+const MODE_LABEL = { MOVE: 'Grip move', ROTATE: 'Grip rotate', SCALE: 'Grip scale', MIRROR: 'Grip mirror' };
+/** apply a grip mode to `ids`. copy keeps the originals. join = step id returned by an earlier call of the same grip
+ *  command: the new changes are folded into that undo step (so one U removes every copy of the command).
+ *  -> { done, failed, created, step } | null when the transform is degenerate */
+export function gripModeEdit(s, ids, mode, base, arg, { copy = false, join = null } = {}) {
+  const m = gripMatrix(mode, base, arg);
+  if (!m) return null;
+  const prev = s.undoStack.at(-1);
+  const r = transformEntities(s, ids, m, { copy, label: MODE_LABEL[mode] });
+  const last = s.undoStack.at(-1);
+  if (join != null && prev?.id === join && last !== prev) { s.undoStack.pop(); prev.ops.push(...last.ops); return { ...r, step: prev.id }; }
+  return { ...r, step: last === prev ? join : last.id };
+}
+
+// ---- MATCHPROP ------------------------------------------------------------------------------------------------
+/** MATCHPROP Settings groups: [key, label]. All on by default. The model has no transparency or table entities. */
+export const MATCH_SETTINGS = [
+  ['color', 'Colour'], ['layer', 'Layer'], ['linetype', 'Linetype'], ['ltscale', 'Linetype scale'], ['lineweight', 'Lineweight'],
+  ['thickness', 'Thickness'], ['text', 'Text (style, height, oblique, width)'], ['dim', 'Dimension (dimstyle)'],
+  ['hatch', 'Hatch (pattern, scale, angle)'], ['polyline', 'Polyline (width, closed)'], ['mleader', 'Multileader (style, arrow, landing, text height)'],
+];
+export const defaultMatchSettings = () => Object.fromEntries(MATCH_SETTINGS.map(([k]) => [k, true]));
+const BASIC = ['color', 'layer', 'linetype', 'ltscale', 'lineweight', 'thickness'];
+const GROUPS = {
+  text: { when: (t) => t === 'TEXT' || t === 'MTEXT', keys: ['style', 'height', 'oblique', 'widthFactor'] },
+  dim: { when: (t) => t === 'DIMENSION', keys: ['style'] },
+  hatch: { when: (t) => t === 'HATCH', keys: ['pattern', 'solid', 'scale', 'angle', 'patLines'], drop: ['patLines'] },
+  polyline: { when: (t) => t === 'LWPOLYLINE', keys: ['width', 'closed'], drop: ['width'] },
+  mleader: { when: (t) => t === 'MLEADER', keys: ['style', 'arrowSize', 'landingGap', 'textHeight', 'arrow', 'dogleg'] },
+};
+export const MATCH_KEYS = BASIC;
+export function matchProps(src, dst, settings = defaultMatchSettings()) {
   const c = structuredClone(dst);
-  for (const k of MATCH_KEYS) if (k in src) c[k] = structuredClone(src[k]);
-  const isText = (x) => x.type === 'TEXT' || x.type === 'MTEXT';
-  if (isText(src) && isText(dst)) { c.height = src.height; if (src.style) c.style = src.style; }
-  if (src.type === 'DIMENSION' && dst.type === 'DIMENSION' && src.style) c.style = src.style;
+  for (const k of BASIC) if (settings[k] && k in src) c[k] = structuredClone(src[k]);
+  for (const [g, d] of Object.entries(GROUPS)) {
+    if (!settings[g] || !d.when(src.type) || !d.when(dst.type)) continue;
+    for (const k of d.keys) {
+      if (k in src) c[k] = structuredClone(src[k]);
+      else if (d.drop?.includes(k)) delete c[k]; // e.g. a hatch pattern's own line table belongs to the old pattern
+    }
+  }
   return c;
 }

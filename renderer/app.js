@@ -79,6 +79,7 @@ class App {
     this.cmd.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); const v = this.cmd.value; this.cmd.value = ''; this.vp.canvas.focus(); this.submit(v); }
       else if (e.key === 'Escape') { this.cmd.value = ''; this.cmd.blur(); this.vp.canvas.focus(); this.tool?.key({ key: 'Escape' }); }
+      else if (e.key === ' ' && !this.cmd.value.trim() && this.tool?.key?.({ key: ' ' })) { e.preventDefault(); this.cmd.value = ''; this.refreshPrompt(); } // Space = Enter (grip modes)
       e.stopPropagation();
     });
     document.getElementById('z-in').onclick = () => this.vp.zoomBy(1.4);
@@ -137,7 +138,7 @@ class App {
     const s = raw.trim();
     const t = this.tool;
     if (!s) { // Enter: finish the tool, or repeat the last command from idle
-      if (this.toolId === 'select') this.setTool(this.lastTool); else t.key({ key: 'Enter' });
+      if (this.toolId === 'select' && !t.hot) this.setTool(this.lastTool); else t.key({ key: 'Enter' });
       this.refreshPrompt(); return;
     }
     if (t.text?.(s)) { this.refreshPrompt(); return; }
@@ -505,6 +506,7 @@ class App {
       if (e.key === 'Escape') { e.preventDefault(); this.tool.key(e) || this.tool.cancel(); this.refreshPrompt(); return; }
       if (e.key === 'Enter') { e.preventDefault(); this.submit(''); return; }
       if (e.key === 'Delete' && this.toolId === 'select') { this.deleteSelection(); return; }
+      if (e.key === ' ' && this.tool.key?.(e)) { e.preventDefault(); this.refreshPrompt(); return; } // Space = Enter where a tool takes it (grip modes)
       if (e.key.length === 1 && !e.altKey) { this.cmd.focus(); } // start typing a command
     });
     // keep the prompt fresh after any pointer action

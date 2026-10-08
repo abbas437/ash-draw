@@ -627,6 +627,56 @@ try {
   assert.deepEqual([mad.layer, mad.color], ['A', 1], 'destination took the source layer and colour');
   assert.equal(await page.evaluate(() => window.app.toolId), 'select');
 
+  step = 'MATCHPROP Settings: untick Layer -> destination keeps its layer, takes the colour';
+  await page.evaluate(() => { const vp = window.app.vp; vp.view = { ...vp.view, cx: 240, cy: 155, zoom: 8 }; vp.render(); });
+  await typeCmd('l'); await typeCmd('200,160'); await typeCmd('240,160'); await typeCmd('');
+  const ma3 = await byP1(200, 160);
+  await page.keyboard.press('Escape');
+  await page.evaluate(async (b) => { const { setEntityProps } = await import('/src/core/edit.js'); setEntityProps(window.app.session, [b], { layer: 'B', color: 5 }); }, ma3.id);
+  await typeCmd('ma'); await clickWorld(220, 180);
+  assert.match(await page.locator('#prompt').textContent(), /S = settings/);
+  await typeCmd('s');
+  await page.locator('#dlg input[name=layer]').uncheck();
+  assert.equal(await page.locator('#dlg input[type=checkbox]:checked').count(), await page.locator('#dlg input[type=checkbox]').count() - 1);
+  await page.locator('#dlg button.primary').click();
+  await clickWorld(220, 160); await typeCmd('');
+  const mad3 = (await ents()).find((e) => e.id === ma3.id);
+  assert.deepEqual([mad3.layer, mad3.color], ['B', 1], 'layer kept (setting off), colour copied');
+
+  step = 'grip modes: end grip, Space twice -> ROTATE, 90 -> rotated about that grip';
+  await typeCmd('l'); await typeCmd('200,150'); await typeCmd('240,150'); await typeCmd('');
+  const gr = await byP1(200, 150);
+  await page.keyboard.press('Escape');
+  await page.evaluate((id) => window.app.vp.setSelection([id]), gr.id);
+  s0 = await scr(240, 150); await page.mouse.click(s0.x, s0.y);
+  assert.match(await page.locator('#prompt').textContent(), /\*\* STRETCH \*\*/);
+  await page.keyboard.press('Space');
+  assert.match(await page.locator('#prompt').textContent(), /\*\* MOVE \*\*/);
+  await page.keyboard.press('Space');
+  assert.match(await page.locator('#prompt').textContent(), /\*\* ROTATE \*\*/);
+  await typeCmd('90');
+  let grl = (await ents()).find((e) => e.id === gr.id);
+  near(grl.p1.x, 240, 'rotated p1.x'); near(grl.p1.y, 110, 'rotated p1.y'); near(grl.p2.x, 240, 'p2 (base) x'); near(grl.p2.y, 150, 'p2 (base) y');
+  assert.doesNotMatch(await page.locator('#prompt').textContent(), /\*\*/, 'grip mode ends after one rotate');
+
+  step = 'grip MOVE + Copy: two copies, Esc, one undo removes both (whole grip command = one undo step)';
+  const n0 = await count();
+  await page.evaluate((id) => window.app.vp.setSelection([id]), gr.id);
+  s0 = await scr(240, 150); await page.mouse.click(s0.x, s0.y);
+  await page.keyboard.press('Space');
+  await typeCmd('c');
+  assert.match(await page.locator('#prompt').textContent(), /\*\* MOVE \(multiple\) \*\*/);
+  await typeCmd('@10,0'); await typeCmd('@20,0');
+  assert.equal(await count(), n0 + 2, 'two copies made');
+  await page.keyboard.press('Escape');
+  assert.doesNotMatch(await page.locator('#prompt').textContent(), /\*\*/);
+  grl = (await ents()).find((e) => e.id === gr.id);
+  near(grl.p2.x, 240, 'original stays');
+  await page.keyboard.press('Control+z');
+  assert.equal(await count(), n0, 'one undo removes both copies');
+  near((await ents()).find((e) => e.id === gr.id).p1.y, 110, 'the earlier rotate is a separate step');
+  await page.keyboard.press('Escape');
+
   step = 'blocks: ATTDEF + BLOCK (convert) + INSERT with attribute values';
   await typeCmd('new');
   await page.evaluate(() => { const vp = window.app.vp; vp.view = { ...vp.view, cx: 60, cy: 30, zoom: 6 }; vp.render(); });

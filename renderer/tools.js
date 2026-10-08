@@ -16,7 +16,8 @@ import {
   offsetCommand, trimCommand, extendCommand,
 } from '../src/core/edit.js';
 import { MeasureGeomTool } from './tools-measure.js';
-import { gripsOf, applyGrip, gripEdit, matchProps } from './grips.js';
+import { gripsOf, applyGrip, gripEdit, matchProps, nextGripMode, gripMatrix, gripModeEdit, MATCH_SETTINGS, defaultMatchSettings } from './grips.js';
+import { el, modal } from './ui.js';
 import { createModifyTools } from './tools-modify.js';
 import { createDimTools } from './tools-dims.js';
 import { createBlockTools } from './tools-blocks.js';
@@ -78,10 +79,17 @@ class Selector {
   }
 }
 
+const GRIP_ASK = { STRETCH: 'specify stretch point', MOVE: 'specify move point (or @dx,dy)', ROTATE: 'specify rotation angle (click or type degrees)', SCALE: 'specify scale factor (click or type)', MIRROR: 'specify second point of mirror line' };
+/** Select + grip editing. A hot grip starts ** STRETCH **; Space / Enter cycles the modes (grips.js GRIP_MODES).
+ *  MOVE/ROTATE/SCALE/MIRROR act on the whole selection about the base point (the hot grip, or B = new base point).
+ *  C = Copy: originals stay and each pick adds copies until Enter / Esc; the whole grip command is ONE undo step. */
 class SelectTool extends Tool {
   constructor(h) { super(h); this.sel = new Selector(this.vp); this.hot = null; }
   get prompt() {
-    return this.hot ? '** STRETCH **  specify stretch point (Esc = cancel)' : 'Select objects (drag right-to-left = crossing, Shift = add/remove)';
+    if (!this.hot) return 'Select objects (drag right-to-left = crossing, Shift = add/remove)';
+    if (this.pickBase) return `** ${this.mode} **  specify base point`;
+    const done = this.copy && this.step != null ? ', Enter = done' : ', Space/Enter = next mode';
+    return `** ${this.mode}${this.copy ? ' (multiple)' : ''} **  ${GRIP_ASK[this.mode]}  [B = base point, C = copy${done}, Esc = exit]`;
   }
   /** grip under the screen point -> {id, i, base} (5 px pick box) */
   gripAt(sx, sy) {
@@ -96,7 +104,10 @@ class SelectTool extends Tool {
   down(p, ev) {
     if (this.hot) return;
     const g = this.gripAt(ev.sx, ev.sy);
-    if (g) { this.hot = g; this.fresh = true; this.vp.gripHot = g; this.vp.lastPoint = g.base; this.h.refreshPrompt(); return; }
+    if (g) {
+      Object.assign(this, { hot: g, fresh: true, mode: 'STRETCH', base: g.base, copy: false, step: null, pickBase: false });
+      this.vp.gripHot = g; this.vp.lastPoint = g.base; this.h.refreshPrompt(); return;
+    }
     this.sel.down(p, ev);
   }
   move(p, ev) {
@@ -105,37 +116,79 @@ class SelectTool extends Tool {
     if (!ev.dragging) this.setHover(this.gripAt(ev.sx, ev.sy));
   }
   up(p, ev) {
-    if (this.hot) { if (this.fresh && !ev.dragged) { this.fresh = false; return; } this.place(p); return; } // click-click or drag-release
+    if (this.hot) { if (this.fresh && !ev.dragged) { this.fresh = false; return; } this.fresh = false; this.place(p); return; } // click-click or drag-release
     this.sel.up(p, ev);
   }
   click(p) { if (this.hot) this.place(p); } // typed coordinate
   place(p) {
+    if (this.pickBase) { this.base = p; this.vp.lastPoint = p; this.pickBase = false; this.h.refreshPrompt(); return; }
+    if (this.mode !== 'STRETCH') { this.apply({ p }); return; }
     const g = this.hot;
     this.endGrip();
     if (!gripEdit(this.h.session, g.id, g.i, p)) this.h.toast('That grip edit cannot be applied.');
   }
-  endGrip() { this.hot = null; this.fresh = false; this.vp.gripHot = null; this.vp.lastPoint = null; this.h.refreshPrompt(); this.vp.requestRender(); }
+  apply(arg) {
+    const ids = [...this.vp.selection];
+    const r = gripModeEdit(this.h.session, ids, this.mode, this.base, arg, { copy: this.copy, join: this.step });
+    if (!r) { this.h.toast(`${this.mode}: that point gives no transformation.`); return; }
+    this.report(r, this.mode);
+    if (this.copy) { this.step = r.step; this.vp.lastPoint = this.base; this.h.refreshPrompt(); this.vp.requestRender(); return; }
+    this.endGrip();
+  }
+  text(s) {
+    if (!this.hot) return false;
+    const low = s.trim().toLowerCase(), v = num(s);
+    if (low === 'c' || low === 'copy') { this.copy = !this.copy; this.h.refreshPrompt(); return true; }
+    if (low === 'b' || low === 'base') { this.pickBase = true; this.h.refreshPrompt(); return true; }
+    if (low === 'x' || low === 'exit') { this.endGrip(); return true; }
+    if (v !== null && !this.pickBase && (this.mode === 'ROTATE' || this.mode === 'SCALE')) { this.apply({ value: v }); return true; }
+    return false;
+  }
+  endGrip() { this.hot = null; this.fresh = false; this.step = null; this.pickBase = false; this.vp.gripHot = null; this.vp.lastPoint = null; this.h.refreshPrompt(); this.vp.requestRender(); }
   key(e) {
     if (e.key === 'Escape') { if (this.hot) this.endGrip(); else this.cancel(); return true; }
+    if (this.hot && (e.key === 'Enter' || e.key === ' ')) {
+      if (this.copy && this.step != null) this.endGrip();
+      else { this.mode = nextGripMode(this.mode); this.pickBase = false; this.h.refreshPrompt(); this.vp.requestRender(); }
+      return true;
+    }
     return false;
   }
   cancel() { if (this.hot) this.endGrip(); this.vp.setSelection([]); }
   deactivate() { super.deactivate(); this.sel.start = null; this.hot = null; this.vp.gripHot = null; this.vp.gripHover = null; }
   draw(c) {
-    if (!this.hot) return;
-    const e = this.vp.doc.entities.find((x) => x.id === this.hot.id);
-    const ne = e && applyGrip(e, this.hot.i, this.vp.cursor);
-    c.strokeStyle = this.vp.inkColor; c.setLineDash([4, 3]);
-    if (ne) for (const pl of tessellate(ne, this.vp.doc, 0.5 / this.vp.view.zoom)) this.poly(c, pl);
-    this.line(c, this.hot.base, this.vp.cursor);
+    if (!this.hot || this.pickBase) return;
+    const q = this.vp.cursor;
+    if (this.mode === 'STRETCH') {
+      const e = this.vp.doc.entities.find((x) => x.id === this.hot.id);
+      const ne = e && applyGrip(e, this.hot.i, q);
+      c.strokeStyle = this.vp.inkColor; c.setLineDash([4, 3]);
+      if (ne) for (const pl of tessellate(ne, this.vp.doc, 0.5 / this.vp.view.zoom)) this.poly(c, pl);
+    } else {
+      const m = gripMatrix(this.mode, this.base, { p: q });
+      if (m) ghost(this.vp, [...this.vp.selection], m)(c);
+    }
+    c.strokeStyle = this.vp.inkColor; this.line(c, this.base, q);
   }
 }
 
 /** MATCHPROP: pick a source object, then destination objects (click or window); Enter/Esc ends */
 class MatchPropTool extends Tool {
   constructor(h) { super(h); this.sel = new Selector(this.vp); }
-  activate() { super.activate(); this.src = null; this.vp.setSelection([]); }
-  get prompt() { return this.src ? 'MATCHPROP  select destination object(s) (click or window, Enter = done)' : 'MATCHPROP  select source object'; }
+  activate() { super.activate(); this.src = null; this.vp.setSelection([]); this.settings ??= defaultMatchSettings(); } // remembered for the session
+  get prompt() { return this.src ? 'MATCHPROP  select destination object(s) (click or window, S = settings, Enter = done)' : 'MATCHPROP  select source object'; }
+  text(s) {
+    if (!this.src || !['s', 'settings'].includes(s.trim().toLowerCase())) return false;
+    this.editSettings();
+    return true;
+  }
+  async editSettings() {
+    const boxes = MATCH_SETTINGS.map(([k, label]) => el('label', {}, el('input', { type: 'checkbox', name: k, checked: this.settings[k] }), ` ${label}`));
+    const ok = await modal('Property Settings', el('div', { class: 'match-settings' }, boxes),
+      [{ label: 'OK', value: true, primary: true }, { label: 'Cancel', value: false }]);
+    if (ok) for (const b of boxes) { const i = b.querySelector('input'); this.settings[i.name] = i.checked; }
+    this.vp.canvas.focus();
+  }
   down(p, ev) { if (this.src) this.sel.down(p, ev); }
   move(p, ev) { if (this.src) this.sel.move(p, ev); }
   up(p, ev) {
@@ -150,7 +203,7 @@ class MatchPropTool extends Tool {
     if (!ids.length) return;
     const doc = this.vp.doc, src = this.src;
     this.h.session.transact('Match properties', (tx) => {
-      for (const id of ids) { const e = doc.entities.find((x) => x.id === id); if (e) tx.replace(matchProps(src, e)); }
+      for (const id of ids) { const e = doc.entities.find((x) => x.id === id); if (e) tx.replace(matchProps(src, e, this.settings)); }
     });
   }
   key(e) { if (e.key === 'Escape' || e.key === 'Enter') { this.vp.setSelection([]); this.h.setTool('select'); return true; } return false; }
