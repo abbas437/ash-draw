@@ -205,7 +205,7 @@ try {
   }
   {
     await page.locator('#menubar .menu > button', { hasText: 'File' }).click();
-    await page.locator('#menubar .drop button', { hasText: 'Export PDF…' }).click();
+    await page.locator('#menubar .drop button', { hasText: 'Plot to PDF…' }).click();
     const dl = page.waitForEvent('download');
     await page.locator('#dlg button.primary').click();
     const d = await dl;

@@ -79,7 +79,7 @@ paths the user chose in a dialog or passed on the command line during this sessi
 | `writeFile(path, bytes)` | Write bytes to a granted path. |
 | `getLaunchFiles()` | Files passed on the command line / "Open with" at start-up. |
 | `onOpenFile(cb)` | Subscribe to files opened later (second instance); returns an unsubscribe function. |
-| `print()` | Print the current view. |
+| `print(pdfBytes)` | Print a PDF (a plot) through the system print dialog; the app window itself is never printed. |
 | `setTitle(title)` | Set the window title. |
 | `showItem(path)` | Show a granted file in Explorer. |
 | `settingsGet(key)` / `settingsSet(key, value)` | Read / write a persisted setting. |
