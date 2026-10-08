@@ -116,7 +116,8 @@ export function popMenu(ev, items) {
   const m = el('div', { class: 'popmenu', style: `left:${ev.clientX}px;top:${ev.clientY}px` },
     items.map(([label, fn]) => el('button', { onclick: () => { m.remove(); fn(); } }, label)));
   document.body.append(m);
-  setTimeout(() => document.addEventListener('pointerdown', () => m.remove(), { once: true }), 0);
+  const away = (e) => { if (m.contains(e.target)) return; m.remove(); document.removeEventListener('pointerdown', away); };
+  setTimeout(() => document.addEventListener('pointerdown', away), 0);
   return m;
 }
 
