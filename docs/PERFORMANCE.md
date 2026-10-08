@@ -33,6 +33,22 @@ Observations from the code path (not yet profiled per stage):
   bbox from all items, so a one-entity edit costs ~160 ms on the full case.
 - Parse (4.5 s) and scene build (2.8 s) dominate opening; the first frame is another 1.4 s.
 
-## After
+## After (branch perf3, 2026-10-08, same container and benchmark, one full run)
 
-Not yet measured - see the optimisation plan in the branch hand-off.
+Changes: grid-culled single pass over visible items (perf2); level of detail at fit (items under 1 px drawn as
+1-px dots, one fill per colour; pattern hatches with line spacing under 2 px drawn as a light tint, one fill per
+colour without clipping; text under 2 px as bars, one stroke per colour); cached per-style batch keys and colours;
+incremental `updateScene` (validated id -> index map, in-place replacement, scene bbox grown on insert and
+recomputed lazily only when an edge item is removed).
+
+| case | parse | scene build | first frame | pan fit avg (max) | zoom fit | pan 10x avg (max) | zoom 10x | edit 1 entity |
+|------|------:|------------:|------------:|------------------:|---------:|------------------:|---------:|--------------:|
+| full baseline | 4499 ms | 2761 ms | 1386 ms | 947 ms (1678) | 384 ms | 126 ms (235) | 134 ms | 164 ms |
+| full after    | 1924 ms | 2003 ms | 861 ms  | 618 ms (1251) | 324 ms | 28 ms (56)   | 35 ms  | 0.7 ms |
+| text baseline | -       | 189 ms  | 182 ms  | 54 ms (135)   | 25 ms  | 10 ms (31)   | 9 ms   | 10 ms |
+| text after    | -       | 193 ms  | 91 ms   | 38 ms (67)    | 14 ms  | 4.6 ms (6.7) | 5.1 ms | 0.4 ms |
+
+Parse and scene build were not changed on this branch; their difference is run-to-run variation of the container.
+The fit view is still above the 300 ms target: it has not been profiled per stage after these changes; the remaining
+per-frame work at fit is the line strokes of items 1-4 px long (most of the 200k LINEs and 20k ARCs) and the
+rasterisation of the batched paths.

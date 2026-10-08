@@ -282,7 +282,26 @@ export function buildScene(doc) {
   const b = new Builder(doc);
   for (const e of doc.entities) b.emit(e, [1, 0, 0, 1, 0, 0], null, e.id, 0);
   b.items.forEach((it, i) => { it.pos = i; });
-  return { items: b.items, byId: b.byId, bbox: b.bbox, doc, version: 0, grid: null };
+  const entIndex = new Map();
+  doc.entities.forEach((e, i) => entIndex.set(e.id, i));
+  return {
+    items: b.items, byId: b.byId, doc, version: 0, grid: null,
+    entIndex, _entLen: doc.entities.length, _bbox: b.bbox, _bboxDirty: false,
+    // the scene bbox: grown on insert by updateScene, recomputed lazily only after an edge item was removed
+    get bbox() { if (this._bboxDirty) { this._bbox = itemsBox(this.items); this._bboxDirty = false; } return this._bbox; },
+    set bbox(v) { this._bbox = v; this._bboxDirty = false; },
+  };
+}
+
+function itemsBox(items) {
+  let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  for (let i = 0; i < items.length; i++) {
+    const b = items[i].bbox;
+    if (!b) continue;
+    if (b.minx < minx) minx = b.minx; if (b.miny < miny) miny = b.miny;
+    if (b.maxx > maxx) maxx = b.maxx; if (b.maxy > maxy) maxy = b.maxy;
+  }
+  return minx <= maxx ? { minx, miny, maxx, maxy } : null;
 }
 
 /** the scene's item grid, built on first use (drawing) and kept up to date by updateScene */
@@ -312,19 +331,64 @@ export function visibleItems(scene, minx, miny, maxx, maxy) {
   return out;
 }
 
-/** rebuild just the given entity ids (after edits); unknown ids are removed */
+/** the document entity with this id, through the scene's id -> index map. The map is only a hint: edit.js replaces
+ *  doc.entities[i] and model.js reassigns doc.entities, so every hit is checked against doc.entities[index]; a miss
+ *  first indexes entities appended since the last look, then (once per call) rebuilds the map. */
+function entityLookup(scene) {
+  let rebuilt = false;
+  const find = (ents, id) => { const i = scene.entIndex.get(id); return i !== undefined && ents[i]?.id === id ? ents[i] : null; };
+  return (id) => {
+    const ents = scene.doc.entities;
+    let e = find(ents, id);
+    if (e) return e;
+    if (ents.length > scene._entLen) { for (let i = scene._entLen; i < ents.length; i++) scene.entIndex.set(ents[i].id, i); }
+    scene._entLen = ents.length;
+    if ((e = find(ents, id)) || rebuilt) return e;
+    rebuilt = true;
+    scene.entIndex.clear();
+    for (let i = 0; i < ents.length; i++) scene.entIndex.set(ents[i].id, i);
+    return find(ents, id);
+  };
+}
+
+/** rebuild just the given entity ids (after edits); unknown ids are removed. Work is O(items of those ids): an entity
+ *  that yields as many items as before is replaced in place (keeping its draw order); otherwise its old items are
+ *  dropped (one compaction pass from the first of them) and the new ones appended. */
 export function updateScene(scene, ids) {
-  const set = new Set(ids);
-  const doc = scene.doc;
-  const grid = scene.grid;
-  for (const id of set) { if (grid) for (const it of scene.byId.get(id) ?? []) grid.remove(it); scene.byId.delete(id); }
-  scene.items = scene.items.filter((it) => !set.has(it.id));
-  const b = new Builder(doc);
-  for (const id of set) { const e = doc.entities.find((x) => x.id === id); if (e) b.emit(e, [1, 0, 0, 1, 0, 0], null, id, 0); }
-  for (const it of b.items) { scene.items.push(it); let l = scene.byId.get(it.id); if (!l) scene.byId.set(it.id, (l = [])); l.push(it); if (grid) grid.insert(it); }
-  for (let i = 0; i < scene.items.length; i++) scene.items[i].pos = i;
-  scene.bbox = null;
-  for (const it of scene.items) if (it.bbox) scene.bbox = unionBox(scene.bbox, it.bbox);
+  const items = scene.items, grid = scene.grid, look = entityLookup(scene);
+  const b = new Builder(scene.doc);
+  const added = [];
+  let firstDead = -1;
+  for (const id of new Set(ids)) {
+    const old = scene.byId.get(id) ?? [];
+    const e = look(id);
+    const start = b.items.length;
+    if (e) b.emit(e, [1, 0, 0, 1, 0, 0], null, id, 0);
+    const nu = b.items.slice(start);
+    const sb = scene._bboxDirty ? null : scene._bbox;
+    for (const it of old) {
+      if (grid) grid.remove(it);
+      const ib = it.bbox;
+      if (sb && ib && (ib.minx <= sb.minx || ib.miny <= sb.miny || ib.maxx >= sb.maxx || ib.maxy >= sb.maxy)) scene._bboxDirty = true;
+    }
+    if (nu.length === old.length) {
+      for (let k = 0; k < nu.length; k++) { const p = old[k].pos; nu[k].pos = p; items[p] = nu[k]; }
+    } else {
+      for (const it of old) { it._dead = true; if (firstDead < 0 || it.pos < firstDead) firstDead = it.pos; }
+      for (const it of nu) added.push(it);
+    }
+    if (nu.length) scene.byId.set(id, nu); else scene.byId.delete(id);
+    for (const it of nu) {
+      if (grid) grid.insert(it);
+      if (!scene._bboxDirty && it.bbox) scene._bbox = unionBox(scene._bbox, it.bbox);
+    }
+  }
+  if (firstDead >= 0) {
+    let w = firstDead;
+    for (let r = firstDead; r < items.length; r++) { const it = items[r]; if (it._dead) continue; if (w !== r) items[w] = it; it.pos = w++; }
+    items.length = w;
+  }
+  for (const it of added) { it.pos = items.length; items.push(it); }
   scene.version++;
   return scene;
 }
@@ -365,7 +429,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
   const sy = (y) => H / 2 - (y - view.cy) * z;
   const minx = view.cx - W / 2 / z, maxx = view.cx + W / 2 / z, miny = view.cy - H / 2 / z, maxy = view.cy + H / 2 / z;
   const hi = opts.highlight instanceof Set ? opts.highlight : null;
-  const colorOf = (st) => (st.color.auto ? (dark ? '#ffffff' : '#000000') : rgbCss(st.color.rgb));
+  const colorOf = (st) => (st.color.auto ? (dark ? '#ffffff' : '#000000') : (st._css ??= rgbCss(st.color.rgb)));
   const lwPx = (st) => {
     if (!opts.showLineweight) return 1;
     const mm = st.lw >= 0 ? st.lw : 0.25;
@@ -393,23 +457,51 @@ export function drawScene(ctx, scene, view, opts = {}) {
     }
   };
 
-  // one pass over the visible items buckets them for the drawing phases (grid-culled, scene order kept)
-  const fills = [], marks = [], texts = [], batches = new Map();
+  // one pass over the visible items buckets them for the drawing phases (grid-culled, scene order kept).
+  // Level of detail: an item under 1 px on screen becomes a 1-px dot (one fill per colour); a pattern hatch whose
+  // line spacing is under 2 px (or that is tiny) becomes a light tint (one fill per colour, no clip); text under
+  // 2 px high becomes a bar (one stroke per colour).
+  const fills = [], marks = [], texts = [], batches = new Map(), dots = new Map(), tints = new Map(), bars = new Map();
+  const lwSig = opts.showLineweight ? (opts.pixelsPerMm ?? 3.78) : 0;
+  const bucket = (map, key) => { let l = map.get(key); if (!l) map.set(key, (l = [])); return l; };
   for (const it of visibleItems(scene, minx, miny, maxx, maxy)) {
     const k = it.kind;
+    if (it.arrow || k === 'point') marks.push(it);
+    if (k === 'point') continue;
+    const b = it.bbox;
+    const tiny = b && (b.maxx - b.minx) * z < 1 && (b.maxy - b.miny) * z < 1;
+    if (k === 'hatch' && !it.solid && it.lines) {
+      it._sp ??= patternSpacing(it.lines);
+      if (tiny || it._sp * z < 2) { bucket(tints, colorOf(it.style)).push(it); continue; }
+    }
+    if (tiny) { bucket(dots, colorOf(it.style)).push(it); continue; }
     if (k === 'hatch' || k === 'fill') fills.push(it);
     else if (k === 'path' || k === 'hatchOutline') {
       const st = it.style;
-      const key = `${st.color.auto ? 'a' : st.color.rgb.join(',')}|${lwPx(st)}|${st.lt}|${st.lts}`;
-      let b = batches.get(key);
-      if (!b) batches.set(key, (b = { st, items: [] }));
-      b.items.push(it);
-    } else if (k === 'text') texts.push(it);
-    if (it.arrow || k === 'point') marks.push(it);
+      if (st._ks !== lwSig) { st._ks = lwSig; st._key = `${st.color.auto ? 'a' : st.color.rgb.join(',')}|${lwPx(st)}|${st.lt}|${st.lts}`; }
+      let bt = batches.get(st._key);
+      if (!bt) batches.set(st._key, (bt = { st, items: [] }));
+      bt.items.push(it);
+    } else if (k === 'text') {
+      if (!it.mt && it.h * z < 2) bucket(bars, colorOf(it.style)).push(it);
+      else texts.push(it);
+    }
   }
 
-  // 1. hatches and solid fills
+  // 1. hatches and solid fills; LOD tints first (one fill per colour), then the per-item fills and patterns
   const fillAlphaPattern = opts.patternFallbackAlpha ?? 0.25;
+  if (tints.size) {
+    ctx.save(); ctx.globalAlpha = fillAlphaPattern;
+    for (const [col, list] of tints) {
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      // single-loop boundaries share one non-zero path, all wound the same way so overlaps do not cancel
+      for (const it of list) if (loopCount(it) === 1) traceLoopCcw(ctx, it, sx, sy);
+      ctx.fill();
+      for (const it of list) if (loopCount(it) !== 1) { ctx.beginPath(); tracePath(it.ops); ctx.fill('evenodd'); }
+    }
+    ctx.restore();
+  }
   for (const it of fills) {
     const col = colorOf(it.style);
     if (it.kind === 'fill' || it.solid) {
@@ -419,6 +511,26 @@ export function drawScene(ctx, scene, view, opts = {}) {
       drawPatternHatch(ctx, it, view, col, tracePath, sx, sy, fillAlphaPattern);
     } else {
       ctx.beginPath(); tracePath(it.ops); ctx.save(); ctx.globalAlpha = fillAlphaPattern; ctx.fillStyle = col; ctx.fill('evenodd'); ctx.restore();
+    }
+  }
+
+  // LOD dots: one 1-px rect per covered pixel and colour, one fill per colour
+  if (dots.size) {
+    const Wi = Math.ceil(W), Hi = Math.ceil(H), stamp = dotStamp(Wi * Hi);
+    let ci = 0;
+    for (const [col, list] of dots) {
+      const mark = dotFrame * 256 + (ci++ & 255);
+      ctx.beginPath();
+      for (const it of list) {
+        const b = it.bbox;
+        const x = Math.floor(sx((b.minx + b.maxx) / 2)), y = Math.floor(sy((b.miny + b.maxy) / 2));
+        if (x < 0 || y < 0 || x >= Wi || y >= Hi) continue;
+        const i = y * Wi + x;
+        if (stamp[i] === mark) continue;
+        stamp[i] = mark;
+        ctx.rect(x, y, 1, 1);
+      }
+      ctx.fillStyle = col; ctx.fill();
     }
   }
 
@@ -452,7 +564,20 @@ export function drawScene(ctx, scene, view, opts = {}) {
     }
   }
 
-  // 3. text
+  // 3. text; LOD bars (text under 2 px) as one stroke per colour
+  if (bars.size) {
+    ctx.save(); ctx.globalAlpha = 0.5; ctx.lineWidth = 1;
+    for (const [col, list] of bars) {
+      ctx.beginPath();
+      for (const it of list) {
+        const x = sx(it.p.x), y = sy(it.p.y);
+        const w = (it._maxLen ??= Math.max(...it.lines.map((l) => l.length))) * it.h * z * 0.6 * it.wf;
+        ctx.moveTo(x, y); ctx.lineTo(x + w * Math.cos(it.rot), y - w * Math.sin(it.rot));
+      }
+      ctx.strokeStyle = col; ctx.stroke();
+    }
+    ctx.restore();
+  }
   for (const it of texts) {
     if (it.mt) drawMText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style), dark);
     else drawText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style));
@@ -480,17 +605,44 @@ export function drawScene(ctx, scene, view, opts = {}) {
   }
 }
 
+// LOD helpers: shared 1-px dot de-duplication buffer (stamped per frame), hatch pattern spacing, CCW loop tracing
+let dotBuf = null, dotFrame = 0;
+function dotStamp(n) {
+  if (!dotBuf || dotBuf.length < n) { dotBuf = new Uint32Array(n); dotFrame = 0; }
+  if (++dotFrame >= 0xffffff) { dotBuf.fill(0); dotFrame = 1; }
+  return dotBuf;
+}
+/** smallest perpendicular spacing of a hatch's pattern line families (world units) */
+function patternSpacing(lines) {
+  let m = Infinity;
+  for (const L of lines) {
+    const a = L.angle * DEG;
+    m = Math.min(m, Math.abs(-L.offset.x * Math.sin(a) + L.offset.y * Math.cos(a)));
+  }
+  return m;
+}
+/** number of boundary loops of a hatch item (its ops are M/L/Z only) */
+function loopCount(it) {
+  if (it._loops === undefined) { let n = 0; for (let i = 0; i < it.ops.length; i += it.ops[i] === OP_Z ? 1 : 3) if (it.ops[i] === OP_M) n++; it._loops = n; }
+  return it._loops;
+}
+/** trace a single-loop hatch boundary counter-clockwise (world), whichever way it was stored */
+function traceLoopCcw(ctx, it, sx, sy) {
+  const o = it.ops;
+  let n = 0; while (n < o.length && o[n] !== OP_Z) n += 3; // n = end of the point ops
+  if (it._ccw === undefined) {
+    let a = 0;
+    for (let i = 0; i < n; i += 3) { const j = i + 3 < n ? i + 3 : 0; a += o[i + 1] * o[j + 2] - o[j + 1] * o[i + 2]; }
+    it._ccw = a >= 0;
+  }
+  if (it._ccw) { ctx.moveTo(sx(o[1]), sy(o[2])); for (let i = 3; i < n; i += 3) ctx.lineTo(sx(o[i + 1]), sy(o[i + 2])); }
+  else { ctx.moveTo(sx(o[n - 2]), sy(o[n - 1])); for (let i = n - 6; i >= 0; i -= 3) ctx.lineTo(sx(o[i + 1]), sy(o[i + 2])); }
+  ctx.closePath();
+}
+
 function drawText(ctx, it, x, y, z, color) {
   const px = it.h * z;
   const lineH = px * (it.mtext ? 1.25 : 1);
-  if (px < 2) {
-    // too small to read: a thin bar the width of the text keeps the layout visible
-    const w = Math.max(...it.lines.map((l) => l.length)) * px * 0.6 * it.wf;
-    ctx.strokeStyle = color; ctx.globalAlpha = 0.5; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + w * Math.cos(it.rot), y - w * Math.sin(it.rot)); ctx.stroke();
-    ctx.globalAlpha = 1;
-    return;
-  }
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(-it.rot);
