@@ -178,3 +178,4 @@ dialog label { display:block; margin:6px 0 2px; color:var(--dim); }
 .mt-toolbar input[type="number"] { width:56px; }
 .mt-edit .mt-raw { font-size:70%; color:#6b7280; background:#e5e7eb; }
 .mt-edit .mt-nbsp { background:rgba(59,130,246,.18); }
+.match-settings { display:grid; gap:4px; }
