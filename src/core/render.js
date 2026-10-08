@@ -838,7 +838,7 @@ export function drawLayout(ctx, paperScene, view, layout, paperRectsOf, modelSce
     // model view centred on the viewport, D x D pixels so culling covers the rotated window
     ctx.translate(cx, cy); ctx.rotate(-(v.twist || 0)); ctx.translate(-D / 2, -D / 2);
     drawScene(ctx, modelScene(v.frozen ?? []), { cx: v.viewCenter.x, cy: v.viewCenter.y, zoom: k, width: D, height: D },
-      { ...opts, background: '#ffffff', noClear: true, baseTransform: ctx.getTransform(), highlight: null });
+      { ...opts, background: '#ffffff', noClear: true, baseTransform: ctx.getTransform(), highlight: v === opts.activeVp ? opts.modelHighlight : null });
     ctx.restore();
   }
   drawScene(ctx, paperScene, view, { ...opts, background: '#ffffff', noClear: true });
@@ -846,6 +846,6 @@ export function drawLayout(ctx, paperScene, view, layout, paperRectsOf, modelSce
   ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
   for (const v of vports) {
     const sel = opts.highlight instanceof Set && opts.highlight.has(v.id);
-    ctx.strokeStyle = sel ? (opts.highlightColor ?? '#0a6fd1') : '#333'; ctx.lineWidth = sel ? 2 : 1; ctx.strokeRect(sx(v.c.x - v.width / 2), sy(v.c.y + v.height / 2), v.width * z, v.height * z);
+    ctx.strokeStyle = sel ? (opts.highlightColor ?? '#0a6fd1') : '#333'; ctx.lineWidth = v === opts.activeVp ? 3 : sel ? 2 : 1; ctx.strokeRect(sx(v.c.x - v.width / 2), sy(v.c.y + v.height / 2), v.width * z, v.height * z);
   }
 }

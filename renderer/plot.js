@@ -44,6 +44,7 @@ function viewRect(vp) { return rectOf(vp.toWorld(0, vp.view.height), vp.toWorld(
 
 /** mode 'print' (Print button, system print dialog) or 'pdf' (Save button, Plot to PDF). Options persist per session. */
 export async function plotDialog(app, mode) {
+  if (app.vp.layout) { await plotLayoutDialog(app, mode); return; }
   const s = (app.plotSettings ??= { pageSize: 'A3', orientation: 'auto', monochrome: false, lineweights: true, what: 'extents', window: null, fit: true, n: 100, centre: true });
   for (;;) {
     const size = el('select', { name: 'pageSize' }, options(['fit|Fit to drawing', 'A4|A4', 'A3|A3', 'A2|A2', 'A1|A1', 'A0|A0', 'Letter|Letter']));
@@ -81,6 +82,31 @@ export async function plotDialog(app, mode) {
       pageSize: s.pageSize, orientation: s.orientation, monochrome: s.monochrome, lineweights: s.lineweights,
       region, centre: s.centre, scale: s.fit ? null : plotScale(s.n, 1 / unitsPerMm(app.fileDoc)),
     });
+    if (mode === 'pdf') await app.saveBytes(out.bytes, 'pdf', 'PDF document');
+    else {
+      const res = await window.api.print(out.bytes);
+      if (res && !res.ok && res.reason && !/cancel/i.test(res.reason)) await message('Print failed', res.reason);
+    }
+    if (out.warnings.length) await message(mode === 'pdf' ? 'PDF exported with warnings' : 'Printed with warnings', out.warnings.join('\n'));
+  } catch (err) { await message(mode === 'pdf' ? 'Export failed' : 'Print failed', err.message || String(err)); }
+}
+
+/** a layout tab plots the layout at 1:1 on its own paper (page = paper size, 1 paper unit = 1 mm or 1 inch) */
+async function plotLayoutDialog(app, mode) {
+  const s = (app.plotSettings ??= { pageSize: 'A3', orientation: 'auto', monochrome: false, lineweights: true, what: 'extents', window: null, fit: true, n: 100, centre: true });
+  const layout = app.vp.layout, p = layout.plot, swap = p.rotation === 1 || p.rotation === 3;
+  const what = el('select', { name: 'what' }, options(['layout|Layout']));
+  const mono = el('input', { type: 'checkbox', name: 'monochrome', checked: s.monochrome }), lw = el('input', { type: 'checkbox', name: 'lineweights', checked: s.lineweights });
+  const paper = `${p.paperName || 'Paper'}: ${fmt(swap ? p.paperH : p.paperW)} × ${fmt(swap ? p.paperW : p.paperH)} mm, scale 1:1 (${p.units === 0 ? 'inches' : 'millimetres'})`;
+  const r = await modal(mode === 'print' ? `Print ${layout.name}` : `Plot ${layout.name} to PDF`, [
+    el('label', {}, 'What to print'), what, el('p', { class: 'plot-paper', text: paper }),
+    el('label', {}, mono, ' Black and white'), el('label', {}, lw, ' Use lineweights'),
+    el('p', { text: 'The layout is plotted as vector graphics on its own paper size; viewports are clipped to their boundaries.' })],
+  [{ label: mode === 'print' ? 'Print' : 'Save', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
+  if (r == null) return;
+  Object.assign(s, { monochrome: mono.checked, lineweights: lw.checked });
+  try {
+    const out = await exportPdfBytes(app.fileDoc, null, { layout, modelScene: app.vp.modelScene, monochrome: s.monochrome, lineweights: s.lineweights });
     if (mode === 'pdf') await app.saveBytes(out.bytes, 'pdf', 'PDF document');
     else {
       const res = await window.api.print(out.bytes);

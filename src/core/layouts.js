@@ -90,9 +90,9 @@ export function newLayout(name, tab) {
 /** paper sheet and printable area in layout coordinates (printable lower-left at 0,0, the AutoCAD convention) */
 export function paperRects(layout) {
   const p = layout.plot;
-  const swap = p.rotation === 1 || p.rotation === 3;
-  const w = (swap ? p.paperH : p.paperW) || 420, h = (swap ? p.paperW : p.paperH) || 297;
-  const m = p.margins;
+  const swap = p.rotation === 1 || p.rotation === 3, u = p.units === 0 ? 25.4 : 1; // paper size and margins are mm; inch layouts draw in inches
+  const w = ((swap ? p.paperH : p.paperW) || 420) / u, h = ((swap ? p.paperW : p.paperH) || 297) / u;
+  const m = { l: p.margins.l / u, b: p.margins.b / u, r: p.margins.r / u, t: p.margins.t / u };
   const sheet = { minx: -m.l, miny: -m.b, maxx: w - m.l, maxy: h - m.b };
   const printable = { minx: 0, miny: 0, maxx: w - m.l - m.r, maxy: h - m.b - m.t };
   return { sheet, printable };
@@ -109,4 +109,42 @@ export function makeViewport(a, b, fit, vpId = 2) {
     viewCenter: fit ? { x: (fit.minx + fit.maxx) / 2, y: (fit.miny + fit.maxy) / 2 } : { x: 0, y: 0 }, target: { x: 0, y: 0 },
     viewHeight, twist: 0, frozen: [], flags: 32768, on: true, locked: false, clipHandle: null,
   };
+}
+
+/** paper point -> model point through a viewport (centre c on paper shows viewCenter; twist turns the model CCW) */
+export function paperToModel(vp, p) {
+  const s = viewportScale(vp), t = vp.twist || 0, dx = (p.x - vp.c.x) * s, dy = (p.y - vp.c.y) * s;
+  return { x: vp.viewCenter.x + dx * Math.cos(t) + dy * Math.sin(t), y: vp.viewCenter.y - dx * Math.sin(t) + dy * Math.cos(t) };
+}
+
+/** the model-space view {cx, cy, zoom, width, height} that the paper view `pv` shows through the (untwisted) viewport */
+export function modelViewThrough(pv, vp) {
+  const s = viewportScale(vp), c = paperToModel(vp, { x: pv.cx, y: pv.cy });
+  return { ...pv, cx: c.x, cy: c.y, zoom: pv.zoom / s };
+}
+
+/** viewport view centre / height that make the paper view `pv` show the model view `mv` (inverse of modelViewThrough) */
+export function viewportFromModelView(pv, vp, mv) {
+  const s = pv.zoom / mv.zoom;
+  return { viewHeight: s * vp.height, viewCenter: { x: mv.cx + (vp.c.x - pv.cx) * s, y: mv.cy + (vp.c.y - pv.cy) * s } };
+}
+
+/** standard plot scales "1:N" offered for viewports */
+export const STANDARD_SCALES = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000];
+
+/** the topmost (last drawn) usable viewport containing paper point p, or null */
+export function viewportAt(entities, p) {
+  for (let i = entities.length - 1; i >= 0; i--) {
+    const v = entities[i];
+    if (v.type !== 'VIEWPORT' || v.vpId === 1 || v.on === false || !(v.width > 0 && v.height > 0)) continue;
+    if (Math.abs(p.x - v.c.x) <= v.width / 2 && Math.abs(p.y - v.c.y) <= v.height / 2) return v;
+  }
+  return null;
+}
+
+/** PDF page for plotting a layout at 1:1: page size in points = the paper, k = points per paper unit (mm or inch),
+ *  sheet = the paper in layout coordinates (page = (layout - sheet.min) * k) */
+export function layoutPage(layout) {
+  const { sheet } = paperRects(layout), k = layout.plot.units === 0 ? 72 : 72 / 25.4;
+  return { pw: (sheet.maxx - sheet.minx) * k, ph: (sheet.maxy - sheet.miny) * k, k, sheet };
 }

@@ -12,7 +12,7 @@ import { blockDoubleClick } from './tools-blocks.js';
 import { initSession } from './session.js';
 import { FindPanel } from './find.js';
 import { plotDialog } from './plot.js';
-import { initLayouts, restoreSpace, renderSpaceBar } from './layouts-ui.js';
+import { initLayouts, restoreSpace, renderSpaceBar, layoutDoubleClick, exitMspace, renderVpScale } from './layouts-ui.js';
 import { ComparePanel, runCompare } from './compare.js';
 import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
 import { loadDrawingXrefs, xrefPanel } from './xref-panel.js';
@@ -88,7 +88,7 @@ class App {
     this.vp.on('selection', () => { this.refreshPanels(true); this.refreshStatus(); });
     this.vp.on('change', () => { this.refreshPanels(); this.refreshStatus(); this.updateTitle(); this.refreshDimStyles(); });
     this.vp.on('cursor', (p) => this.showCursor(p));
-    this.vp.canvas.addEventListener('dblclick', (e) => { if (this.toolId === 'select') blockDoubleClick(this, e); });
+    this.vp.canvas.addEventListener('dblclick', (e) => { if (this.toolId === 'select' && !layoutDoubleClick(this, e)) blockDoubleClick(this, e); });
     window.addEventListener('beforeunload', (e) => { if (!this.closeConfirmed && this.tabs.some((t) => t.session.dirty)) { e.preventDefault(); e.returnValue = ''; } });
     api.onCloseRequest?.(() => this.closeAll());
     this.newDrawing();
@@ -144,7 +144,7 @@ class App {
     if (t.text?.(s)) { this.refreshPrompt(); return; }
     const low = s.toLowerCase();
     if (TOOL_ALIASES[low]) { this.setTool(TOOL_ALIASES[low]); return; }
-    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => this.vp.zoomExtents(), z: () => this.vp.zoomExtents(), 'zoom': () => this.vp.zoomExtents(), all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), find: () => this.find.open(), compare: () => this.compare(), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), ...this.layerCommands() };
+    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => this.vp.zoomExtents(), z: () => this.vp.zoomExtents(), 'zoom': () => this.vp.zoomExtents(), all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), find: () => this.find.open(), compare: () => this.compare(), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), ...this.layerCommands(), ...this.layoutCommands };
     if (sys[low]) { sys[low](); return; }
     const last = this.vp.lastPoint ?? { x: 0, y: 0 };
     const dir = this.vp.lastPoint ? { x: this.vp.cursor.x - last.x, y: this.vp.cursor.y - last.y } : null;
@@ -194,6 +194,7 @@ class App {
   /** bring a tab to the front: the shown tab keeps its view, selection and caches for when it comes back */
   switchTo(tab, { fit = false } = {}) {
     const cur = this.active;
+    if (cur && cur !== tab) exitMspace(this);
     if (cur && cur !== tab && this.tabs.includes(cur)) {
       cur.view = { cx: this.vp.view.cx, cy: this.vp.view.cy, zoom: this.vp.view.zoom };
       cur.selection = [...this.vp.selection]; cur.lastPoint = this.vp.lastPoint;
@@ -463,6 +464,7 @@ class App {
     document.getElementById('sel').textContent = this.vp.selection.size ? `${this.vp.selection.size} selected` : `${this.doc.entities.length.toLocaleString()} objects`;
     document.getElementById('stage').classList.toggle('empty', this.doc.entities.length === 0);
     document.getElementById('units').textContent = `Units: ${UNIT_NAMES[this.doc.units] ?? this.doc.units}`;
+    renderVpScale(this);
   }
   updateTitle() {
     const t = `${this.session?.dirty ? '• ' : ''}${this.file.name}`;

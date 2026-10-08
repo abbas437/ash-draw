@@ -7,7 +7,8 @@ import {
   setStrokingRgbColor, setFillingRgbColor, moveTo, lineTo, appendBezierCurve, closePath, stroke,
   clip, clipEvenOdd, endPath, concatTransformationMatrix,
 } from 'pdf-lib';
-import { buildScene } from './render.js';
+import { buildScene, docWithFrozen } from './render.js';
+import { layoutPage, viewportScale } from './layouts.js';
 import {
   walkOps, colorRgb, lineweightMm, dashUnits, hatchFamilies, layoutText, markerSize, arrowTriangle, runRgb, mtextItemLayout,
 } from './exportSvg.js';
@@ -61,10 +62,17 @@ export const plotScale = (n, mmPerUnit = 1) => mmPerUnit / n;
  * WinAnsi), scene (prebuilt).
  */
 export async function exportPdf(doc, opts = {}) {
-  const { monochrome = false, lineweights = true, unicodeFont = null, region = null } = opts;
-  const scene = opts.scene || buildScene(doc);
+  const { monochrome = false, lineweights = true, unicodeFont = null, layout = null } = opts;
+  const region = layout ? null : opts.region ?? null;
+  // a layout plots at 1:1 on its own paper: its entities, then each viewport's model view clipped to the viewport
+  const paperDoc = layout ? Object.create(doc, { entities: { value: layout.entities } }) : doc;
+  const scene = (layout ? opts.paperScene : opts.scene) || buildScene(paperDoc);
   const bb = region || scene.bbox || { minx: 0, miny: 0, maxx: 100, maxy: 100 };
-  const { pw, ph, k, ox, oy, warnings } = plotLayout(bb, opts);
+  let pw, ph, k, ox, oy, warnings;
+  if (layout) {
+    const lp = layoutPage(layout);
+    ({ pw, ph, k } = lp); ox = -lp.sheet.minx * k; oy = -lp.sheet.miny * k; warnings = [];
+  } else ({ pw, ph, k, ox, oy, warnings } = plotLayout(bb, opts));
   const X = (x) => ox + x * k, Y = (y) => oy + y * k;
 
   const pdf = await PDFDocument.create();
@@ -106,7 +114,7 @@ export async function exportPdf(doc, opts = {}) {
     if (dashes && dashes.reduce((s, d) => s + d, 0) >= 1) ops.push(setDashPattern(dashes, 0));
   };
   const fillState = (style) => { const [r, g, b] = colOf(style); ops.push(setFillingRgbColor(r, g, b)); };
-  const msize = markerSize(scene.bbox);
+  let msize;
 
   /** one font per text item: Helvetica when every character is WinAnsi, else the Unicode font, else '?' substitutes */
   const fontFor = async (lines) => {
@@ -146,7 +154,9 @@ export async function exportPdf(doc, opts = {}) {
     return { font: HELV[variant(p)], text: [...t].map((ch) => (helvChars.has(ch.codePointAt(0)) ? ch : (count && missing++, '?'))).join('') };
   };
 
-  for (const it of scene.items) {
+  const drawItems = async (scn) => {
+  msize = markerSize(scn.bbox);
+  for (const it of scn.items) {
     if (it.kind === 'path') {
       ops.push(pushGraphicsState()); strokeState(it.style, dashPt(dashUnits(doc, it.style)));
       pathOps(it.ops); ops.push(stroke(), popGraphicsState());
@@ -212,6 +222,23 @@ export async function exportPdf(doc, opts = {}) {
     }
     if (ops.length > 5000) page.pushOperators(...ops.splice(0));
   }
+  };
+  if (layout) {
+    const modelScene = opts.modelScene ?? ((fr) => buildScene(docWithFrozen(doc, fr)));
+    const paper = { ox, oy, k };
+    for (const v of layout.entities) {
+      if (v.type !== 'VIEWPORT' || v.vpId === 1 || v.on === false || !(v.width > 0 && v.height > 0)) continue;
+      const s = viewportScale(v), cx = X(v.c.x), cy = Y(v.c.y), hw = (v.width / 2) * k, hh = (v.height / 2) * k;
+      ops.push(pushGraphicsState(), moveTo(cx - hw, cy - hh), lineTo(cx + hw, cy - hh), lineTo(cx + hw, cy + hh), lineTo(cx - hw, cy + hh), closePath(), clip(), endPath());
+      const t = v.twist || 0, c = Math.cos(t), sn = Math.sin(t);
+      if (t) ops.push(concatTransformationMatrix(c, sn, -sn, c, cx - c * cx + sn * cy, cy - sn * cx - c * cy)); // turn about the viewport centre
+      k = paper.k / s; ox = cx - v.viewCenter.x * k; oy = cy - v.viewCenter.y * k;
+      await drawItems(modelScene(v.frozen ?? []));
+      ({ ox, oy, k } = paper);
+      ops.push(popGraphicsState());
+    }
+  }
+  await drawItems(scene);
   if (ops.length) page.pushOperators(...ops.splice(0));
   if (region) page.pushOperators(popGraphicsState());
   if (missing) warnings.push(`${missing} text characters could not be drawn (no Unicode font)`);
