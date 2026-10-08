@@ -31,6 +31,7 @@ export class Viewport {
     this.rubber = null;                // selection rectangle {a,b,crossing} in world coordinates
     this.layout = null;                // the layout shown (paper space; see layouts-ui.js), null = model space
     this.modelScene = null;            // (frozenLayers) => model scene for viewports (layouts-ui.js)
+    this.mspace = null;                // model space through a viewport: { vp, paperView, paperScene } (layouts-ui.js)
     this._raf = 0;
     this._spaceDown = false;
     this._pan = null;
@@ -95,6 +96,7 @@ export class Viewport {
     this.requestRender();
   }
   zoomExtents() {
+    if (this.mspace) { this.mspace.zoomExtents(); return; } // inside a viewport (layouts-ui.js)
     const b = this.layout ? paperRects(this.layout).sheet : this.scene?.bbox;
     this.view = fitView(b, this.view.width, this.view.height, 0.04);
     this.requestRender();
@@ -163,7 +165,11 @@ export class Viewport {
       highlightColor: this.settings.dark ? '#4dd2ff' : '#0a6fd1',
       dpr: this.dpr,
     };
-    if (this.layout) drawLayout(ctx, this.scene, view, this.layout, paperRects, this.modelScene, { ...opts, highlightColor: '#0a6fd1' });
+    const ms = this.mspace;
+    if (this.layout) {
+      drawLayout(ctx, ms ? ms.paperScene : this.scene, ms ? { ...ms.paperView, width: view.width, height: view.height } : view, this.layout, paperRects, this.modelScene,
+        { ...opts, highlightColor: '#0a6fd1', ...(ms && { highlight: null, modelHighlight: this.selection, activeVp: ms.vp }) });
+    }
     else drawScene(ctx, this.scene, view, opts);
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this._drawGrips();
