@@ -15,6 +15,7 @@ import {
   addEntities, moveEntities, rotateEntities, scaleEntities, mirrorEntities, eraseEntities, explodeEntities,
   offsetCommand, trimCommand, extendCommand,
 } from '../src/core/edit.js';
+import { MeasureGeomTool } from './tools-measure.js';
 import { tessellate, transformEntity, translation, rotation, scaling, mirrorLine, dist, DEG } from '../src/core/geom.js';
 
 const num = (s) => { const v = Number(String(s).trim().replace(',', '.')); return Number.isFinite(v) && String(s).trim() !== '' ? v : null; };
@@ -303,23 +304,6 @@ class HatchTool extends Tool {
   }
 }
 
-class MeasureTool extends Tool {
-  activate() { super.activate(); this.a = null; }
-  get prompt() { return this.a ? 'MEASURE  second point' : 'MEASURE  first point'; }
-  click(p) {
-    if (!this.a) { this.a = p; this.vp.lastPoint = p; return; }
-    const d = dist(this.a, p), ang = ((angleOf(this.a, p) / DEG) + 360) % 360;
-    this.h.toast(`Distance ${fmt(d)}   ΔX ${fmt(p.x - this.a.x)}   ΔY ${fmt(p.y - this.a.y)}   Angle ${fmt(ang)}°`, 8000);
-    this.a = null; this.vp.lastPoint = null;
-  }
-  key(e) { if (e.key === 'Escape') { if (this.a) { this.a = null; this.vp.lastPoint = null; } else this.cancel(); return true; } return false; }
-  draw(c) {
-    if (!this.a) return;
-    c.strokeStyle = '#ff7a59'; c.setLineDash([]); this.line(c, this.a, this.vp.cursor);
-    this.dyn(c, `${fmt(dist(this.a, this.vp.cursor))}`, this.vp.cursor);
-  }
-}
-
 // ---------------------------------------------------------------------------------------------
 // modify tools
 function ghost(vp, ids, m) {
@@ -525,13 +509,14 @@ export function createTools(h) {
     select: new SelectTool(h),
     line: new LineTool(h), pline: new PolylineTool(h), rect: new RectTool(h), circle: new CircleTool(h),
     arc: new ArcTool(h), ellipse: new EllipseTool(h), point: new PointTool(h), text: new TextTool(h), hatch: new HatchTool(h),
-    measure: new MeasureTool(h),
+    measure: new MeasureGeomTool(h), area: new MeasureGeomTool(h, 'AREA'),
     move: new MoveTool(h), copy: new MoveTool(h, true), rotate: new RotateTool(h), scale: new ScaleTool(h), mirror: new MirrorTool(h),
     offset: new OffsetTool(h), trim: new TrimTool(h), extend: new TrimTool(h, true), erase: new EraseTool(h), explode: new ExplodeTool(h),
   };
 }
 
 export const TOOL_ALIASES = {
+  mea: 'measure', measuregeom: 'measure', area: 'area', aa: 'area',
   l: 'line', line: 'line', pl: 'pline', pline: 'pline', polyline: 'pline', rec: 'rect', rect: 'rect', rectangle: 'rect',
   c: 'circle', circle: 'circle', a: 'arc', arc: 'arc', el: 'ellipse', ellipse: 'ellipse', po: 'point', point: 'point',
   t: 'text', text: 'text', mt: 'text', h: 'hatch', hatch: 'hatch', di: 'measure', dist: 'measure', measure: 'measure',

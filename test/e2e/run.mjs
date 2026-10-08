@@ -381,6 +381,40 @@ try {
   await page.keyboard.press('Control+z');
   assert.deepEqual(await texts(), ['PUMP P-101', '{\\C1;Pump} room\\Pspare pump', 'PUMPS'], 'one Undo restores every replaced text');
 
+  step = 'measure: AREA object / add / subtract, MEA distance / radius / angle';
+  await page.evaluate(async () => {
+    const M = await import('/src/core/model.js');
+    const doc = M.newDocument();
+    M.addEntity(doc, M.makeRect({ x: 0, y: 0 }, { x: 100, y: 50 }));   // 5000, perimeter 300
+    M.addEntity(doc, M.makeRect({ x: 150, y: 0 }, { x: 210, y: 40 })); // 2400
+    M.addEntity(doc, M.makeCircle({ x: 260, y: 20 }, 10));
+    window.app.installDoc(doc, { path: null, name: 'measure.dxf', format: 'dxf' });
+    window.app.vp.zoomExtents();
+  });
+  const panel = () => page.locator('#measure-panel .mp-body').textContent();
+  await typeCmd('area'); await typeCmd('o'); await clickWorld(50, 0);
+  assert.match(await panel(), /^Area = 5000, Perimeter = 300$/m);
+  await page.keyboard.press('Escape');
+  assert.equal(await page.evaluate(() => window.app.toolId), 'select', 'Esc ends AREA');
+  assert.equal(await page.locator('#measure-panel').count(), 1, 'results panel stays after the command ends');
+  await typeCmd('area'); await typeCmd('a'); await typeCmd('o'); await clickWorld(50, 0); await clickWorld(180, 0);
+  assert.match(await panel(), /^Total area = 7400$/m, 'Add: running total of both rectangles');
+  await page.keyboard.press('Escape');
+  await typeCmd('area'); await typeCmd('a'); await typeCmd('o'); await clickWorld(50, 0);
+  await typeCmd('s'); await typeCmd('o'); await clickWorld(180, 0);
+  assert.match(await panel(), /^Total area = 2600$/m, 'Subtract: 5000 - 2400');
+  await page.keyboard.press('Escape');
+  await typeCmd('mea'); await clickWorld(0.6, 0.4); await clickWorld(99.5, 49.6); // snapped to the corners
+  assert.match(await panel(), /^Distance = 111\.8034$/m);
+  assert.match(await panel(), /^Delta X = 100, Delta Y = 50$/m);
+  await typeCmd('r'); await clickWorld(270, 20);
+  assert.match(await panel(), /^Radius = 10$/m);
+  await typeCmd('n'); await clickWorld(50, 0); await clickWorld(0, 25);
+  assert.match(await panel(), /^Angle = 90°$/m);
+  await page.keyboard.press('Escape');
+  await page.locator('#measure-panel .mp-close').click();
+  assert.equal(await page.locator('#measure-panel').count(), 0, 'Close removes the panel');
+
   step = 'csp';
   assert.deepEqual(await page.evaluate(() => window.__csp), []);
   assert.deepEqual(problems, []);
