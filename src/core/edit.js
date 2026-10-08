@@ -226,6 +226,15 @@ export function explodeEntities(s, ids) {
   return { done: created.length, failed, created };
 }
 
+/** Apply an edit set {add, remove, change} from modify.js as one undo step; returns the added entities. */
+export function applyEditSet(s, label, set) {
+  return s.transact(label, (tx) => {
+    for (const e of set.change || []) tx.replace(e);
+    if (set.remove && set.remove.length) tx.remove(set.remove);
+    return (set.add || []).map((e) => { e.id = 0; return tx.add(e); });
+  });
+}
+
 /** Offset one entity by distance d to the side of sidePt; the new entity goes on the same layer. */
 export function offsetCommand(s, id, d, sidePt) {
   const e = getEntity(s.doc, id);
