@@ -198,6 +198,7 @@ function ellipsePoints(e, tol) {
 export function tessellate(e, doc = null, tol = 0) {
   switch (e.type) {
     case 'LINE': return [[{ ...e.p1 }, { ...e.p2 }]];
+    case 'VIEWPORT': { const w = e.width / 2, h = e.height / 2, c = e.c; return [[{ x: c.x - w, y: c.y - h }, { x: c.x + w, y: c.y - h }, { x: c.x + w, y: c.y + h }, { x: c.x - w, y: c.y + h }, { x: c.x - w, y: c.y - h }]]; }
     case 'LWPOLYLINE': return [polylinePoints(e, tol)];
     case 'CIRCLE': return [arcPoints(e.c, e.r, 0, TAU, tol)];
     case 'ARC': return [arcPoints(e.c, e.r, e.a0 * DEG, ccwSweep(e.a0 * DEG, e.a1 * DEG), tol)];

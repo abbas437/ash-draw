@@ -321,9 +321,9 @@ export function drawScene(ctx, scene, view, opts = {}) {
   const dark = luminance(bg) < 0.5;
   const doc = scene.doc;
   const dpr = opts.dpr ?? 1;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // view.width/height are CSS pixels
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, W, H);
+  if (opts.baseTransform) ctx.setTransform(opts.baseTransform); // drawLayout: viewport placement (clip, twist)
+  else ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // view.width/height are CSS pixels
+  if (!opts.noClear) { ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H); }
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   const sx = (x) => (x - view.cx) * z + W / 2;
   const sy = (y) => H / 2 - (y - view.cy) * z;
@@ -594,4 +594,55 @@ export function zoomAt(view, sx, sy, factor) {
   const v = { ...view, zoom };
   const after = screenToWorld(v, sx, sy);
   return { ...v, cx: v.cx + (before.x - after.x), cy: v.cy + (before.y - after.y) };
+}
+
+// ---------------------------------------------------------------------------------------------
+// paper-space layouts
+/** model point -> paper point through a VIEWPORT (scale 1:N = viewHeight/height, twist turns the model counter-clockwise) */
+export function viewportToPaper(vp, p) {
+  const k = vp.height / (vp.viewHeight || 1), t = vp.twist || 0, c = Math.cos(t), s = Math.sin(t);
+  const dx = p.x - vp.viewCenter.x, dy = p.y - vp.viewCenter.y;
+  return { x: vp.c.x + k * (c * dx - s * dy), y: vp.c.y + k * (s * dx + c * dy) };
+}
+
+/** a copy of `doc` whose layer table has the given layers frozen (for viewport-frozen layers) */
+export function docWithFrozen(doc, frozen) {
+  if (!frozen?.length) return doc;
+  const set = new Set(frozen.map((n) => String(n).toUpperCase()));
+  const layers = new Map([...doc.layers].map(([k, l]) => [k, set.has(String(k).toUpperCase()) ? { ...l, frozen: true } : l]));
+  return { ...doc, layers };
+}
+
+/** Draw a layout: grey surround, white sheet with shadow, dashed printable area, viewports showing model space
+ *  (scene per frozen-layer set from `modelScene(frozen)`), then the paper-space scene and its highlight. */
+export function drawLayout(ctx, paperScene, view, layout, paperRectsOf, modelScene, opts = {}) {
+  const { width: W, height: H, zoom: z } = view, dpr = opts.dpr ?? 1;
+  const sx = (x) => (x - view.cx) * z + W / 2, sy = (y) => H / 2 - (y - view.cy) * z;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = opts.surround ?? '#8a9099'; ctx.fillRect(0, 0, W, H);
+  const { sheet, printable } = paperRectsOf(layout);
+  const r = (b) => [sx(b.minx), sy(b.maxy), (b.maxx - b.minx) * z, (b.maxy - b.miny) * z];
+  ctx.fillStyle = 'rgba(0,0,0,0.35)'; const sr = r(sheet); ctx.fillRect(sr[0] + 4, sr[1] + 4, sr[2], sr[3]);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(...sr);
+  ctx.strokeStyle = '#888'; ctx.lineWidth = 1; ctx.setLineDash([4, 3]); ctx.strokeRect(...r(printable)); ctx.setLineDash([]);
+  const vports = paperScene.doc.entities.filter((e) => e.type === 'VIEWPORT' && e.vpId !== 1 && e.on !== false && e.width > 0 && e.height > 0);
+  for (const v of vports) {
+    const k = (v.height / (v.viewHeight || 1)) * z, cx = sx(v.c.x), cy = sy(v.c.y), w = v.width * z, h = v.height * z;
+    const D = Math.hypot(w, h) + 2;
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.beginPath(); ctx.rect(cx - w / 2, cy - h / 2, w, h); ctx.clip();
+    // model view centred on the viewport, D x D pixels so culling covers the rotated window
+    ctx.translate(cx, cy); ctx.rotate(-(v.twist || 0)); ctx.translate(-D / 2, -D / 2);
+    drawScene(ctx, modelScene(v.frozen ?? []), { cx: v.viewCenter.x, cy: v.viewCenter.y, zoom: k, width: D, height: D },
+      { ...opts, background: '#ffffff', noClear: true, baseTransform: ctx.getTransform(), highlight: null });
+    ctx.restore();
+  }
+  drawScene(ctx, paperScene, view, { ...opts, background: '#ffffff', noClear: true });
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
+  for (const v of vports) {
+    const sel = opts.highlight instanceof Set && opts.highlight.has(v.id);
+    ctx.strokeStyle = sel ? (opts.highlightColor ?? '#0a6fd1') : '#333'; ctx.lineWidth = sel ? 2 : 1; ctx.strokeRect(sx(v.c.x - v.width / 2), sy(v.c.y + v.height / 2), v.width * z, v.height * z);
+  }
 }

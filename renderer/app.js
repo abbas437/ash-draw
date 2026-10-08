@@ -12,6 +12,7 @@ import { blockDoubleClick } from './tools-blocks.js';
 import { initSession } from './session.js';
 import { FindPanel } from './find.js';
 import { plotDialog } from './plot.js';
+import { initLayouts, restoreSpace, renderSpaceBar } from './layouts-ui.js';
 import { el, message, modal, confirmDialog, textDialog, toast, renderLayers, renderProperties } from './ui.js';
 import {
   OPEN_FILTERS, loadDrawing, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, baseName, extOf, UNIT_NAMES,
@@ -66,6 +67,7 @@ class App {
     this.bindKeys();
     this.bindDrop();
     this.find = new FindPanel(this);
+    initLayouts(this);
     this.cmd = document.getElementById('cmd');
     this.cmd.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); const v = this.cmd.value; this.cmd.value = ''; this.vp.canvas.focus(); this.submit(v); }
@@ -98,6 +100,8 @@ class App {
   get file() { return this.active.file; }
   set file(f) { this.active.file = f; }
   get doc() { return this.vp.doc; }
+  /** the whole drawing (model space and layouts) whichever space is shown - for save and export */
+  get fileDoc() { return this.active.doc; }
   get tool() { return this.tools[this.toolId]; }
   newProps() { return { layer: this.state.layer, color: this.state.color, linetype: this.state.linetype, lineweight: this.state.lineweight }; }
   toast(t, ms) { toast(t, ms); }
@@ -189,8 +193,10 @@ class App {
     }
     if (cur !== tab && this.toolId) this.setTool(this.toolId === 'select' ? 'select' : this.toolId); // drop a half-done command
     this.active = tab;
+    restoreSpace(this, tab);
     this.vp.setSession(tab.session, { fit: fit || !tab.view, view: fit ? null : tab.view, selection: tab.selection, scene: tab.scene, index: tab.index, lastPoint: tab.lastPoint });
     tab.scene = tab.index = null;
+    renderSpaceBar(this);
     this.refreshPanels(); this.refreshStatus(); this.updateTitle(); this.refreshDimStyles();
   }
   activateIndex(i) { if (this.tabs[i] && this.tabs[i] !== this.active) this.switchTo(this.tabs[i]); }
@@ -267,7 +273,7 @@ class App {
   }
   async writeDxfTo(path) {
     try {
-      const r = await saveDxf(api, this.doc, { path, name: this.file.name });
+      const r = await saveDxf(api, this.fileDoc, { path, name: this.file.name });
       if (!r) return false;
       this.afterSave(r.path ?? path, 'dxf');
       this.writeReport(r.report);
@@ -289,7 +295,7 @@ class App {
         const ok = await confirmDialog('Save as DWG (experimental)',
           'DWG is written through the free LibreDWG converter. Text rotation and some hatch details can be lost, so the program re-reads the saved file and tells you if anything differs. DXF keeps everything this program supports. Save as DWG anyway?', 'Save as DWG', 'Cancel', null);
         if (ok !== 'yes') return false;
-        const r = await saveDwg(api, this.doc, {
+        const r = await saveDwg(api, this.fileDoc, {
           name: this.file.name,
           confirmDifferences: async (v) => (await confirmDialog('The DWG does not match your drawing', `${verificationMessage(v)}\n\nSave this DWG anyway? (Your drawing stays open and unsaved, so you can still save it as DXF.)`, 'Save DWG anyway', 'Cancel', null)) === 'yes',
         });
@@ -299,7 +305,7 @@ class App {
         await message(r.verification.ok ? 'DWG saved' : 'DWG saved — please check', verificationMessage(r.verification));
         return true;
       }
-      const r = await saveDxf(api, this.doc, { path: null, name: this.file.name });
+      const r = await saveDxf(api, this.fileDoc, { path: null, name: this.file.name });
       if (!r) return false;
       this.afterSave(r.path, 'dxf'); this.writeReport(r.report);
       return true;
@@ -307,7 +313,7 @@ class App {
   }
 
   // ---- exports ---------------------------------------------------------------------------------
-  scene() { return buildScene(this.doc); }
+  scene() { return buildScene(this.fileDoc); }
   async saveBytes(bytes, ext, label) {
     const r = await api.saveFile({ defaultPath: `${baseName(this.file.name)}.${ext}`, filters: [{ name: label, extensions: [ext] }], bytes });
     if (r) toast(`Exported ${ext.toUpperCase()}`, 2000);
@@ -316,10 +322,10 @@ class App {
   exportPdf() { return plotDialog(this, 'pdf'); }
   print() { return plotDialog(this, 'print'); }
   async exportSvg() {
-    try { await this.saveBytes(await exportSvgBytes(this.doc, this.scene(), {}), 'svg', 'SVG image'); } catch (err) { await message('Export failed', err.message || String(err)); }
+    try { await this.saveBytes(await exportSvgBytes(this.fileDoc, this.scene(), {}), 'svg', 'SVG image'); } catch (err) { await message('Export failed', err.message || String(err)); }
   }
   async exportPng() {
-    try { await this.saveBytes(await exportPngBytes(this.doc, this.scene(), { dark: this.vp.settings.dark, lineweights: this.vp.settings.lineweights }), 'png', 'PNG image'); } catch (err) { await message('Export failed', err.message || String(err)); }
+    try { await this.saveBytes(await exportPngBytes(this.fileDoc, this.scene(), { dark: this.vp.settings.dark, lineweights: this.vp.settings.lineweights }), 'png', 'PNG image'); } catch (err) { await message('Export failed', err.message || String(err)); }
   }
 
   // ---- help ---------------------------------------------------------------------------------------

@@ -1,10 +1,11 @@
 // ASH Draw Studio - canvas viewport: view state, pan/zoom, snapping, selection, overlays.
 // The active tool receives world-space events through vp.tool (see tools.js).
-import { buildScene, updateScene, drawScene, fitView, screenToWorld, worldToScreen, zoomAt } from '../src/core/render.js';
+import { buildScene, updateScene, drawScene, drawLayout, fitView, screenToWorld, worldToScreen, zoomAt } from '../src/core/render.js';
 import { SpatialIndex, findSnap, orthoPoint, polarPoint, pickEntity, selectInBox } from '../src/core/pick.js';
 import { bboxOf, growBox } from '../src/core/geom.js';
 import { gripsOf } from './grips.js';
 import { getEntity } from '../src/core/model.js';
+import { paperRects } from '../src/core/layouts.js';
 
 const DEFAULT_KINDS = new Set(['end', 'int', 'mid', 'cen', 'quad', 'node', 'ins', 'per']);
 const SNAP_PX = 12;
@@ -28,6 +29,8 @@ export class Viewport {
     this.settings = { snap: true, ortho: false, polar: false, polarStep: 45, lineweights: false, dark: false, kinds: new Set(DEFAULT_KINDS) };
     this.preview = null;               // (ctx, view, vp) => void drawn above the scene
     this.rubber = null;                // selection rectangle {a,b,crossing} in world coordinates
+    this.layout = null;                // the layout shown (paper space; see layouts-ui.js), null = model space
+    this.modelScene = null;            // (frozenLayers) => model scene for viewports (layouts-ui.js)
     this._raf = 0;
     this._spaceDown = false;
     this._pan = null;
@@ -58,6 +61,7 @@ export class Viewport {
   }
 
   _changed(info) {
+    if (info.doc && info.doc !== this.doc) { this.requestRender(); this.emit('change', info); return; } // undo of the other space
     if (info.structure) {
       this.scene = buildScene(this.doc);
       this.index.rebuild();
@@ -76,6 +80,7 @@ export class Viewport {
   refreshStructure() {
     this.scene = buildScene(this.doc);
     this.index.rebuild();
+    this.emit('structure');
     this.requestRender();
   }
 
@@ -90,7 +95,7 @@ export class Viewport {
     this.requestRender();
   }
   zoomExtents() {
-    const b = this.scene?.bbox;
+    const b = this.layout ? paperRects(this.layout).sheet : this.scene?.bbox;
     this.view = fitView(b, this.view.width, this.view.height, 0.04);
     this.requestRender();
     this.emit('view');
@@ -151,13 +156,15 @@ export class Viewport {
   render() {
     if (!this.scene) return;
     const { ctx, view } = this;
-    drawScene(ctx, this.scene, view, {
+    const opts = {
       background: this.settings.dark ? CANVAS_BG.dark : CANVAS_BG.light,
       showLineweight: this.settings.lineweights,
       highlight: this.selection,
       highlightColor: this.settings.dark ? '#4dd2ff' : '#0a6fd1',
       dpr: this.dpr,
-    });
+    };
+    if (this.layout) drawLayout(ctx, this.scene, view, this.layout, paperRects, this.modelScene, { ...opts, highlightColor: '#0a6fd1' });
+    else drawScene(ctx, this.scene, view, opts);
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this._drawGrips();
     if (this.preview) { ctx.save(); this.preview(ctx, view, this); ctx.restore(); }

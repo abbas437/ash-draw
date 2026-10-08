@@ -77,9 +77,9 @@ export async function plotDialog(app, mode) {
   }
   const region = s.what === 'window' ? s.window : s.what === 'view' ? viewRect(app.vp) : null;
   try {
-    const out = await exportPdfBytes(app.doc, app.scene(), {
+    const out = await exportPdfBytes(app.fileDoc, app.scene(), {
       pageSize: s.pageSize, orientation: s.orientation, monochrome: s.monochrome, lineweights: s.lineweights,
-      region, centre: s.centre, scale: s.fit ? null : plotScale(s.n, 1 / unitsPerMm(app.doc)),
+      region, centre: s.centre, scale: s.fit ? null : plotScale(s.n, 1 / unitsPerMm(app.fileDoc)),
     });
     if (mode === 'pdf') await app.saveBytes(out.bytes, 'pdf', 'PDF document');
     else {
