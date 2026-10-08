@@ -15,6 +15,7 @@ const num = (n) => {
 import { dimStyleTags } from './dimsStyle.js';
 import { dimensionTags, arrowEntities } from './dims.js';
 import { mleaderTags, mleaderStyleTags } from './mleader.js';
+import { viewportTags } from './layouts.js';
 const encode = (s) => String(s ?? '').replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7e]/g, (c) => {
   const code = c.charCodeAt(0);
   return code < 32 ? ' ' : `\\U+${code.toString(16).toUpperCase().padStart(4, '0')}`;
@@ -60,6 +61,8 @@ export function writeDxf(doc, opts = {}) {
   const hModelRec = '17', hPaperRec = '1B', hModelLayout = '1A', hPaperLayout = '1E';
   const tbl = { LAYER: '1', LTYPE: '2', APPID: '3', DIMSTYLE: '4', STYLE: '5', UCS: '6', VIEW: '7', VPORT: '8', BLOCK_RECORD: '9' };
   const asGeometry = !!(opts && opts.dimensionsAsGeometry);
+  let paperMode = false;
+  const layerH = new Map([...doc.layers.keys()].map((n) => [n, H()]));
 
   // ---- collect what is used ---------------------------------------------------------------
   // arrowhead blocks named by dimension styles (DIMBLK) that the drawing does not define yet
@@ -88,6 +91,7 @@ export function writeDxf(doc, opts = {}) {
     o.p(5, hd);
     o.p(330, owner);
     o.p(100, 'AcDbEntity');
+    if (paperMode) o.p(67, 1);
     o.s(8, e.layer || '0');
     if (e.linetype && e.linetype !== 'BYLAYER') {
       if (ltKnown(e.linetype)) o.s(6, ltDefs.get(String(e.linetype).toUpperCase())?.name ?? e.linetype);
@@ -289,6 +293,11 @@ export function writeDxf(doc, opts = {}) {
         o.p(47, 1); o.p(98, 0);
         return true;
       }
+      case 'VIEWPORT': {
+        head(o, e, 'VIEWPORT', owner);
+        for (const [c, v] of viewportTags(e, (n) => layerH.get(n))) o.p(c, v);
+        return true;
+      }
       default:
         report.skipped[e.type] = (report.skipped[e.type] ?? 0) + 1;
         return false;
@@ -308,6 +317,22 @@ export function writeDxf(doc, opts = {}) {
     report.blocks++;
   }
   for (const e of doc.entities) if (writeEntity(entOut, e, hModelRec)) report.entities++;
+  // paper space: the first layout is the active one (*Paper_Space, entities in ENTITIES), the others own *Paper_SpaceN
+  // blocks. Viewports go last in each list.
+  const paperOrder = (list) => [...list.filter((e) => e.type !== 'VIEWPORT'), ...list.filter((e) => e.type === 'VIEWPORT')];
+  const paperLayouts = (doc.layouts?.length ? doc.layouts : [{ name: 'Layout1', tab: 1, entities: [], plot: null }]).map((lo, i) => ({
+    lo, name: i === 0 ? '*Paper_Space' : `*Paper_Space${i - 1}`, rec: i === 0 ? hPaperRec : H(), layoutH: i === 0 ? hPaperLayout : H(),
+  }));
+  paperMode = true;
+  for (const pl of paperLayouts) {
+    const ents = paperOrder(pl.lo.entities ?? []);
+    if (pl.rec === hPaperRec) { for (const e of ents) if (writeEntity(entOut, e, hPaperRec)) report.entities++; continue; }
+    blocksOut.p(0, 'BLOCK'); blocksOut.p(5, H()); blocksOut.p(330, pl.rec); blocksOut.p(100, 'AcDbEntity'); blocksOut.p(67, 1); blocksOut.p(8, '0');
+    blocksOut.p(100, 'AcDbBlockBegin'); blocksOut.s(2, pl.name); blocksOut.p(70, 0); blocksOut.pt(10, 0, 0); blocksOut.s(3, pl.name); blocksOut.p(1, '');
+    for (const e of ents) if (writeEntity(blocksOut, e, pl.rec)) report.entities++;
+    blocksOut.p(0, 'ENDBLK'); blocksOut.p(5, H()); blocksOut.p(330, pl.rec); blocksOut.p(100, 'AcDbEntity'); blocksOut.p(67, 1); blocksOut.p(8, '0'); blocksOut.p(100, 'AcDbBlockEnd');
+  }
+  paperMode = false;
 
   // ---- header ----------------------------------------------------------------------------------
   const ext = docExtents(doc);
@@ -344,7 +369,7 @@ export function writeDxf(doc, opts = {}) {
   // ---- tables ------------------------------------------------------------------------------------
   out.p(0, 'SECTION'); out.p(2, 'TABLES');
   const table = (name, count, extra) => { out.p(0, 'TABLE'); out.p(2, name); out.p(5, tbl[name]); out.p(330, 0); out.p(100, 'AcDbSymbolTable'); out.p(70, count); if (extra) out.p(100, extra); };
-  const rec = (type, name, sub, ownerTable, handleCode = 5) => { const h = H(); out.p(0, type); out.p(handleCode, h); out.p(330, tbl[ownerTable]); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, sub); out.s(2, name); return h; };
+  const rec = (type, name, sub, ownerTable, handleCode = 5, preH = null) => { const h = preH ?? H(); out.p(0, type); out.p(handleCode, h); out.p(330, tbl[ownerTable]); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, sub); out.s(2, name); return h; };
 
   table('VPORT', 1);
   rec('VPORT', '*Active', 'AcDbViewportTableRecord', 'VPORT');
@@ -374,7 +399,7 @@ export function writeDxf(doc, opts = {}) {
   const layers = [...doc.layers.values()];
   table('LAYER', layers.length);
   for (const l of layers) {
-    rec('LAYER', l.name, 'AcDbLayerTableRecord', 'LAYER');
+    rec('LAYER', l.name, 'AcDbLayerTableRecord', 'LAYER', 5, layerH.get(l.name));
     out.p(70, (l.frozen ? 1 : 0) | (l.locked ? 4 : 0));
     const c = typeof l.color === 'number' ? l.color : 7;
     out.p(62, l.visible === false ? -Math.abs(c || 7) : Math.abs(c || 7));
@@ -426,9 +451,10 @@ export function writeDxf(doc, opts = {}) {
   }
   out.p(0, 'ENDTAB');
 
-  table('BLOCK_RECORD', 2 + blockNames.length);
+  table('BLOCK_RECORD', 1 + paperLayouts.length + blockNames.length);
   out.p(0, 'BLOCK_RECORD'); out.p(5, hModelRec); out.p(330, tbl.BLOCK_RECORD); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, 'AcDbBlockTableRecord'); out.p(2, '*Model_Space'); out.p(340, hModelLayout);
   out.p(0, 'BLOCK_RECORD'); out.p(5, hPaperRec); out.p(330, tbl.BLOCK_RECORD); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, 'AcDbBlockTableRecord'); out.p(2, '*Paper_Space'); out.p(340, hPaperLayout);
+  for (const pl of paperLayouts.slice(1)) { out.p(0, 'BLOCK_RECORD'); out.p(5, pl.rec); out.p(330, tbl.BLOCK_RECORD); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, 'AcDbBlockTableRecord'); out.s(2, pl.name); out.p(340, pl.layoutH); }
   for (const n of blockNames) { out.p(0, 'BLOCK_RECORD'); out.p(5, blockRec.get(n)); out.p(330, tbl.BLOCK_RECORD); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, 'AcDbBlockTableRecord'); out.s(2, n); }
   out.p(0, 'ENDTAB');
   out.p(0, 'ENDSEC');
@@ -457,24 +483,25 @@ export function writeDxf(doc, opts = {}) {
   out.p(3, 'ACAD_MLINESTYLE'); out.p(350, hMlineDict); out.p(3, 'ACAD_PLOTSTYLENAME'); out.p(350, hPlotDict);
   const dict = (h, entries) => { out.p(0, 'DICTIONARY'); out.p(5, h); out.p(330, hRootDict); out.p(100, 'AcDbDictionary'); out.p(281, 1); for (const [k, v] of entries) { out.p(3, k); out.p(350, v); } };
   dict(hGroupDict, []);
-  dict(hLayoutDict, [['Model', hModelLayout], ['Layout1', hPaperLayout]]);
+  dict(hLayoutDict, [['Model', hModelLayout], ...paperLayouts.map((pl) => [pl.lo.name, pl.layoutH])]);
   dict(hMlineDict, [['Standard', hMlineStyle]]);
   dict(hMleaderDict, [['Standard', hMleaderStyle]]);
   out.p(0, 'ACDBDICTIONARYWDFLT'); out.p(5, hPlotDict); out.p(330, hRootDict); out.p(100, 'AcDbDictionary'); out.p(281, 1);
   out.p(3, 'Normal'); out.p(350, hPlotPlaceholder); out.p(100, 'AcDbDictionaryWithDefault'); out.p(340, hPlotPlaceholder);
   out.p(0, 'ACDBPLACEHOLDER'); out.p(5, hPlotPlaceholder); out.p(330, hPlotDict);
-  const layout = (h, name, isModel, tab, ownerRec) => {
+  const layout = (h, name, isModel, tab, ownerRec, lo = null) => {
+    const p = lo?.plot, m = p?.margins ?? { l: 7.5, b: 20, r: 7.5, t: 20 };
     out.p(0, 'LAYOUT'); out.p(5, h); out.p(330, hLayoutDict); out.p(100, 'AcDbPlotSettings');
-    out.p(1, ''); out.p(4, 'A3'); out.p(6, ''); out.p(40, 7.5); out.p(41, 20); out.p(42, 7.5); out.p(43, 20); out.p(44, 420); out.p(45, 297);
-    out.p(46, 0); out.p(47, 0); out.p(48, 0); out.p(49, 0); out.p(140, 0); out.p(141, 0); out.p(142, 1); out.p(143, 1);
-    out.p(70, isModel ? 1024 : 0); out.p(72, 1); out.p(73, 0); out.p(74, 5); out.p(7, ''); out.p(75, 16); out.p(76, 0); out.p(77, 2); out.p(78, 300);
-    out.p(147, 1); out.p(148, 0); out.p(149, 0);
-    out.p(100, 'AcDbLayout'); out.p(1, name); out.p(70, 1); out.p(71, tab);
-    out.pt(10, 0, 0, 0, false); out.pt(11, 420, 297, 0, false); out.pt(12, 0, 0, 0); out.pt(14, 1e20, 1e20, 1e20); out.pt(15, -1e20, -1e20, -1e20);
+    out.s(1, p?.pageName ?? ''); if (p?.printer) out.s(2, p.printer); out.s(4, p?.paperName || 'A3'); out.p(6, ''); out.p(40, m.l); out.p(41, m.b); out.p(42, m.r); out.p(43, m.t); out.p(44, p?.paperW || 420); out.p(45, p?.paperH || 297);
+    out.p(46, p?.origin.x ?? 0); out.p(47, p?.origin.y ?? 0); out.p(48, 0); out.p(49, 0); out.p(140, 0); out.p(141, 0); out.p(142, p?.scaleNum || 1); out.p(143, p?.scaleDen || 1);
+    out.p(70, isModel ? 1024 : (p?.flags ?? 0)); out.p(72, p?.units ?? 1); out.p(73, p?.rotation ?? 0); out.p(74, p?.plotType ?? 5); out.p(7, ''); out.p(75, 16); out.p(76, 0); out.p(77, 2); out.p(78, 300);
+    out.p(147, (p?.scaleNum || 1) / (p?.scaleDen || 1)); out.p(148, 0); out.p(149, 0);
+    out.p(100, 'AcDbLayout'); out.s(1, name); out.p(70, 1); out.p(71, tab);
+    out.pt(10, lo?.limMin.x ?? 0, lo?.limMin.y ?? 0, 0, false); out.pt(11, lo?.limMax.x ?? 420, lo?.limMax.y ?? 297, 0, false); out.pt(12, 0, 0, 0); out.pt(14, 1e20, 1e20, 1e20); out.pt(15, -1e20, -1e20, -1e20);
     out.p(146, 0); out.pt(13, 0, 0, 0); out.pt(16, 1, 0, 0); out.pt(17, 0, 1, 0); out.p(76, 1); out.p(330, ownerRec);
   };
   layout(hModelLayout, 'Model', true, 0, hModelRec);
-  layout(hPaperLayout, 'Layout1', false, 1, hPaperRec);
+  paperLayouts.forEach((pl, i) => layout(pl.layoutH, pl.lo.name, false, i + 1, pl.rec, pl.lo.plot ? pl.lo : null));
   out.p(0, 'MLINESTYLE'); out.p(5, hMlineStyle); out.p(102, '{ACAD_REACTORS'); out.p(330, hMlineDict); out.p(102, '}'); out.p(330, hMlineDict);
   out.p(100, 'AcDbMlineStyle'); out.p(2, 'Standard'); out.p(70, 0); out.p(3, ''); out.p(62, 256); out.p(51, 90); out.p(52, 90); out.p(71, 2);
   out.p(49, 0.5); out.p(62, 256); out.p(6, 'BYLAYER'); out.p(49, -0.5); out.p(62, 256); out.p(6, 'BYLAYER');
@@ -485,7 +512,6 @@ export function writeDxf(doc, opts = {}) {
 
   const text = out.text().replace('__HANDSEED__', nextHandle.toString(16).toUpperCase()).replaceAll('\r\n__STDSTYLE__\r\n', `\r\n${styleHandle.get('STANDARD')}\r\n`);
 
-  if (doc.header.paperSpaceEntities) report.notes.push(`${doc.header.paperSpaceEntities} paper-space objects (layouts) are not kept; only model space is saved.`);
   for (const [t, n] of Object.entries(doc.skipped)) report.skipped[`${t} (not read)`] = n;
   doc.lastWriteReport = report;
   void ccwSweep;

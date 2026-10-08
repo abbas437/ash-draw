@@ -180,7 +180,7 @@ test('unsupported entities are counted, not silently lost, and do not stop the l
   assert.equal(doc.lastWriteReport.skipped['XLINE (not read)'], 1);
 });
 
-test('paper-space objects are counted and reported on save', () => {
+test('paper-space objects without a LAYOUT object are kept in a default layout and saved back', () => {
   const text = [
     '0', 'SECTION', '2', 'ENTITIES',
     '0', 'LINE', '8', '0', '10', '0', '20', '0', '11', '1', '21', '1',
@@ -189,9 +189,10 @@ test('paper-space objects are counted and reported on save', () => {
   ].join('\n');
   const doc = parseDxf(text);
   assert.equal(doc.entities.length, 1);
-  assert.equal(doc.header.paperSpaceEntities, 1);
-  writeDxf(doc);
-  assert.ok(doc.lastWriteReport.notes.some((n) => /paper-space/.test(n)));
+  assert.deepEqual(doc.layouts.map((l) => [l.name, l.entities.length]), [['Layout1', 1]]);
+  const back = parseDxf(writeDxf(doc));
+  assert.equal(back.entities.length, 1);
+  assert.equal(back.layouts[0].entities[0].p2.x, 5);
 });
 
 test('writer output reads back to the same drawing (all fixtures)', () => {

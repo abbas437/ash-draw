@@ -46,7 +46,6 @@ export async function loadDrawing(api, name, bytes) {
   }
   const sk = Object.entries(doc.skipped || {});
   if (sk.length) notes.push(`Not displayed (unsupported object types): ${sk.map(([k, v]) => `${v} ${k}`).join(', ')}.`);
-  if (doc.header?.paperSpaceEntities) notes.push(`${doc.header.paperSpaceEntities} paper-space (layout) objects were ignored; only model space is shown.`);
   return { doc, format, notes };
 }
 function looksLikeDwg(b) { return b.length > 6 && b[0] === 0x41 && b[1] === 0x43 && b[2] === 0x31 && b[3] >= 0x30 && b[3] <= 0x39; } // "AC10.."
