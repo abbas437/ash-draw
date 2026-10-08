@@ -3,6 +3,7 @@ import { newDocument } from '../src/core/model.js';
 import { eraseEntities, copyToClipboard, pasteEntities } from '../src/core/edit.js';
 import { parseCoordinate } from '../src/core/coords.js';
 import { PATTERN_NAMES } from '../src/core/patterns.js';
+import { layIsolate, layUnisolate, layFreeze, layOn, layThaw } from '../src/core/layers.js';
 import { Viewport, CANVAS_BG } from './viewport.js';
 import { createDocState, findTabByPath, indexAfterClose, cycleIndex, isBlankTab } from './tabs.js';
 import { createTools, TOOL_ALIASES } from './tools.js';
@@ -100,7 +101,7 @@ class App {
     if (t.text?.(s)) { this.refreshPrompt(); return; }
     const low = s.toLowerCase();
     if (TOOL_ALIASES[low]) { this.setTool(TOOL_ALIASES[low]); return; }
-    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => this.vp.zoomExtents(), z: () => this.vp.zoomExtents(), 'zoom': () => this.vp.zoomExtents(), all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf() };
+    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => this.vp.zoomExtents(), z: () => this.vp.zoomExtents(), 'zoom': () => this.vp.zoomExtents(), all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), ...this.layerCommands() };
     if (sys[low]) { sys[low](); return; }
     const last = this.vp.lastPoint ?? { x: 0, y: 0 };
     const dir = this.vp.lastPoint ? { x: this.vp.cursor.x - last.x, y: this.vp.cursor.y - last.y } : null;
@@ -109,6 +110,16 @@ class App {
     toast(`Unknown command "${s}".`);
   }
 
+  layerCommands() {
+    const sel = () => [...this.vp.selection];
+    const need = (f) => () => { if (!this.vp.selection.size) { toast('Select objects first, then run the command.'); return; } f(); };
+    return {
+      layiso: need(() => { this.isoSaved = layIsolate(this.session, sel()); toast('Layers isolated (LAYUNISO restores)', 2500); }),
+      layuniso: () => { if (layUnisolate(this.session, this.isoSaved)) { this.isoSaved = null; toast('Layers restored', 1500); } else toast('Nothing isolated.'); },
+      layfrz: need(() => { const n = layFreeze(this.session, sel()); this.vp.setSelection([]); toast(`Frozen: ${n.join(', ')}`, 2500); }),
+      layon: () => layOn(this.session), laythw: () => layThaw(this.session),
+    };
+  }
   undo() { if (this.session.undo()) toast(`Undo`, 1200); }
   redo() { if (this.session.redo()) toast(`Redo`, 1200); }
   selectAll() { this.vp.setSelection(this.doc.entities.filter((e) => this.vp.index.bboxOf(e)).map((e) => e.id)); }
