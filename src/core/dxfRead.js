@@ -17,6 +17,7 @@ import { transformEntity } from './geom.js';
 import { dimStyleFromTags } from './dimsStyle.js';
 import { dimDefFromTags } from './dims.js';
 import { mtextPlain } from './mtext.js';
+import { parseLayoutObject, readViewport } from './layouts.js';
 
 const DEG = Math.PI / 180;
 
@@ -459,12 +460,14 @@ function readEntityList(recs, doc, target, stats) {
       let j = k + 1;
       while (j < recs.length && recs[j].type === 'ATTRIB') { attribs.push(recs[j]); j++; }
     }
-    if (rec.int(67) === 1 && target === doc.entities) { stats.paper++; continue; }
+    // paper space: ENTITIES with 67=1 belong to the active layout (*Paper_Space); layout blocks pass their own list
+    const list = rec.int(67) === 1 && target === doc.entities ? stats.paperList('*PAPER_SPACE') : target;
+    if (t === 'VIEWPORT') { if (list !== doc.entities) addEntity(doc, readViewport(rec, stats.layerH), list); else doc.skipped[t] = (doc.skipped[t] ?? 0) + 1; continue; }
     let e;
     try { e = buildEntity(rec, doc, extra); } catch (err) { e = undefined; stats.errors.push(`${t}: ${err.message}`); }
     if (e === undefined) { doc.skipped[t] = (doc.skipped[t] ?? 0) + 1; continue; }
     if (e === null) { doc.skipped[`${t} (unusable)`] = (doc.skipped[`${t} (unusable)`] ?? 0) + 1; continue; }
-    addEntity(doc, e, target);
+    addEntity(doc, e, list);
     if (attribs) linkAttribs(e, attribs.map((a) => buildEntity(a, doc, {})));
   }
 }
@@ -479,7 +482,9 @@ export function parseDxf(text) {
     throw err;
   }
   const doc = newDocument();
-  const stats = { paper: 0, errors: [] };
+  const paperLists = new Map();
+  const blockRecH = new Map();
+  const stats = { errors: [], layerH: new Map(), paperList: (n) => paperLists.get(n.toUpperCase()) ?? paperLists.set(n.toUpperCase(), []).get(n.toUpperCase()) };
 
   // HEADER
   if (secs.HEADER) {
@@ -502,13 +507,14 @@ export function parseDxf(text) {
 
   // TABLES
   if (secs.TABLES) {
-    const dimRecs = [], styleH = new Map(), blockRecH = new Map();
+    const dimRecs = [], styleH = new Map();
     for (const rec of records(tk, secs.TABLES.from, secs.TABLES.to)) {
       if (rec.type === 'BLOCK_RECORD') blockRecH.set(rec.str(5), rec.str(2));
       if (rec.type === 'STYLE') styleH.set(rec.str(5), rec.str(2));
       if (rec.type === 'LAYER') {
         const name = rec.str(2);
         if (!name) continue;
+        stats.layerH.set(rec.str(5), name);
         const c = rec.int(62, 7);
         const flags = rec.int(70);
         addLayer(doc, {
@@ -553,7 +559,7 @@ export function parseDxf(text) {
       if (!isLayoutBlock) {
         const blk = addBlock(doc, cur.name, cur.base, []);
         readEntityList(list, doc, blk.entities, stats);
-      }
+      } else if (/^[*$]paper_space./i.test(cur.name)) readEntityList(list, doc, stats.paperList(cur.name), stats);
       cur = null; list = [];
     };
     for (const rec of recs) {
@@ -567,7 +573,30 @@ export function parseDxf(text) {
   // ENTITIES
   if (secs.ENTITIES) readEntityList(records(tk, secs.ENTITIES.from, secs.ENTITIES.to), doc, doc.entities, stats);
 
-  if (stats.paper) doc.header.paperSpaceEntities = stats.paper;
+  // OBJECTS: LAYOUT objects name the paper-space blocks; paper entities without a layout get a default one
+  const layouts = [];
+  if (secs.OBJECTS) {
+    for (const rec of records(tk, secs.OBJECTS.from, secs.OBJECTS.to)) {
+      if (rec.type !== 'LAYOUT') continue;
+      const lo = parseLayoutObject(rec.tags());
+      const block = blockRecH.get(lo.blockHandle) ?? '';
+      if (/^\*model_space$/i.test(block) || lo.name.toUpperCase() === 'MODEL') continue;
+      lo.block = block || (layouts.length ? `*Paper_Space${layouts.length - 1}` : '*Paper_Space');
+      delete lo.blockHandle;
+      lo.entities = paperLists.get(lo.block.toUpperCase()) ?? [];
+      paperLists.delete(lo.block.toUpperCase());
+      layouts.push(lo);
+    }
+  }
+  for (const [blk, ents] of paperLists) {
+    if (!ents.length) continue;
+    const lo = parseLayoutObject([]);
+    Object.assign(lo, { name: `Layout${layouts.length + 1}`, tab: layouts.length + 1, block: blk, entities: ents });
+    delete lo.blockHandle;
+    layouts.push(lo);
+  }
+  layouts.sort((a, b) => a.tab - b.tab);
+  doc.layouts = layouts;
   if (stats.errors.length) doc.header.readErrors = stats.errors.slice(0, 20);
   return doc;
 }

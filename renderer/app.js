@@ -244,8 +244,6 @@ class App {
   /** objects that were read but cannot be written back (they would vanish from an overwritten file) */
   droppedContent() {
     const sk = Object.entries(this.doc.skipped || {}).map(([k, v]) => `${v} ${k}`);
-    const ps = this.doc.header?.paperSpaceEntities;
-    if (ps) sk.push(`${ps} paper-space (layout) object(s)`);
     return sk;
   }
   async save() {
@@ -336,7 +334,7 @@ class App {
   }
   async limitations() {
     await message('What this program does and does not do', 'Please read before relying on it for important work:', el('ul', {},
-      ['Only model space is shown and saved. Paper-space layouts are ignored.',
+      ['Paper-space layouts, their objects and viewports are read and saved back; viewport clip boundaries other than the rectangle are not kept.',
         'Supported objects: lines, polylines, circles, arcs, ellipses, splines, text, multiline text, points, solids, hatches, blocks, dimensions (as drawn) and leaders. Other objects (3D solids, regions, xlines, multileaders …) are skipped and reported when you open the file.',
         'Dimensions are displayed from their stored drawing, but cannot be edited as dimensions; they can be moved, copied or exploded.',
         'Saving as DXF is the reliable option. Saving as DWG is experimental and is checked after saving; text rotation and some hatches can be lost.',
