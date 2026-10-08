@@ -132,6 +132,16 @@ export function serializeMText(model, { height = 1 } = {}) {
 
 // ---------------------------------------------------------------------------------------------
 // layout. measure(text, props) -> advance width in drawing units at height props.h (before wf / tracking).
+const INDENT = /^\\pxi(-?[\d.]+)(?:,l(-?[\d.]+))?/;
+/** the paragraph's \pxi first-line / left indent from its raw code run ({ i: 0, l: 0 } when none) */
+function paraIndent(para) {
+  for (const r of para.runs) {
+    if (r.raw == null) break;
+    const m = INDENT.exec(r.raw);
+    if (m) return { i: num(m[1], 0), l: num(m[2], 0) };
+  }
+  return { i: 0, l: 0 };
+}
 export const approxMeasure = (t, p) => [...t].length * p.h * (p.bold ? 0.66 : 0.6);
 const STACK_H = 0.7;
 
@@ -139,6 +149,10 @@ export function layoutMText(model, { width = 0, attach = 1, lineSpacing = 1, mea
   const adv = (t, p) => measure(t, p) * p.wf * p.track;
   const lines = [];
   for (const para of model.paras) {
+    // paragraph indent \pxi<first>,l<left>: first line at left + first, the others at left (drawing units)
+    const ind = paraIndent(para), first0 = lines.length;
+    const indOf = () => (lines.length === first0 ? ind.l + ind.i : ind.l);
+    const mk = () => ({ parts: [], w: 0, align: para.align, ind: indOf() });
     // pieces: words (one or more runs without a breaking space), spaces and stacks
     const units = [];
     let word = null;
@@ -160,15 +174,15 @@ export function layoutMText(model, { width = 0, attach = 1, lineSpacing = 1, mea
       }
     }
     endWord();
-    let cur = { parts: [], w: 0, align: para.align };
+    let cur = mk();
     const trimEnd = (l) => { while (l.parts.length && l.parts.at(-1).text?.trim() === '') l.w -= l.parts.pop().w; };
     for (const u of units) {
-      if (width > 0 && !u.space && cur.parts.length && cur.w + u.w > width + 1e-9) {
-        trimEnd(cur); lines.push(cur); cur = { parts: [], w: 0, align: para.align };
+      if (width > 0 && !u.space && cur.parts.length && cur.w + u.w > width - cur.ind + 1e-9) {
+        trimEnd(cur); lines.push(cur); cur = mk();
       }
       if (u.space && !cur.parts.length && lines.length && lines.at(-1).align === para.align && lines.at(-1).wrapped) continue;
       cur.parts.push(...u.parts); cur.w += u.w;
-      if (width > 0 && !u.space && cur.w > width) cur.wrapped = true;
+      if (width > 0 && !u.space && cur.w > width - cur.ind) cur.wrapped = true;
     }
     trimEnd(cur);
     cur.h = Math.max(0, ...para.runs.filter((r) => r.props).map((r) => r.props.h)) || model.baseH || 1;
@@ -176,7 +190,7 @@ export function layoutMText(model, { width = 0, attach = 1, lineSpacing = 1, mea
   }
   // per line height from its own parts
   for (const l of lines) if (l.parts.length) l.h = Math.max(...l.parts.map((p) => p.props.h));
-  const boxW = width > 0 ? width : Math.max(0, ...lines.map((l) => l.w));
+  const boxW = width > 0 ? width : Math.max(0, ...lines.map((l) => l.w + l.ind));
   const col = (attach - 1) % 3, row = Math.floor((attach - 1) / 3);
   const x0 = col === 0 ? 0 : col === 1 ? -boxW / 2 : -boxW;
   let y = 0;
@@ -187,7 +201,7 @@ export function layoutMText(model, { width = 0, attach = 1, lineSpacing = 1, mea
   for (const l of lines) {
     l.y += dy;
     const a = l.align ?? col;
-    let x = x0 + (a === 1 ? (boxW - l.w) / 2 : a === 2 ? boxW - l.w : 0);
+    let x = x0 + l.ind + (a === 1 ? (boxW - l.ind - l.w) / 2 : a === 2 ? boxW - l.ind - l.w : 0);
     l.x = x;
     for (const p of l.parts) {
       const pr = p.props;
@@ -292,4 +306,66 @@ export function unstackMText(model, a, b) {
     end += t.length - 1;
   });
   return { model: modelOf(out, model.paras[0]?.align ?? null), a, b: end };
+}
+
+// ---- bulleted / numbered lists. A list paragraph starts with the raw code run LIST_CODE and then the text "• " or "1. "
+// (the DXF writer turns tabs into spaces and the reader does not decode ^I, so no tab is used).
+export const LIST_CODE = '\\pxi-3,l3,t3;';
+const LIST_RAW = /^\\pxi-?[\d.]+,l[\d.]+,t[\d.]+;$/;
+const MARK = /^(?:• |\d+\. )/;
+function paraRanges(cells) {
+  const out = [];
+  let start = 0;
+  cells.forEach((c, k) => { if (c.br) { out.push({ start, end: k }); start = k + 1; } });
+  out.push({ start, end: cells.length });
+  return out;
+}
+/** the list marker of the paragraph in cells [start, end): { kind: 'bullet' | 'number', len } or null (len counts cells incl. the code run) */
+function listOf(cells, { start, end }) {
+  if (end - start < 3 || !cells[start].raw || !LIST_RAW.test(cells[start].raw)) return null;
+  const txt = cells.slice(start + 1, Math.min(end, start + 12)).map((c) => c.ch ?? '\u0000').join('');
+  const m = MARK.exec(txt);
+  return m ? { kind: m[0] === '• ' ? 'bullet' : 'number', len: 1 + m[0].length } : null;
+}
+/** toggle a bulleted (kind 'bullet') or numbered ('number') list on the paragraphs touched by [a, b] (all when a === b).
+ *  Already that kind on all of them: removes it. Numbered paragraphs are renumbered 1., 2., 3. in each consecutive run. */
+export function listMText(model, a, b, kind) {
+  let cells = cellsOf(model);
+  const all = a === b, lo = Math.min(a, b), hi = Math.max(a, b);
+  const sel = (r) => all || (r.start <= hi && r.end >= lo && !(r.start === hi && hi > lo));
+  const ranges = paraRanges(cells), chosen = ranges.filter(sel);
+  const remove = chosen.every((r) => listOf(cells, r)?.kind === kind);
+  const shifts = [];   // [cell position, delta]
+  const out = [];
+  ranges.forEach((r, pi) => {
+    if (pi) out.push(cells[r.start - 1]);
+    let body = cells.slice(r.start, r.end);
+    if (sel(r)) {
+      const cur = listOf(cells, r);
+      if (cur) { body = body.slice(cur.len); shifts.push([r.start, -cur.len]); }
+      if (!remove) {
+        const props = (body.find((c) => c.props) ?? cells.slice(r.start, r.end).find((c) => c.props))?.props ?? { ...DEFAULT_PROPS, h: model.baseH ?? 1 };
+        const pre = [{ raw: LIST_CODE }, ...(kind === 'bullet' ? '• ' : '1. ').split('').map((ch) => ({ ch, props }))];
+        body = [...pre, ...body]; shifts.push([r.start, pre.length]);
+      }
+    }
+    out.push(...body);
+  });
+  // renumber every consecutive run of numbered paragraphs
+  const rr = paraRanges(out);
+  let n = 0;
+  for (const r of rr) {
+    const cur = listOf(out, r);
+    if (cur?.kind !== 'number') { n = 0; continue; }
+    const digits = out.slice(r.start + 1, r.start + cur.len - 2).length;
+    const props = out[r.start + 1].props;
+    out.splice(r.start + 1, digits + 2, ...`${++n}. `.split('').map((ch) => ({ ch, props })));
+    const d = `${n}. `.length - (digits + 2);
+    if (d) for (let k = rr.indexOf(r) + 1; k < rr.length; k++) { rr[k].start += d; rr[k].end += d; }
+    r.end += d;
+  }
+  const map = (x) => { let y = x; for (const [at, d] of shifts) if (x > at) y += Math.max(d, at - x); return Math.max(0, y); };
+  const m = modelOf(out, model.paras[0]?.align ?? null);
+  // a first paragraph keeps its alignment; the others come from their break cells
+  return { model: m, a: all ? 0 : map(lo), b: all ? out.length : map(hi) };
 }

@@ -368,6 +368,11 @@ try {
   });
   assert.deepEqual(reread, [false, true], 'DUCT off + frozen after save and reopen');
 
+  step = 'layers panel: colour swatch -> pick red sets the layer colour (popup survives its own click)';
+  await row('DUCT').locator('.swatch').click();
+  await page.locator('.popmenu button', { hasText: /red/i }).first().click();
+  assert.equal(await page.evaluate(() => window.app.doc.layers.get('DUCT').color), 1, 'DUCT colour = 1');
+
   step = 'find and replace: Ctrl+F, results, click selects, Replace all, Undo';
   await page.evaluate(async () => {
     const M = await import('/src/core/model.js');
@@ -876,6 +881,18 @@ try {
   assert.equal(tb.attach, 5, 'justification MC sets attach 5');
   await page.mouse.click(5, 300); await page.keyboard.press('Control+z');
   assert.deepEqual(await entOf(tbId), { text: 'Pump room', attach: 1 }, 'one undo step restores text and attach');
+
+  step = 'MTEXT editor toolbar: bullets and numbering on two paragraphs, toggle off';
+  const listId = await openOn('one\\Ptwo');
+  const reopen = async () => { await page.evaluate(async (id) => { const { openMTextEditor } = await import('/renderer/mtext-editor.js'); openMTextEditor(window.app, window.app.doc.entities.find((e) => e.id === id)); }, listId); await page.locator(ed).waitFor(); };
+  const listText = async () => { await page.keyboard.press('Control+Enter'); return (await entOf(listId)).text; };
+  const P = '\\pxi-3,l3,t3;';
+  await page.locator('.mt-toolbar [data-cmd="bullets"]').click();
+  assert.equal(await listText(), `${P}\u2022 one\\P${P}\u2022 two`, 'bullets on both paragraphs');
+  await reopen(); await page.locator('.mt-toolbar [data-cmd="bullets"]').click();
+  assert.equal(await listText(), 'one\\Ptwo', 'bullets toggled off');
+  await reopen(); await page.locator('.mt-toolbar [data-cmd="numbering"]').click();
+  assert.equal(await listText(), `${P}1. one\\P${P}2. two`, 'numbering');
 
   step = 'layouts: Model / Layout tabs, sheet, viewport at 1:50, viewport-frozen layer, MV';
   await page.keyboard.press('Escape');

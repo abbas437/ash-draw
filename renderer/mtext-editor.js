@@ -6,7 +6,7 @@
 // non-breaking spaces (\~) are non-editable spans written back verbatim. A toolbar action reads the DOM into the model
 // with the selection as cell positions (mtext-dom.js), applies a src/core/mtext.js helper, re-renders and puts the
 // selection back. An empty selection applies to the whole text.
-import { parseMText, serializeMText, DEFAULT_PROPS, formatMText, toggleMText, insertMText, stackMText, unstackMText } from '../src/core/mtext.js';
+import { parseMText, serializeMText, DEFAULT_PROPS, formatMText, toggleMText, listMText, insertMText, stackMText, unstackMText } from '../src/core/mtext.js';
 import { aciToRgb } from '../src/core/aci.js';
 import { makeMText } from '../src/core/model.js';
 import { addEntities, setText } from '../src/core/edit.js';
@@ -110,6 +110,8 @@ class MTextEditor {
       pick('color', 'Colour of the selected text', [['', 'Colour'], ...ACI_CHOICES], (v, s) => { if (v) fmt({ color: +v === 256 ? null : { aci: +v } }); s.value = ''; }),
       btn('stack', 'a/b', 'Stack the selected "a/b", "a#b" or "a^b"', () => this.act((m, a, b) => stackMText(m, a, b))),
       btn('unstack', 'a b', 'Unstack', () => this.act((m, a, b) => unstackMText(m, a, b))),
+      btn('bullets', '•≡', 'Bulleted list (selected paragraphs, all when nothing is selected)', () => this.act((m, a, b) => listMText(m, a, b, 'bullet'))),
+      btn('numbering', '1.', 'Numbered list (selected paragraphs, all when nothing is selected)', () => this.act((m, a, b) => listMText(m, a, b, 'number'))),
       pick('symbol', 'Insert a symbol', [['', 'Symbol'], ...SYMBOLS.map(([c, n]) => [c, c === '\u00A0' ? n : `${c}  ${n}`])], (v, s) => { if (v) this.act((m, a, b) => insertMText(m, a, b, v)); s.value = ''; }),
       pick('attach', 'Justification (attachment point)', ATTACH.map((t, i) => [i + 1, t]), (v) => { this.attach = +v; this.place(); this.root.focus(); }),
       num('wf', 'Width factor of the selected text', 1, '0.01', (v) => fmt({ wf: v })),
