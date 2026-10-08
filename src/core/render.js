@@ -18,6 +18,7 @@ import {
 import { plainText } from './dxfRead.js';
 import { mleaderParts } from './mleader.js';
 import { patternLines, hasPattern } from './patterns.js';
+import { SceneGrid } from './sceneGrid.js';
 
 const TAU = Math.PI * 2;
 const OP_M = 0, OP_L = 1, OP_A = 2, OP_E = 3, OP_Z = 4;
@@ -280,18 +281,48 @@ class Builder {
 export function buildScene(doc) {
   const b = new Builder(doc);
   for (const e of doc.entities) b.emit(e, [1, 0, 0, 1, 0, 0], null, e.id, 0);
-  return { items: b.items, byId: b.byId, bbox: b.bbox, doc, version: 0 };
+  b.items.forEach((it, i) => { it.pos = i; });
+  return { items: b.items, byId: b.byId, bbox: b.bbox, doc, version: 0, grid: null };
+}
+
+/** the scene's item grid, built on first use (drawing) and kept up to date by updateScene */
+export function sceneGrid(scene) {
+  if (!scene.grid) {
+    scene.grid = new SceneGrid(scene.bbox, scene.items.length);
+    for (const it of scene.items) scene.grid.insert(it);
+  }
+  return scene.grid;
+}
+
+/** the scene items whose bbox touches the view box, in scene (draw) order */
+export function visibleItems(scene, minx, miny, maxx, maxy) {
+  const items = scene.items, out = [];
+  const touches = (b) => !b || !(b.maxx < minx || b.minx > maxx || b.maxy < miny || b.miny > maxy);
+  const sb = scene.bbox;
+  if (!sb || (minx <= sb.minx && miny <= sb.miny && maxx >= sb.maxx && maxy >= sb.maxy)) {
+    for (const it of items) if (touches(it.bbox)) out.push(it);
+    return out;
+  }
+  const cand = sceneGrid(scene).query({ minx, miny, maxx, maxy });
+  const ord = new Uint32Array(cand.length);
+  let n = 0;
+  for (const it of cand) if (touches(it.bbox)) ord[n++] = it.pos;
+  const sorted = ord.subarray(0, n).sort();
+  for (let i = 0; i < n; i++) out.push(items[sorted[i]]);
+  return out;
 }
 
 /** rebuild just the given entity ids (after edits); unknown ids are removed */
 export function updateScene(scene, ids) {
   const set = new Set(ids);
   const doc = scene.doc;
+  const grid = scene.grid;
+  for (const id of set) { if (grid) for (const it of scene.byId.get(id) ?? []) grid.remove(it); scene.byId.delete(id); }
   scene.items = scene.items.filter((it) => !set.has(it.id));
-  for (const id of set) scene.byId.delete(id);
   const b = new Builder(doc);
   for (const id of set) { const e = doc.entities.find((x) => x.id === id); if (e) b.emit(e, [1, 0, 0, 1, 0, 0], null, id, 0); }
-  for (const it of b.items) { scene.items.push(it); let l = scene.byId.get(it.id); if (!l) scene.byId.set(it.id, (l = [])); l.push(it); }
+  for (const it of b.items) { scene.items.push(it); let l = scene.byId.get(it.id); if (!l) scene.byId.set(it.id, (l = [])); l.push(it); if (grid) grid.insert(it); }
+  for (let i = 0; i < scene.items.length; i++) scene.items[i].pos = i;
   scene.bbox = null;
   for (const it of scene.items) if (it.bbox) scene.bbox = unionBox(scene.bbox, it.bbox);
   scene.version++;
@@ -333,7 +364,6 @@ export function drawScene(ctx, scene, view, opts = {}) {
   const sx = (x) => (x - view.cx) * z + W / 2;
   const sy = (y) => H / 2 - (y - view.cy) * z;
   const minx = view.cx - W / 2 / z, maxx = view.cx + W / 2 / z, miny = view.cy - H / 2 / z, maxy = view.cy + H / 2 / z;
-  const visible = (it) => !it.bbox || !(it.bbox.maxx < minx || it.bbox.minx > maxx || it.bbox.maxy < miny || it.bbox.miny > maxy);
   const hi = opts.highlight instanceof Set ? opts.highlight : null;
   const colorOf = (st) => (st.color.auto ? (dark ? '#ffffff' : '#000000') : rgbCss(st.color.rgb));
   const lwPx = (st) => {
@@ -363,11 +393,24 @@ export function drawScene(ctx, scene, view, opts = {}) {
     }
   };
 
+  // one pass over the visible items buckets them for the drawing phases (grid-culled, scene order kept)
+  const fills = [], marks = [], texts = [], batches = new Map();
+  for (const it of visibleItems(scene, minx, miny, maxx, maxy)) {
+    const k = it.kind;
+    if (k === 'hatch' || k === 'fill') fills.push(it);
+    else if (k === 'path' || k === 'hatchOutline') {
+      const st = it.style;
+      const key = `${st.color.auto ? 'a' : st.color.rgb.join(',')}|${lwPx(st)}|${st.lt}|${st.lts}`;
+      let b = batches.get(key);
+      if (!b) batches.set(key, (b = { st, items: [] }));
+      b.items.push(it);
+    } else if (k === 'text') texts.push(it);
+    if (it.arrow || k === 'point') marks.push(it);
+  }
+
   // 1. hatches and solid fills
   const fillAlphaPattern = opts.patternFallbackAlpha ?? 0.25;
-  for (const it of scene.items) {
-    if (it.kind !== 'hatch' && it.kind !== 'fill') continue;
-    if (!visible(it)) continue;
+  for (const it of fills) {
     const col = colorOf(it.style);
     if (it.kind === 'fill' || it.solid) {
       ctx.beginPath(); tracePath(it.ops);
@@ -380,16 +423,6 @@ export function drawScene(ctx, scene, view, opts = {}) {
   }
 
   // 2. line work, batched by style
-  const batches = new Map();
-  for (const it of scene.items) {
-    if (it.kind !== 'path' && it.kind !== 'hatchOutline') continue;
-    if (!visible(it)) continue;
-    const st = it.style;
-    const key = `${st.color.auto ? 'a' : st.color.rgb.join(',')}|${lwPx(st)}|${st.lt}|${st.lts}`;
-    let b = batches.get(key);
-    if (!b) batches.set(key, (b = { st, items: [] }));
-    b.items.push(it);
-  }
   for (const { st, items } of batches.values()) {
     ctx.beginPath();
     for (const it of items) tracePath(it.ops);
@@ -402,8 +435,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
   ctx.setLineDash([]);
 
   // leader arrow heads and points
-  for (const it of scene.items) {
-    if (!visible(it)) continue;
+  for (const it of marks) {
     if (it.arrow) {
       ctx.fillStyle = colorOf(it.style);
       const a = it.arrow[0], b = it.arrow[1];
@@ -413,7 +445,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
       ctx.lineTo(sx(b.x) - ux * size + uy * size * 0.2, sy(b.y) - uy * size - ux * size * 0.2);
       ctx.lineTo(sx(b.x) - ux * size - uy * size * 0.2, sy(b.y) - uy * size + ux * size * 0.2);
       ctx.closePath(); ctx.fill();
-    } else if (it.kind === 'point') {
+    } else {
       const x = sx(it.p.x), y = sy(it.p.y);
       ctx.strokeStyle = colorOf(it.style); ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(x - 3, y); ctx.lineTo(x + 3, y); ctx.moveTo(x, y - 3); ctx.lineTo(x, y + 3); ctx.stroke();
@@ -421,8 +453,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
   }
 
   // 3. text
-  for (const it of scene.items) {
-    if (it.kind !== 'text' || !visible(it)) continue;
+  for (const it of texts) {
     if (it.mt) drawMText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style), dark);
     else drawText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style));
   }

@@ -926,6 +926,23 @@ try {
   await page.keyboard.press('Control+z');
   assert.equal(await page.locator('#markups .mk-row').count(), 1, 'delete is one undo step');
 
+  step = 'drawScene pixel parity with the reference renderer (3 zoom levels, browser canvas)';
+  const parity = await page.evaluate(async () => {
+    const R = await import('/src/core/render.js');
+    const { drawSceneRef } = await import('/test/ref/drawSceneRef.js');
+    const { mixedDoc } = await import('/test/ref/mixedDoc.js');
+    const scene = R.buildScene(mixedDoc());
+    const W = 500, H = 320, fit = R.fitView(scene.bbox, W, H);
+    const px = (draw, v) => { const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const c = cv.getContext('2d'); draw(c, scene, v, { background: '#ffffff' }); return c.getImageData(0, 0, W, H).data; };
+    return [[2, 300, 200], [6, 620, 410], [16, 150, 520]].map(([k, cx, cy]) => {
+      const v = { ...fit, zoom: fit.zoom * k, cx, cy }, a = px(drawSceneRef, v), b = px(R.drawScene, v);
+      let diff = 0, ink = 0;
+      for (let i = 0; i < a.length; i += 4) { if (a[i] !== b[i] || a[i + 1] !== b[i + 1] || a[i + 2] !== b[i + 2]) diff++; if (a[i] < 250 || a[i + 1] < 250 || a[i + 2] < 250) ink++; }
+      return { k, diff: diff / (W * H), ink };
+    });
+  });
+  for (const p of parity) { assert.ok(p.ink > 500, `parity view ${p.k}x is not empty`); assert.ok(p.diff <= 0.005, `parity view ${p.k}x: ${(p.diff * 100).toFixed(3)} % pixels differ`); }
+
   step = 'csp';
   assert.deepEqual(await page.evaluate(() => window.__csp), []);
   assert.deepEqual(problems, []);
