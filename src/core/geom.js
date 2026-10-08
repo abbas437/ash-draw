@@ -1,6 +1,8 @@
 // ASH Draw Studio - 2D geometry helpers over the drawing model (see model.js).
 // Pure ES module. Matrices are canvas-style [a,b,c,d,e,f]:  x' = a*x + c*y + e ; y' = b*x + d*y + f.
 
+import { mleaderParts, transformMLeader } from './mleader.js';
+
 const TAU = Math.PI * 2;
 const EPS = 1e-9;
 export const DEG = Math.PI / 180;
@@ -210,6 +212,7 @@ export function tessellate(e, doc = null, tol = 0) {
     }
     case 'POINT': return [[{ ...e.p }]];
     case 'LEADER': return e.pts && e.pts.length > 1 ? [e.pts.map((a) => ({ ...a }))] : [];
+    case 'MLEADER': return mleaderParts(e).flatMap((sub) => (sub.type === 'MTEXT' ? [[{ ...sub.p }]] : tessellate(sub, doc, tol)));
     case 'HATCH': return (e.loops || []).map((l) => hatchLoopPoints(l, tol)).filter((l) => l.length > 1);
     case 'INSERT':
     case 'DIMENSION': {
@@ -411,6 +414,7 @@ export function transformEntity(e, m) {
     case 'POINT': c.p = apply(m, e.p); break;
     case 'SOLID': c.pts = e.pts.map((p) => apply(m, p)); break;
     case 'LEADER': c.pts = e.pts.map((p) => apply(m, p)); break;
+    case 'MLEADER': return transformMLeader(e, (p) => apply(m, p));
     case 'SPLINE':
       c.ctrl = e.ctrl.map((p) => apply(m, p)); c.fit = (e.fit || []).map((p) => apply(m, p)); break;
     case 'CIRCLE':
@@ -690,6 +694,7 @@ export function snapPoints(e, doc = null) {
     case 'SPLINE': { const pts = e.fit && e.fit.length ? e.fit : e.ctrl || []; if (pts.length) { add(pts[0], 'end'); add(pts[pts.length - 1], 'end'); } break; }
     case 'SOLID': e.pts.forEach((q) => add(q, 'end')); break;
     case 'LEADER': e.pts.forEach((q) => add(q, 'end')); break;
+    case 'MLEADER': e.leaders.forEach((l) => l.lines.forEach((ln) => ln.length && add(ln[0], 'end'))); break;
     default: break;
   }
   return out;

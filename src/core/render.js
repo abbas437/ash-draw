@@ -16,6 +16,7 @@ import {
   ccwSweep, tessellate, ellipsePoint, unionBox, growBox,
 } from './geom.js';
 import { plainText } from './dxfRead.js';
+import { mleaderParts } from './mleader.js';
 import { patternLines, hasPattern } from './patterns.js';
 
 const TAU = Math.PI * 2;
@@ -60,6 +61,11 @@ class Builder {
     if (e.type === 'DIMENSION') {
       const blk = this.doc.blocks.get(e.block);
       if (blk) this.emitBlockContent(blk, m, this.styleFor(e, layer, inherit, name), rootId, depth);
+      return;
+    }
+    if (e.type === 'MLEADER') {
+      const st = this.styleFor(e, layer, inherit, name);
+      for (const sub of mleaderParts(e)) this.emit(sub, m, st, rootId, depth + 1);
       return;
     }
     const style = this.styleFor(e, layer, inherit, name);
