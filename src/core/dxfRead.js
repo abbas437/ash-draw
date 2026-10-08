@@ -240,10 +240,12 @@ function buildSpline(rec, o) {
 
 function buildText(rec, o) {
   const hAlign = rec.int(72), vAlign = rec.int(73);
-  let p = pt(rec, 10);
-  if ((hAlign || vAlign) && rec.has(11)) p = pt(rec, 11);
+  let p = pt(rec, 10), p2 = null;
+  // Aligned / Fit run from 10 to 11; every other non-default justification is placed at 11
+  if ((hAlign === 3 || hAlign === 5) && rec.has(11)) p2 = pt(rec, 11);
+  else if ((hAlign || vAlign) && rec.has(11)) p = pt(rec, 11);
   return makeText(p, rec.num(40, 1), rec.str(1), {
-    ...o, rot: rec.num(50), widthFactor: rec.num(41, 1), style: rec.str(7, 'STANDARD').toUpperCase(), hAlign, vAlign,
+    ...o, p2, rot: rec.num(50), widthFactor: rec.num(41, 1), style: rec.str(7, 'STANDARD').toUpperCase(), hAlign, vAlign,
     oblique: rec.num(51),
   });
 }
@@ -453,7 +455,7 @@ function buildEntity(rec, doc, extra) {
   const xd = readXData(rec);
   if (xd) e.xdata = xd;
   if (flipped) {
-    if (e.type === 'TEXT') { e.p = { x: -e.p.x, y: e.p.y }; e.rot = 180 - e.rot; }
+    if (e.type === 'TEXT') { e.p = { x: -e.p.x, y: e.p.y }; e.rot = 180 - e.rot; if (e.p2) e.p2 = { x: -e.p2.x, y: e.p2.y }; }
     else if (['CIRCLE', 'ARC', 'LWPOLYLINE', 'SOLID', 'INSERT', 'HATCH'].includes(e.type)) {
       const id = e.id;
       const t = transformEntity(e, FLIP);

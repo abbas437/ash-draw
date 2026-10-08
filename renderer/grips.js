@@ -66,7 +66,7 @@ export function gripsOf(e) {
       const mn = { x: -e.major.y * e.ratio, y: e.major.x * e.ratio };
       return [g(e.c, 'cen'), g(add(e.c, e.major), 'axis'), g(sub(e.c, e.major), 'axis'), g(add(e.c, mn), 'axis'), g(sub(e.c, mn), 'axis')];
     }
-    case 'TEXT': case 'MTEXT': case 'INSERT': case 'POINT': return [g(e.p, 'ins')];
+    case 'TEXT': case 'MTEXT': case 'INSERT': case 'POINT': return e.p2 ? [g(e.p, 'ins'), g(e.p2, 'ins')] : [g(e.p, 'ins')];
     case 'LEADER': return e.pts.map((q) => g(q, 'vtx'));
     case 'DIMENSION': {
       if (!e.def) return [];
@@ -123,7 +123,8 @@ export function applyGrip(e, i, p) {
       return c;
     }
     case 'TEXT': case 'MTEXT': case 'INSERT': case 'POINT':
-      c.p = P(p); return c;
+      if (i === 1 && c.p2) c.p2 = P(p); else c.p = P(p);
+      return c;
     case 'LEADER':
       c.pts[i] = P(p); return c;
     case 'DIMENSION': {

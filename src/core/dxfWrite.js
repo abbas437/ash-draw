@@ -2,6 +2,7 @@
 // Output is plain ASCII (non-ASCII text is written as \U+XXXX), CRLF line ends.
 // doc.lastWriteReport = { version, entities, blocks, skipped:{TYPE:n}, notes:[...] } is set on every call.
 import { docExtents, ccwSweep, DEG } from './geom.js';
+import { textFrame } from './textMetrics.js';
 import { patternLines, hasPattern } from './patterns.js';
 
 const TAU = Math.PI * 2;
@@ -206,15 +207,18 @@ export function writeDxf(doc, opts = {}) {
       case 'TEXT': {
         // ATTDEF (e.attdef) and ATTRIB (e.attrib, written after their INSERT) share the TEXT body; value in 1
         const kind = e.attdef ? 'ATTDEF' : e.attrib ? 'ATTRIB' : 'TEXT';
-        head(o, e, kind, owner); o.p(100, 'AcDbText'); o.pt(10, e.p.x, e.p.y); o.p(40, e.height); o.s(1, e.attdef ? e.attdef.default : e.text);
+        // 10 is the baseline start (computed for every justification but Aligned / Fit, where it is stored); 11 the alignment point
+        const ha = e.hAlign || 0, va = e.vAlign || 0, fit = (ha === 3 || ha === 5) && e.p2;
+        const p10 = fit || (!ha && !va) ? e.p : textFrame(e, doc).o;
+        head(o, e, kind, owner); o.p(100, 'AcDbText'); o.pt(10, p10.x, p10.y); o.p(40, e.height); o.s(1, e.attdef ? e.attdef.default : e.text);
         if (e.rot) o.p(50, e.rot);
         if (e.widthFactor && e.widthFactor !== 1) o.p(41, e.widthFactor);
         if (e.oblique) o.p(51, e.oblique);
         const st = String(e.style || 'STANDARD').toUpperCase();
         o.s(7, styleDefs.has(st) ? styleDefs.get(st).name : 'Standard');
-        const aligned = (e.hAlign || 0) !== 0 || (e.vAlign || 0) !== 0;
-        if (e.hAlign) o.p(72, e.hAlign);
-        if (aligned) o.pt(11, e.p.x, e.p.y);
+        if (ha) o.p(72, ha);
+        if (fit) o.pt(11, e.p2.x, e.p2.y);
+        else if (ha || va) o.pt(11, e.p.x, e.p.y);
         if (kind !== 'TEXT') {
           const at = e.attdef ?? e.attrib;
           o.p(100, kind === 'ATTDEF' ? 'AcDbAttributeDefinition' : 'AcDbAttribute');

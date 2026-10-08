@@ -2,6 +2,7 @@
 // Pure ES module. Matrices are canvas-style [a,b,c,d,e,f]:  x' = a*x + c*y + e ; y' = b*x + d*y + f.
 
 import { mleaderParts, transformMLeader } from './mleader.js';
+import { textFrame, textCorners } from './textMetrics.js';
 import { nurbsOf, curveOfNurbs, curveCurveHits, nearestParam, slice as nurbsSlice, splineEntity, offsetNurbs, isClosed, derivsAt, domain, lineNurbs, joinCurves, subCurve } from './nurbs.js';
 
 const TAU = Math.PI * 2;
@@ -276,7 +277,8 @@ export function textExtent(e) {
 }
 /** Axis-aligned bbox {minx,miny,maxx,maxy} or null. */
 export function bboxOf(e, doc = null) {
-  if (e.type === 'TEXT' || e.type === 'MTEXT') {
+  if (e.type === 'TEXT') return boxOfPoints(textCorners(textFrame(e, doc)));
+  if (e.type === 'MTEXT') {
     const { w, h } = textExtent(e);
     const r = (e.rot || 0) * DEG, c = Math.cos(r), s = Math.sin(r);
     const mtext = e.type === 'MTEXT';
@@ -453,6 +455,13 @@ export function transformEntity(e, m) {
         c.rot = r;
       }
       if (e.type === 'MTEXT' && e.width) c.width = e.width * s;
+      if (e.p2) {
+        // Aligned / Fit: both points move; a mirror keeps the text reading left to right (MIRRTEXT = 0)
+        c.p2 = apply(m, e.p2);
+        let r = Math.atan2(c.p2.y - c.p.y, c.p2.x - c.p.x) / DEG;
+        if (det(m) < 0 && Math.abs(r) > 90) { [c.p, c.p2] = [c.p2, c.p]; r += r > 0 ? -180 : 180; }
+        c.rot = r;
+      }
       break;
     case 'HATCH':
       c.loops = e.loops.map((l) => {

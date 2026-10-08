@@ -19,7 +19,8 @@ import { plainText } from './dxfRead.js';
 import { mleaderParts } from './mleader.js';
 import { patternLines, hasPattern } from './patterns.js';
 import { SceneGrid } from './sceneGrid.js';
-import { shxSubstitute, strokeLayout, STROKE_DESCENT } from './shx.js';
+import { strokeLayout } from './shx.js';
+import { textFrame, textCorners } from './textMetrics.js';
 
 const TAU = Math.PI * 2;
 const OP_M = 0, OP_L = 1, OP_A = 2, OP_E = 3, OP_Z = 4;
@@ -230,10 +231,16 @@ class Builder {
         for (const [x, y] of corners) {
           box = growBox(box, { x: p.x + x * Math.cos(rot) - y * Math.sin(rot), y: p.y + x * Math.sin(rot) + y * Math.cos(rot) });
         }
-        const tst = this.doc.textStyles.get(String(e.style || 'STANDARD').toUpperCase());
-        if (e.type === 'TEXT' && !e.ui && lines.length === 1 && shxSubstitute(tst?.fontFile || tst?.font)) {
-          const sl = strokeLayout(raw, h);
-          if (sl) { this.pushStrokeText(e, sl, p, h, rot, style, box, rootId); return; }
+        if (e.type === 'TEXT') {
+          // real width and the 15 justifications (Aligned / Fit: drawn from p with the fitted height / width factor)
+          const f = textFrame({ ...e, p, p2: e.p2 && P(e.p2), height: h, rot: rot / DEG }, this.doc);
+          box = textCorners(f).reduce((b, q) => growBox(b, q), null);
+          if (f.stroke) { this.pushStrokeText(strokeLayout(raw, f.h), f, style, box, rootId); return; }
+          if (e.hAlign === 3 || e.hAlign === 5) {
+            this.push({ kind: 'text', p: f.o, h: f.h, rot: f.rot, lines, wf: f.wf, style, bbox: box, mtext: false, attach: 1, boxW: 0, hAlign: 0, vAlign: 0,
+              font: this.doc.textStyles.get(String(e.style || 'STANDARD').toUpperCase())?.font || 'Arial', mt: null, lineSpacing: 1 }, rootId);
+            return;
+          }
         }
         this.push({
           kind: 'text', p, h, rot, lines, wf: e.widthFactor || 1, style, bbox: box, mtext: e.type === 'MTEXT', attach: e.attach || 1,
@@ -249,26 +256,22 @@ class Builder {
   }
 
   /** TEXT in an SHX style: the stroke font's glyphs as one path item (width factor, oblique, justification) */
-  pushStrokeText(e, sl, p, h, rot, style, estBox, rootId) {
-    const wf = e.widthFactor || 1, t = Math.tan((e.oblique || 0) * DEG), W = sl.width * wf;
-    const ha = e.hAlign || 0, va = e.vAlign || 0;
-    const dx = ha === 1 || ha === 4 ? -W / 2 : ha === 2 ? -W : 0;
-    const dy = va === 1 ? h * STROKE_DESCENT : va === 2 || (ha === 4 && !va) ? -h / 2 : va === 3 ? -h : 0;
+  pushStrokeText(sl, f, style, estBox, rootId) {
+    const { wf, t, o: p0, h, rot } = f, W = sl.width * wf;
     const c = Math.cos(rot), sn = Math.sin(rot), ops = [];
     let bbox = null;
     for (const st of sl.strokes) {
       for (let i = 0; i < st.length; i += 2) {
-        const y = st[i + 1] + dy, x = st[i] * wf + y * t + dx;
-        const q = { x: p.x + x * c - y * sn, y: p.y + x * sn + y * c };
+        const y = st[i + 1], x = st[i] * wf + y * t;
+        const q = { x: p0.x + x * c - y * sn, y: p0.y + x * sn + y * c };
         ops.push(i ? OP_L : OP_M, q.x, q.y);
         bbox = growBox(bbox, q);
       }
     }
-    // the item box also holds the estimated text box that pick and zoom extents use (geom.js textExtent)
+    // the item box also holds the text box that pick and zoom extents use (textMetrics.textFrame)
     bbox = unionBox(bbox, estBox);
     // text strokes ignore the entity linetype (as in AutoCAD); start of the baseline and length for the LOD bar
     const st = style.lt === 'CONTINUOUS' ? style : { ...style, lt: 'CONTINUOUS', _ks: undefined, _key: undefined };
-    const p0 = { x: p.x + (dx + dy * t) * c - dy * sn, y: p.y + (dx + dy * t) * sn + dy * c };
     this.push({ kind: 'path', ops, style: st, bbox, strokeText: { p: p0, h, rot, w: W } }, rootId);
   }
 

@@ -6,7 +6,7 @@ import { mleaderParts } from './mleader.js';
 const PICK = {
   LINE: ['p1', 'p2'], CIRCLE: ['c', 'r'], ARC: ['c', 'r', 'a0', 'a1'], ELLIPSE: ['c', 'major', 'ratio'],
   LWPOLYLINE: ['vertices', 'closed'], POINT: ['p'], SOLID: ['pts'], SPLINE: ['ctrl', 'degree'],
-  TEXT: ['p', 'height', 'text', 'rot', 'widthFactor', 'hAlign', 'vAlign'], MTEXT: ['p', 'height', 'text', 'rot', 'width'],
+  TEXT: ['p', 'p2', 'height', 'text', 'rot', 'widthFactor', 'hAlign', 'vAlign'], MTEXT: ['p', 'height', 'text', 'rot', 'width'],
   INSERT: ['block', 'p', 'sx', 'sy', 'rot'], HATCH: ['loops', 'pattern'], LEADER: ['pts'],
 };
 const round = (v, d) => {

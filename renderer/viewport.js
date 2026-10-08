@@ -5,6 +5,13 @@ import { SpatialIndex, findSnap, orthoPoint, polarPoint, pickEntity, selectInBox
 import { bboxOf, growBox } from '../src/core/geom.js';
 import { gripsOf } from './grips.js';
 import { getEntity } from '../src/core/model.js';
+import { setTextMeasure } from '../src/core/textMetrics.js';
+
+// TEXT width for pick boxes, justification and DXF group 10: measured with the same canvas fonts drawText uses
+{
+  const mctx = document.createElement('canvas').getContext('2d');
+  setTextMeasure((t, font) => { mctx.font = `100px "${font}", Arial, "Segoe UI", sans-serif`; return mctx.measureText(t).width / 100; });
+}
 import { paperRects } from '../src/core/layouts.js';
 import { frameKey, framePlan, exposedStrips } from '../src/core/frameCache.js';
 
