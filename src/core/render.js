@@ -20,6 +20,7 @@ import { mleaderParts } from './mleader.js';
 import { patternLines, hasPattern } from './patterns.js';
 import { SceneGrid } from './sceneGrid.js';
 import { strokeLayout } from './shx.js';
+import { isGdtFont, gdtText, gdtModel } from './gdt.js';
 import { textFrame, textCorners } from './textMetrics.js';
 
 const TAU = Math.PI * 2;
@@ -218,13 +219,16 @@ class Builder {
         const p = P(e.p);
         const h = (e.height || 1) * s;
         const rot = ((e.rot || 0) * DEG) + ang;
-        const raw = plainText(e.text);
+        const tst = this.doc.textStyles.get(String(e.style || 'STANDARD').toUpperCase());
+        const gdt = isGdtFont(tst?.fontFile || tst?.font);
+        let raw = plainText(e.text);
         if (!raw) return;
+        if (gdt) raw = gdtText(raw);
         const lines = raw.split('\n');
         const w = Math.max(...lines.map((l) => l.length)) * h * 0.6 * (e.widthFactor || 1);
         // conservative bbox around the (rotated) text block
         let box = null;
-        const mt = e.type === 'MTEXT' ? parseMText(e.text, { height: h }) : null;
+        const mt = e.type === 'MTEXT' ? gdtModel(parseMText(e.text, { height: h }), gdt) : null;
         const lay = mt && layoutMText(mt, { width: (e.width || 0) * s, attach: e.attach || 1, lineSpacing: e.lineSpacing || 1 });
         const corners = lay ? [[lay.x0, -lay.y0], [lay.x0 + lay.width, -lay.y0], [lay.x0 + lay.width, -lay.y0 - lay.height], [lay.x0, -lay.y0 - lay.height]]
           : [[0, -h * lines.length * 1.4], [w, -h * lines.length * 1.4], [w, h], [0, h]];

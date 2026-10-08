@@ -7,7 +7,8 @@ with a bundled single-stroke font instead, so it looks and measures like AutoCAD
 |---|---|
 | `romans`, `simplex`, `txt`, `monotxt`, `isocp`/`isocp2`/`isocp3`, `isoct*`, `romand`, `romanc`, `romant`, `complex`, `italic*`, `scripts`/`scriptc` | Hershey Roman Simplex stroke font |
 | any other `*.shx` (company fonts) | Hershey Roman Simplex (as AutoCAD's `FONTALT = simplex.shx`) |
-| `gdt.shx`, `amgdt.shx`, `sy*.shx`, `greek*`, `gothic*`, `cyril*` (symbol / non-Latin letter fonts) | canvas TrueType path, as before (no substitute yet) |
+| `gdt.shx`, `amgdt.shx` | canvas path with the letters mapped to GD&T symbols (see GD&T below) |
+| `sy*.shx`, `greek*`, `gothic*`, `cyril*` (symbol / non-Latin letter fonts) | canvas TrueType path, as before (no substitute yet) |
 | TrueType / OpenType (`arial.ttf`, `isocpeur.ttf`, ...) | the installed font, unchanged |
 
 - Height: the TEXT height is the cap height (AutoCAD SHX rule); a 2.5 TEXT has 2.5-high capitals. Advances
@@ -18,7 +19,7 @@ with a bundled single-stroke font instead, so it looks and measures like AutoCAD
 - The strokes are ordinary drawing paths: screen, PDF and SVG export draw the same lines, in the entity
   lineweight and always continuous (text ignores the linetype, as in AutoCAD).
 - Fallback: a TEXT with a character outside the stroke font (e.g. Arabic, CJK from a big font) is drawn
-  with the canvas TrueType path as before. MTEXT and gdt.shx GD&T symbols still use TrueType fonts.
+  with the canvas TrueType path as before. MTEXT still uses TrueType fonts.
 - To keep real TrueType text, give the style a TrueType font (e.g. `arial.ttf`); only SHX styles are
   substituted. Saving keeps the style's `.shx` file name, so AutoCAD uses its own SHX on reopen.
 
@@ -35,3 +36,22 @@ with a bundled single-stroke font instead, so it looks and measures like AutoCAD
   7/21 h; canvas text 0.8 h above and 0.2 h below the baseline (the offsets the canvas renderer uses).
 
 Glyph data: Hershey Fonts, `futural.jhf` (public-domain font; distribution notice in THIRD-PARTY-NOTICES.md).
+
+## GD&T fonts (src/core/gdt.js)
+
+`gdt.shx` / `amgdt.shx` draw GD&T symbols for plain lowercase letters. For display only (the stored text, DXF and
+DWG keep the letters) a TEXT, MTEXT or dimension text in a style with such a font, or an MTEXT run `\fgdt;`, shows:
+
+| a | b | c | d | e | f | g | h | i | j | k | l | m | n | p | r | s | t | u |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| ∠ | ⟂ | ▱ | ⌓ | ○ | ∥ | ⌭ | ↗ | ⌯ | ⌖ | ⌒ | Ⓛ | Ⓜ | ⌀ | Ⓟ | ◎ | Ⓢ | ⌰ | ⏤ |
+
+Source: ARKANCE/CADforum tip 6266, https://www.cadforum.cz/cz/qaID.asp?tip=6266 (letters and the symbol each draws:
+u straightness, c flatness, e circularity, g cylindricity, k line profile, d surface profile, a angularity,
+b perpendicularity, f parallelism, j position, r concentricity, h circular runout, i symmetry, t total runout,
+n diameter, m MMC, l LMC, s RFS, p P-in-circle). Only these 19 letters are mapped; others (q, o, v-z, uppercase) stay
+letters. The Unicode choice per symbol is ours (Unicode Miscellaneous Technical / Geometric Shapes). Only one
+source gave the full table (other pages searched had images or no table); it matches the earlier provisional table
+letter for letter, so nothing disagreed. The page labels `p` "position" but describes it as P in a circle, which is
+the projected tolerance zone symbol; we followed the glyph description (Ⓟ). TOLERANCE entities are not rendered by
+the app, so there is nothing to map there.

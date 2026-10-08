@@ -10,6 +10,7 @@
 // Justification (DXF 72 / 73): 72 = 0 left, 1 center, 2 right, 3 aligned, 4 middle, 5 fit; 73 = 0 baseline,
 // 1 bottom, 2 middle, 3 top. e.p is the alignment point (group 11) except for Left/baseline (group 10) and for
 // Aligned / Fit, where e.p is group 10 and e.p2 group 11 (the text runs from p to p2; 73 is ignored).
+import { isGdtFont, gdtText } from './gdt.js';
 import { shxSubstitute, strokeLayout, STROKE_DESCENT } from './shx.js';
 import { mtextPlain } from './mtext.js';
 
@@ -37,7 +38,7 @@ const CANVAS_M = { top: 0.8, mid: 0.35, desc: 0.2 };
 
 export function textFrame(e, doc = null) {
   const st = doc?.textStyles?.get(String(e.style || 'STANDARD').toUpperCase());
-  const lines = mtextPlain(e.text).split('\n');
+  const lines = (isGdtFont(st?.fontFile || st?.font) ? gdtText(mtextPlain(e.text)) : mtextPlain(e.text)).split('\n');
   const sl = !e.ui && lines.length === 1 && shxSubstitute(st?.fontFile || st?.font) ? strokeLayout(lines[0], 1) : null;
   const w1 = sl ? sl.width : Math.max(0, ...lines.map((l) => canvasWidth(l, st?.font || 'Arial')));
   const m = sl ? SHX_M : CANVAS_M;
