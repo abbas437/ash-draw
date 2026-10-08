@@ -83,6 +83,22 @@ async function benchInPage({ scale }) {
   const avg = (a) => a.reduce((s, x) => s + x, 0) / a.length;
   const r1 = (x) => Math.round(x * 10) / 10;
 
+  /** per-phase time of the fit frame (drawScene's profile hook; each phase flushed with a 1-px read-back) */
+  function profile(scene, view, n = 5) {
+    const acc = {};
+    let info = null, items = 0;
+    for (let i = 0; i < n; i++) {
+      let t = performance.now();
+      R.drawScene(ctx, scene, view, {
+        background: '#ffffff',
+        profile: (ph, x) => { flush(); const now = performance.now(); acc[ph] = (acc[ph] ?? 0) + now - t; t = now; if (ph === 'bucket') info = x; if (ph === 'query') items = x; },
+      });
+    }
+    const phases = {};
+    for (const k in acc) phases[k] = r1(acc[k] / n);
+    return { phases, total: r1(Object.values(acc).reduce((a, b) => a + b, 0) / n), visible: items, buckets: info };
+  }
+
   function viewSeries(scene, view0) {
     // 30 pan steps of 25 px, then 10 zoom steps alternating in/out around the centre
     let v = view0;
@@ -91,6 +107,29 @@ async function benchInPage({ scale }) {
     for (let i = 0; i < 30; i++) { v = { ...v, cx: v.cx - 25 / v.zoom, cy: v.cy + 10 / v.zoom }; pans.push(frame(scene, v)); }
     for (let i = 0; i < 10; i++) { v = R.zoomAt(v, 700, 425, i % 2 ? 0.8 : 1.25); zooms.push(frame(scene, v)); }
     return { pan: r1(avg(pans)), panMax: r1(Math.max(...pans)), zoom: r1(avg(zooms)) };
+  }
+
+  /** the app's Viewport (bitmap cache): time to the shown frame during a pan / wheel-zoom gesture ("perceived"),
+   *  and the full render once the gesture has settled ("settle"); the steps of viewSeries plus one more zoom-in, so
+   *  that the zoom gesture does not end on the view it started from (that settles to a blit) */
+  async function viewportSeries(scene, doc, fit) {
+    const { Viewport } = await import('/renderer/viewport.js');
+    const vp = new Viewport(cv);
+    await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0))); // let the ResizeObserver run
+    vp.dpr = 1;
+    vp.setSession({ doc }, { scene, index: {}, view: fit });
+    const shown = () => vp.ctx.getImageData(0, 0, 1, 1);
+    const tframe = (f) => time(() => { f(); vp.render(); shown(); });
+    const settle = async () => { vp.endGesture(0); await new Promise((r) => setTimeout(r, 0)); return tframe(() => {}); };
+    tframe(() => {});
+    const pans = [], zooms = [];
+    vp.beginGesture('pan');
+    for (let i = 0; i < 30; i++) pans.push(tframe(() => vp.panPixels(25, 10)));
+    const panSettle = await settle();
+    for (let i = 0; i < 11; i++) zooms.push(tframe(() => { vp.beginGesture('zoom'); vp.zoomBy(i % 2 ? 0.8 : 1.25, 700, 425); }));
+    const zoomSettle = await settle();
+    const idle = tframe(() => {}); // e.g. a mouse move: overlays over the cached bitmap
+    return { pan: r1(avg(pans)), panMax: r1(Math.max(...pans)), panSettle: r1(panSettle), zoom: r1(avg(zooms)), zoomMax: r1(Math.max(...zooms)), zoomSettle: r1(zoomSettle), idle: r1(idle) };
   }
 
   async function run(name, spec, withParse) {
@@ -109,8 +148,10 @@ async function benchInPage({ scale }) {
     out.items = scene.items.length;
     const fit = R.fitView(scene.bbox, 1400, 850, 0.04);
     out.first = r1(frame(scene, fit));
+    out.profile = profile(scene, fit);
     out.fit = viewSeries(scene, fit);
     out.z10 = viewSeries(scene, { ...fit, zoom: fit.zoom * 10 });
+    out.vpFit = await viewportSeries(scene, doc, fit);
     // one-entity edit: change an entity and refresh the scene
     const e = doc.entities[doc.entities.length >> 1];
     out.edit = r1(time(() => { e.layer = 'L1'; R.updateScene(scene, [e.id]); }));
@@ -143,6 +184,9 @@ else {
   for (const r of results) {
     console.log(`[${r.name}] entities ${r.entities}, scene items ${r.items}${r.dxfMB ? `, DXF ${r.dxfMB} MB, parse ${r.parse} ms` : ''}`);
     console.log(`  scene build ${r.build} ms, first frame ${r.first} ms, edit 1 entity ${r.edit} ms`);
+    if (r.profile) console.log(`  fit frame by phase (ms): ${Object.entries(r.profile.phases).map(([k, v]) => `${k} ${v}`).join(', ')} = ${r.profile.total}; visible ${r.profile.visible}, buckets ${JSON.stringify(r.profile.buckets)}`);
+    const v = r.vpFit;
+    console.log(`  viewport at fit, perceived: pan avg ${v.pan} ms (max ${v.panMax}), zoom avg ${v.zoom} ms (max ${v.zoomMax}); settle: pan ${v.panSettle} ms, zoom ${v.zoomSettle} ms; unchanged view ${v.idle} ms`);
     for (const k of ['fit', 'z10']) console.log(`  ${k === 'fit' ? 'fit ' : '10x '}: pan avg ${r[k].pan} ms (max ${r[k].panMax}), zoom avg ${r[k].zoom} ms`);
   }
 }

@@ -1021,6 +1021,62 @@ try {
   await page.keyboard.press('Control+z');
   assert.equal(await page.locator('#markups .mk-row').count(), 1, 'delete is one undo step');
 
+  step = 'pan bitmap cache: a mouse pan at fit settles to a fresh full render; an edit during the pan is never stale';
+  await page.evaluate(async () => {
+    const { addEntities } = await import('/src/core/edit.js'); const { makeLine } = await import('/src/core/model.js');
+    const ls = [];
+    for (let i = 0; i < 40; i++) ls.push(makeLine({ x: i * 5, y: 0 }, { x: i * 5 + 30, y: 100 }), makeLine({ x: 0, y: i * 2.5 }, { x: 200, y: i * 2.5 + 3 }));
+    ls.push(makeLine({ x: 90, y: 40 }, { x: 110, y: 60 }, { color: 1 }));
+    addEntities(window.app.session, ls);
+    const vp = window.app.vp; vp.setSelection([]); vp.zoomExtents(); vp.render();
+  });
+  const cvBox = await page.locator('#cv').boundingBox();
+  const mid = { x: cvBox.x + cvBox.width / 2, y: cvBox.y + cvBox.height / 2 };
+  const settledDiff = () => page.evaluate(async () => {
+    const { drawScene } = await import('/src/core/render.js');
+    const vp = window.app.vp; vp.showCross = false; vp.snapMarker = null; vp.render();
+    const W = vp.canvas.width, H = vp.canvas.height, a = vp.ctx.getImageData(0, 0, W, H).data;
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const c = cv.getContext('2d'); drawScene(c, vp.scene, vp.view, vp.sceneOpts());
+    const b = c.getImageData(0, 0, W, H).data;
+    let diff = 0;
+    for (let i = 0; i < a.length; i += 4) if (a[i] !== b[i] || a[i + 1] !== b[i + 1] || a[i + 2] !== b[i + 2]) diff++;
+    return diff / (W * H);
+  });
+  /** red pixels of the 7x7 square around the world point, read from the canvas as shown */
+  const redAt = (x, y) => page.evaluate(([x, y]) => {
+    const vp = window.app.vp, s = vp.toScreen({ x, y }), d = vp.dpr;
+    const px = vp.ctx.getImageData(Math.round(s.x * d) - 3, Math.round(s.y * d) - 3, 7, 7).data;
+    let n = 0; for (let i = 0; i < px.length; i += 4) if (px[i] > 180 && px[i + 1] < 90 && px[i + 2] < 90) n++;
+    return n;
+  }, [x, y]);
+  await page.mouse.move(mid.x, mid.y);
+  await page.mouse.down({ button: 'middle' });
+  for (let i = 1; i <= 8; i++) { await page.mouse.move(mid.x + i * 15, mid.y + i * 7); await page.evaluate(() => window.app.vp.render()); }
+  assert.deepEqual(await page.evaluate(() => [window.app.vp._gesture, window.app.vp._frame.exact]), ['pan', false], 'the pan frames reuse the bitmap');
+  await page.mouse.up({ button: 'middle' });
+  await page.waitForFunction(() => !window.app.vp._gesture && window.app.vp._frame?.exact, null, { timeout: 2000 });
+  const pd = await settledDiff();
+  assert.ok(pd <= 0.005, `settled pan frame: ${(pd * 100).toFixed(3)} % pixels differ from a full render`);
+  assert.ok(await redAt(100, 50) > 0, 'red line drawn before the edit');
+  await page.mouse.down({ button: 'middle' });
+  await page.mouse.move(mid.x + 120 - 10, mid.y + 56 - 5);
+  await page.evaluate(async () => {
+    const { transformEntities } = await import('/src/core/edit.js'); const { translation } = await import('/src/core/geom.js');
+    const vp = window.app.vp, red = vp.doc.entities.find((e) => e.type === 'LINE' && e.color === 1 && e.p1.x === 90);
+    transformEntities(window.app.session, [red.id], translation(0, -30));
+  });
+  await page.mouse.move(mid.x + 120 - 20, mid.y + 56 - 10);
+  await page.evaluate(() => window.app.vp.render());
+  assert.equal(await page.evaluate(() => window.app.vp._gesture), 'pan');
+  assert.ok(await redAt(100, 20) > 0, 'edited line shown at its new place during the pan');
+  assert.equal(await redAt(100, 50), 0, 'no stale copy of the edited line during the pan');
+  await page.mouse.up({ button: 'middle' });
+  await page.waitForFunction(() => !window.app.vp._gesture && window.app.vp._frame?.exact, null, { timeout: 2000 });
+  assert.ok(await redAt(100, 20) > 0 && await redAt(100, 50) === 0, 'edited line after the settle');
+  const pd2 = await settledDiff();
+  assert.ok(pd2 <= 0.005, `settled frame after the edit: ${(pd2 * 100).toFixed(3)} % pixels differ`);
+
   step = 'drawScene pixel parity with the reference renderer (3 zoom levels, browser canvas)';
   const parity = await page.evaluate(async () => {
     const R = await import('/src/core/render.js');
