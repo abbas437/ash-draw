@@ -346,15 +346,13 @@ export function sceneGrid(scene) {
   return scene.grid;
 }
 
-/** the scene items whose bbox touches the view box, in scene (draw) order */
+/** the scene items whose bbox touches the view box, in scene (draw) order. When the view contains the whole scene
+ *  (every item bbox lies inside the scene bbox) this is scene.items itself, not a copy: read it, do not change it. */
 export function visibleItems(scene, minx, miny, maxx, maxy) {
   const items = scene.items, out = [];
   const touches = (b) => !b || !(b.maxx < minx || b.minx > maxx || b.maxy < miny || b.miny > maxy);
   const sb = scene.bbox;
-  if (!sb || (minx <= sb.minx && miny <= sb.miny && maxx >= sb.maxx && maxy >= sb.maxy)) {
-    for (const it of items) if (touches(it.bbox)) out.push(it);
-    return out;
-  }
+  if (!sb || (minx <= sb.minx && miny <= sb.miny && maxx >= sb.maxx && maxy >= sb.maxy)) return items;
   const cand = sceneGrid(scene).query({ minx, miny, maxx, maxy });
   const ord = new Uint32Array(cand.length);
   let n = 0;
