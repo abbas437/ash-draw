@@ -18,12 +18,15 @@
   <header id="menubar"></header>
   <div id="main">
     <aside id="tools" aria-label="Tools"></aside>
+    <section id="docs">
+    <div id="tabbar" role="tablist" aria-label="Open drawings"></div>
     <section id="stage">
       <canvas id="cv" tabindex="0" aria-label="Drawing area"></canvas>
       <div id="zoombar"><button id="z-in" title="Zoom in">+</button><button id="z-out" title="Zoom out">−</button><button id="z-fit" title="Zoom to fit (Z, E)">Fit</button></div>
       <div id="stage-logo" aria-hidden="true"><img class="brand-logo lt" src="assets/brand/ash-logo-horizontal.svg" alt=""><img class="brand-logo rev" src="assets/brand/ash-logo-horizontal-reversed.svg" alt=""></div>
       <div id="toast" role="status"></div>
       <div id="drop">Drop a DWG or DXF file to open it</div>
+    </section>
     </section>
     <aside id="side">
       <div class="panel"><div class="phead">Layers <span class="spacer"></span><button id="layer-add" title="New layer">+</button><button id="layer-del" title="Delete current layer (must be empty)">−</button></div><div id="layers"></div></div>

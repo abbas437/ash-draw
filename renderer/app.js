@@ -1,9 +1,10 @@
 // ASH Draw Studio - application controller: wires the viewport, tools, panels, menus and files together.
 import { newDocument } from '../src/core/model.js';
-import { Session, eraseEntities, copyToClipboard, pasteEntities } from '../src/core/edit.js';
+import { eraseEntities, copyToClipboard, pasteEntities } from '../src/core/edit.js';
 import { parseCoordinate } from '../src/core/coords.js';
 import { PATTERN_NAMES } from '../src/core/patterns.js';
 import { Viewport, CANVAS_BG } from './viewport.js';
+import { createDocState, findTabByPath, indexAfterClose, cycleIndex, isBlankTab } from './tabs.js';
 import { createTools, TOOL_ALIASES } from './tools.js';
 import { el, message, modal, confirmDialog, textDialog, toast, renderLayers, renderProperties } from './ui.js';
 import {
@@ -21,9 +22,9 @@ const TOOL_BUTTONS = [
 
 class App {
   constructor() {
-    this.state = { layer: '0', color: 256, linetype: 'BYLAYER', lineweight: -1 };
+    this.tabs = [];              // open drawings (file tabs); see tabs.js createDocState
+    this.active = null;          // the tab shown
     this.defaults = { textHeight: null, hatchPattern: 'ANSI31', hatchScale: 1, hatchAngle: 0 };
-    this.file = { path: null, name: 'Untitled.dxf', format: 'dxf' };
     this.clip = [];
     this.lastTool = 'line';
     this.theme = 'light';        // UI theme; light by default, the choice is saved as setting 'theme'
@@ -48,17 +49,22 @@ class App {
     this.vp.on('selection', () => { this.refreshPanels(true); this.refreshStatus(); });
     this.vp.on('change', () => { this.refreshPanels(); this.refreshStatus(); this.updateTitle(); });
     this.vp.on('cursor', (p) => this.showCursor(p));
-    window.addEventListener('beforeunload', (e) => { if (this.session?.dirty) { e.preventDefault(); e.returnValue = ''; } });
-    this.newDrawing(true);
+    window.addEventListener('beforeunload', (e) => { if (!this.closeConfirmed && this.tabs.some((t) => t.session.dirty)) { e.preventDefault(); e.returnValue = ''; } });
+    api.onCloseRequest?.(() => this.closeAll());
+    this.newDrawing();
     this.setTool('select');
     this.setTheme('light', false);
     api.settingsGet?.('theme').then((t) => { if (t === 'dark') this.setTheme('dark', false); }).catch(() => {});
     api.onOpenFile?.((f) => this.openFromFile(f));
-    api.getLaunchFiles?.().then((files) => { if (files?.[0]) this.openFromFile(files[0]); }).catch(() => {});
+    api.getLaunchFiles?.().then(async (files) => { for (const f of files ?? []) await this.openFromFile(f); }).catch(() => {});
   }
 
   // ---- host interface for tools ---------------------------------------------------------------
   get session() { return this.vp.session; }
+  /** current layer and new-object properties of the shown drawing */
+  get state() { return this.active.state; }
+  get file() { return this.active.file; }
+  set file(f) { this.active.file = f; }
   get doc() { return this.vp.doc; }
   get tool() { return this.tools[this.toolId]; }
   newProps() { return { layer: this.state.layer, color: this.state.color, linetype: this.state.linetype, lineweight: this.state.lineweight }; }
@@ -116,41 +122,80 @@ class App {
   }
 
   // ---- new / open / save -------------------------------------------------------------------------
-  async confirmDiscard() {
-    if (!this.session?.dirty) return true;
-    const r = await confirmDialog('Unsaved changes', `Save changes to ${this.file.name}?`, 'Save', "Don't save", 'Cancel');
+  /** asks to save a drawing with unsaved changes (shown first); false = the user cancelled */
+  async confirmDiscard(tab = this.active) {
+    if (!tab?.session.dirty) return true;
+    if (tab !== this.active) this.switchTo(tab);
+    const r = await confirmDialog('Unsaved changes', `Save changes to ${tab.file.name}?`, 'Save', "Don't save", 'Cancel');
     if (r === 'yes') return this.save();
     return r === 'no';
   }
-  installDoc(doc, file) {
-    const session = new Session(doc);
-    this.state.layer = doc.layers.has('0') ? '0' : [...doc.layers.keys()][0];
-    this.file = file;
-    this.vp.setSession(session);
+  /** show a drawing in a new tab; a blank, untouched Untitled tab is replaced instead */
+  installDoc(doc, file, { replaceBlank = false } = {}) {
+    const tab = createDocState(doc, file);
+    const blank = replaceBlank && isBlankTab(this.active) ? this.active : null;
+    if (blank) this.tabs.splice(this.tabs.indexOf(blank), 1, tab); else this.tabs.push(tab);
+    this.switchTo(tab, { fit: true });
+  }
+  /** bring a tab to the front: the shown tab keeps its view, selection and caches for when it comes back */
+  switchTo(tab, { fit = false } = {}) {
+    const cur = this.active;
+    if (cur && cur !== tab && this.tabs.includes(cur)) {
+      cur.view = { cx: this.vp.view.cx, cy: this.vp.view.cy, zoom: this.vp.view.zoom };
+      cur.selection = [...this.vp.selection]; cur.lastPoint = this.vp.lastPoint;
+      cur.scene = this.vp.scene; cur.index = this.vp.index;
+    }
+    if (cur !== tab && this.toolId) this.setTool(this.toolId === 'select' ? 'select' : this.toolId); // drop a half-done command
+    this.active = tab;
+    this.vp.setSession(tab.session, { fit: fit || !tab.view, view: fit ? null : tab.view, selection: tab.selection, scene: tab.scene, index: tab.index, lastPoint: tab.lastPoint });
+    tab.scene = tab.index = null;
     this.refreshPanels(); this.refreshStatus(); this.updateTitle();
   }
-  async newDrawing(silent = false) {
-    if (!silent && !(await this.confirmDiscard())) return;
+  activateIndex(i) { if (this.tabs[i] && this.tabs[i] !== this.active) this.switchTo(this.tabs[i]); }
+  cycleTab(step) { this.activateIndex(cycleIndex(this.tabs.length, this.tabs.indexOf(this.active), step)); }
+  /** close a tab after the save prompt; closing the last tab leaves a new blank drawing. Returns false if cancelled. */
+  async closeTab(tab = this.active) {
+    if (!(await this.confirmDiscard(tab))) return false;
+    const i = this.tabs.indexOf(tab);
+    if (i < 0) return true;
+    const next = indexAfterClose(this.tabs.length, i, this.tabs.indexOf(this.active));
+    this.tabs.splice(i, 1);
+    if (this.active === tab) this.active = null;
+    if (next < 0) { this.newDrawing(); return true; }
+    if (!this.active) this.switchTo(this.tabs[next]); else this.updateTitle();
+    return true;
+  }
+  /** window close / quit: one save prompt per drawing with unsaved changes, then close */
+  async closeAll() {
+    for (const tab of this.tabs.filter((t) => t.session.dirty)) if (!(await this.confirmDiscard(tab))) return false;
+    this.closeConfirmed = true;
+    api.closeWindow?.();
+    return true;
+  }
+  newDrawing() {
     const doc = newDocument(); doc.units = 4;
-    this.installDoc(doc, { path: null, name: 'Untitled.dxf', format: 'dxf' });
+    const n = this.tabs.filter((t) => /^Drawing\d+\.dxf$/.test(t.file.name)).length;
+    this.installDoc(doc, { path: null, name: this.tabs.length ? `Drawing${n + 1}.dxf` : 'Untitled.dxf', format: 'dxf' });
   }
   async open() {
-    if (!(await this.confirmDiscard())) return;
     let files;
-    try { files = await api.openFiles({ filters: OPEN_FILTERS }); } catch (err) { toast(`Could not open: ${err.message}`); return; }
-    if (files?.[0]) await this.loadFile(files[0]);
+    try { files = await api.openFiles({ filters: OPEN_FILTERS, multiple: true }); } catch (err) { toast(`Could not open: ${err.message}`); return; }
+    for (const f of files ?? []) await this.loadFile(f);
   }
   /** a file handed over by the desktop shell (double-click, "Open with", second launch): {path, name} without bytes */
   async openFromFile(f) {
-    if (!(await this.confirmDiscard())) return;
+    const open = findTabByPath(this.tabs, f.path);
+    if (open) { this.switchTo(open); return; }
     try { if (!f.bytes) f = { ...f, bytes: await api.readFile(f.path) }; } catch (err) { await message('Cannot open this file', err.message || String(err)); return; }
     await this.loadFile(f);
   }
   async loadFile(f) {
+    const open = findTabByPath(this.tabs, f.path);
+    if (open) { this.switchTo(open); return; } // already open: show its tab
     toast(`Opening ${f.name} …`, 60000);
     try {
       const { doc, format, notes } = await loadDrawing(api, f.name, f.bytes);
-      this.installDoc(doc, { path: f.path ?? null, name: f.name, format });
+      this.installDoc(doc, { path: f.path ?? null, name: f.name, format }, { replaceBlank: true });
       toast(`${f.name}: ${doc.entities.length.toLocaleString()} objects`, 2500);
       if (notes.length) await message('Opened with limitations', `${f.name} was opened, but:`, el('ul', {}, notes.map((n) => el('li', { text: n }))));
     } catch (err) {
@@ -278,7 +323,7 @@ class App {
   buildMenus() {
     const vp = this.vp;
     const M = [
-      ['File', [['New', 'Ctrl+N', () => this.newDrawing()], ['Open…', 'Ctrl+O', () => this.open()], '-', ['Save', 'Ctrl+S', () => this.save()], ['Save as DXF…', '', () => this.saveAs('dxf')], ['Save as DWG… (experimental)', '', () => this.saveAs('dwg')], '-',
+      ['File', [['New', 'Ctrl+N', () => this.newDrawing()], ['Open…', 'Ctrl+O', () => this.open()], ['Close', 'Ctrl+W', () => this.closeTab()], '-', ['Save', 'Ctrl+S', () => this.save()], ['Save as DXF…', '', () => this.saveAs('dxf')], ['Save as DWG… (experimental)', '', () => this.saveAs('dwg')], '-',
         ['Export PDF…', '', () => this.exportPdf()], ['Export SVG…', '', () => this.exportSvg()], ['Export PNG image…', '', () => this.exportPng()]]],
       ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Paste', 'Ctrl+V', () => this.paste()], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()]]],
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-',
@@ -362,6 +407,18 @@ class App {
     const t = `${this.session?.dirty ? '• ' : ''}${this.file.name}`;
     document.getElementById('title').textContent = t;
     api.setTitle?.(`${t} — ASH Draw Studio`);
+    this.renderTabs();
+  }
+  /** the file tab strip above the drawing area: name, unsaved-changes dot, close button; middle-click closes */
+  renderTabs() {
+    const bar = document.getElementById('tabbar');
+    bar.replaceChildren(...this.tabs.map((t) => el('div', {
+      class: `tab${t === this.active ? ' active' : ''}${t.session.dirty ? ' dirty' : ''}`, role: 'tab', 'aria-selected': String(t === this.active), title: t.file.path ?? t.file.name, 'data-tab': String(t.id),
+      onclick: () => { if (this.active !== t) this.switchTo(t); },
+      onauxclick: (e) => { if (e.button === 1) { e.preventDefault(); this.closeTab(t); } },
+      onmousedown: (e) => { if (e.button === 1) e.preventDefault(); }, // no auto-scroll
+    }, el('span', { class: 'dot', text: t.session.dirty ? '\u25CF' : '', title: t.session.dirty ? 'Unsaved changes' : '' }), el('span', { class: 'name', text: t.file.name }),
+    el('button', { class: 'x', title: 'Close (Ctrl+W)', 'aria-label': `Close ${t.file.name}`, onclick: (e) => { e.stopPropagation(); this.closeTab(t); } }, '\u00D7'))));
   }
 
   // ---- keyboard / drop ------------------------------------------------------------------------------
@@ -372,8 +429,10 @@ class App {
       if (document.getElementById('dlg').open) return;
       const ctrl = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
       if (ctrl) {
-        if (typing && !['s', 'o', 'n'].includes(k)) return;
-        const map = { z: () => this.undo(), y: () => this.redo(), a: () => this.selectAll(), c: () => this.copySel(), v: () => this.paste(), s: () => this.save(), o: () => this.open(), n: () => this.newDrawing() };
+        if (e.key === 'Tab') { e.preventDefault(); this.cycleTab(e.shiftKey ? -1 : 1); return; }
+        if (e.key === 'F4') { e.preventDefault(); this.closeTab(); return; }
+        if (typing && !['s', 'o', 'n', 'w'].includes(k)) return;
+        const map = { z: () => this.undo(), y: () => this.redo(), a: () => this.selectAll(), c: () => this.copySel(), v: () => this.paste(), s: () => this.save(), o: () => this.open(), n: () => this.newDrawing(), w: () => this.closeTab() };
         if (map[k]) { e.preventDefault(); map[k](); }
         return;
       }
@@ -399,7 +458,7 @@ class App {
       const f = e.dataTransfer?.files?.[0];
       if (!f) return;
       if (!['dwg', 'dxf'].includes(extOf(f.name))) { toast('Drop a DWG or DXF file.'); return; }
-      if (await this.confirmDiscard()) await this.loadFile({ path: null, name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) });
+      await this.loadFile({ path: null, name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) });
     });
   }
 }
