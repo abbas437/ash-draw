@@ -2,7 +2,8 @@
 // The active tool receives world-space events through vp.tool (see tools.js).
 import { buildScene, updateScene, drawScene, fitView, screenToWorld, worldToScreen, zoomAt } from '../src/core/render.js';
 import { SpatialIndex, findSnap, orthoPoint, polarPoint, pickEntity, selectInBox } from '../src/core/pick.js';
-import { snapPoints, bboxOf, growBox } from '../src/core/geom.js';
+import { bboxOf, growBox } from '../src/core/geom.js';
+import { gripsOf } from './grips.js';
 import { getEntity } from '../src/core/model.js';
 
 const DEFAULT_KINDS = new Set(['end', 'int', 'mid', 'cen', 'quad', 'node', 'ins', 'per']);
@@ -167,14 +168,14 @@ export class Viewport {
 
   _drawGrips() {
     if (!this.selection.size || this.selection.size > 300) return;
-    const { ctx } = this;
-    ctx.fillStyle = '#2d7dff'; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1;
+    const { ctx } = this, hv = this.gripHover, hot = this.gripHot;
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1;
     for (const e of this.selectedEntities()) {
-      for (const sp of snapPoints(e, this.doc)) {
-        if (sp.kind !== 'end' && sp.kind !== 'cen' && sp.kind !== 'mid') continue;
-        const s = this.toScreen(sp);
-        ctx.fillRect(s.x - 3, s.y - 3, 6, 6); ctx.strokeRect(s.x - 3.5, s.y - 3.5, 7, 7);
-      }
+      gripsOf(e).forEach((g, i) => {
+        const s = this.toScreen(g), is = (o) => o && o.id === e.id && o.i === i;
+        ctx.fillStyle = is(hot) ? '#ff2020' : is(hv) ? '#ff6ec7' : '#2d7dff';
+        ctx.fillRect(s.x - 4, s.y - 4, 8, 8); ctx.strokeRect(s.x - 4.5, s.y - 4.5, 9, 9);
+      });
     }
   }
   _drawRubber() {

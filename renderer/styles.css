@@ -87,7 +87,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 button.icon { border:none; background:none; padding:0 3px; width:22px; }
 .swatch { display:inline-block; width:14px; height:14px; border:1px solid var(--swatch-border); vertical-align:middle; cursor:pointer; }
 #props label { display:grid; grid-template-columns:80px 1fr; align-items:center; gap:6px; margin:4px 0; color:var(--dim); }
-#props label select, #props label textarea { color:var(--text); width:100%; }
+#props label select, #props label textarea, #props label input { color:var(--text); width:100%; }
 #props .info { display:flex; justify-content:space-between; padding:1px 0; color:var(--dim); }
 #props .info b { color:var(--text); font-weight:500; }
 #cmdbar { display:flex; align-items:center; gap:8px; background:var(--panel); border-top:1px solid var(--line); padding:0 8px; }

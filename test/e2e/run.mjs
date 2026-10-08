@@ -477,6 +477,55 @@ try {
   const xs = (await ents()).find((e) => e.type === 'LWPOLYLINE').vertices.map((q) => q.x);
   near(Math.max(...xs) - Math.min(...xs), 40, 'rectangle width after STRETCH');
 
+  step = 'grips: drag a line end grip to a snapped endpoint, undo';
+  await page.evaluate(() => { const vp = window.app.vp; vp.setSelection([]); vp.view = { ...vp.view, cx: 260, cy: 210, zoom: 8 }; vp.render(); });
+  await typeCmd('l'); await typeCmd('200,200'); await typeCmd('240,200'); await typeCmd('');
+  await typeCmd('l'); await typeCmd('200,225'); await typeCmd('260,225'); await typeCmd('');
+  const byP1 = async (x, y) => (await ents()).find((e) => e.type === 'LINE' && e.p1.x === x && e.p1.y === y);
+  const gl = await byP1(200, 200);
+  await page.keyboard.press('Escape'); assert.equal(await page.evaluate(() => window.app.toolId), 'select');
+  await page.evaluate((id) => window.app.vp.setSelection([id]), gl.id);
+  const scr = async (x, y) => { const s = await page.evaluate(([a, b]) => window.app.vp.toScreen({ x: a, y: b }), [x, y]); const box = await page.locator('#cv').boundingBox(); return { x: box.x + s.x, y: box.y + s.y }; };
+  let s0 = await scr(240, 200), s1 = await scr(259.6, 224.7);
+  await page.mouse.move(s0.x, s0.y); await page.mouse.down();
+  await page.mouse.move((s0.x + s1.x) / 2, (s0.y + s1.y) / 2, { steps: 3 }); await page.mouse.move(s1.x, s1.y, { steps: 3 }); await page.mouse.up();
+  let gle = (await ents()).find((e) => e.id === gl.id);
+  assert.deepEqual([gle.p2.x, gle.p2.y], [260, 225], 'end grip snapped to the other line end');
+  await page.keyboard.press('Control+z');
+  gle = (await ents()).find((e) => e.id === gl.id);
+  assert.deepEqual([gle.p2.x, gle.p2.y], [240, 200], 'undo restores the end');
+
+  step = 'grips: circle quadrant grip (click, then typed point) changes the radius';
+  await typeCmd('c'); await typeCmd('300,200'); await typeCmd('10');
+  const gc = (await ents()).find((e) => e.type === 'CIRCLE' && e.c.x === 300);
+  await page.keyboard.press('Escape');
+  await page.evaluate((id) => window.app.vp.setSelection([id]), gc.id);
+  s0 = await scr(310, 200); await page.mouse.click(s0.x, s0.y);
+  assert.match(await page.locator('#prompt').textContent(), /STRETCH/);
+  await typeCmd('325,200');
+  near((await ents()).find((e) => e.id === gc.id).r, 25, 'radius after quadrant grip');
+
+  step = 'properties palette: circle radius 30';
+  await page.evaluate((id) => window.app.vp.setSelection([id]), gc.id);
+  await page.locator('#props input[data-prop="Radius"]').fill('30');
+  await page.locator('#props input[data-prop="Radius"]').press('Enter');
+  near((await ents()).find((e) => e.id === gc.id).r, 30, 'radius set in the palette');
+  await page.keyboard.press('Escape');
+
+  step = 'MATCHPROP: red line on layer A onto blue line on layer B';
+  await typeCmd('l'); await typeCmd('200,180'); await typeCmd('240,180'); await typeCmd('');
+  await typeCmd('l'); await typeCmd('200,170'); await typeCmd('240,170'); await typeCmd('');
+  const ma1 = await byP1(200, 180), ma2 = await byP1(200, 170);
+  await page.keyboard.press('Escape');
+  await page.evaluate(async ([a, b]) => {
+    const { setEntityProps } = await import('/src/core/edit.js');
+    setEntityProps(window.app.session, [a], { layer: 'A', color: 1 }); setEntityProps(window.app.session, [b], { layer: 'B', color: 5 });
+  }, [ma1.id, ma2.id]);
+  await typeCmd('ma'); await clickWorld(220, 180); await clickWorld(220, 170); await typeCmd('');
+  const mad = (await ents()).find((e) => e.id === ma2.id);
+  assert.deepEqual([mad.layer, mad.color], ['A', 1], 'destination took the source layer and colour');
+  assert.equal(await page.evaluate(() => window.app.toolId), 'select');
+
   step = 'csp';
   assert.deepEqual(await page.evaluate(() => window.__csp), []);
   assert.deepEqual(problems, []);

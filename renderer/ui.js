@@ -2,6 +2,7 @@
 import { setLayerProps, setEntityProps, setText, deleteLayer } from '../src/core/edit.js';
 import { tessellate, dist, DEG } from '../src/core/geom.js';
 import { aciToRgb } from '../src/core/aci.js';
+import { editEntity } from './grips.js';
 
 export function el(tag, attrs = {}, ...kids) {
   const n = document.createElement(tag);
@@ -122,16 +123,16 @@ const fmt = (v) => (Math.abs(v) >= 100 ? v.toFixed(2) : Math.abs(v) >= 1 ? v.toF
 
 function describe(e, doc) {
   switch (e.type) {
-    case 'LINE': return [['Length', fmt(dist(e.p1, e.p2))], ['Angle', `${fmt(((Math.atan2(e.p2.y - e.p1.y, e.p2.x - e.p1.x) / DEG) + 360) % 360)}°`], ['Start', `${fmt(e.p1.x)}, ${fmt(e.p1.y)}`], ['End', `${fmt(e.p2.x)}, ${fmt(e.p2.y)}`]];
-    case 'CIRCLE': return [['Center', `${fmt(e.c.x)}, ${fmt(e.c.y)}`], ['Radius', fmt(e.r)], ['Diameter', fmt(2 * e.r)], ['Circumference', fmt(2 * Math.PI * e.r)], ['Area', fmt(Math.PI * e.r * e.r)]];
-    case 'ARC': return [['Center', `${fmt(e.c.x)}, ${fmt(e.c.y)}`], ['Radius', fmt(e.r)], ['Start angle', `${fmt(e.a0)}°`], ['End angle', `${fmt(e.a1)}°`]];
+    case 'LINE': return [['Length', fmt(dist(e.p1, e.p2))], ['Angle', `${fmt(((Math.atan2(e.p2.y - e.p1.y, e.p2.x - e.p1.x) / DEG) + 360) % 360)}°`]];
+    case 'CIRCLE': return [['Circumference', fmt(2 * Math.PI * e.r)], ['Area', fmt(Math.PI * e.r * e.r)]];
+    case 'ARC': return [];
     case 'LWPOLYLINE': {
       const pl = tessellate(e, doc, 0)[0] ?? [];
       let len = 0; for (let i = 1; i < pl.length; i++) len += dist(pl[i - 1], pl[i]);
       return [['Vertices', String(e.vertices.length)], ['Closed', e.closed ? 'yes' : 'no'], ['Length', fmt(len)]];
     }
     case 'INSERT': return [['Block', e.block], ['Position', `${fmt(e.p.x)}, ${fmt(e.p.y)}`], ['Scale', `${fmt(e.sx)} × ${fmt(e.sy)}`], ['Rotation', `${fmt(e.rot)}°`]];
-    case 'TEXT': case 'MTEXT': return [['Position', `${fmt(e.p.x)}, ${fmt(e.p.y)}`], ['Height', fmt(e.height)]];
+    case 'TEXT': case 'MTEXT': return [['Position', `${fmt(e.p.x)}, ${fmt(e.p.y)}`]];
     case 'HATCH': return [['Pattern', e.pattern], ['Loops', String(e.loops.length)]];
     default: return [];
   }
@@ -157,6 +158,7 @@ export function renderProperties(app) {
     el('label', {}, 'Lineweight', mixed(common('lineweight', -1), (v) => select(LW_CHOICES, v, (x) => x !== '__mixed__' && apply({ lineweight: Number(x) })))),
     ...rowsInfo.map(([k, v]) => el('div', { class: 'info' }, el('span', { text: k }), el('b', { text: v }))),
   ];
+  if (ents.length === 1) kids.push(...geometryFields(app, ents[0]));
   if (ents.length === 1 && (ents[0].type === 'TEXT' || ents[0].type === 'MTEXT')) {
     const e = ents[0];
     const ta = el('textarea', { rows: 3 }); ta.value = e.text.replace(/\\P/g, '\n');
@@ -165,3 +167,37 @@ export function renderProperties(app) {
   }
   box.replaceChildren(...kids);
 }
+
+// ---- editable geometry (single selection); every change is one undo step -------------------------
+const polyVertex = { id: 0, i: 0 }; // vertex shown in the palette for the selected polyline
+function geometryFields(app, e) {
+  const edit = (fn) => editEntity(app.session, e.id, (c) => fn(c) ?? c, 'Properties');
+  const field = (label, value, set, ok = Number.isFinite) => {
+    const inp = el('input', { type: 'text', 'data-prop': label, value: fmtField(value) });
+    inp.onchange = () => { const v = Number(inp.value.trim().replace(',', '.')); if (inp.value.trim() !== '' && ok(v)) edit((c) => set(c, v)); else inp.value = fmtField(value); };
+    return el('label', {}, label, inp);
+  };
+  const pos = (v) => Number.isFinite(v) && v > 0;
+  const xy = (name, get) => [field(`${name} X`, get(e).x, (c, v) => { get(c).x = v; }), field(`${name} Y`, get(e).y, (c, v) => { get(c).y = v; })];
+  switch (e.type) {
+    case 'LINE': return [...xy('Start', (x) => x.p1), ...xy('End', (x) => x.p2)];
+    case 'CIRCLE': return [...xy('Center', (x) => x.c), field('Radius', e.r, (c, v) => { c.r = v; }, pos), field('Diameter', 2 * e.r, (c, v) => { c.r = v / 2; }, pos)];
+    case 'ARC': return [...xy('Center', (x) => x.c), field('Radius', e.r, (c, v) => { c.r = v; }, pos),
+      field('Start angle', e.a0, (c, v) => { c.a0 = v; }), field('End angle', e.a1, (c, v) => { c.a1 = v; })];
+    case 'ELLIPSE': {
+      const R = Math.hypot(e.major.x, e.major.y);
+      return [...xy('Center', (x) => x.c), field('Major radius', R, (c, v) => { c.major = { x: (e.major.x / R) * v, y: (e.major.y / R) * v }; }, pos),
+        field('Ratio', e.ratio, (c, v) => { c.ratio = v; }, (v) => v > 0 && v <= 1)];
+    }
+    case 'TEXT': case 'MTEXT': return [field('Height', e.height, (c, v) => { c.height = v; }, pos), field('Rotation', e.rot ?? 0, (c, v) => { c.rot = v; })];
+    case 'LWPOLYLINE': {
+      if (polyVertex.id !== e.id || polyVertex.i >= e.vertices.length) Object.assign(polyVertex, { id: e.id, i: 0 });
+      const i = polyVertex.i, n = e.vertices.length;
+      const step = (d) => { polyVertex.i = (i + d + n) % n; app.refreshPanels(true); };
+      return [el('label', {}, 'Vertex', el('span', {}, el('button', { class: 'icon', title: 'Previous vertex', onclick: () => step(-1) }, '‹'), ` ${i + 1} / ${n} `,
+        el('button', { class: 'icon', title: 'Next vertex', onclick: () => step(1) }, '›'))), ...xy('Vertex', (x) => x.vertices[i])];
+    }
+    default: return [];
+  }
+}
+const fmtField = (v) => String(Math.round(v * 1e6) / 1e6);

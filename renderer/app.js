@@ -128,7 +128,7 @@ class App {
     const last = this.vp.lastPoint ?? { x: 0, y: 0 };
     const dir = this.vp.lastPoint ? { x: this.vp.cursor.x - last.x, y: this.vp.cursor.y - last.y } : null;
     const pt = parseCoordinate(s, last, dir);
-    if (pt && Number.isFinite(pt.x) && this.toolId !== 'select') { this.vp.cursor = { x: pt.x, y: pt.y }; t.click({ x: pt.x, y: pt.y }); this.refreshPrompt(); this.vp.requestRender(); return; }
+    if (pt && Number.isFinite(pt.x) && (this.toolId !== 'select' || t.hot)) { this.vp.cursor = { x: pt.x, y: pt.y }; t.click({ x: pt.x, y: pt.y }); this.refreshPrompt(); this.vp.requestRender(); return; }
     toast(`Unknown command "${s}".`);
   }
 
