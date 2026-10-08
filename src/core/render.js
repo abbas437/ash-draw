@@ -429,7 +429,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
   const sy = (y) => H / 2 - (y - view.cy) * z;
   const minx = view.cx - W / 2 / z, maxx = view.cx + W / 2 / z, miny = view.cy - H / 2 / z, maxy = view.cy + H / 2 / z;
   const hi = opts.highlight instanceof Set ? opts.highlight : null;
-  const colorOf = (st) => (st.color.auto ? (dark ? '#ffffff' : '#000000') : rgbCss(st.color.rgb));
+  const colorOf = (st) => (st.color.auto ? (dark ? '#ffffff' : '#000000') : (st._css ??= rgbCss(st.color.rgb)));
   const lwPx = (st) => {
     if (!opts.showLineweight) return 1;
     const mm = st.lw >= 0 ? st.lw : 0.25;
@@ -457,23 +457,51 @@ export function drawScene(ctx, scene, view, opts = {}) {
     }
   };
 
-  // one pass over the visible items buckets them for the drawing phases (grid-culled, scene order kept)
-  const fills = [], marks = [], texts = [], batches = new Map();
+  // one pass over the visible items buckets them for the drawing phases (grid-culled, scene order kept).
+  // Level of detail: an item under 1 px on screen becomes a 1-px dot (one fill per colour); a pattern hatch whose
+  // line spacing is under 2 px (or that is tiny) becomes a light tint (one fill per colour, no clip); text under
+  // 2 px high becomes a bar (one stroke per colour).
+  const fills = [], marks = [], texts = [], batches = new Map(), dots = new Map(), tints = new Map(), bars = new Map();
+  const lwSig = opts.showLineweight ? (opts.pixelsPerMm ?? 3.78) : 0;
+  const bucket = (map, key) => { let l = map.get(key); if (!l) map.set(key, (l = [])); return l; };
   for (const it of visibleItems(scene, minx, miny, maxx, maxy)) {
     const k = it.kind;
+    if (it.arrow || k === 'point') marks.push(it);
+    if (k === 'point') continue;
+    const b = it.bbox;
+    const tiny = b && (b.maxx - b.minx) * z < 1 && (b.maxy - b.miny) * z < 1;
+    if (k === 'hatch' && !it.solid && it.lines) {
+      it._sp ??= patternSpacing(it.lines);
+      if (tiny || it._sp * z < 2) { bucket(tints, colorOf(it.style)).push(it); continue; }
+    }
+    if (tiny) { bucket(dots, colorOf(it.style)).push(it); continue; }
     if (k === 'hatch' || k === 'fill') fills.push(it);
     else if (k === 'path' || k === 'hatchOutline') {
       const st = it.style;
-      const key = `${st.color.auto ? 'a' : st.color.rgb.join(',')}|${lwPx(st)}|${st.lt}|${st.lts}`;
-      let b = batches.get(key);
-      if (!b) batches.set(key, (b = { st, items: [] }));
-      b.items.push(it);
-    } else if (k === 'text') texts.push(it);
-    if (it.arrow || k === 'point') marks.push(it);
+      if (st._ks !== lwSig) { st._ks = lwSig; st._key = `${st.color.auto ? 'a' : st.color.rgb.join(',')}|${lwPx(st)}|${st.lt}|${st.lts}`; }
+      let bt = batches.get(st._key);
+      if (!bt) batches.set(st._key, (bt = { st, items: [] }));
+      bt.items.push(it);
+    } else if (k === 'text') {
+      if (!it.mt && it.h * z < 2) bucket(bars, colorOf(it.style)).push(it);
+      else texts.push(it);
+    }
   }
 
-  // 1. hatches and solid fills
+  // 1. hatches and solid fills; LOD tints first (one fill per colour), then the per-item fills and patterns
   const fillAlphaPattern = opts.patternFallbackAlpha ?? 0.25;
+  if (tints.size) {
+    ctx.save(); ctx.globalAlpha = fillAlphaPattern;
+    for (const [col, list] of tints) {
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      // single-loop boundaries share one non-zero path, all wound the same way so overlaps do not cancel
+      for (const it of list) if (loopCount(it) === 1) traceLoopCcw(ctx, it, sx, sy);
+      ctx.fill();
+      for (const it of list) if (loopCount(it) !== 1) { ctx.beginPath(); tracePath(it.ops); ctx.fill('evenodd'); }
+    }
+    ctx.restore();
+  }
   for (const it of fills) {
     const col = colorOf(it.style);
     if (it.kind === 'fill' || it.solid) {
@@ -483,6 +511,26 @@ export function drawScene(ctx, scene, view, opts = {}) {
       drawPatternHatch(ctx, it, view, col, tracePath, sx, sy, fillAlphaPattern);
     } else {
       ctx.beginPath(); tracePath(it.ops); ctx.save(); ctx.globalAlpha = fillAlphaPattern; ctx.fillStyle = col; ctx.fill('evenodd'); ctx.restore();
+    }
+  }
+
+  // LOD dots: one 1-px rect per covered pixel and colour, one fill per colour
+  if (dots.size) {
+    const Wi = Math.ceil(W), Hi = Math.ceil(H), stamp = dotStamp(Wi * Hi);
+    let ci = 0;
+    for (const [col, list] of dots) {
+      const mark = dotFrame * 256 + (ci++ & 255);
+      ctx.beginPath();
+      for (const it of list) {
+        const b = it.bbox;
+        const x = Math.floor(sx((b.minx + b.maxx) / 2)), y = Math.floor(sy((b.miny + b.maxy) / 2));
+        if (x < 0 || y < 0 || x >= Wi || y >= Hi) continue;
+        const i = y * Wi + x;
+        if (stamp[i] === mark) continue;
+        stamp[i] = mark;
+        ctx.rect(x, y, 1, 1);
+      }
+      ctx.fillStyle = col; ctx.fill();
     }
   }
 
@@ -516,7 +564,20 @@ export function drawScene(ctx, scene, view, opts = {}) {
     }
   }
 
-  // 3. text
+  // 3. text; LOD bars (text under 2 px) as one stroke per colour
+  if (bars.size) {
+    ctx.save(); ctx.globalAlpha = 0.5; ctx.lineWidth = 1;
+    for (const [col, list] of bars) {
+      ctx.beginPath();
+      for (const it of list) {
+        const x = sx(it.p.x), y = sy(it.p.y);
+        const w = (it._maxLen ??= Math.max(...it.lines.map((l) => l.length))) * it.h * z * 0.6 * it.wf;
+        ctx.moveTo(x, y); ctx.lineTo(x + w * Math.cos(it.rot), y - w * Math.sin(it.rot));
+      }
+      ctx.strokeStyle = col; ctx.stroke();
+    }
+    ctx.restore();
+  }
   for (const it of texts) {
     if (it.mt) drawMText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style), dark);
     else drawText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style));
@@ -544,17 +605,44 @@ export function drawScene(ctx, scene, view, opts = {}) {
   }
 }
 
+// LOD helpers: shared 1-px dot de-duplication buffer (stamped per frame), hatch pattern spacing, CCW loop tracing
+let dotBuf = null, dotFrame = 0;
+function dotStamp(n) {
+  if (!dotBuf || dotBuf.length < n) { dotBuf = new Uint32Array(n); dotFrame = 0; }
+  if (++dotFrame >= 0xffffff) { dotBuf.fill(0); dotFrame = 1; }
+  return dotBuf;
+}
+/** smallest perpendicular spacing of a hatch's pattern line families (world units) */
+function patternSpacing(lines) {
+  let m = Infinity;
+  for (const L of lines) {
+    const a = L.angle * DEG;
+    m = Math.min(m, Math.abs(-L.offset.x * Math.sin(a) + L.offset.y * Math.cos(a)));
+  }
+  return m;
+}
+/** number of boundary loops of a hatch item (its ops are M/L/Z only) */
+function loopCount(it) {
+  if (it._loops === undefined) { let n = 0; for (let i = 0; i < it.ops.length; i += it.ops[i] === OP_Z ? 1 : 3) if (it.ops[i] === OP_M) n++; it._loops = n; }
+  return it._loops;
+}
+/** trace a single-loop hatch boundary counter-clockwise (world), whichever way it was stored */
+function traceLoopCcw(ctx, it, sx, sy) {
+  const o = it.ops;
+  let n = 0; while (n < o.length && o[n] !== OP_Z) n += 3; // n = end of the point ops
+  if (it._ccw === undefined) {
+    let a = 0;
+    for (let i = 0; i < n; i += 3) { const j = i + 3 < n ? i + 3 : 0; a += o[i + 1] * o[j + 2] - o[j + 1] * o[i + 2]; }
+    it._ccw = a >= 0;
+  }
+  if (it._ccw) { ctx.moveTo(sx(o[1]), sy(o[2])); for (let i = 3; i < n; i += 3) ctx.lineTo(sx(o[i + 1]), sy(o[i + 2])); }
+  else { ctx.moveTo(sx(o[n - 2]), sy(o[n - 1])); for (let i = n - 6; i >= 0; i -= 3) ctx.lineTo(sx(o[i + 1]), sy(o[i + 2])); }
+  ctx.closePath();
+}
+
 function drawText(ctx, it, x, y, z, color) {
   const px = it.h * z;
   const lineH = px * (it.mtext ? 1.25 : 1);
-  if (px < 2) {
-    // too small to read: a thin bar the width of the text keeps the layout visible
-    const w = Math.max(...it.lines.map((l) => l.length)) * px * 0.6 * it.wf;
-    ctx.strokeStyle = color; ctx.globalAlpha = 0.5; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + w * Math.cos(it.rot), y - w * Math.sin(it.rot)); ctx.stroke();
-    ctx.globalAlpha = 1;
-    return;
-  }
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(-it.rot);

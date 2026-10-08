@@ -182,3 +182,42 @@ test('updateScene validates the id -> index map after doc.entities is reassigned
   assert.deepEqual(it.bbox, { minx: 100, miny: 100, maxx: 101, maxy: 102 });
   assert.deepEqual(sc.items.map((x) => x.id), ids.slice(1));
 });
+
+test('LOD at fit: tiny items are batched as 1-px dots, one fill per colour', () => {
+  const doc = newDocument();
+  addLayer(doc, { name: 'R', color: 1 }); addLayer(doc, { name: 'G', color: 3 });
+  for (let i = 0; i < 400; i++) {
+    const x = (i % 20) * 50, y = Math.floor(i / 20) * 50, layer = i % 2 ? 'R' : 'G';
+    addEntity(doc, makeLine({ x, y }, { x: x + 0.5, y: y + 0.3 }, { layer }));
+    addEntity(doc, makeCircle({ x: x + 20, y }, 0.2, { layer }));
+  }
+  const sc = buildScene(doc);
+  const ctx = fakeCtx();
+  drawScene(ctx, sc, { cx: 500, cy: 500, zoom: 0.5, width: 600, height: 600 }, {});
+  assert.equal(ctx.calls.fill.length, 2, 'one fill per colour');
+  assert.equal(ctx.calls.stroke, undefined, 'no per-item strokes');
+  assert.equal(ctx.calls.rect.length, 800);
+  assert.ok(ctx.calls.rect.every(([, , w, h]) => w === 1 && h === 1));
+});
+
+test('LOD at fit: dense pattern hatches become one tint fill per colour without clipping; tiny text one bar stroke per colour', () => {
+  const doc = newDocument();
+  addLayer(doc, { name: 'R', color: 1 }); addLayer(doc, { name: 'G', color: 3 });
+  for (let i = 0; i < 40; i++) {
+    const x = (i % 8) * 100, y = Math.floor(i / 8) * 100, layer = i % 2 ? 'R' : 'G';
+    const pts = [{ x, y }, { x: x + 60, y }, { x: x + 60, y: y + 60 }, { x, y: y + 60 }];
+    addEntity(doc, makeHatch([{ pts: i % 4 ? pts : [...pts].reverse() }], { solid: false, pattern: 'ANSI31', scale: 1, layer }));
+    addEntity(doc, makeText({ x, y: y + 80 }, 2, 'ROOM 204', { layer }));
+  }
+  const sc = buildScene(doc);
+  const ctx = fakeCtx();
+  drawScene(ctx, sc, { cx: 400, cy: 250, zoom: 0.5, width: 500, height: 400 }, {}); // ANSI31 spacing 3.175 -> 1.6 px; text 1 px
+  assert.equal(ctx.calls.clip, undefined, 'no per-hatch clip');
+  assert.equal(ctx.calls.fill.length, 2, 'one tint fill per colour');
+  assert.equal(ctx.calls.stroke.length, 2, 'one bar stroke per colour');
+  assert.equal(ctx.calls.fillText, undefined);
+  // the pattern itself comes back once its spacing is a few pixels
+  const ctx2 = fakeCtx();
+  drawScene(ctx2, sc, { cx: 30, cy: 30, zoom: 2, width: 500, height: 400 }, {});
+  assert.ok(ctx2.calls.clip.length >= 1);
+});
