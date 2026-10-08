@@ -42,7 +42,7 @@ export function parseMText(raw, { height = 1 } = {}) {
     switch (n) {
       case '\\': case '{': case '}': buf += n; i += 2; continue;
       case 'P': flush(); para = { align: para.align, runs: [] }; paras.push(para); i += 2; continue;
-      case '~': buf += ' '; i += 2; continue;
+      case '~': buf += '\u00A0'; i += 2; continue;
       case 'L': case 'l': set('u', n === 'L'); i += 2; continue;
       case 'O': case 'o': set('o', n === 'O'); i += 2; continue;
       case 'K': case 'k': set('k', n === 'K'); i += 2; continue;
@@ -95,7 +95,7 @@ export function mtextPlain(raw) {
 
 // ---------------------------------------------------------------------------------------------
 // serialiser: each run whose properties differ from the base is written as one {…} group.
-const escText = (t) => t.replace(/[\\{}]/g, (c) => `\\${c}`).replace(/ /g, '\\~');
+const escText = (t) => t.replace(/[\\{}]/g, (c) => `\\${c}`).replace(/\u00A0/g, '\\~');   // only a real non-breaking space
 const fmtNum = (v) => String(+v.toFixed(6));
 function codesFor(p, base) {
   let out = '';
@@ -215,4 +215,81 @@ export function layoutMText(model, { width = 0, attach = 1, lineSpacing = 1, mea
     }
   }
   return { lines, glyphs, rules, width: boxW, height: total, x0, y0: dy };
+}
+
+// ---------------------------------------------------------------------------------------------
+// editing helpers (pure). Positions count cells: one per text character (UTF-16 unit), one per stack or raw run,
+// one per paragraph break. An empty range (a === b) means the whole text. Each returns { model, a, b }.
+const sameProps = (p, q) => JSON.stringify(p) === JSON.stringify(q);
+function cellsOf(model) {
+  const cells = [];
+  model.paras.forEach((para, pi) => {
+    if (pi) cells.push({ br: true, align: para.align });
+    for (const r of para.runs) {
+      if (r.text != null) for (const ch of r.text.split('')) cells.push({ ch, props: r.props });
+      else cells.push(r);
+    }
+  });
+  return cells;
+}
+function modelOf(cells, align) {
+  const paras = [{ align, runs: [] }];
+  for (const c of cells) {
+    const runs = paras.at(-1).runs, last = runs.at(-1);
+    if (c.br) paras.push({ align: c.align, runs: [] });
+    else if (c.ch == null) runs.push(c);
+    else if (last?.text != null && sameProps(last.props, c.props)) last.text += c.ch;
+    else runs.push({ text: c.ch, props: c.props });
+  }
+  return { paras };
+}
+const span = (cells, a, b) => (a === b ? [0, cells.length] : [Math.min(a, b), Math.max(a, b)]);
+
+/** apply a props patch (object, or function of the run's props) to the text and stacks in [a, b) */
+export function formatMText(model, a, b, patch) {
+  const cells = cellsOf(model);
+  [a, b] = span(cells, a, b);
+  const up = (p) => ({ ...p, ...(typeof patch === 'function' ? patch(p) : patch) });
+  const out = cells.map((c, i) => (i < a || i >= b || !c.props ? c : c.ch != null ? { ch: c.ch, props: up(c.props) } : { ...c, props: up(c.props) }));
+  return { model: modelOf(out, model.paras[0]?.align ?? null), a, b };
+}
+/** toggle a boolean property (bold, italic, u, o) from the state of the first character in [a, b) */
+export function toggleMText(model, a, b, key) {
+  const cells = cellsOf(model), [i, j] = span(cells, a, b);
+  const first = cells.slice(i, j).find((c) => c.props);
+  return formatMText(model, a, b, { [key]: !(first && first.props[key]) });
+}
+/** replace [a, b) (a === b: insert at a) with plain text in the properties of the character before a */
+export function insertMText(model, a, b, text) {
+  const cells = cellsOf(model);
+  const [i, j] = [Math.min(a, b), Math.max(a, b)];
+  const near = cells.slice(0, i).reverse().find((c) => c.br || c.props) ?? cells[i];
+  const props = near?.props ?? { ...DEFAULT_PROPS, h: model.baseH ?? 1 };
+  cells.splice(i, j - i, ...String(text).split('').map((ch) => ({ ch, props })));
+  const end = i + String(text).length;
+  return { model: modelOf(cells, model.paras[0]?.align ?? null), a: end, b: end };
+}
+/** turn the selected text "a/b", "a#b" or "a^b" into one stack; null when the selection is not stackable */
+export function stackMText(model, a, b) {
+  const cells = cellsOf(model), [i, j] = [Math.min(a, b), Math.max(a, b)];
+  const sel = cells.slice(i, j);
+  if (!sel.length || sel.some((c) => c.ch == null)) return null;
+  const m = /^(.*?)([/#^])(.*)$/s.exec(sel.map((c) => c.ch).join(''));
+  if (!m) return null;
+  cells.splice(i, j - i, { stack: { a: m[1], b: m[3], type: m[2] }, props: sel[0].props });
+  return { model: modelOf(cells, model.paras[0]?.align ?? null), a: i, b: i + 1 };
+}
+/** turn the stacks in [a, b) back into text "a/b" (also "#", "^") */
+export function unstackMText(model, a, b) {
+  const cells = cellsOf(model);
+  [a, b] = span(cells, a, b);
+  const out = [];
+  let end = b;
+  cells.forEach((c, k) => {
+    if (k < a || k >= b || !c.stack) { out.push(c); return; }
+    const t = `${c.stack.a}${c.stack.type}${c.stack.b}`;
+    for (const ch of t.split('')) out.push({ ch, props: c.props });
+    end += t.length - 1;
+  });
+  return { model: modelOf(out, model.paras[0]?.align ?? null), a, b: end };
 }
