@@ -6,10 +6,13 @@ import { bboxOf, growBox } from '../src/core/geom.js';
 import { gripsOf } from './grips.js';
 import { getEntity } from '../src/core/model.js';
 import { paperRects } from '../src/core/layouts.js';
+import { frameKey, framePlan, exposedStrips } from '../src/core/frameCache.js';
 
 const DEFAULT_KINDS = new Set(['end', 'int', 'mid', 'cen', 'quad', 'node', 'ins', 'per']);
 const SNAP_PX = 12;
 const PICK_PX = 6;
+/** a pan / wheel-zoom gesture shows the cached bitmap; the full render follows this long after it ends */
+const SETTLE_MS = 120;
 /** drawing-area background per theme; settings.dark picks one (it follows the app theme unless overridden) */
 export const CANVAS_BG = { light: '#ffffff', dark: '#1b1f23' };
 
@@ -34,6 +37,12 @@ export class Viewport {
     this._raf = 0;
     this._spaceDown = false;
     this._pan = null;
+    this._gesture = null;              // 'pan' | 'zoom' while the cached bitmap stands in for the scene
+    this._settleT = 0;
+    this._frame = null;                // last scene frame: { key, view, exact } with its bitmap in this._buf
+    this._buf = document.createElement('canvas');
+    this._buf2 = document.createElement('canvas');
+    document.fonts?.addEventListener?.('loadingdone', () => this.invalidate());
     this._bind();
   }
   /** colour for previews and snap markers: yellow on the dark canvas, dark amber on the light one */
@@ -149,28 +158,74 @@ export class Viewport {
   }
 
   // ---- rendering -----------------------------------------------------------------------------
+  /** drop the cached scene bitmap (scene edits, layer and theme changes are detected through frameKey) */
+  invalidate() { this._frame = null; this.requestRender(); }
+  /** pan / wheel-zoom gesture: frames reuse the cached bitmap until SETTLE_MS after endGesture() */
+  beginGesture(kind) { clearTimeout(this._settleT); this._settleT = 0; this._gesture = kind; }
+  endGesture(ms = SETTLE_MS) {
+    clearTimeout(this._settleT);
+    this._settleT = setTimeout(() => { this._settleT = 0; this._gesture = null; this.requestRender(); }, ms);
+  }
   requestRender() {
     if (this._raf) return;
     this._raf = requestAnimationFrame(() => { this._raf = 0; this.render(); });
   }
-  render() {
-    if (!this.scene) return;
-    const { ctx, view } = this;
-    const opts = {
+  /** drawScene options of the model-space frame */
+  sceneOpts() {
+    return {
       background: this.settings.dark ? CANVAS_BG.dark : CANVAS_BG.light,
       showLineweight: this.settings.lineweights,
       highlight: this.selection,
       highlightColor: this.settings.dark ? '#4dd2ff' : '#0a6fd1',
       dpr: this.dpr,
     };
-    if (this.layout) drawLayout(ctx, this.scene, view, this.layout, paperRects, this.modelScene, { ...opts, highlightColor: '#0a6fd1' });
-    else drawScene(ctx, this.scene, view, opts);
+  }
+  render() {
+    if (!this.scene) return;
+    if (this._raf) { cancelAnimationFrame(this._raf); this._raf = 0; }
+    const { ctx, view } = this;
+    const opts = this.sceneOpts();
+    if (this.layout) { this._frame = null; drawLayout(ctx, this.scene, view, this.layout, paperRects, this.modelScene, { ...opts, highlightColor: '#0a6fd1' }); }
+    else this._sceneFrame(opts);
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this._drawGrips();
     if (this.preview) { ctx.save(); this.preview(ctx, view, this); ctx.restore(); }
     if (this.rubber) this._drawRubber();
     if (this.snapMarker) this._drawSnapMarker();
     this._drawCrosshair();
+  }
+
+  /** model space: draw the scene through the cached bitmap (see framePlan in src/core/frameCache.js) */
+  _sceneFrame(opts) {
+    const { ctx, view, canvas } = this;
+    const key = frameKey({ scene: this.scene, dark: this.settings.dark, lineweights: this.settings.lineweights, selection: this.selection, dpr: this.dpr, pxWidth: canvas.width, pxHeight: canvas.height });
+    const plan = framePlan(this._frame, key, view, this._gesture);
+    let buf = this._buf;
+    if (plan.mode === 'full') {
+      if (buf.width !== canvas.width || buf.height !== canvas.height) { buf.width = canvas.width; buf.height = canvas.height; }
+      drawScene(buf.getContext('2d'), this.scene, view, opts);
+      this._frame = { key, view, exact: true };
+    } else if (plan.mode === 'shift') {
+      // move the bitmap into the spare buffer, then render only the exposed strips, each clipped to itself
+      const nb = this._buf2, c = nb.getContext('2d'), d = this.dpr, f = plan.view;
+      if (nb.width !== buf.width || nb.height !== buf.height) { nb.width = buf.width; nb.height = buf.height; }
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.drawImage(buf, plan.dx, plan.dy);
+      for (const [x, y, w, h] of exposedStrips(plan.dx, plan.dy, nb.width, nb.height)) {
+        const sv = { cx: f.cx + ((x + w / 2) / d - f.width / 2) / f.zoom, cy: f.cy - ((y + h / 2) / d - f.height / 2) / f.zoom, zoom: f.zoom, width: w / d, height: h / d };
+        c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.beginPath(); c.rect(x, y, w, h); c.clip();
+        drawScene(c, this.scene, sv, { ...opts, baseTransform: new DOMMatrix([d, 0, 0, d, x, y]) });
+        c.restore();
+      }
+      this._buf2 = buf; this._buf = buf = nb;
+      this._frame = { key, view: f, exact: false };
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (plan.mode === 'scale') {
+      ctx.fillStyle = opts.background; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const d = this.dpr;
+      ctx.drawImage(buf, plan.ox * d, plan.oy * d, buf.width * plan.s, buf.height * plan.s);
+    } else ctx.drawImage(buf, 0, 0);
   }
 
   _drawGrips() {
@@ -228,6 +283,7 @@ export class Viewport {
     cv.addEventListener('wheel', (e) => {
       e.preventDefault();
       const r = cv.getBoundingClientRect();
+      if (this._gesture !== 'pan') { this.beginGesture('zoom'); this.endGesture(); }
       this.zoomBy(e.deltaY < 0 ? 1.25 : 0.8, e.clientX - r.left, e.clientY - r.top);
       this._moved(e.clientX - r.left, e.clientY - r.top, e);
     }, { passive: false });
@@ -236,6 +292,7 @@ export class Viewport {
       const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
       if (e.button === 1 || (e.button === 0 && this._spaceDown)) {
         this._pan = { x: e.clientX, y: e.clientY };
+        this.beginGesture('pan');
         cv.setPointerCapture(e.pointerId);
         cv.style.cursor = 'grabbing';
         return;
@@ -259,7 +316,7 @@ export class Viewport {
       this._moved(sx, sy, e);
     });
     cv.addEventListener('pointerup', (e) => {
-      if (this._pan) { this._pan = null; cv.style.cursor = ''; return; }
+      if (this._pan) { this._pan = null; cv.style.cursor = ''; this.endGesture(); return; }
       if (e.button !== 0 || !this._down) return;
       const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
       const res = this.resolve(sx, sy);

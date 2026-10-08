@@ -73,3 +73,32 @@ counted in `query`.
 
 The line batches (LINEs and ARCs 1-4 px on screen) are half of the fit frame, then the bucketing pass and the
 grid query, which are plain JavaScript over every item.
+
+## Bitmap reuse in the viewport (branch perf4, 2026-10-08, one full run)
+
+`renderer/viewport.js` keeps the last model-space scene frame in an offscreen canvas and draws the overlays (grips,
+preview, rubber band, snap marker, crosshair) over a copy of it. The rule (`framePlan` in `src/core/frameCache.js`,
+unit-tested) is:
+
+- content key changed (scene object or `scene.version` - every edit, layer change and file switch -, canvas
+  theme, lineweight display, selection, canvas size or dpr) or `invalidate()` (web font loaded): full render;
+- same view: the bitmap as is (mouse moves, tool previews no longer redraw the scene);
+- during a pan gesture (middle button or space-drag): the bitmap moved by whole device pixels, and only the exposed
+  strips rendered, each `drawScene` call clipped to its strip;
+- during a wheel zoom: the bitmap scaled at once;
+- 120 ms after the gesture ends (button released, last wheel event), a full render replaces the approximation.
+
+Paper-space layouts are drawn as before, without the cache. The bench drives the `Viewport` itself: "perceived" is
+the time to the shown frame during the gesture (30 pan steps of 25 x 10 px; 11 wheel steps x1.25 / x0.8), "settle"
+the full render after it. At fit the exposed pan strips lie mostly in the drawing margin; strips over dense content
+cost about as much as the 10x pan frame (~30 ms).
+
+| case | perceived pan fit avg (max) | perceived zoom fit avg (max) | settle after pan | settle after zoom | unchanged view | drawScene pan fit avg (max), same run |
+|------|----------------------------:|-----------------------------:|-----------------:|------------------:|---------------:|--------------------------------------:|
+| full | 3.4 ms (8.6) | 5.8 ms (9.9) | 313 ms | 177 ms | 1.4 ms | 458 ms (1072) |
+| text | 3.3 ms (9.0) | 7.4 ms (12.7) | 25 ms | 13 ms | 1.2 ms | 38 ms (75) |
+
+Same run, full case, fit frame by phase: query 63, bucket 148, tints 40, dots 92, lines 321, bars 22 = 685 ms
+(165k items drawn as dots, 162k in the 10 line batches, 13k text bars, 5k hatch tints). The settle frame is still
+dominated by the line batches; next candidates are a ~1.5 px dot threshold for LINE/ARC items and skipping the
+`touches` pass in `visibleItems` when the view contains the whole scene.
