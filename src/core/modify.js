@@ -9,7 +9,7 @@
 // Failures throw Error with code 'GEOMETRY' (no solution for this input) or 'UNSUPPORTED' (entity type not handled).
 import {
   DEG, dist, mid, normAngle, ccwSweep, bulgeToArc, transformEntity, translation, rotation, compose, bboxOf, unionBox, tessellate,
-  plSegs, segPoint, segParam, plParamOf, plSegAt, plSlice,
+  plSegs, segPoint, segParam, plParamOf, plSegAt, plSlice, splinePiece, splineParam,
 } from './geom.js';
 
 const TAU = Math.PI * 2;
@@ -296,6 +296,15 @@ export function breakAt(e, p) {
     if (!(s > EPS && s < m - EPS)) throw fail('GEOMETRY', 'break point is at or beyond an end');
     return pieces(e, [plPiece(e, plSlice(segs, 0, s)), plPiece(e, plSlice(segs, s, m))]);
   }
+  if (e.type === 'SPLINE') {
+    const sp = splineParam(e, p);
+    if (!sp) throw fail('UNSUPPORTED', 'break of a spline without control points');
+    const { t, t0, t1 } = sp, span = t1 - t0, eps = EPS * span;
+    // closed: opens at the point, one piece running in parameter direction from p round to p
+    if (sp.closed) return pieces(e, [splinePiece(e, t, t + span)]);
+    if (!(t > t0 + eps && t < t1 - eps)) throw fail('GEOMETRY', 'break point is at or beyond an end');
+    return pieces(e, [splinePiece(e, t0, t), splinePiece(e, t, t1)]);
+  }
   throw fail('UNSUPPORTED', `break of ${e.type}`);
 }
 /** BREAK between two points: removes the part between them. A circle loses the part CCW from p1 to p2
@@ -336,6 +345,21 @@ export function breakBetween(e, p1, p2) {
     const out = [];
     if (a > EPS) out.push(plPiece(e, plSlice(segs, 0, a)));
     if (b < m - EPS) out.push(plPiece(e, plSlice(segs, b, m)));
+    return pieces(e, out);
+  }
+  if (e.type === 'SPLINE') {
+    const s1 = splineParam(e, p1), s2 = s1 && splineParam(e, p2);
+    if (!s1) throw fail('UNSUPPORTED', 'break of a spline without control points');
+    const { t0, t1 } = s1, span = t1 - t0, eps = EPS * span;
+    let a = s1.t, b = s2.t;
+    if (s1.closed) { // removes the part from p1 to p2 in parameter direction; the rest runs from p2 round to p1
+      const end = a <= b ? a + span : a;
+      return pieces(e, end - b > eps ? [splinePiece(e, b, end)] : []);
+    }
+    if (a > b) [a, b] = [b, a];
+    const out = [];
+    if (a > t0 + eps) out.push(splinePiece(e, t0, a));
+    if (b < t1 - eps) out.push(splinePiece(e, b, t1));
     return pieces(e, out);
   }
   throw fail('UNSUPPORTED', `break of ${e.type}`);

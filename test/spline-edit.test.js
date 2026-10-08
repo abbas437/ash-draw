@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as G from '../src/core/geom.js';
 import * as N from '../src/core/nurbs.js';
 import * as M from '../src/core/model.js';
+import * as X from '../src/core/modify.js';
 
 const near = (a, b, tol = 1e-9, msg) => assert.ok(Math.abs(a - b) <= tol, msg ?? `${a} !~ ${b}`);
 const nearPt = (p, x, y, tol = 1e-9) => { near(p.x, x, tol, `x ${p.x} !~ ${x}`); near(p.y, y, tol, `y ${p.y} !~ ${y}`); };
@@ -103,4 +104,51 @@ test('EXTEND an open spline to a line: straight along the end tangent, meets the
   near((end.x - p.x) * d1.y - (end.y - p.y) * d1.x, 0, 1e-9, 'end on the tangent ray');
   for (let i = 0; i <= 20; i++) { const t = (4 * i) / 20, q = N.pointAt(nu, t, i === 20); nearPt(N.pointAt(xn, t, i === 20), q.x, q.y, 1e-9); }
   near(a, 0);
+});
+
+// ---- BREAK -----------------------------------------------------------------------------------
+const closedSp = () => M.makeSpline({ degree: 3, ctrl: [{ x: 10, y: 0 }, { x: 10, y: 10 }, { x: -10, y: 10 }, { x: -10, y: -10 }, { x: 10, y: -10 }, { x: 10, y: 0 }], knots: [0, 0, 0, 0, 1, 2, 3, 3, 3, 3], closed: true });
+const onCurve = (orig, piece) => { const nu = N.nurbsOf(orig), P = N.nurbsOf(piece), [a, b] = N.domain(P); for (let i = 0; i <= 20; i++) { const q = N.pointAt(P, a + (b - a) * i / 20, i === 20); near(distTo(nu, q), 0, 1e-9); } };
+const ends = (piece) => { const P = N.nurbsOf(piece), [a, b] = N.domain(P); return [N.pointAt(P, a), N.pointAt(P, b, true)]; };
+
+test('BREAK between two points on an open spline: two pieces on the original curve, gap between the points', () => {
+  const e = sCurve(); e.id = 7; const nu = N.nurbsOf(e);
+  const p1 = N.pointAt(nu, 1), p2 = N.pointAt(nu, 3);
+  for (const [u, v] of [[p1, p2], [p2, p1]]) {
+    const r = X.breakBetween(e, u, v);
+    assert.equal(r.change.length, 1); assert.equal(r.add.length, 1); assert.equal(r.change[0].id, 7);
+    const [A, B] = [r.change[0], r.add[0]];
+    assert.ok([A, B].every((x) => x.type === 'SPLINE' && !x.closed));
+    A && onCurve(e, A); onCurve(e, B);
+    const [, a1] = ends(A), [b0] = ends(B);
+    near(a1.x, p1.x, 1e-9); near(a1.y, p1.y, 1e-9); near(b0.x, p2.x, 1e-9); near(b0.y, p2.y, 1e-9);
+  }
+});
+
+test('BREAK AT POINT on an open spline: two pieces meeting at the point; at an end it fails', () => {
+  const e = sCurve(); e.id = 3; const nu = N.nurbsOf(e), q = N.pointAt(nu, 2);
+  const r = X.breakAt(e, { x: q.x + 0.001, y: q.y + 0.001 });
+  assert.equal(r.change.length + r.add.length, 2);
+  const [A, B] = [r.change[0], r.add[0]]; onCurve(e, A); onCurve(e, B);
+  const m = ends(A)[1], n = ends(B)[0];
+  near(m.x, n.x, 1e-9); near(m.y, n.y, 1e-9); assert.ok(Math.hypot(m.x - q.x, m.y - q.y) < 0.01);
+  near(ends(A)[0].x, 0, 1e-9); near(ends(B)[1].x, 60, 1e-9);
+  assert.throws(() => X.breakAt(e, { x: 0, y: 0 }), { code: 'GEOMETRY' });
+});
+
+test('BREAK of a closed spline: one open piece from the second point round to the first, in parameter direction', () => {
+  const e = closedSp(); e.id = 5; const nu = N.nurbsOf(e);
+  const p1 = N.pointAt(nu, 0.5), p2 = N.pointAt(nu, 2);
+  const r = X.breakBetween(e, p1, p2);
+  assert.equal(r.change.length, 1); assert.equal(r.add.length, 0);
+  const P = r.change[0]; assert.equal(P.type, 'SPLINE'); assert.equal(P.closed, false); onCurve(e, P);
+  const [s, f] = ends(P);
+  near(s.x, p2.x, 1e-9); near(s.y, p2.y, 1e-9); near(f.x, p1.x, 1e-9); near(f.y, p1.y, 1e-9);
+  const [a, b] = N.domain(N.nurbsOf(P)); assert.ok(Math.abs((b - a) - (3 - 1.5)) < 1e-9, 'kept span = full period minus the removed 1.5');
+  // swapping the points keeps the other arc (parameter direction decides)
+  const r2 = X.breakBetween(e, p2, p1), [s2, f2] = ends(r2.change[0]);
+  near(s2.x, p1.x, 1e-9); near(f2.x, p2.x, 1e-9);
+  // break at a point opens the loop there
+  const r3 = X.breakAt(e, p1), [s3, f3] = ends(r3.change[0]);
+  near(s3.x, p1.x, 1e-9); near(f3.x, p1.x, 1e-9); onCurve(e, r3.change[0]);
 });

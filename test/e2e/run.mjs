@@ -1110,6 +1110,48 @@ try {
   await page.locator('#dlg button.primary').click();
   await page.waitForSelector('#dlg[open]', { state: 'hidden' });
 
+  step = 'splines: TRIM beyond a line, OFFSET 5, BREAK between two points';
+  const spl = { degree: 3, ctrl: [{ x: 0, y: 0 }, { x: 10, y: 20 }, { x: 25, y: 22 }, { x: 35, y: -5 }, { x: 50, y: -15 }, { x: 60, y: 5 }], knots: [0, 0, 0, 0, 1, 2.5, 4, 4, 4, 4] };
+  const splineAt = (t) => page.evaluate(async ([sp, t]) => { const N = await import('/src/core/nurbs.js'); const M = await import('/src/core/model.js'); return N.pointAt(N.nurbsOf(M.makeSpline(sp)), t); }, [spl, t]);
+  const loadSpline = async (withLine) => {
+    await page.evaluate(async ([sp, withLine]) => {
+      const M = await import('/src/core/model.js');
+      const doc = M.newDocument();
+      M.addEntity(doc, M.makeSpline(sp));
+      if (withLine) M.addEntity(doc, M.makeLine({ x: 30, y: -50 }, { x: 30, y: 50 }));
+      window.app.installDoc(doc, { path: null, name: 'spline.dxf', format: 'dxf' });
+      window.app.vp.view = { ...window.app.vp.view, cx: 30, cy: 0, zoom: 6 }; window.app.vp.render();
+    }, [spl, withLine]);
+  };
+  const splines = () => page.evaluate(() => window.app.doc.entities.filter((e) => e.type === 'SPLINE'));
+  await loadSpline(true);
+  const far = await splineAt(3.5); // beyond the line at x = 30 (the curve crosses it once, near t = 1.8)
+  assert.ok(far.x > 31, `click point x ${far.x}`);
+  await typeCmd('tr'); await clickWorld(far.x, far.y); await page.keyboard.press('Escape');
+  let sp1 = await splines();
+  assert.equal(sp1.length, 1, 'TRIM keeps one SPLINE');
+  const endX = await page.evaluate(async () => {
+    const N = await import('/src/core/nurbs.js'); const e = window.app.doc.entities.find((x) => x.type === 'SPLINE');
+    const nu = N.nurbsOf(e), [a, b] = N.domain(nu); return [N.pointAt(nu, a).x, N.pointAt(nu, b, true).x];
+  });
+  assert.ok(Math.abs(endX[1] - 30) < 1e-6 && Math.abs(endX[0]) < 1e-6, `trimmed spline ends on the line: ${endX}`);
+  const near2 = await page.evaluate(async () => {
+    const N = await import('/src/core/nurbs.js'); const e = window.app.doc.entities.find((x) => x.type === 'SPLINE');
+    const nu = N.nurbsOf(e), [a, b] = N.domain(nu), p = N.pointAt(nu, (a + b) / 2); return p;
+  });
+  await typeCmd('o'); await typeCmd('5'); await clickWorld(near2.x, near2.y); await clickWorld(near2.x, near2.y + 15); await page.keyboard.press('Escape');
+  sp1 = await splines();
+  assert.equal(sp1.length, 2, 'OFFSET adds a SPLINE');
+  const gap = await page.evaluate(async () => {
+    const N = await import('/src/core/nurbs.js'); const [A, B] = window.app.doc.entities.filter((x) => x.type === 'SPLINE').map(N.nurbsOf);
+    const [a, b] = N.domain(B), q = N.pointAt(B, (a + b) / 2), c = N.pointAt(A, N.nearestParam(A, q)); return Math.hypot(c.x - q.x, c.y - q.y);
+  });
+  assert.ok(Math.abs(gap - 5) < 0.05, `offset distance ${gap}`);
+  await loadSpline(false);
+  const b1 = await splineAt(1), b2 = await splineAt(3);
+  await typeCmd('br'); await clickWorld(b1.x, b1.y); await clickWorld(b2.x, b2.y);
+  assert.deepEqual(await types(), ['SPLINE', 'SPLINE'], 'BREAK gives two SPLINEs');
+
   step = 'csp';
   assert.deepEqual(await page.evaluate(() => window.__csp), []);
   assert.deepEqual(problems, []);
