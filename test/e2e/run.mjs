@@ -349,6 +349,68 @@ try {
   });
   assert.deepEqual(reread, [false, true], 'DUCT off + frozen after save and reopen');
 
+  step = 'modify tools: FILLET R 5 on two perpendicular lines';
+  await typeCmd('new');
+  assert.equal(await count(), 0);
+  await page.evaluate(() => { const vp = window.app.vp; vp.view = { ...vp.view, cx: 50, cy: 25, zoom: 8 }; vp.render(); });
+  const ents = () => page.evaluate(() => window.app.doc.entities.map((e) => ({ ...e, len: e.type === 'LINE' ? Math.hypot(e.p2.x - e.p1.x, e.p2.y - e.p1.y) : null })));
+  const lens = async () => (await ents()).filter((e) => e.type === 'LINE').map((e) => Math.round(e.len * 1e6) / 1e6).sort((x, y) => x - y);
+  const near = (x, y, msg) => assert.ok(Math.abs(x - y) < 1e-6, `${msg}: ${x} != ${y}`);
+  await typeCmd('l'); await typeCmd('0,0'); await typeCmd('40,0'); await typeCmd('');
+  await typeCmd('l'); await typeCmd('0,0'); await typeCmd('0,30'); await typeCmd('');
+  await typeCmd('f'); await typeCmd('r'); await typeCmd('5');
+  await clickWorld(20, 0); await clickWorld(0, 15);
+  const arc = (await ents()).find((e) => e.type === 'ARC');
+  assert.ok(arc, 'FILLET made no arc');
+  near(arc.r, 5, 'fillet radius');
+  assert.deepEqual(await lens(), [25, 35], 'lines trimmed to the fillet');
+  step = 'modify tools: undo the fillet';
+  await page.keyboard.press('Control+z');
+  assert.deepEqual(await types(), ['LINE', 'LINE']);
+  assert.deepEqual(await lens(), [30, 40]);
+  step = 'modify tools: FILLET remembers its radius per drawing';
+  await typeCmd('f');
+  assert.match(await page.locator('#prompt').textContent(), /radius 5\b/);
+  await page.keyboard.press('Escape');
+
+  step = 'modify tools: CHAMFER 2';
+  await typeCmd('cha'); await typeCmd('d'); await typeCmd('2'); await typeCmd('2');
+  await clickWorld(20, 0); await clickWorld(0, 15);
+  assert.deepEqual(await lens(), [Math.round(2 * Math.SQRT2 * 1e6) / 1e6, 28, 38]);
+
+  step = 'modify tools: BREAK between two points, JOIN back, LENGTHEN DE 10';
+  const onY50 = async () => (await ents()).filter((e) => e.type === 'LINE' && e.p1.y === 50 && e.p2.y === 50);
+  await typeCmd('l'); await typeCmd('10,50'); await typeCmd('70,50'); await typeCmd('');
+  await typeCmd('br'); await clickWorld(20, 50); await typeCmd('30,50');
+  assert.equal((await onY50()).length, 2, 'BREAK gives two lines');
+  await page.evaluate((ids) => window.app.vp.setSelection(ids), (await onY50()).map((e) => e.id));
+  await typeCmd('j');
+  assert.equal((await onY50()).length, 1, 'JOIN gives one line');
+  near((await onY50())[0].len, 60, 'joined length');
+  await typeCmd('len'); await typeCmd('de'); await typeCmd('10'); await clickWorld(65, 50); await typeCmd('');
+  near((await onY50())[0].len, 70, 'lengthened by 10');
+
+  step = 'modify tools: ARRAYRECT 2 x 3 and ARRAYPOLAR 4';
+  const circles = async () => (await ents()).filter((e) => e.type === 'CIRCLE');
+  await typeCmd('c'); await typeCmd('90,10'); await typeCmd('2');
+  const circleId = (await circles())[0].id;
+  await page.evaluate((id) => window.app.vp.setSelection([id]), circleId);
+  await typeCmd('ar');
+  for (const [k, v] of [['rows', '2'], ['cols', '3'], ['rowSpacing', '6'], ['colSpacing', '6']]) await page.locator(`#dlg input[name=${k}]`).fill(v);
+  await page.locator('#dlg button.primary').click();
+  assert.equal((await circles()).length, 6, 'ARRAYRECT 2x3');
+  await page.evaluate((id) => window.app.vp.setSelection([id]), circleId);
+  await typeCmd('arraypolar'); await typeCmd('80,30');
+  await page.locator('#dlg input[name=count]').fill('4');
+  await page.locator('#dlg button.primary').click();
+  assert.equal((await circles()).length, 9, 'ARRAYPOLAR adds 3 copies (4 items)');
+
+  step = 'modify tools: STRETCH the right edge of a rectangle';
+  await typeCmd('rec'); await typeCmd('20,10'); await typeCmd('@30,20');
+  await typeCmd('stretch'); await typeCmd('45,5'); await typeCmd('55,35'); await typeCmd('0,0'); await typeCmd('@10,0');
+  const xs = (await ents()).find((e) => e.type === 'LWPOLYLINE').vertices.map((q) => q.x);
+  near(Math.max(...xs) - Math.min(...xs), 40, 'rectangle width after STRETCH');
+
   step = 'csp';
   assert.deepEqual(await page.evaluate(() => window.__csp), []);
   assert.deepEqual(problems, []);
