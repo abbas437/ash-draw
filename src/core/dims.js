@@ -16,6 +16,7 @@
 //   continueDimension(prev, point) / baselineDimension(prev, point, style) -> next def
 //   createDimension(doc, def, styleName, o) -> DIMENSION entity added to doc, with its *D block
 //   regenerateDimension(doc, e, style)      -> rebuilds e's block from e.def (drops the stored raw tags)
+//   rebuildDimension(doc, e, def) / transformDimension(doc, e, m) -> copy of e with a new *D block (undo-safe)
 //   dimensionTags(e) -> DXF group pairs after the common entity head;  dimDefFromTags(tags) -> def | null
 //   arrowEntities(kind, tip, dir, size, o)  -> arrowhead entities (DIMBLK names: '' closed filled, _ARCHTICK, _OBLIQUE, _DOT, _OPEN)
 import { makeLine, makeArc, makeSolid, makeMText, makeHatch, addBlock, addEntity } from './model.js';
@@ -368,6 +369,27 @@ export function regenerateDimension(doc, e, st = resolveDimStyle(doc, e.style)) 
   if (!e.def) throw new Error('dimension has no definition to regenerate from');
   e.text = e.def.text ?? '';
   return applyBuild(doc, e, st);
+}
+
+/** copy of e (same id) rebuilt from `def` into a NEW *D block, so the old block stays valid for undo */
+export function rebuildDimension(doc, e, def = e.def, st = resolveDimStyle(doc, e.style)) {
+  const c = { ...e, def, block: anonBlockName(doc), raw: null, text: def.text ?? '' };
+  delete c.parent;
+  return applyBuild(doc, c, st);
+}
+
+/** e transformed by the matrix m ([a,b,c,d,e,f], x' = a*x + c*y + e): def points moved, block regenerated */
+export function transformDimension(doc, e, m) {
+  const P = (p) => ({ x: m[0] * p.x + m[2] * p.y + m[4], y: m[1] * p.x + m[3] * p.y + m[5] });
+  const d = e.def, nd = { ...d };
+  for (const k of ['p1', 'p2', 'at', 'vertex', 'center', 'p']) if (d[k]) nd[k] = P(d[k]);
+  if (d.l1) nd.l1 = d.l1.map(P);
+  if (d.l2) nd.l2 = d.l2.map(P);
+  if (d.kind === 'linear') {
+    const a = (d.angle ?? 0) / DEG, v = { x: m[0] * Math.cos(a) + m[2] * Math.sin(a), y: m[1] * Math.cos(a) + m[3] * Math.sin(a) };
+    nd.angle = Math.round(normAng(Math.atan2(v.y, v.x)) * DEG * 1e9) / 1e9 % 360;
+  }
+  return rebuildDimension(doc, e, nd);
 }
 
 // ---- DXF ----------------------------------------------------------------------------------------

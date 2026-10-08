@@ -12,6 +12,7 @@ import {
 import {
   translation, rotation, scaling, mirrorLine, compose, transformEntity, explode, offsetEntity, trimEntity, extendEntity,
 } from './geom.js';
+import { transformDimension, rebuildDimension } from './dims.js';
 
 const UNDO_LIMIT = 500;
 
@@ -46,6 +47,14 @@ class Tx {
     this.ids.add(ne.id);
     return true;
   }
+  /** set (style object) or delete (null) the dimension style `name` in doc.dimStyles */
+  dimStyle(name, style) {
+    const m = (this.doc.dimStyles ??= new Map());
+    const before = m.get(name) ?? null;
+    if (style) m.set(name, style); else m.delete(name);
+    this.ops.push({ k: 'dimstyle', name, before, after: style });
+    this.structure = true;
+  }
   /** create or change a layer: props merged into the existing layer; null deletes it */
   layer(name, props) {
     const before = getLayer(this.doc, name);
@@ -65,6 +74,7 @@ function applyInverse(doc, op) {
     case 'remove': for (const it of [...op.items].sort((a, b) => a.index - b.index)) doc.entities.splice(it.index, 0, it.e); break;
     case 'replace': { const i = doc.entities.findIndex((e) => e.id === op.after.id); if (i >= 0) doc.entities[i] = op.before; break; }
     case 'layer': if (op.before) doc.layers.set(op.name, { ...op.before }); else doc.layers.delete(op.name); break;
+    case 'dimstyle': if (op.before) doc.dimStyles.set(op.name, op.before); else doc.dimStyles.delete(op.name); break;
     default: break;
   }
 }
@@ -74,6 +84,7 @@ function applyForward(doc, op) {
     case 'remove': removeEntities(doc, op.items.map((i) => i.e.id)); break;
     case 'replace': { const i = doc.entities.findIndex((e) => e.id === op.before.id); if (i >= 0) doc.entities[i] = op.after; break; }
     case 'layer': if (op.after) doc.layers.set(op.name, { ...op.after }); else doc.layers.delete(op.name); break;
+    case 'dimstyle': if (op.after) (doc.dimStyles ??= new Map()).set(op.name, op.after); else doc.dimStyles.delete(op.name); break;
     default: break;
   }
 }
@@ -123,7 +134,7 @@ export class Session {
     let structure = false;
     for (const op of [...step.ops].reverse()) {
       applyInverse(this.doc, op);
-      if (op.k === 'layer') structure = true; else collectIds(op, ids);
+      if (op.k === 'layer' || op.k === 'dimstyle') structure = true; else collectIds(op, ids);
     }
     this.redoStack.push(step);
     this.revision--;
@@ -138,7 +149,7 @@ export class Session {
     let structure = false;
     for (const op of step.ops) {
       applyForward(this.doc, op);
-      if (op.k === 'layer') structure = true; else collectIds(op, ids);
+      if (op.k === 'layer' || op.k === 'dimstyle') structure = true; else collectIds(op, ids);
     }
     this.undoStack.push(step);
     this.revision++;
@@ -157,6 +168,8 @@ function collectIds(op, ids) {
 
 // ---------------------------------------------------------------------------------------------
 // commands
+/** a dimension with a definition stays a dimension (def transformed, block regenerated); others via geom */
+const xform = (doc, e, m) => (e.type === 'DIMENSION' && e.def ? transformDimension(doc, e, m) : transformEntity(e, m));
 const fail = (id, err) => ({ id, reason: err?.code ?? err?.message ?? 'failed' });
 
 export function addEntities(s, entities, label = 'Draw') {
@@ -177,7 +190,7 @@ export function transformEntities(s, ids, m, { copy = false, label = 'Transform'
       const e = getEntity(s.doc, id);
       if (!e) continue;
       try {
-        const t = transformEntity(e, m);
+        const t = xform(s.doc, e, m);
         if (copy) { t.id = 0; created.push(tx.add(t)); } else tx.replace(t);
         done++;
       } catch (err) { failed.push(fail(id, err)); }
@@ -317,6 +330,15 @@ export function deleteLayer(s, name) {
   return true;
 }
 
+/** Set dimension style `name` to `style` and regenerate the dimensions that use it, as one undo step. */
+export function setDimStyle(s, name, style) {
+  return s.transact('Dimension Style', (tx) => {
+    tx.dimStyle(name, { ...style, name });
+    const key = name.toLowerCase();
+    for (const e of [...s.doc.entities]) if (e.type === 'DIMENSION' && e.def && String(e.style).toLowerCase() === key) tx.replace(rebuildDimension(s.doc, e));
+  });
+}
+
 /** Copy of entities (for clipboard); ids stripped. */
 export function copyToClipboard(doc, ids) {
   return ids.map((id) => getEntity(doc, id)).filter(Boolean).map((e) => { const c = structuredClone(e); c.id = 0; return c; });
@@ -326,7 +348,7 @@ export function pasteEntities(s, clip, dx = 0, dy = 0) {
   return s.transact('Paste', (tx) => {
     const out = [];
     for (const e of clip) {
-      try { const t = transformEntity(e, m); t.id = 0; out.push(tx.add(t)); } catch { /* skip */ }
+      try { const t = xform(s.doc, e, m); t.id = 0; out.push(tx.add(t)); } catch { /* skip */ }
     }
     return out;
   });

@@ -17,6 +17,7 @@ import {
 } from '../src/core/edit.js';
 import { MeasureGeomTool } from './tools-measure.js';
 import { createModifyTools } from './tools-modify.js';
+import { createDimTools } from './tools-dims.js';
 import { tessellate, transformEntity, translation, rotation, scaling, mirrorLine, dist, DEG } from '../src/core/geom.js';
 
 const num = (s) => { const v = Number(String(s).trim().replace(',', '.')); return Number.isFinite(v) && String(s).trim() !== '' ? v : null; };
@@ -514,6 +515,7 @@ export function createTools(h) {
     move: new MoveTool(h), copy: new MoveTool(h, true), rotate: new RotateTool(h), scale: new ScaleTool(h), mirror: new MirrorTool(h),
     offset: new OffsetTool(h), trim: new TrimTool(h), extend: new TrimTool(h, true), erase: new EraseTool(h), explode: new ExplodeTool(h),
     ...createModifyTools(h, { Tool, ModifyTool }),
+    ...createDimTools(h, { Tool }),
   };
 }
 
@@ -528,4 +530,6 @@ export const TOOL_ALIASES = {
   f: 'fillet', fillet: 'fillet', cha: 'chamfer', chamfer: 'chamfer', br: 'break', break: 'break', j: 'join', join: 'join',
   len: 'lengthen', lengthen: 'lengthen', str: 'stretch', stretch: 'stretch', ar: 'arrayrect', arrayrect: 'arrayrect',
   arraypolar: 'arraypolar', arraypath: 'arraypath',
+  dli: 'dimlinear', dimlinear: 'dimlinear', dal: 'dimaligned', dimaligned: 'dimaligned', dra: 'dimradius', dimradius: 'dimradius',
+  ddi: 'dimdiameter', dimdiameter: 'dimdiameter', dco: 'dimcontinue', dimcontinue: 'dimcontinue', dba: 'dimbaseline', dimbaseline: 'dimbaseline',
 };
