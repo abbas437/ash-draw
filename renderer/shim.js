@@ -63,6 +63,13 @@
       try { localStorage.setItem(KEY + k, JSON.stringify(v)); } catch { /* storage unavailable */ }
       return Promise.resolve();
     },
+    sessionUpdate: () => Promise.resolve(true),
+    sessionInfo: () => Promise.resolve({ mode: 'ask', offer: null }),
+    sessionRestore: () => Promise.resolve(null),
+    sessionDismiss: () => Promise.resolve(true),
+    recentList: () => Promise.resolve([]),
+    recentOpen: () => Promise.resolve(null),
+    recentClear: () => Promise.resolve(true),
     dwgAvailable: () => Promise.resolve({ available: false, version: null, reason: 'DWG conversion ' + NO_DESKTOP }),
     dwgToDxf: () => Promise.reject(new Error('DWG conversion ' + NO_DESKTOP)),
     dxfToDwg: () => Promise.reject(new Error('DWG conversion ' + NO_DESKTOP)),

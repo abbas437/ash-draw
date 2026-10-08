@@ -1,10 +1,11 @@
 // ASH Draw Studio - Electron main process.
 import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, screen, session, shell } from 'electron';
 import { randomBytes } from 'node:crypto';
-import { promises as fs, statSync } from 'node:fs';
+import { promises as fs, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createDwgBridge, DWG_OUT_VERSIONS } from './dwgBridge.js';
+import { cleanSession, isPathString, pushRecent, startupModeOf } from './sessionLists.js';
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCHEME = 'app';
@@ -111,6 +112,47 @@ app.on('second-instance', (_e, argv, cwd) => {
   if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
 });
 for (const p of drawingArgs(process.argv)) forwardFile(p);
+
+// ---- last session and recent files ----
+// Main owns both lists. The renderer only reports its tabs' paths (app:sessionUpdate); paths that were not granted
+// this session are dropped, and a recorded path is granted again only when the user chooses to reopen it.
+let current = { files: [], active: null }; // the open tabs' granted paths, saved as session.json at quit
+let savedSession = { files: [], active: null }; // the previous run's tabs
+let sessionOffer = null; // { auto }: the previous session may be reopened once, until answered
+let recent = []; // paths, newest first (recent.json)
+function readJsonSync(n) { try { return JSON.parse(readFileSync(storePath(n), 'utf8')); } catch { return null; } }
+function writeJsonSync(n, value) { // sync: also runs in will-quit
+  try {
+    mkdirSync(app.getPath('userData'), { recursive: true });
+    const tmp = `${storePath(n)}.${process.pid}-${randomBytes(4).toString('hex')}.tmp`;
+    writeFileSync(tmp, JSON.stringify(value, null, 2));
+    renameSync(tmp, storePath(n));
+  } catch (err) { console.error('could not save', n, err.message); }
+}
+const isFile = (p) => fs.stat(p).then((s) => s.isFile(), () => false);
+function loadSessionAndRecent() {
+  savedSession = cleanSession(readJsonSync('session.json'), () => true, key) ?? { files: [], active: null };
+  const r = readJsonSync('recent.json');
+  recent = pushRecent(Array.isArray(r) ? r : [], [], key);
+}
+function saveSession() {
+  // Never answered and nothing open: keep the previous session for the next start.
+  const s = !current.files.length && sessionOffer ? savedSession : current;
+  writeJsonSync('session.json', { version: 1, ...s });
+}
+app.on('will-quit', saveSession);
+// Reopens the previous session: existing files are granted again and returned; deleted or moved ones in `missing`.
+async function restoreSession() {
+  sessionOffer = null;
+  const files = [];
+  const missing = [];
+  for (const p of savedSession.files) {
+    if (await isFile(p)) files.push({ path: grant(p), name: path.basename(p) });
+    else missing.push(p);
+  }
+  const active = files.some((f) => key(f.path) === key(savedSession.active ?? '')) ? savedSession.active : null;
+  return { files, active, missing };
+}
 
 // ---- window ----
 function visibleBounds(b) {
@@ -247,6 +289,32 @@ function registerIpc() {
     settings[k] = JSON.parse(json);
     await saveJson('settings.json', settings);
   });
+  // ---- last session and recent files (see "last session and recent files" above)
+  handle('app:sessionUpdate', (v) => {
+    const next = cleanSession(v, (p) => granted.has(key(p)), key);
+    if (!next) throw new TypeError('sessionUpdate: { files: [path], active } expected');
+    const before = new Set(current.files.map(key));
+    current = next;
+    const added = next.files.filter((p) => !before.has(key(p)));
+    if (added.length) { recent = pushRecent(recent, added, key); writeJsonSync('recent.json', recent); }
+    return true;
+  });
+  // { mode, offer: { count, auto } | null }
+  handle('app:sessionInfo', async () => {
+    settings ??= await loadJson('settings.json');
+    const count = savedSession.files.length;
+    return { mode: startupModeOf(settings['startup.mode']), offer: sessionOffer && count ? { count, auto: sessionOffer.auto } : null };
+  });
+  handle('app:sessionRestore', () => (sessionOffer ? restoreSession() : null));
+  handle('app:sessionDismiss', () => { sessionOffer = null; return true; });
+  handle('app:recentList', () => Promise.all(recent.map(async (p) => ({ path: p, name: path.basename(p), folder: path.dirname(p), exists: await isFile(p) }))));
+  // An entry of the recent list, granted again after a check that it still exists; null when it is missing.
+  handle('app:recentOpen', async (p) => {
+    if (!isPathString(p) || !recent.some((q) => key(q) === key(p))) throw new Error('recentOpen: not in the recent files list');
+    if (!(await isFile(p))) return null;
+    return { path: grant(p), name: path.basename(p) };
+  });
+  handle('app:recentClear', () => { recent = []; writeJsonSync('recent.json', recent); return true; });
   handle('dwg:available', () => dwg.available());
   handle('dwg:toDxf', (bytes) => dwg.toDxf(asBytes(bytes, 'DWG data')));
   handle('dwg:fromDxf', (opts) => {
@@ -264,6 +332,11 @@ app.whenReady().then(async () => {
   protocol.handle(SCHEME, serveAppFile);
   dwg = createDwgBridge(libredwgDir, process.platform, { tmpRoot: app.getPath('temp') });
   registerIpc();
+  // Files given at start-up take priority: the previous session is then only offered, never reopened automatically.
+  settings ??= await loadJson('settings.json');
+  loadSessionAndRecent();
+  const mode = startupModeOf(settings['startup.mode']);
+  if (mode !== 'new' && savedSession.files.length) sessionOffer = { auto: mode === 'restore' && pendingFiles.length === 0 };
   await createWindow();
 });
 
