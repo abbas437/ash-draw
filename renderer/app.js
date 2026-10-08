@@ -8,6 +8,7 @@ import { Viewport, CANVAS_BG } from './viewport.js';
 import { createDocState, findTabByPath, indexAfterClose, cycleIndex, isBlankTab } from './tabs.js';
 import { createTools, TOOL_ALIASES } from './tools.js';
 import { dimStyleManager, dimStyleNames, dimVarsOf, setCurrentDimStyle } from './tools-dims.js';
+import { blockDoubleClick } from './tools-blocks.js';
 import { initSession } from './session.js';
 import { FindPanel } from './find.js';
 import { plotDialog } from './plot.js';
@@ -28,6 +29,8 @@ const TOOL_BUTTONS = [
     ['arrayrect', 'Array rect', 'AR', 'M2 2h4v4H2zM10 2h4v4h-4zM2 10h4v4H2zM10 10h4v4h-4z'],
     ['arraypolar', 'Array polar', 'ARRAYPOLAR', 'M7 1h2v2H7zM13 7h2v2h-2zM7 13h2v2H7zM1 7h2v2H1zM7.5 7.5h1v1h-1z'],
     ['arraypath', 'Array path', 'ARRAYPATH', 'M1 14C6 14 6 3 15 3M2 11h2v2H2zM7 6h2v2H7zM12 1h2v2h-2z']]],
+  ['Block', [['block', 'Create block', 'B', 'M2 2h12v12H2zM5 5h6v6H5z'], ['insert', 'Insert', 'I', 'M8 1v9M5 7l3 3 3-3M2 12h12v3H2z'],
+    ['attdef', 'Attribute', 'ATT', 'M2 4h12M8 4v9M5 13h6'], ['eattedit', 'Edit attributes', 'ATE', 'M2 13l3-1 8-8-2-2-8 8zM10 3l2 2']]],
   ['Dimension', [['dimlinear', 'Linear', 'DLI', 'M2 4v8M14 4v8M2 8h12M4 6 2 8l2 2M12 6l2 2-2 2'], ['dimaligned', 'Aligned', 'DAL', 'M2 12 12 2M4 14 14 4M5 11l6-6'],
     ['dimangular', 'Angular', 'DAN', 'M2 14 14 14M2 14 11 3M8 14a6 6 0 0 0-2-4.6'],
     ['dimradius', 'Radius', 'DRA', 'M8 8l5-5M1 8a7 7 0 1 0 14 0A7 7 0 1 0 1 8'], ['dimdiameter', 'Diameter', 'DDI', 'M3 13 13 3M1 8a7 7 0 1 0 14 0A7 7 0 1 0 1 8'],
@@ -75,6 +78,7 @@ class App {
     this.vp.on('selection', () => { this.refreshPanels(true); this.refreshStatus(); });
     this.vp.on('change', () => { this.refreshPanels(); this.refreshStatus(); this.updateTitle(); this.refreshDimStyles(); });
     this.vp.on('cursor', (p) => this.showCursor(p));
+    this.vp.canvas.addEventListener('dblclick', (e) => { if (this.toolId === 'select') blockDoubleClick(this, e); });
     window.addEventListener('beforeunload', (e) => { if (!this.closeConfirmed && this.tabs.some((t) => t.session.dirty)) { e.preventDefault(); e.returnValue = ''; } });
     api.onCloseRequest?.(() => this.closeAll());
     this.newDrawing();

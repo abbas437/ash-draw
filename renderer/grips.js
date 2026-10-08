@@ -7,7 +7,7 @@
 //   matchProps(src, dst)       -> copy of dst carrying src's layer/colour/linetype/ltscale/lineweight (+ text height/style, dim style)
 import { getEntity } from '../src/core/model.js';
 import { regenerateDimension } from '../src/core/dims.js';
-import { bulgeToArc, ccwSweep, DEG } from '../src/core/geom.js';
+import { bulgeToArc, ccwSweep, DEG, compose, translation, rotation, scaling, invert, transformEntity } from '../src/core/geom.js';
 
 const P = (p) => ({ x: p.x, y: p.y });
 const add = (a, b) => ({ x: a.x + b.x, y: a.y + b.y });
@@ -137,6 +137,16 @@ function freshDimBlock(doc) {
   return `*D${n}`;
 }
 
+const insertFrame = (i) => compose(translation(i.p.x, i.p.y), compose(rotation((i.rot || 0) * DEG), scaling(i.sx ?? 1, i.sy ?? 1)));
+/** An INSERT whose position, scale or rotation was set directly: move its ATTRIBs from the old frame to the new one. */
+export function carryAttribs(old, c) {
+  const a = insertFrame(old), b = insertFrame(c);
+  if (a.every((v, k) => v === b[k]) || !(Math.abs(a[0] * a[3] - a[1] * a[2]) > 1e-12)) return c;
+  const m = compose(b, invert(a));
+  c.attribs = old.attribs.map((at) => transformEntity(at, m));
+  return c;
+}
+
 /** replace entity `id` by fn(copy) as one undo step; returns true when something changed */
 export function editEntity(s, id, fn, label = 'Properties') {
   const e = getEntity(s.doc, id);
@@ -145,6 +155,7 @@ export function editEntity(s, id, fn, label = 'Properties') {
   if (!c) return false;
   c.id = e.id;
   if (c.type === 'DIMENSION' && c.def) { c.block = freshDimBlock(s.doc); regenerateDimension(s.doc, c); } // old block stays for undo
+  if (c.type === 'INSERT' && e.attribs?.length) carryAttribs(e, c);
   s.transact(label, (tx) => { tx.replace(c); });
   return true;
 }

@@ -79,3 +79,24 @@ test('matchProps copies layer/colour/linetype/ltscale/lineweight and text height
   const line = matchProps(src, M.makeLine({ x: 0, y: 0 }, { x: 1, y: 1 }));
   assert.equal(line.height, undefined); assert.equal(line.layer, 'A');
 });
+
+test('INSERT placement edits (properties, grips) carry the attributes with them', async () => {
+  const { makeAttdef, makeBlock, instantiate } = await import('../src/core/blocks.js');
+  const doc = M.newDocument();
+  const s = new Session(doc);
+  const { block } = makeBlock(doc, 'TB', [M.makeLine({ x: 0, y: 0 }, { x: 10, y: 0 }), makeAttdef({ x: 2, y: 1 }, 1, 'TAG1', { default: 'X' })], { x: 0, y: 0 });
+  s.transact('Block', (tx) => { tx.block('TB', block); });
+  const ins = instantiate(block, { x: 100, y: 0 }, { values: { TAG1: 'A' } });
+  s.transact('Insert', (tx) => { tx.add(ins); });
+  const id = doc.entities.at(-1).id;
+  nearPt(doc.entities.at(-1).attribs[0].p, 102, 1);
+  editEntity(s, id, (c) => { c.rot = 90; return c; });
+  const a = M.getEntity(doc, id).attribs[0];
+  nearPt(a.p, 99, 2); near(a.rot, 90); assert.equal(a.text, 'A'); assert.equal(a.attrib.tag, 'TAG1');
+  editEntity(s, id, (c) => { c.sx = 2; c.sy = 2; return c; });
+  nearPt(M.getEntity(doc, id).attribs[0].p, 98, 4); near(M.getEntity(doc, id).attribs[0].height, 2);
+  gripEdit(s, id, 0, { x: 0, y: 0 });
+  nearPt(M.getEntity(doc, id).attribs[0].p, -2, 4);
+  s.undo();
+  nearPt(M.getEntity(doc, id).attribs[0].p, 98, 4);
+});
