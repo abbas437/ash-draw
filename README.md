@@ -83,6 +83,9 @@ paths the user chose in a dialog or passed on the command line during this sessi
 | `setTitle(title)` | Set the window title. |
 | `showItem(path)` | Show a granted file in Explorer. |
 | `settingsGet(key)` / `settingsSet(key, value)` | Read / write a persisted setting. |
+| `sessionUpdate({files, active})` | Report the open drawings' paths; main keeps only granted paths and adds new ones to the recent list. |
+| `sessionInfo()` / `sessionRestore()` / `sessionDismiss()` | Start-up mode (`startup.mode`: `ask`, `restore`, `new`) and the offer to reopen the last session; reopen it (`{files, active, missing}`) or decline. |
+| `recentList()` / `recentOpen(path)` / `recentClear()` | The last 15 files (`exists` per entry); reopen one (null when it no longer exists); clear the list. |
 | `dwgAvailable()` | Whether the LibreDWG converters are present and usable. |
 | `dwgToDxf(bytes)` | Convert DWG bytes to DXF via `dwg2dxf.exe`. |
 | `dxfToDwg(dxfBytes, version)` | Convert DXF bytes to DWG via `dxf2dwg.exe`; `version` is `'r2000'` or `'r14'`. |

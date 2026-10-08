@@ -7,6 +7,7 @@ import { layIsolate, layUnisolate, layFreeze, layOn, layThaw } from '../src/core
 import { Viewport, CANVAS_BG } from './viewport.js';
 import { createDocState, findTabByPath, indexAfterClose, cycleIndex, isBlankTab } from './tabs.js';
 import { createTools, TOOL_ALIASES } from './tools.js';
+import { initSession } from './session.js';
 import { el, message, modal, confirmDialog, textDialog, toast, renderLayers, renderProperties } from './ui.js';
 import {
   OPEN_FILTERS, loadDrawing, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPdfBytes, exportPngBytes, buildScene, baseName, extOf, UNIT_NAMES,
@@ -33,6 +34,7 @@ class App {
     this.vp = new Viewport(document.getElementById('cv'));
     this.tools = createTools(this);
     this.toolId = null;
+    this.sessionStore = initSession(this); // last session and recent files
     this.buildMenus();
     this.buildToolbar();
     this.buildStatus();
@@ -57,7 +59,9 @@ class App {
     this.setTheme('light', false);
     api.settingsGet?.('theme').then((t) => { if (t === 'dark') this.setTheme('dark', false); }).catch(() => {});
     api.onOpenFile?.((f) => this.openFromFile(f));
-    api.getLaunchFiles?.().then(async (files) => { for (const f of files ?? []) await this.openFromFile(f); }).catch(() => {});
+    // files given at start-up open first; then the previous session is offered (or reopened, per startup.mode)
+    api.getLaunchFiles?.().then(async (files) => { for (const f of files ?? []) await this.openFromFile(f); }).catch(() => {})
+      .then(() => this.sessionStore.start());
   }
 
   // ---- host interface for tools ---------------------------------------------------------------
@@ -334,7 +338,7 @@ class App {
   buildMenus() {
     const vp = this.vp;
     const M = [
-      ['File', [['New', 'Ctrl+N', () => this.newDrawing()], ['Open…', 'Ctrl+O', () => this.open()], ['Close', 'Ctrl+W', () => this.closeTab()], '-', ['Save', 'Ctrl+S', () => this.save()], ['Save as DXF…', '', () => this.saveAs('dxf')], ['Save as DWG… (experimental)', '', () => this.saveAs('dwg')], '-',
+      ['File', [['New', 'Ctrl+N', () => this.newDrawing()], ['Open…', 'Ctrl+O', () => this.open()], ['Recent files…', '', () => this.sessionStore.showRecent().catch((err) => message('Could not open the file', err.message || String(err)))], ['Close', 'Ctrl+W', () => this.closeTab()], '-', ['Save', 'Ctrl+S', () => this.save()], ['Save as DXF…', '', () => this.saveAs('dxf')], ['Save as DWG… (experimental)', '', () => this.saveAs('dwg')], '-',
         ['Export PDF…', '', () => this.exportPdf()], ['Export SVG…', '', () => this.exportSvg()], ['Export PNG image…', '', () => this.exportPng()]]],
       ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Paste', 'Ctrl+V', () => this.paste()], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()]]],
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-',
@@ -419,6 +423,7 @@ class App {
     document.getElementById('title').textContent = t;
     api.setTitle?.(`${t} — ASH Draw Studio`);
     this.renderTabs();
+    this.sessionStore.changed();
   }
   /** the file tab strip above the drawing area: name, unsaved-changes dot, close button; middle-click closes */
   renderTabs() {
