@@ -8,7 +8,8 @@
 //   0 M x y | 1 L x y | 2 A cx cy r a0 sweep | 3 E cx cy rx ry rot t0 sweep | 4 Z
 // They are converted to screen space in JS doubles at draw time (Canvas paths are float32, so big
 // drawing coordinates would otherwise lose precision when zoomed in).
-import { resolveColor } from './aci.js';
+import { resolveColor, aciToRgb } from './aci.js';
+import { parseMText, layoutMText } from './mtext.js';
 import {
   DEG, compose, translation, rotation, scaling, apply, isSimilarity, matScale, transformEntity, bulgeToArc,
   ccwSweep, tessellate, ellipsePoint, unionBox, growBox,
@@ -206,13 +207,19 @@ class Builder {
         const w = Math.max(...lines.map((l) => l.length)) * h * 0.6 * (e.widthFactor || 1);
         // conservative bbox around the (rotated) text block
         let box = null;
-        for (const [x, y] of [[0, -h * lines.length * 1.4], [w, -h * lines.length * 1.4], [w, h], [0, h]]) {
+        const mt = e.type === 'MTEXT' ? parseMText(e.text, { height: h }) : null;
+        const lay = mt && layoutMText(mt, { width: (e.width || 0) * s, attach: e.attach || 1, lineSpacing: e.lineSpacing || 1 });
+        const corners = lay ? [[lay.x0, -lay.y0], [lay.x0 + lay.width, -lay.y0], [lay.x0 + lay.width, -lay.y0 - lay.height], [lay.x0, -lay.y0 - lay.height]]
+          : [[0, -h * lines.length * 1.4], [w, -h * lines.length * 1.4], [w, h], [0, h]];
+        for (const [x, y] of corners) {
           box = growBox(box, { x: p.x + x * Math.cos(rot) - y * Math.sin(rot), y: p.y + x * Math.sin(rot) + y * Math.cos(rot) });
         }
         this.push({
           kind: 'text', p, h, rot, lines, wf: e.widthFactor || 1, style, bbox: box, mtext: e.type === 'MTEXT', attach: e.attach || 1,
           boxW: e.type === 'MTEXT' ? (e.width || 0) * s : 0, hAlign: e.hAlign || 0, vAlign: e.vAlign || 0,
           font: this.doc.textStyles.get(String(e.style || 'STANDARD').toUpperCase())?.font || 'Arial',
+          // MTEXT: the parsed run model (heights in drawing units of this item)
+          mt, lineSpacing: e.lineSpacing || 1,
         }, rootId);
         return;
       }
@@ -402,7 +409,8 @@ export function drawScene(ctx, scene, view, opts = {}) {
   // 3. text
   for (const it of scene.items) {
     if (it.kind !== 'text' || !visible(it)) continue;
-    drawText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style));
+    if (it.mt) drawMText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style), dark);
+    else drawText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style));
   }
 
   // 4. highlight / selection overlay
@@ -461,6 +469,45 @@ function drawText(ctx, it, x, y, z, color) {
   }
   ctx.textAlign = hAlign === 1 || hAlign === 4 ? 'center' : hAlign === 2 ? 'right' : 'left';
   for (let i = 0; i < n; i++) ctx.fillText(lines[i], 0, vOff + i * lineH);
+  ctx.restore();
+}
+
+/** CSS font for an MTEXT glyph / run at `px` pixels. */
+export const mtextFont = (g, px, fallback) => `${g.italic ? 'italic ' : ''}${g.bold ? 'bold ' : ''}${px}px "${g.font || fallback}", Arial, "Segoe UI", sans-serif`;
+
+/** MTEXT layout of a scene item, measured with canvas fonts (cached on the item). */
+export function mtextLayout(ctx, it) {
+  if (it._lay) return it._lay;
+  const REF = 100;
+  const measure = (t, p) => { ctx.font = mtextFont(p, REF, it.font); return ctx.measureText(t).width * p.h / REF; };
+  it._lay = layoutMText(it.mt, { width: it.boxW, attach: it.attach, lineSpacing: it.lineSpacing, measure });
+  return it._lay;
+}
+
+function drawMText(ctx, it, x, y, z, color, dark) {
+  ctx.save();
+  const lay = mtextLayout(ctx, it);
+  const colOf = (c) => (!c ? color : c.rgb ? rgbCss(c.rgb) : c.aci === 7 ? (dark ? '#ffffff' : '#000000') : rgbCss(aciToRgb(c.aci)));
+  ctx.translate(x, y);
+  ctx.rotate(-it.rot);
+  ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+  for (const g of lay.glyphs) {
+    const px = g.h * z;
+    ctx.fillStyle = colOf(g.color);
+    if (px < 2) { ctx.globalAlpha = 0.5; ctx.fillRect(g.x * z, g.y * z - 1, (g.w ?? g.text.length * g.h * 0.6) * z, 1); ctx.globalAlpha = 1; continue; }
+    ctx.save();
+    ctx.translate(g.x * z, g.y * z);
+    if (g.oblique) ctx.transform(1, 0, -Math.tan(g.oblique * DEG), 1, 0, 0);
+    ctx.scale(g.wf || 1, 1);
+    ctx.font = mtextFont(g, px, it.font);
+    if (g.track && g.track !== 1) ctx.letterSpacing = `${(g.track - 1) * px * 0.6}px`;
+    ctx.fillText(g.text, 0, 0);
+    ctx.restore();
+  }
+  for (const r of lay.rules) {
+    ctx.strokeStyle = colOf(r.color); ctx.lineWidth = Math.max(1, r.h * z * 0.06);
+    ctx.beginPath(); ctx.moveTo(r.x1 * z, r.y * z); ctx.lineTo(r.x2 * z, r.y * z); ctx.stroke();
+  }
   ctx.restore();
 }
 
