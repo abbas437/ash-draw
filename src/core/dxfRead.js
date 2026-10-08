@@ -17,6 +17,7 @@ import { transformEntity } from './geom.js';
 import { dimStyleFromTags } from './dimsStyle.js';
 import { dimDefFromTags } from './dims.js';
 import { mtextPlain } from './mtext.js';
+import { mleaderFromTags, mleaderStyleFromTags } from './mleader.js';
 
 const DEG = Math.PI / 180;
 
@@ -404,6 +405,7 @@ function buildHatch(rec, o, doc) {
 }
 
 // ---------------------------------------------------------------------------------------------
+let mlStyles = new Map(); // MLEADERSTYLE handle -> defaults (set per parse)
 function buildEntity(rec, doc, extra) {
   const o = common(rec);
   const flipped = isFlipped(rec);
@@ -424,6 +426,12 @@ function buildEntity(rec, doc, extra) {
     case 'HATCH': e = buildHatch(rec, o, doc); break;
     case 'DIMENSION': e = buildDimension(rec, o); break;
     case 'LEADER': e = buildLeader(rec, o); break;
+    case 'MLEADER': case 'MULTILEADER': {
+      const tags = rec.tags();
+      const ml = mleaderFromTags(tags, tags.map(([c, v]) => c === 340 && mlStyles.get(v)).find(Boolean) ?? mlStyles.get('*'));
+      e = ml && { ...ml, ...o, type: 'MLEADER' };
+      break;
+    }
     case 'ATTDEF': case 'ATTRIB': e = buildAttribute(rec, buildText(rec, o)); break;
     default: return undefined;
   }
@@ -539,6 +547,17 @@ export function parseDxf(text) {
     if (dimRecs.length) {
       const resolve = (k, h) => (k === 'DIMBLK' ? blockRecH : styleH).get(h);
       doc.dimStyles = new Map(dimRecs.map((r) => { const st = dimStyleFromTags(r.tags(), resolve); return [st.name, st]; }));
+    }
+  }
+
+  // OBJECTS: MLEADERSTYLE defaults for MLEADER entities
+  mlStyles = new Map();
+  if (secs.OBJECTS) {
+    for (const rec of records(tk, secs.OBJECTS.from, secs.OBJECTS.to)) {
+      if (rec.type !== 'MLEADERSTYLE') continue;
+      const st = mleaderStyleFromTags(rec.tags());
+      mlStyles.set(rec.str(5), st);
+      if (!mlStyles.has('*') || /^standard$/i.test(st.name)) mlStyles.set('*', st);
     }
   }
 
