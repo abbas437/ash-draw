@@ -573,6 +573,14 @@ function primIntersections(p, q) {
 /** All intersection points {x,y} between two entities (real intersections only; no extension). */
 export function intersections(e1, e2, doc = null) {
   const out = [];
+  // ellipses and control-point splines against exact primitives: crossings refined on the exact curve
+  const c1 = EXACT_PRIMS.has(e2.type) && exactCurve(e1), c2 = !c1 && EXACT_PRIMS.has(e1.type) && exactCurve(e2);
+  if (c1 || c2) {
+    for (const pr of toPrims(c1 ? e2 : e1)) for (const r of curveHits(c1 || c2, pr)) {
+      if (!out.some((o) => Math.hypot(o.x - r.x, o.y - r.y) < 1e-7)) out.push({ x: r.x, y: r.y });
+    }
+    return out;
+  }
   for (const p of toPrims(e1, doc)) for (const q of toPrims(e2, doc)) for (const r of primIntersections(p, q)) {
     if (!out.some((o) => Math.hypot(o.x - r.x, o.y - r.y) < 1e-7)) out.push({ x: r.x, y: r.y });
   }
@@ -680,8 +688,134 @@ export function snapPoints(e, doc = null) {
   return out;
 }
 
+// ---- polyline parameterisation (s = segment index + fraction; arc fractions are angle fractions) ----
+const polar = (c, r, a) => ({ x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a) });
+const wrapPi = (a) => { a = normAngle(a); return a > Math.PI ? a - TAU : a; };
+export function plSegs(e) {
+  const v = e.vertices, n = v.length, m = e.closed ? n : n - 1, segs = [];
+  for (let i = 0; i < m; i++) {
+    const a = v[i], b = v[(i + 1) % n], bulge = a.bulge || 0;
+    const arc = Math.abs(bulge) > 1e-12 && dist(a, b) > EPS ? bulgeToArc(a, b, bulge) : null;
+    segs.push({ a, b, bulge, arc, len: arc ? Math.abs(arc.sweep) * arc.r : dist(a, b) });
+  }
+  return segs;
+}
+export function segPoint(sg, f) {
+  if (!sg.arc) return { x: sg.a.x + (sg.b.x - sg.a.x) * f, y: sg.a.y + (sg.b.y - sg.a.y) * f };
+  if (f <= 0) return { x: sg.a.x, y: sg.a.y };
+  if (f >= 1) return { x: sg.b.x, y: sg.b.y };
+  return polar(sg.arc.c, sg.arc.r, sg.arc.a0 + sg.arc.sweep * f);
+}
+export function segParam(sg, p) {
+  if (!sg.arc) {
+    const dx = sg.b.x - sg.a.x, dy = sg.b.y - sg.a.y, l2 = dx * dx + dy * dy;
+    return l2 < 1e-24 ? 0 : Math.max(0, Math.min(1, ((p.x - sg.a.x) * dx + (p.y - sg.a.y) * dy) / l2));
+  }
+  const { c, a0, sweep } = sg.arc, sw = Math.abs(sweep), t = Math.atan2(p.y - c.y, p.x - c.x);
+  const rel = sweep > 0 ? normAngle(t - a0) : normAngle(a0 - t);
+  if (rel <= sw) return rel / sw;
+  return rel - sw < TAU - rel ? 1 : 0;
+}
+export function plParamOf(segs, p) {
+  let best = 0, bd = Infinity;
+  segs.forEach((sg, i) => { const f = segParam(sg, p), d = dist(segPoint(sg, f), p); if (d < bd - 1e-12) { bd = d; best = i + f; } });
+  return best;
+}
+export function plSegAt(segs, s) {
+  const m = segs.length;
+  let i = Math.floor(s + 1e-12);
+  let f = s - i;
+  if (i >= m) { i = m - 1; f = 1; }
+  if (f < 0) f = 0;
+  return { sg: segs[((i % m) + m) % m], f, i };
+}
+/** Vertices of the open piece from s0 to s1 (s0 < s1; for closed polylines s1 may exceed the segment count). */
+export function plSlice(segs, s0, s1) {
+  const m = segs.length, out = [];
+  let s = s0;
+  while (s < s1 - 1e-12) {
+    const i = Math.floor(s + 1e-12), f0 = Math.max(0, s - i), e = Math.min(s1, i + 1), f1 = e - i;
+    const sg = segs[i % m];
+    out.push({ ...segPoint(sg, f0), bulge: sg.arc ? Math.tan((sg.arc.sweep * (f1 - f0)) / 4) : 0 });
+    s = e;
+  }
+  const end = s1 >= m ? (s1 - m * Math.floor((s1 - 1e-12) / m)) : s1;
+  const { sg, f } = plSegAt(segs, end);
+  out.push({ ...segPoint(sg, f), bulge: 0 });
+  return out;
+}
+
+// ---- exact curves (ELLIPSE, control-point SPLINE) for intersections with lines/arcs/polylines ----
+const ellipseFull = (e) => Math.abs((e.a1 ?? TAU) - (e.a0 ?? 0)) >= TAU - 1e-9;
+/** Parameter of a point on the ellipse (atan2 in the axis frame). */
+function ellipseParam(e, p) {
+  const { u, v } = ellipseAxes(e), dx = p.x - e.c.x, dy = p.y - e.c.y;
+  return Math.atan2((dx * v.x + dy * v.y) / (v.x * v.x + v.y * v.y), (dx * u.x + dy * u.y) / (u.x * u.x + u.y * u.y));
+}
+function exactCurve(e) {
+  if (e.type === 'ELLIPSE') {
+    const t0 = ellipseFull(e) ? 0 : normAngle(e.a0), sw = ellipseFull(e) ? TAU : ccwSweep(t0, normAngle(e.a1));
+    return { at: (t) => ellipsePoint(e, t), t0, t1: t0 + sw, n: Math.max(16, Math.ceil((256 * sw) / TAU)) };
+  }
+  if (e.type === 'SPLINE') {
+    const ctrl = e.ctrl;
+    if (!ctrl || ctrl.length < 2) return null; // fit-point-only splines: tessellation
+    let degree = e.degree || 3, knots = e.knots;
+    if (ctrl.length <= degree) degree = ctrl.length - 1;
+    if (!knots || knots.length !== ctrl.length + degree + 1) knots = clampedKnots(ctrl.length, degree);
+    const t0 = knots[degree], t1 = knots[ctrl.length];
+    if (!(t1 > t0)) return null;
+    return { at: (t) => deBoor(ctrl, knots, e.weights, degree, Math.min(t, t1)), t0, t1, n: Math.min(4000, Math.max(64, ctrl.length * 32)) };
+  }
+  return null;
+}
+function rootIllinois(g, a, b, fa, fb) {
+  let side = 0, c = a;
+  for (let k = 0; k < 200; k++) {
+    c = (a * fb - b * fa) / (fb - fa);
+    const fc = g(c);
+    if (fc === 0 || Math.abs(b - a) <= 1e-15 * (1 + Math.abs(c))) return c;
+    if (fc * fb > 0) { b = c; fb = fc; if (side === -1) fa /= 2; side = -1; } else { a = c; fa = fc; if (side === 1) fb /= 2; side = 1; }
+  }
+  return c;
+}
+/** Sign-change crossings of exact curve `cv` with primitive `pr` (bounded unless `full`): [{x,y,t}].
+ *  Tangential touches without a sign change between samples are not reported. */
+function curveHits(cv, pr, full = false) {
+  const L = pr.k === 'seg' ? dist(pr.a, pr.b) || 1 : 1;
+  const f = pr.k === 'seg'
+    ? (p) => ((pr.b.x - pr.a.x) * (p.y - pr.a.y) - (pr.b.y - pr.a.y) * (p.x - pr.a.x)) / L
+    : (p) => Math.hypot(p.x - pr.c.x, p.y - pr.c.y) - pr.r;
+  const g = (t) => f(cv.at(t));
+  const out = [];
+  let ta = cv.t0, fa = g(ta);
+  for (let i = 1; i <= cv.n; i++) {
+    const tb = cv.t0 + ((cv.t1 - cv.t0) * i) / cv.n, fb = g(tb);
+    const roots = [];
+    if (fa === 0) roots.push(ta); else if (fa * fb < 0) roots.push(rootIllinois(g, ta, tb, fa, fb));
+    if (i === cv.n && fb === 0) roots.push(tb);
+    for (const t of roots) {
+      const p = cv.at(t);
+      let ok = true;
+      if (!full && pr.k === 'seg') { const u = ((p.x - pr.a.x) * (pr.b.x - pr.a.x) + (p.y - pr.a.y) * (pr.b.y - pr.a.y)) / (L * L); ok = u >= -1e-9 && u <= 1 + 1e-9; }
+      else if (!full) ok = onSweep(Math.atan2(p.y - pr.c.y, p.x - pr.c.x), pr.a0, pr.sweep);
+      if (ok && !out.some((o) => Math.hypot(o.x - p.x, o.y - p.y) < 1e-9)) out.push({ x: p.x, y: p.y, t });
+    }
+    ta = tb; fa = fb;
+  }
+  return out;
+}
+const EXACT_PRIMS = new Set(['LINE', 'ARC', 'CIRCLE', 'LWPOLYLINE']);
+
 // ---- offset / trim / extend -----------------------------------------------------------------
-/** Offset by `d` (>0) to the side of `sidePt`. Supports LINE, CIRCLE, ARC, ELLIPSE-free; LWPOLYLINE made of straight segments.
+const PROPS = ['layer', 'color', 'linetype', 'lineweight', 'ltscale'];
+function polylineLike(src, vertices, closed) {
+  const o = { id: 0, type: 'LWPOLYLINE' };
+  for (const k of PROPS) if (src[k] !== undefined) o[k] = structuredClone(src[k]);
+  return { ...o, vertices, closed };
+}
+/** Offset by `d` (>0) to the side of `sidePt`. Supports LINE, CIRCLE, ARC, LWPOLYLINE (with arc segments) and ELLIPSE
+ *  (-> LWPOLYLINE through exact normal-offset points, chord error <= 1e-4 x major radius).
  *  Throws Error{code:'UNSUPPORTED'} otherwise. Returns a new entity (id 0). */
 export function offsetEntity(e, d, sidePt) {
   const c = structuredClone(e); c.id = 0; delete c.parent;
@@ -699,42 +833,117 @@ export function offsetEntity(e, d, sidePt) {
     if (!(r > 0)) throw unsupported('offset radius would be zero or negative');
     c.r = r; return c;
   }
-  if (e.type === 'LWPOLYLINE') {
-    if (e.vertices.some((v) => v.bulge && Math.abs(v.bulge) > 1e-12)) throw unsupported('offset of polylines containing arc segments');
-    const v = e.vertices, n = v.length;
-    if (n < 2) throw unsupported('polyline too short');
-    const segN = e.closed ? n : n - 1;
-    const normals = [];
-    for (let i = 0; i < segN; i++) {
-      const a = v[i], b = v[(i + 1) % n], l = dist(a, b) || 1;
-      normals.push({ x: -(b.y - a.y) / l, y: (b.x - a.x) / l });
-    }
-    // side: use the nearest segment to decide the sign
-    let bestI = 0, bd = Infinity;
-    for (let i = 0; i < segN; i++) { const dd = distToSegment(sidePt, v[i], v[(i + 1) % n]); if (dd < bd) { bd = dd; bestI = i; } }
-    const nb = normals[bestI], a0 = v[bestI];
-    const sign = (sidePt.x - a0.x) * nb.x + (sidePt.y - a0.y) * nb.y >= 0 ? 1 : -1;
-    const lines = normals.map((nn, i) => ({ a: { x: v[i].x + sign * nn.x * d, y: v[i].y + sign * nn.y * d }, b: { x: v[(i + 1) % n].x + sign * nn.x * d, y: v[(i + 1) % n].y + sign * nn.y * d } }));
-    const out = [];
-    for (let i = 0; i < n; i++) {
-      const prev = i === 0 ? (e.closed ? lines[segN - 1] : null) : lines[i - 1];
-      const next = i < segN ? lines[i] : null;
-      if (!prev) out.push({ x: next.a.x, y: next.a.y, bulge: 0 });
-      else if (!next) out.push({ x: prev.b.x, y: prev.b.y, bulge: 0 });
-      else {
-        const ip = segSegIntersect(prev.a, prev.b, next.a, next.b, true, true);
-        out.push(ip ? { x: ip.x, y: ip.y, bulge: 0 } : { x: next.a.x, y: next.a.y, bulge: 0 });
-      }
-    }
-    c.vertices = out; return c;
-  }
+  if (e.type === 'LWPOLYLINE') { c.vertices = offsetPolyline(e, d, sidePt); return c; }
+  if (e.type === 'ELLIPSE') return offsetEllipse(e, d, sidePt);
   throw unsupported(`offset of ${e.type}`);
 }
 function unsupported(msg) { const err = new Error(`Not supported yet: ${msg}`); err.code = 'UNSUPPORTED'; return err; }
 
-/** Trim a LINE / ARC / CIRCLE at the cutting edges, removing the part under `pick`.
+// Each segment is offset on its own (arcs: radius r -/+ s, same centre and angles); arcs whose radius collapses are
+// dropped. Neighbours are joined at the intersection of their extended curves nearest the shared vertex (AutoCAD
+// OFFSETGAPTYPE 0); a pair that does not intersect is joined by a straight segment. A segment that the joins reverse
+// is dropped and its neighbours re-joined.
+function offsetPolyline(e, d, sidePt) {
+  const segs = plSegs(e).filter((sg) => sg.len > EPS);
+  if (!segs.length || (e.closed && segs.length < 2)) throw unsupported('polyline too short');
+  let s;
+  if (e.closed) { // inside/outside decides; left of a CCW loop is inside
+    const pl = polylinePoints(e);
+    let area = 0;
+    for (let i = 0; i + 1 < pl.length; i++) area += pl[i].x * pl[i + 1].y - pl[i + 1].x * pl[i].y;
+    s = pointInPoly(sidePt, pl) === area > 0 ? d : -d;
+  } else {
+    let best = null;
+    for (const sg of segs) { const f = segParam(sg, sidePt), q = segPoint(sg, f), dd = dist(q, sidePt); if (!best || dd < best.dd) best = { sg, f, q, dd }; }
+    const { sg, f, q } = best;
+    const t = sg.arc ? ((a) => ({ x: -Math.sin(a) * Math.sign(sg.arc.sweep), y: Math.cos(a) * Math.sign(sg.arc.sweep) }))(sg.arc.a0 + sg.arc.sweep * f) : { x: sg.b.x - sg.a.x, y: sg.b.y - sg.a.y };
+    s = t.x * (sidePt.y - q.y) - t.y * (sidePt.x - q.x) >= 0 ? d : -d;
+  }
+  const tolC = 1e-9 * (1 + d + segs.reduce((m, sg) => Math.max(m, Math.abs(sg.a.x), Math.abs(sg.a.y)), 0));
+  const list = [];
+  for (const sg of segs) { // offset to the left by s
+    if (!sg.arc) {
+      const nx = (-(sg.b.y - sg.a.y) / sg.len) * s, ny = ((sg.b.x - sg.a.x) / sg.len) * s;
+      list.push({ k: 'seg', a: { x: sg.a.x + nx, y: sg.a.y + ny }, b: { x: sg.b.x + nx, y: sg.b.y + ny } });
+    } else {
+      const { c, r, a0, sweep } = sg.arc, r2 = sweep > 0 ? r - s : r + s;
+      if (r2 > tolC) list.push({ k: 'arc', c, r: r2, a0, sweep, a: polar(c, r2, a0), b: polar(c, r2, a0 + sweep) });
+    }
+  }
+  const joinAt = (A, B) => {
+    const g = mid(A.b, B.a);
+    if (dist(A.b, B.a) < tolC) return { p: g };
+    let cands;
+    if (A.k === 'seg' && B.k === 'seg') { const ip = segSegIntersect(A.a, A.b, B.a, B.b, true, true); cands = ip ? [ip] : []; }
+    else if (A.k === 'seg') cands = segArcIntersect(A.a, A.b, B, true, true);
+    else if (B.k === 'seg') cands = segArcIntersect(B.a, B.b, A, true, true);
+    else cands = arcArcIntersect({ ...A, a0: 0, sweep: TAU }, { ...B, a0: 0, sweep: TAU });
+    let best = null;
+    for (const q of cands) { const dd = dist(q, g); if (!best || dd < best.dd) best = { p: { x: q.x, y: q.y }, dd }; }
+    return best ? { p: best.p } : { p1: { ...A.b }, p2: { ...B.a } };
+  };
+  for (let guard = 0; guard <= segs.length; guard++) {
+    const m = list.length;
+    if (m === 0 || (e.closed && m < 2)) break;
+    const J = [];
+    for (let i = 0; i < m; i++) J.push(i === 0 && !e.closed ? { p: { ...list[0].a } } : joinAt(list[(i - 1 + m) % m], list[i]));
+    if (!e.closed) J.push({ p: { ...list[m - 1].b } });
+    const endJ = (i) => J[e.closed ? (i + 1) % m : i + 1];
+    const st = (i) => J[i].p || J[i].p2, en = (i) => endJ(i).p || endJ(i).p1;
+    const sw = [];
+    let bad = -1;
+    for (let i = 0; i < m && bad < 0; i++) {
+      const A = list[i], p0 = st(i), p1 = en(i);
+      if (A.k === 'seg') { if ((p1.x - p0.x) * (A.b.x - A.a.x) + (p1.y - p0.y) * (A.b.y - A.a.y) <= 0) bad = i; continue; }
+      const t0 = A.a0 + wrapPi(Math.atan2(p0.y - A.c.y, p0.x - A.c.x) - A.a0);
+      const t1 = A.a0 + A.sweep + wrapPi(Math.atan2(p1.y - A.c.y, p1.x - A.c.x) - (A.a0 + A.sweep));
+      sw[i] = t1 - t0;
+      if (!(sw[i] * Math.sign(A.sweep) > 1e-12) || Math.abs(sw[i]) >= TAU) bad = i;
+    }
+    if (bad >= 0 && (m > 1 || e.closed)) { list.splice(bad, 1); continue; }
+    const out = [];
+    for (let i = 0; i < m; i++) {
+      const p = st(i);
+      out.push({ x: p.x, y: p.y, bulge: list[i].k === 'arc' ? Math.tan(sw[i] / 4) : 0 });
+      const ej = endJ(i);
+      if (ej.p1) out.push({ x: ej.p1.x, y: ej.p1.y, bulge: 0 });
+    }
+    if (!e.closed) out.push({ x: J[m].p.x, y: J[m].p.y, bulge: 0 });
+    return out;
+  }
+  throw unsupported('offset distance too large for this polyline');
+}
+function offsetEllipse(e, d, sidePt) {
+  const { u, v } = ellipseAxes(e), a = Math.hypot(u.x, u.y), b = Math.hypot(v.x, v.y);
+  const dx = sidePt.x - e.c.x, dy = sidePt.y - e.c.y;
+  const X = (dx * u.x + dy * u.y) / (a * a), Y = (dx * v.x + dy * v.y) / (b * b);
+  const s = X * X + Y * Y > 1 ? d : -d; // along the outward normal
+  if (s < 0 && d >= Math.min(a, b)) throw unsupported('offset distance would collapse the ellipse');
+  const Q = (t) => {
+    const p = ellipsePoint(e, t), tx = -u.x * Math.sin(t) + v.x * Math.cos(t), ty = -u.y * Math.sin(t) + v.y * Math.cos(t), l = Math.hypot(tx, ty);
+    return { x: p.x + (s * ty) / l, y: p.y - (s * tx) / l };
+  };
+  const cv = exactCurve(e), tol = 1e-4 * Math.max(a, b), pts = [];
+  const rec = (t0, p0, t1, p1, depth) => {
+    const tm = (t0 + t1) / 2, pm = Q(tm);
+    if (depth < 20 && distToSegment(pm, p0, p1) > tol) { rec(t0, p0, tm, pm, depth + 1); pts.push(pm); rec(tm, pm, t1, p1, depth + 1); }
+  };
+  const N = 16;
+  let tPrev = cv.t0, pPrev = Q(tPrev);
+  pts.push(pPrev);
+  for (let i = 1; i <= N; i++) {
+    const t = cv.t0 + ((cv.t1 - cv.t0) * i) / N, p = Q(t);
+    rec(tPrev, pPrev, t, p, 0); pts.push(p); tPrev = t; pPrev = p;
+  }
+  const full = ellipseFull(e);
+  if (full) pts.pop();
+  return polylineLike(e, pts.map((p) => ({ x: p.x, y: p.y, bulge: 0 })), full);
+}
+
+/** Trim a LINE / ARC / CIRCLE / LWPOLYLINE / ELLIPSE at the cutting edges, removing the part under `pick`.
  *  Returns {replace: [entities...]} (0, 1 or 2 pieces; ids 0 except the first keeps e.id) or null if nothing to trim. */
 export function trimEntity(e, cutters, pick, doc = null) {
+  if (e.type === 'SPLINE') { const err = new Error('Trimming splines is not supported yet; explode/convert first'); err.code = 'UNSUPPORTED'; throw err; }
   const pts = [];
   for (const cu of cutters) for (const p of intersections(e, cu, doc)) pts.push(p);
   if (!pts.length) return null;
@@ -753,62 +962,116 @@ export function trimEntity(e, cutters, pick, doc = null) {
     if (out.length) out[0].id = e.id;
     return { replace: out };
   }
-  if (e.type === 'ARC' || e.type === 'CIRCLE') {
-    const a0 = e.type === 'ARC' ? e.a0 * DEG : 0, sw = e.type === 'ARC' ? ccwSweep(e.a0 * DEG, e.a1 * DEG) : TAU;
-    const rel = (p) => normAngle(Math.atan2(p.y - e.c.y, p.x - e.c.x) - a0);
-    let ts = pts.map(rel).filter((t) => (e.type === 'CIRCLE' ? true : t > 1e-9 && t < sw - 1e-9)).sort((a, b) => a - b);
+  // Curves trimmed by parameter: rel(p) in [0, sw) from the start; closed curves need two cutting points.
+  const byParam = (rel, sw, closed, piece) => {
+    let ts = pts.map(rel).map((t) => (closed && t >= sw - 1e-9 ? 0 : t)).filter((t) => (closed ? true : t > 1e-9 && t < sw - 1e-9)).sort((a, b) => a - b);
     ts = ts.filter((t, i) => i === 0 || t - ts[i - 1] > 1e-9);
     const tp = rel(pick);
-    if (e.type === 'CIRCLE') {
-      if (ts.length < 2) return null; // need two cutting points to trim a circle
-      const lo = [...ts.filter((t) => t <= tp)].pop() ?? ts[ts.length - 1], hi = ts.find((t) => t > tp) ?? ts[0];
-      return { replace: [{ ...base, type: 'ARC', a0: normAngle(a0 + hi) / DEG, a1: normAngle(a0 + lo) / DEG }] };
+    if (closed) {
+      if (ts.length < 2) return null;
+      const lo = [...ts.filter((t) => t <= tp)].pop() ?? ts[ts.length - 1] - sw, hi = ts.find((t) => t > tp) ?? ts[0] + sw;
+      return { replace: [{ ...piece(hi, lo + sw), id: e.id }] };
     }
     if (!ts.length) return { replace: [] };
     const lo = [...ts.filter((t) => t <= tp)].pop() ?? 0, hi = ts.find((t) => t > tp) ?? sw;
     const out = [];
-    if (lo > 1e-9) out.push({ ...base, a0: e.a0, a1: normAngle(a0 + lo) / DEG });
-    if (hi < sw - 1e-9) out.push({ ...base, id: 0, a0: normAngle(a0 + hi) / DEG, a1: e.a1 });
+    if (lo > 1e-9) out.push(piece(0, lo));
+    if (hi < sw - 1e-9) out.push({ ...piece(hi, sw), id: 0 });
     if (out.length) out[0].id = e.id;
     return { replace: out };
+  };
+  if (e.type === 'ARC' || e.type === 'CIRCLE') {
+    const a0 = e.type === 'ARC' ? e.a0 * DEG : 0, sw = e.type === 'ARC' ? ccwSweep(e.a0 * DEG, e.a1 * DEG) : TAU;
+    const rel = (p) => normAngle(Math.atan2(p.y - e.c.y, p.x - e.c.x) - a0);
+    if (e.type === 'CIRCLE') return byParam(rel, TAU, true, (r0, r1) => ({ ...base, type: 'ARC', a0: normAngle(a0 + r0) / DEG, a1: normAngle(a0 + r1) / DEG }));
+    return byParam(rel, sw, false, (r0, r1) => ({ ...base, a0: r0 > 0 ? normAngle(a0 + r0) / DEG : e.a0, a1: r1 < sw ? normAngle(a0 + r1) / DEG : e.a1 }));
+  }
+  if (e.type === 'ELLIPSE') {
+    const full = ellipseFull(e), a0 = full ? normAngle(e.a0 ?? 0) : normAngle(e.a0), sw = full ? TAU : ccwSweep(a0, normAngle(e.a1));
+    const rel = (p) => normAngle(ellipseParam(e, p) - a0);
+    return byParam(rel, sw, full, (r0, r1) => ({ ...base, a0: normAngle(a0 + r0), a1: normAngle(a0 + r1) }));
+  }
+  if (e.type === 'LWPOLYLINE') {
+    const segs = plSegs(e);
+    return byParam((p) => plParamOf(segs, p), segs.length, !!e.closed, (s0, s1) => ({ ...base, closed: false, vertices: plSlice(segs, s0, s1) }));
   }
   throw unsupported(`trim of ${e.type}`);
 }
-/** Extend the end of a LINE/ARC nearest `pick` up to the first boundary. Returns the new entity or null. */
+/** Extend the end of a LINE / ARC / open LWPOLYLINE / elliptical arc nearest `pick` up to the first boundary.
+ *  Returns the new entity or null. */
 export function extendEntity(e, boundaries, pick) {
   const c = structuredClone(e); delete c.parent;
-  if (e.type === 'LINE') {
-    const fromP1 = dist(pick, e.p1) < dist(pick, e.p2);
-    const a = fromP1 ? e.p2 : e.p1, b = fromP1 ? e.p1 : e.p2; // extend b away from a
+  const hitsOn = (ent) => { const out = []; for (const bd of boundaries) for (const h of intersections(ent, bd)) out.push(h); return out; };
+  const rayHit = (a, b) => { // first boundary hit beyond b on the ray a -> b
     const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy);
     if (L < EPS) return null;
     let best = null;
-    for (const bd of boundaries) for (const pr of toPrims(bd)) {
-      const far = { x: b.x + (dx / L) * 1e7, y: b.y + (dy / L) * 1e7 };
-      const hits = pr.k === 'seg' ? [segSegIntersect(b, far, pr.a, pr.b, false, false)].filter(Boolean) : segArcIntersect(b, far, pr);
-      for (const h of hits) { const t = Math.hypot(h.x - b.x, h.y - b.y); if (t > 1e-9 && (!best || t < best.t)) best = { x: h.x, y: h.y, t }; }
+    for (const h of hitsOn({ type: 'LINE', p1: b, p2: { x: b.x + (dx / L) * 1e7, y: b.y + (dy / L) * 1e7 } })) {
+      const t = Math.hypot(h.x - b.x, h.y - b.y);
+      if (t > 1e-9 && (!best || t < best.t)) best = { x: h.x, y: h.y, t };
     }
-    if (!best) return null;
-    if (fromP1) c.p1 = { x: best.x, y: best.y }; else c.p2 = { x: best.x, y: best.y };
+    return best && { x: best.x, y: best.y };
+  };
+  // growth (radians, > 0) needed to reach each hit on the full curve, the nearest one wins
+  const nearestGrow = (hits, growOf, maxGrow) => {
+    let best = null;
+    for (const h of hits) { const g = growOf(h); if (g > 1e-9 && g < maxGrow && (!best || g < best.g)) best = { h, g }; }
+    return best;
+  };
+  if (e.type === 'LINE') {
+    const fromP1 = dist(pick, e.p1) < dist(pick, e.p2);
+    const h = fromP1 ? rayHit(e.p2, e.p1) : rayHit(e.p1, e.p2);
+    if (!h) return null;
+    if (fromP1) c.p1 = h; else c.p2 = h;
     return c;
   }
   if (e.type === 'ARC') {
     const a0 = e.a0 * DEG, sw = ccwSweep(a0, e.a1 * DEG);
-    const s = { x: e.c.x + e.r * Math.cos(a0), y: e.c.y + e.r * Math.sin(a0) };
-    const t = { x: e.c.x + e.r * Math.cos(a0 + sw), y: e.c.y + e.r * Math.sin(a0 + sw) };
-    const atStart = dist(pick, s) < dist(pick, t);
-    let best = null;
-    for (const bd of boundaries) for (const pr of toPrims(bd)) {
-      const full = { k: 'arc', c: e.c, r: e.r, a0: 0, sweep: TAU };
-      const pts = pr.k === 'seg' ? segArcIntersect(pr.a, pr.b, full, false, true) : arcArcIntersect(full, pr);
-      for (const h of pts) {
-        const ang = Math.atan2(h.y - e.c.y, h.x - e.c.x);
-        const grow = atStart ? normAngle(a0 - ang) : normAngle(ang - (a0 + sw));
-        if (grow > 1e-9 && (!best || grow < best.grow)) best = { ang, grow };
-      }
-    }
+    const atStart = dist(pick, polar(e.c, e.r, a0)) < dist(pick, polar(e.c, e.r, a0 + sw));
+    const best = nearestGrow(hitsOn({ type: 'CIRCLE', c: e.c, r: e.r }), (h) => {
+      const ang = Math.atan2(h.y - e.c.y, h.x - e.c.x);
+      return atStart ? normAngle(a0 - ang) : normAngle(ang - (a0 + sw));
+    }, Infinity);
     if (!best) return null;
-    if (atStart) c.a0 = normAngle(best.ang) / DEG; else c.a1 = normAngle(best.ang) / DEG;
+    const ang = normAngle(Math.atan2(best.h.y - e.c.y, best.h.x - e.c.x)) / DEG;
+    if (atStart) c.a0 = ang; else c.a1 = ang;
+    return c;
+  }
+  if (e.type === 'LWPOLYLINE') {
+    if (e.closed) return null;
+    const v = c.vertices, segs = plSegs(e), m = segs.length;
+    if (!m) return null;
+    const atStart = dist(pick, v[0]) < dist(pick, v[m]);
+    const sg = atStart ? segs[0] : segs[m - 1];
+    if (!sg.arc) {
+      const h = atStart ? rayHit(sg.b, sg.a) : rayHit(sg.a, sg.b);
+      if (!h) return null;
+      const k = atStart ? 0 : m;
+      v[k] = { ...v[k], x: h.x, y: h.y };
+      return c;
+    }
+    const { c: cc, r, a0, sweep } = sg.arc, dir = Math.sign(sweep), end = atStart ? a0 : a0 + sweep;
+    const best = nearestGrow(hitsOn({ type: 'CIRCLE', c: cc, r }), (h) => {
+      const t = Math.atan2(h.y - cc.y, h.x - cc.x);
+      return atStart ? normAngle(dir * (end - t)) : normAngle(dir * (t - end));
+    }, TAU - Math.abs(sweep));
+    if (!best) return null;
+    const bulge = Math.tan((sweep + dir * best.g) / 4);
+    if (atStart) v[0] = { ...v[0], x: best.h.x, y: best.h.y, bulge };
+    else { v[m - 1] = { ...v[m - 1], bulge }; v[m] = { ...v[m], x: best.h.x, y: best.h.y }; }
+    return c;
+  }
+  if (e.type === 'ELLIPSE') {
+    if (ellipseFull(e)) return null;
+    const a0 = normAngle(e.a0), sw = ccwSweep(a0, normAngle(e.a1));
+    const atStart = dist(pick, ellipsePoint(e, a0)) < dist(pick, ellipsePoint(e, a0 + sw));
+    const best = nearestGrow(hitsOn({ ...e, a0: 0, a1: TAU }), (h) => {
+      const t = ellipseParam(e, h);
+      return atStart ? normAngle(a0 - t) : normAngle(t - (a0 + sw));
+    }, TAU - sw);
+    if (!best) return null;
+    const t = normAngle(ellipseParam(e, best.h));
+    if (atStart) c.a0 = t; else c.a1 = t;
     return c;
   }
   throw unsupported(`extend of ${e.type}`);
