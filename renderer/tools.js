@@ -665,6 +665,7 @@ export const TOOL_ALIASES = {
   ddi: 'dimdiameter', dimdiameter: 'dimdiameter', dor: 'dimordinate', dimordinate: 'dimordinate', dco: 'dimcontinue', dimcontinue: 'dimcontinue', dba: 'dimbaseline', dimbaseline: 'dimbaseline',
   mld: 'mleader', mleader: 'mleader', ma: 'matchprop', matchprop: 'matchprop', painter: 'matchprop',
   b: 'block', block: 'block', bmake: 'block', att: 'attdef', attdef: 'attdef', i: 'insert', insert: 'insert', ddinsert: 'insert',
+  xa: 'xattach', xattach: 'xattach',
   ate: 'eattedit', eattedit: 'eattedit', attedit: 'eattedit', ddatte: 'eattedit',
   mkc: 'mkc', mkr: 'mkr', mkt: 'mkt',
 };

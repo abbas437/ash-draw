@@ -7,6 +7,8 @@ import {
 } from '../src/core/blocks.js';
 import { getEntity } from '../src/core/model.js';
 import { tessellate, explode, boxOfPoints } from '../src/core/geom.js';
+import { attachXref, uniqueXrefName } from '../src/core/xref.js';
+import { pickXref } from './xref-panel.js';
 import { el, modal } from './ui.js';
 
 const num = (s) => { const v = Number(String(s).trim().replace(',', '.')); return Number.isFinite(v) && String(s).trim() !== '' ? v : null; };
@@ -220,5 +222,35 @@ export function createBlockTools(h, { Tool, ModifyTool }) {
     }
   }
 
-  return { block: new BlockTool(h), attdef: new AttdefTool(h), insert: new InsertTool(h), eattedit: new AttEditTool(h) };
+  // ---- XATTACH: pick a DXF/DWG, then the point; one undo step adds the xref block (+ its layers/blocks) and the INSERT ----
+  class XAttachTool extends Tool {
+    get prompt() { return this.x ? `XATTACH  ${this.x.name}: specify insertion point` : 'XATTACH'; }
+    async activate() {
+      super.activate();
+      this.cur = null;
+      if (!this.x) {
+        const x = await pickXref(this.h);
+        if (!x) { this.cancel(); return; }
+        this.x = x;
+      }
+      this.h.refreshPrompt();
+    }
+    deactivate() { this.x = null; super.deactivate(); }
+    move(p) { if (this.x) { this.cur = p; this.vp.requestRender(); } }
+    click(p) {
+      const x = this.x;
+      if (!x) return;
+      const doc = this.h.doc;
+      const name = uniqueXrefName(doc, x.file.name); // taken now, not when the file was picked
+      this.h.session.transact('Attach xref', (tx) => {
+        const blk = attachXref(tx, name, x.path, x.xdoc, x.file.path ?? null);
+        tx.add(instantiate(blk, p, { sx: 1, sy: 1, rot: 0, ...this.props() }));
+      });
+      this.x = null;
+      this.h.toast(`XATTACH: ${name} attached`);
+      this.h.setTool('select');
+    }
+  }
+
+  return { block: new BlockTool(h), attdef: new AttdefTool(h), insert: new InsertTool(h), eattedit: new AttEditTool(h), xattach: new XAttachTool(h) };
 }

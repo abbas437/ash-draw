@@ -15,6 +15,15 @@ export async function loadDrawingXrefs(api, doc, hostPath) {
   return loadXrefs(doc, reader(api, hostPath), parser(api), opts(hostPath));
 }
 
+/** XATTACH step 1: choose a DXF/DWG and parse it. Resolves { file, path, xdoc } (path relative to the host when
+ *  saved on the same drive, else absolute) or null when cancelled/unreadable. */
+export async function pickXref(app) {
+  let f;
+  try { [f] = await window.api.openFiles({ filters: OPEN_FILTERS, multiple: false }); } catch (err) { toast(`Could not open: ${err.message}`); return null; }
+  if (!f) return null;
+  try { return { file: f, path: f.path ? relativePath(app.file.path, f.path) : f.name, xdoc: (await loadDrawing(window.api, f.name, f.bytes)).doc }; } catch (err) { toast(`XATTACH: ${f.name} could not be read (${err.message})`); return null; }
+}
+
 /** the External References panel of the active drawing */
 export async function xrefPanel(app) {
   const api = window.api, body = el('div', { class: 'xref-panel' });
@@ -45,5 +54,6 @@ export async function xrefPanel(app) {
           el('button', { 'data-act': 'browse', onclick: () => browse(x) }, 'Browse…'))))) : el('p', { text: 'This drawing has no external references.' }));
   };
   draw();
-  await modal('External References', body, [{ label: 'Close', value: true, primary: true }]);
+  const r = await modal('External References', body, [{ label: 'Attach…', value: 'attach' }, { label: 'Close', value: true, primary: true }]);
+  if (r === 'attach') app.setTool('xattach');
 }

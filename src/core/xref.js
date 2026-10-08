@@ -2,7 +2,7 @@
 // An xref is a BLOCK whose flags have bit 4 (external) and whose group 1 holds the referenced file's path; its
 // INSERTs place it. Loaded content lives in that block; layers and nested blocks are renamed "XREFNAME|NAME" and
 // marked `xrefDep` so the writer leaves them out (the xref is written back as an empty external block).
-import { addBlock, addLayer } from './model.js';
+import { addBlock, addLayer, newDocument } from './model.js';
 
 const isAbs = (p) => /^([A-Za-z]:[\\/]|[\\/])/.test(p);
 const baseName = (p) => String(p).split(/[\\/]/).pop();
@@ -71,5 +71,27 @@ export function loadXref(doc, name, xdoc, resolvedPath = null) {
   blk.entities = xdoc.entities.map(copy);
   blk.xref.status = 'loaded';
   if (resolvedPath) blk.xref.resolved = resolvedPath;
+  return blk;
+}
+
+/** a free block name for attaching the file `fileName`: its stem upper-cased with characters AutoCAD forbids replaced
+ *  by "_", then NAME, NAME_2, NAME_3 ... (block names compare case-insensitively) */
+export function uniqueXrefName(doc, fileName) {
+  const stem = baseName(fileName).replace(/\.[^.]*$/, '').replace(/[<>/\\":;?*|,=`]/g, '_').trim().toUpperCase() || 'XREF';
+  const taken = new Set([...doc.blocks.keys()].map((k) => k.toUpperCase()));
+  let name = stem;
+  for (let i = 2; taken.has(name); i++) name = `${stem}_${i}`;
+  return name;
+}
+
+/** Attach the drawing `xdoc` as a new xref block `name` through `tx` (so one undo removes the block and every
+ *  `NAME|...` layer and block). Returns the block. */
+export function attachXref(tx, name, path, xdoc, resolvedPath = null) {
+  const scratch = newDocument();
+  addBlock(scratch, name, { x: 0, y: 0 }, []).xref = { path, status: 'pending' };
+  const blk = loadXref(scratch, name, xdoc, resolvedPath);
+  for (const l of scratch.layers.values()) if (l.xrefDep === name) tx.layer(l.name, l);
+  for (const b of scratch.blocks.values()) if (b.xrefDep === name) tx.block(b.name, b);
+  tx.block(name, blk);
   return blk;
 }

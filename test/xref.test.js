@@ -84,3 +84,44 @@ print(json.dumps([b.block.dxf.flags & 4, b.block.dxf.get('xref_path'), len(b), d
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('XATTACH: unique block names, one undo step, addLayer keeps xrefDep', async () => {
+  const { Session } = await import('../src/core/edit.js');
+  const { addLayer, addBlock, newDocument, addEntity } = await import('../src/core/model.js');
+  const { attachXref, uniqueXrefName } = await import('../src/core/xref.js');
+  const { instantiate } = await import('../src/core/blocks.js');
+  const { relativePath } = await import('../renderer/xrefs.js');
+  assert.equal(addLayer(newDocument(), { name: 'X|L', xrefDep: 'X' }).xrefDep, 'X');
+  assert.equal('xrefDep' in addLayer(newDocument(), { name: 'L' }), false);
+
+  const host = newDocument();
+  assert.equal(uniqueXrefName(host, 'C:\\w\\sub\\att.dxf'), 'ATT');
+  addBlock(host, 'ATT', { x: 0, y: 0 }, []);
+  addBlock(host, 'att_2', { x: 0, y: 0 }, []);
+  assert.equal(uniqueXrefName(host, '/w/att.dwg'), 'ATT_3');
+  assert.equal(uniqueXrefName(host, 'a:b.dxf'), 'A_B');
+  host.blocks.clear();
+
+  const x = newDocument();
+  addLayer(x, { name: 'WALL' });
+  addBlock(x, 'DOOR', { x: 0, y: 0 }, []);
+  addEntity(x, { type: 'LINE', layer: 'WALL', p1: { x: 0, y: 0 }, p2: { x: 5, y: 0 } });
+  const s = new Session(host);
+  const layers0 = [...host.layers.keys()];
+  s.transact('Attach xref', (tx) => {
+    const blk = attachXref(tx, 'ATT', relativePath('/w/host.dxf', '/w/sub/att.dxf'), x, '/w/sub/att.dxf');
+    tx.add(instantiate(blk, { x: 1, y: 2 }, {}));
+  });
+  assert.equal(host.blocks.get('ATT').xref.path, './sub/att.dxf');
+  assert.equal(relativePath(null, '/w/sub/att.dxf'), '/w/sub/att.dxf', 'unsaved host: absolute');
+  assert.ok(host.layers.get('ATT|WALL').xrefDep === 'ATT' && host.blocks.get('ATT|DOOR').xrefDep === 'ATT');
+  assert.deepEqual(listXrefs(host).map((r) => [r.name, r.status, r.inserts]), [['ATT', 'Loaded', 1]]);
+  s.undo();
+  assert.equal(host.entities.length, 0);
+  assert.equal(host.blocks.size, 0, 'block and NAME|... blocks gone');
+  assert.deepEqual([...host.layers.keys()], layers0, 'no ATT| layers left');
+  s.redo();
+  assert.ok(host.layers.get('ATT|WALL').xrefDep === 'ATT', 'redo keeps xrefDep');
+  unloadXref(host, 'ATT');
+  assert.deepEqual([...host.layers.keys()], layers0, 'unload after redo still drops the xref layers');
+});

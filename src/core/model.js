@@ -48,6 +48,7 @@ export function addLayer(doc, props) {
     locked: props.locked ?? false,
     plot: props.plot ?? true,
   };
+  if (props.xrefDep) layer.xrefDep = props.xrefDep; // layer owned by an external reference: not written, dropped on unload
   doc.layers.set(key, layer);
   return layer;
 }

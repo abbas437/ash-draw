@@ -112,6 +112,28 @@ try {
   assert.deepEqual(await xrefRows(), [['REF', 'Loaded'], ['GONE', 'Not found']]);
   await win.locator('#dlg button.primary').click();
 
+  setStep('xrefs: XATTACH picks sub/ref.dxf as att.dxf, a click places it, one Ctrl+Z removes everything');
+  const attPath = path.join(xdir, 'att.dxf');
+  await fs.copyFile(path.join(xdir, 'sub', 'ref.dxf'), attPath);
+  await app.evaluate(({ dialog }, p) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [p] }); }, attPath);
+  await win.locator('#cmd').fill('xa'); await win.locator('#cmd').press('Enter');
+  await win.waitForFunction(() => window.app.toolId === 'xattach' && window.app.tool.x?.file.name === 'att.dxf', null, { timeout: 10000 });
+  const cvBox = await win.locator('#cv').boundingBox();
+  await win.mouse.click(cvBox.x + cvBox.width / 2, cvBox.y + cvBox.height / 2);
+  const attItems = () => win.evaluate(() => window.app.scene().items.filter((it) => (it.style?.layerName ?? '').startsWith('ATT|')).length);
+  await win.waitForFunction(() => window.app.scene().items.some((it) => (it.style?.layerName ?? '').startsWith('ATT|')), null, { timeout: 10000 });
+  await win.locator('#cmd').fill('xref'); await win.locator('#cmd').press('Enter');
+  await win.waitForSelector('#dlg[open] .xref-table');
+  assert.deepEqual((await xrefRows()).filter(([n]) => n === 'ATT'), [['ATT', 'Loaded']]);
+  assert.equal(await win.locator('#dlg tr[data-xref=ATT] td').nth(3).textContent(), '1', 'one insert');
+  assert.match(await win.locator('#dlg tr[data-xref=ATT] td').nth(2).textContent(), /^\.[\\/]att\.dxf$/, 'path relative to the host');
+  assert.ok(await attItems() > 0);
+  await win.locator('#dlg button.primary').click();
+  await win.locator('#cv').focus(); await win.keyboard.press('Control+z');
+  await win.waitForFunction(() => !window.app.fileDoc.blocks.has('ATT'), null, { timeout: 10000 });
+  assert.equal(await attItems(), 0, 'scene still has ATT| items after undo');
+  assert.deepEqual(await win.evaluate(() => ({ blk: window.app.fileDoc.blocks.has('ATT'), layers: [...window.app.fileDoc.layers.keys()].filter((k) => k.startsWith('ATT|')) })), { blk: false, layers: [] });
+
   setStep('save as DXF (native dialog stubbed)');
   const dxfOut = path.join(tmp, 'out.dxf');
   await app.evaluate(({ dialog }, p) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: p }); }, dxfOut);
