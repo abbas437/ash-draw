@@ -107,12 +107,13 @@ export class Session {
     this.revision = 0;      // increments on every change (also undo/redo)
     this.stepSeq = 0;
     this.savedStep = 0;     // id of the undo step that was on top when the document was last saved (0 = none)
+    this.viewTouched = false; // a change with no undo step (viewport zoom/pan in MSPACE) since the last save
   }
 
   /** unsaved changes? Compares the top undo step with the one recorded at save, so
    *  "save, undo, make a different edit" is correctly dirty (a plain counter would say clean). */
-  get dirty() { return (this.undoStack.at(-1)?.id ?? 0) !== this.savedStep; }
-  markSaved() { this.savedStep = this.undoStack.at(-1)?.id ?? 0; }
+  get dirty() { return this.viewTouched || (this.undoStack.at(-1)?.id ?? 0) !== this.savedStep; }
+  markSaved() { this.savedStep = this.undoStack.at(-1)?.id ?? 0; this.viewTouched = false; }
   get canUndo() { return this.undoStack.length > 0; }
   get canRedo() { return this.redoStack.length > 0; }
   get undoLabel() { return this.undoStack.at(-1)?.label ?? ''; }

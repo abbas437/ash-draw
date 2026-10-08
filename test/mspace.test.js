@@ -5,6 +5,8 @@ import { paperToModel, modelViewThrough, viewportFromModelView, viewportScale, v
 import { viewportToPaper, screenToWorld } from '../src/core/render.js';
 import { exportPdf } from '../src/core/exportPdf.js';
 import { newDocument as createDocument } from '../src/core/model.js';
+import { writeDxf } from '../src/core/dxfWrite.js';
+import { readDxf } from '../src/core/dxfRead.js';
 
 // a 200 x 100 paper viewport centred at (200,150) showing model (1000,500) at 1:50
 const vp = { type: 'VIEWPORT', vpId: 2, on: true, c: { x: 200, y: 150 }, width: 200, height: 100, viewCenter: { x: 1000, y: 500 }, viewHeight: 5000, twist: 0 };
@@ -76,4 +78,18 @@ test('inch layouts: paper size stays in mm, layout units are inches', () => {
   const lp = layoutPage(lay);
   assert.ok(Math.abs(lp.pw - 17 * 72) < 1e-6 && Math.abs(lp.ph - 11 * 72) < 1e-6 && lp.k === 72);
   assert.ok(Math.abs(lp.sheet.maxx - 17) < 1e-9);
+});
+
+test('VPLOCK flag: locked is VIEWPORT status bit 16384 and round-trips through DXF', () => {
+  const doc = createDocument();
+  const lay = newLayout('Layout1', 1);
+  lay.entities.push({ ...vp, id: 3, layer: '0', color: 256, locked: true, flags: 32768 });
+  lay.entities.push({ ...vp, id: 4, vpId: 3, layer: '0', color: 256, locked: false, flags: 32768 | 16384 });
+  doc.layouts = [lay];
+  const text = writeDxf(doc);
+  const back = readDxf(new TextEncoder().encode(text)).layouts[0].entities.filter((e) => e.type === 'VIEWPORT' && e.vpId !== 1);
+  assert.equal(back.find((e) => e.vpId === 2).locked, true);
+  assert.equal(back.find((e) => e.vpId === 2).flags & 16384, 16384);
+  assert.equal(back.find((e) => e.vpId === 3).locked, false, 'unlocking clears a stale bit');
+  assert.equal(back.find((e) => e.vpId === 3).flags & 16384, 0);
 });

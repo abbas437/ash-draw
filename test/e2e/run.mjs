@@ -886,6 +886,82 @@ try {
   assert.ok(vpReread.some(([x, y, w, h]) => Math.abs(x - 70) < 1e-6 && Math.abs(y - 230) < 1e-6 && Math.abs(w - 100) < 1e-6 && Math.abs(h - 60) < 1e-6), `MV viewport saved and reopened: ${JSON.stringify(vpReread)}`);
   await page.keyboard.press('Control+z');
   assert.equal(await page.evaluate(() => window.app.doc.entities.filter((e) => e.type === 'VIEWPORT').length), vpsBefore, 'undo removes the MV viewport');
+  step = 'MSPACE: double-click enters the viewport, LINE in model coordinates, 1:100, lock ignores zoom, dirty, back to paper';
+  await page.keyboard.press('Escape');
+  // client position of a paper point (paper view while in paper space, the saved paper view in MSPACE)
+  const paperClient = (x, y) => page.evaluate(([x, y]) => {
+    const vp = window.app.vp, v = vp.mspace ? { ...vp.mspace.paperView, width: vp.view.width, height: vp.view.height } : vp.view;
+    const r = vp.canvas.getBoundingClientRect();
+    return { x: r.left + v.width / 2 + (x - v.cx) * v.zoom, y: r.top + v.height / 2 - (y - v.cy) * v.zoom };
+  }, [x, y]);
+  const vpEnt = () => page.evaluate(() => { const v = window.app.vp.mspace.vp; return { h: v.height, vh: v.viewHeight, cx: v.viewCenter.x, cy: v.viewCenter.y, locked: v.locked }; });
+  await page.evaluate(() => window.app.active.session.markSaved());
+  let pt = await paperClient(200, 150);
+  await page.mouse.dblclick(pt.x, pt.y);
+  assert.ok(await page.evaluate(() => !!window.app.vp.mspace), 'double-click inside the viewport enters model space');
+  assert.equal(await page.evaluate(() => window.app.active.session.dirty), false, 'entering MSPACE leaves the drawing clean');
+  const modelLines = () => page.evaluate(() => window.app.active.doc.entities.filter((e) => e.type === 'LINE').map((e) => [e.p1.x, e.p1.y, e.p2.x, e.p2.y]));
+  const linesBefore = (await modelLines()).length;
+  // paper (200,140) -> (210,140) through the 1:50 viewport centred on model (500,0): model (500,-500) -> (1000,-500), clear of snaps
+  await typeCmd('line');
+  pt = await paperClient(200, 140); await page.mouse.click(pt.x, pt.y);
+  pt = await paperClient(210, 140); await page.mouse.click(pt.x, pt.y);
+  await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+  assert.equal(await page.evaluate(() => window.app.toolId), 'select');
+  const lines = await modelLines();
+  assert.equal(lines.length, linesBefore + 1, 'LINE added to model space');
+  const [lx1, ly1, lx2, ly2] = lines.at(-1);
+  assert.ok([[lx1, 500], [ly1, -500], [lx2, 1000], [ly2, -500]].every(([a, b]) => Math.abs(a - b) <= 30), `LINE has model coordinates: ${[lx1, ly1, lx2, ly2]}`);
+  await page.evaluate(() => window.app.active.session.markSaved());
+  // wheel zoom in an unlocked viewport changes its view and marks the drawing changed
+  const e0 = await vpEnt();
+  const mspBox = await page.locator('#cv').boundingBox();
+  const mspWheel = { x: mspBox.x + mspBox.width / 2, y: mspBox.y + mspBox.height / 2 };
+  await page.mouse.move(mspWheel.x, mspWheel.y); await page.mouse.wheel(0, -100);
+  await page.waitForFunction((vh) => window.app.vp.mspace.vp.viewHeight < vh - 1e-6, e0.vh);
+  assert.equal(await page.evaluate(() => window.app.active.session.dirty), true, 'zoom in a viewport marks the drawing changed');
+  await page.evaluate(() => window.app.active.session.markSaved());
+  assert.equal(await page.evaluate(() => window.app.active.session.dirty), false, 'save clears it');
+  // scale 1:100: viewHeight = height x 100
+  await page.locator('#vpscale').selectOption('100');
+  const e1 = await vpEnt();
+  assert.ok(Math.abs(e1.vh - e1.h * 100) < 1e-6 * e1.vh, `1:100 -> viewHeight ${e1.vh}, height ${e1.h}`);
+  assert.equal(await page.evaluate(() => window.app.active.session.dirty), true, 'changing the scale marks the drawing changed');
+  // VPLOCK in MSPACE: the lock flag is set and the wheel no longer changes scale or view window
+  await typeCmd('vplock');
+  assert.equal((await vpEnt()).locked, true, 'VPLOCK locks the active viewport');
+  const e2 = await vpEnt();
+  await page.mouse.move(mspWheel.x, mspWheel.y); await page.mouse.wheel(0, -100); await page.mouse.wheel(0, 100); await page.mouse.wheel(0, -100);
+  await page.waitForTimeout(400);
+  const e3 = await vpEnt();
+  assert.deepEqual([e3.vh, e3.cx, e3.cy], [e2.vh, e2.cx, e2.cy], 'a locked viewport ignores wheel zoom (scale unchanged)');
+  await typeCmd('vplock');
+  assert.equal((await vpEnt()).locked, false, 'VPLOCK again unlocks');
+  // double-click on the paper outside the viewport (paper y 215, viewport top edge is y 200) returns to paper space
+  pt = await paperClient(200, 215);
+  await page.mouse.dblclick(pt.x, pt.y);
+  assert.equal(await page.evaluate(() => window.app.vp.mspace), null, 'double-click outside returns to paper space');
+
+  step = 'VPLOCK in paper space: selected viewport and the border right-click "Display locked"';
+  const vpId = await page.evaluate(() => window.app.vp.doc.entities.find((e) => e.type === 'VIEWPORT' && e.vpId !== 1).id);
+  const lockedOf = () => page.evaluate((id) => window.app.vp.doc.entities.find((e) => e.id === id).locked, vpId);
+  await page.evaluate((id) => { window.app.vp.selection = new Set([id]); }, vpId);
+  await typeCmd('vplock');
+  assert.equal(await lockedOf(), true, 'VPLOCK locks the selected viewport');
+  await page.keyboard.press('Control+z');
+  assert.equal(await lockedOf(), false, 'undo unlocks');
+  const vpBox = await page.evaluate((id) => { const v = window.app.vp.doc.entities.find((e) => e.id === id); return { x: v.c.x - v.width / 2, y: v.c.y, w: v.width }; }, vpId);
+  pt = await paperClient(vpBox.x, vpBox.y);
+  await page.mouse.click(pt.x, pt.y, { button: 'right' });
+  assert.equal((await page.locator('.popmenu button[data-act="vplock"]').textContent()).includes('\u2713'), false, 'no tick while unlocked');
+  await page.locator('.popmenu button[data-act="vplock"]').click();
+  assert.equal(await lockedOf(), true, 'right-click on the border locks the viewport');
+  await page.mouse.click(pt.x, pt.y, { button: 'right' });
+  assert.match(await page.locator('.popmenu button[data-act="vplock"]').textContent(), /Display locked ✓/);
+  await page.locator('.popmenu button[data-act="vplock"]').click();
+  assert.equal(await lockedOf(), false);
+  await page.evaluate(() => window.app.vp.selection.clear());
+
   await page.click('#spacebar button[data-space="Model"]');
   assert.equal(await page.evaluate(() => window.app.vp.layout), null);
 

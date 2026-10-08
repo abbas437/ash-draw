@@ -63,8 +63,9 @@ export function enterMspace(app, v) {
   const paperView = m ? { ...m.paperView } : { ...vp.view }, paperScene = m ? m.paperScene : vp.scene;
   if (app.toolId) app.setTool(app.toolId === 'select' ? 'select' : app.toolId); // drop a half-done command
   tab.session.doc = tab.doc;
-  vp.mspace = { vp: v, paperView, paperScene, zoomExtents: () => zoomViewportExtents(app) };
+  vp.mspace = { vp: v, paperView, paperScene, quiet: true, zoomExtents: () => zoomViewportExtents(app) };
   vp.setSession(tab.session, { fit: false, view: modelViewThrough(paperView, v) });
+  vp.mspace.quiet = false; // the view set above is the viewport's own, not a user zoom/pan to write back
   app.refreshPanels(); app.refreshStatus();
   return true;
 }
@@ -81,16 +82,60 @@ export function exitMspace(app) {
   return true;
 }
 
-/** zoom/pan in MSPACE moved the model view: write it into the viewport (a locked viewport keeps its scale: the paper moves) */
+/** zoom/pan in MSPACE moved the model view: write it into the viewport (a locked viewport keeps its scale: the paper moves).
+ *  Returns true when the VIEWPORT entity changed. */
 function syncViewport(vp) {
   const m = vp.mspace;
-  if (!m) return;
+  if (!m || m.quiet) return false;
   const v = m.vp, mv = vp.view;
   m.paperView = { ...m.paperView, width: mv.width, height: mv.height };
   if (v.locked) {
     const c = viewportToPaper(v, { x: mv.cx, y: mv.cy });
     m.paperView = { ...m.paperView, cx: c.x, cy: c.y, zoom: mv.zoom * viewportScale(v) };
-  } else Object.assign(v, viewportFromModelView(m.paperView, v, mv));
+    return false;
+  }
+  Object.assign(v, viewportFromModelView(m.paperView, v, mv));
+  return true;
+}
+
+/** a change with no undo step (viewport view / lock written straight onto the entity) still makes the drawing dirty */
+function touchDrawing(app) {
+  const s = app.active?.session;
+  if (!s || s.viewTouched) return;
+  s.viewTouched = true; app.renderTabs();
+}
+
+/** VPLOCK: toggle the lock of the active (MSPACE) viewport, or of the selected viewports in paper space */
+function vplock(app) {
+  const vp = app.vp, m = vp.mspace;
+  if (!vp.layout) { toast('VPLOCK works on a layout tab.'); return; }
+  if (m) { m.vp.locked = !m.vp.locked; touchDrawing(app); toast(`Viewport display ${m.vp.locked ? 'locked' : 'unlocked'}.`); return; }
+  const sel = vp.doc.entities.filter((e) => e.type === 'VIEWPORT' && vp.selection.has(e.id));
+  if (!sel.length) { toast('VPLOCK: select one or more viewports first.'); return; }
+  setVpLocked(app, sel, !sel.every((e) => e.locked));
+}
+
+function setVpLocked(app, vps, lock) {
+  app.session.transact('VPLOCK', (tx) => { for (const e of vps) tx.replace({ ...e, locked: lock }); });
+}
+
+/** right-click on a viewport border in paper space: "Display locked" toggle */
+function viewportMenu(app, ev) {
+  const vp = app.vp;
+  if (!vp.layout || vp.mspace) return;
+  const r = vp.canvas.getBoundingClientRect(), p = screenToWorld(vp.view, ev.clientX - r.left, ev.clientY - r.top), tol = 6 / vp.view.zoom;
+  const v = vp.doc.entities.find((e) => {
+    if (e.type !== 'VIEWPORT' || e.vpId === 1 || !(e.width > 0 && e.height > 0)) return false;
+    const dx = Math.abs(p.x - e.c.x) - e.width / 2, dy = Math.abs(p.y - e.c.y) - e.height / 2;
+    return dx <= tol && dy <= tol && (Math.abs(dx) <= tol || Math.abs(dy) <= tol);
+  });
+  if (!v) return;
+  document.querySelector('.popmenu')?.remove();
+  const m = el('div', { class: 'popmenu', style: `left:${ev.clientX}px;top:${ev.clientY}px` },
+    el('button', { 'data-act': 'vplock', onclick: () => { m.remove(); setVpLocked(app, [v], !v.locked); } }, `Display locked${v.locked ? ' \u2713' : ''}`));
+  m.addEventListener('pointerdown', (e) => e.stopPropagation());
+  document.body.append(m);
+  setTimeout(() => document.addEventListener('pointerdown', () => m.remove(), { once: true }), 0);
 }
 
 /** ZOOM Extents inside a viewport: fit the model extents in the viewport window */
@@ -195,8 +240,9 @@ export function initLayouts(app) {
     const v = vp.doc.entities.find((x) => x.type === 'VIEWPORT' && x.vpId !== 1 && x.on !== false && x.width > 0 && x.height > 0);
     if (!v) toast('This layout has no viewport to enter.'); else enterMspace(app, v);
   };
-  app.layoutCommands = { ms, mspace: ms, ps: () => exitMspace(app), pspace: () => exitMspace(app) };
-  vp.on('view', () => { if (vp.mspace) { syncViewport(vp); renderVpScale(app); } });
+  app.layoutCommands = { vplock: () => vplock(app), ms, mspace: ms, ps: () => exitMspace(app), pspace: () => exitMspace(app) };
+  vp.on('view', () => { if (vp.mspace) { if (syncViewport(vp)) touchDrawing(app); renderVpScale(app); } });
+  vp.canvas.addEventListener('contextmenu', (e) => viewportMenu(app, e));
   vp.modelScene = (frozen) => {
     const sp = spaces(app.active), key = frozen.join('\u0001');
     let s = sp.scenes.get(key);
