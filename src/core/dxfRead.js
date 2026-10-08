@@ -16,6 +16,7 @@ import {
 import { transformEntity } from './geom.js';
 import { dimStyleFromTags } from './dimsStyle.js';
 import { dimDefFromTags } from './dims.js';
+import { mtextPlain } from './mtext.js';
 
 const DEG = Math.PI / 180;
 
@@ -53,21 +54,12 @@ export function decodeDxfBytes(bytes) {
 
 // ---------------------------------------------------------------------------------------------
 // text helpers
+
 const decodeU = (s) => (s.includes('\\U+') ? s.replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16))) : s);
 
-/** Resolve DXF text codes into what should be displayed (also used for MTEXT). */
+/** Resolve DXF text codes into what should be displayed (also used for MTEXT): derived from the MTEXT parser. */
 export function plainText(raw) {
-  let s = String(raw ?? '');
-  s = s.replace(/%%[cC]/g, 'Ø').replace(/%%[dD]/g, '°').replace(/%%[pP]/g, '±')
-    .replace(/%%[uUoO]/g, '').replace(/%%(\d{3})/g, (_, n) => String.fromCharCode(Number(n)));
-  s = decodeU(s);
-  if (!/[\\{}]/.test(s)) return s;
-  s = s.replace(/\\P/g, '\n').replace(/\\~/g, ' ');
-  s = s.replace(/\\S([^;^#\\]*)[\^#/]([^;]*);/g, (_, a, b) => `${a}/${b}`);
-  s = s.replace(/\\[fFHCcQWATpMLlOoKk][^;\\]*;/g, '');
-  s = s.replace(/\\([\\{}])/g, '\u0001$1').replace(/[{}]/g, '').replace(/\u0001([\\{}])/g, '$1');
-  s = s.replace(/\\[LlOoKk]/g, '');
-  return s;
+  return mtextPlain(raw);
 }
 
 // ---------------------------------------------------------------------------------------------
