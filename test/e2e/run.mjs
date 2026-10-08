@@ -349,6 +349,38 @@ try {
   });
   assert.deepEqual(reread, [false, true], 'DUCT off + frozen after save and reopen');
 
+  step = 'find and replace: Ctrl+F, results, click selects, Replace all, Undo';
+  await page.evaluate(async () => {
+    const M = await import('/src/core/model.js');
+    const doc = M.newDocument();
+    M.addEntity(doc, M.makeText({ x: 0, y: 0 }, 2, 'PUMP P-101'));
+    M.addEntity(doc, M.makeMText({ x: 0, y: 20 }, 2, '{\\C1;Pump} room\\Pspare pump'));
+    M.addEntity(doc, M.makeText({ x: 50, y: 0 }, 2, 'PUMPS'));
+    M.addEntity(doc, M.makeLine({ x: 0, y: -10 }, { x: 100, y: -10 }));
+    window.app.installDoc(doc, { path: null, name: 'find.dxf', format: 'dxf' });
+  });
+  await page.locator('#cv').click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press('Control+f');
+  await page.waitForSelector('#find-panel:not([hidden])');
+  await page.locator('#find-word').check();
+  await page.locator('#find-q').fill('pump');
+  assert.equal(await page.locator('#find-panel .find-row').count(), 3);
+  assert.match(await page.locator('#find-panel .find-count').innerText(), /3 matches/);
+  await page.locator('#find-panel .find-row').nth(1).click();
+  const mtextId = await page.evaluate(() => window.app.doc.entities[1].id);
+  assert.deepEqual(await page.evaluate(() => [...window.app.vp.selection]), [mtextId], 'clicked result is selected');
+  await page.locator('#find-q').press('Enter'); // find next
+  assert.equal(await page.locator('#find-panel .find-row.cur').count(), 1);
+  await page.locator('#find-r').fill('FAN');
+  await page.locator('#find-all').click();
+  const texts = () => page.evaluate(() => window.app.doc.entities.filter((e) => e.text != null).map((e) => e.text));
+  assert.deepEqual(await texts(), ['FAN P-101', '{\\C1;FAN} room\\Pspare FAN', 'PUMPS']);
+  assert.equal(await page.locator('#find-panel .find-row').count(), 0, 'results refresh after Replace all');
+  await page.locator('#find-q').press('Escape');
+  assert.equal(await page.locator('#find-panel').isHidden(), true);
+  await page.keyboard.press('Control+z');
+  assert.deepEqual(await texts(), ['PUMP P-101', '{\\C1;Pump} room\\Pspare pump', 'PUMPS'], 'one Undo restores every replaced text');
+
   step = 'csp';
   assert.deepEqual(await page.evaluate(() => window.__csp), []);
   assert.deepEqual(problems, []);
