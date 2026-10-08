@@ -743,6 +743,59 @@ try {
   assert.ok(rawAfter.includes('\\Xzz;'), `unknown code kept: ${rawAfter}`);
   await page.keyboard.press('Escape');
 
+  step = 'COMPARE: two drawings in tabs, counts, Next zooms, green/red pixels';
+  await page.evaluate(async () => {
+    const M = await import('/src/core/model.js');
+    const mk = (extra) => {
+      const d = M.newDocument(); d.units = 4;
+      for (let i = 0; i < 30; i++) M.addEntity(d, M.makeLine({ x: i * 3, y: 0 }, { x: i * 3, y: 60 }));
+      for (const e of extra) M.addEntity(d, e);
+      return d;
+    };
+    const a = mk([M.makeCircle({ x: 300, y: 0 }, 10), M.makeText({ x: 0, y: 300 }, 5, 'NOTE'), M.makeLine({ x: 150, y: 300 }, { x: 200, y: 300 }, { color: 1 })]);
+    const b = mk([M.makeLine({ x: 300, y: 200 }, { x: 340, y: 200 }), M.makeText({ x: 3, y: 302 }, 5, 'NOTE'), M.makeLine({ x: 150, y: 300 }, { x: 200, y: 300 }, { color: 5 })]);
+    b.entities.reverse();
+    window.app.installDoc(a, { path: null, name: 'rev-a.dxf', format: 'dxf' });
+    window.app.installDoc(b, { path: null, name: 'rev-b.dxf', format: 'dxf' });
+  });
+  await typeCmd('compare');
+  await page.locator('#dlg[open] #cmp-a').waitFor({ timeout: 3000 });
+  assert.equal(await page.locator('#cmp-a option:checked').textContent(), 'rev-a.dxf');
+  assert.equal(await page.locator('#cmp-b option:checked').textContent(), 'rev-b.dxf');
+  await page.locator('#dlg button.primary').click();
+  await page.locator('#compare-panel:not([hidden])').waitFor({ timeout: 3000 });
+  assert.match(await page.evaluate(() => window.app.active.file.name), /^Compare rev-a\.dxf vs rev-b\.dxf$/);
+  const counts = await page.locator('#compare-panel .cmp-counts').textContent();
+  assert.match(counts, /Added 1/); assert.match(counts, /Removed 1/); assert.match(counts, /Changed 2/); assert.match(counts, /Unchanged 30/);
+  // the strongest pixel of a colour family in a small window around a world point
+  const colourAt = (x, y) => page.evaluate(([wx, wy]) => {
+    const vp = window.app.vp; vp.showCross = false; vp.selection.clear(); vp.render();
+    const s = vp.toScreen({ x: wx, y: wy }), k = vp.dpr;
+    const px = vp.ctx.getImageData(Math.round(s.x * k) - 4, Math.round(s.y * k) - 4, 9, 9).data;
+    let red = 0, green = 0;
+    for (let i = 0; i < px.length; i += 4) {
+      if (px[i] > 180 && px[i + 1] < 90 && px[i + 2] < 90) red++;
+      if (px[i + 1] > 150 && px[i] < 100 && px[i + 2] < 100) green++;
+    }
+    return { red, green };
+  }, [x, y]);
+  await page.mouse.move(2, 2);
+  await page.evaluate(() => window.app.vp.zoomExtents());
+  const atRemoved = await colourAt(310, 0), atAdded = await colourAt(320, 200), atSame = await colourAt(30, 30);
+  assert.ok(atRemoved.red > 0 && atRemoved.green === 0, `removed circle drawn red: ${JSON.stringify(atRemoved)}`);
+  assert.ok(atAdded.green > 0 && atAdded.red === 0, `added line drawn green: ${JSON.stringify(atAdded)}`);
+  assert.ok(atSame.red === 0 && atSame.green === 0, 'unchanged objects are neither red nor green');
+  const fitZoom = await page.evaluate(() => window.app.vp.view.zoom);
+  await page.click('#cmp-next');
+  const v1 = await page.evaluate(() => ({ ...window.app.vp.view, box: window.app.active.compare.r.clusters[0].mark }));
+  assert.ok(v1.zoom > fitZoom * 2, `Next zooms in to a cluster (${v1.zoom} vs ${fitZoom})`);
+  assert.ok(v1.cx >= v1.box.minx && v1.cx <= v1.box.maxx && v1.cy >= v1.box.miny && v1.cy <= v1.box.maxy, 'view centred on the cluster');
+  assert.match(await page.locator('#compare-panel .cmp-pos').textContent(), /^1 of 4$/);
+  await page.click('#cmp-next');
+  assert.match(await page.locator('#compare-panel .cmp-pos').textContent(), /^2 of 4$/);
+  await page.evaluate(() => window.app.activateIndex(window.app.tabs.findIndex((t) => t.file.name === 'rev-b.dxf')));
+  assert.ok(await page.locator('#compare-panel').isHidden(), 'panel hidden on a drawing tab');
+
   step = 'csp';
   assert.deepEqual(await page.evaluate(() => window.__csp), []);
   assert.deepEqual(problems, []);

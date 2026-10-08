@@ -127,3 +127,17 @@ dialog label { display:block; margin:6px 0 2px; color:var(--dim); }
 .file-name { font-weight:600; }
 .file-folder, .file-note { font-size:12px; opacity:.75; word-break:break-all; }
 .file-missing { font-size:12px; color:var(--warn); }
+#compare-panel { position:absolute; right:10px; top:10px; width:300px; max-height:calc(100% - 60px); display:flex; flex-direction:column; gap:6px; padding:0 8px 8px; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:4px; box-shadow:0 2px 8px var(--shadow); z-index:4; }
+#compare-panel[hidden] { display:none; }
+.cmp-counts { display:flex; flex-wrap:wrap; gap:4px 12px; }
+.cmp-files { flex-basis:100%; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cmp-n i { display:inline-block; width:10px; height:10px; margin-right:4px; border-radius:2px; vertical-align:-1px; }
+.cmp-n.added i { background:#00ff00; } .cmp-n.removed i { background:#ff0000; } .cmp-n.changed i { background:#ffbf00; } .cmp-n.same i { background:#808080; }
+.cmp-btns { display:flex; gap:8px; align-items:center; }
+.cmp-pos { color:var(--dim); margin-left:auto; }
+.cmp-list { overflow:auto; min-height:0; border-top:1px solid var(--line); }
+.cmp-row { display:flex; gap:8px; padding:2px 4px; cursor:pointer; white-space:nowrap; }
+.cmp-row.cur { background:var(--accent); color:var(--on-accent); }
+.cmp-pick label { display:flex; flex-direction:column; gap:2px; margin-bottom:8px; }
+.cmp-pick label > div { display:flex; gap:6px; }
+.cmp-pick select { flex:1; }
