@@ -406,6 +406,17 @@ function buildHatch(rec, o, doc) {
   return hatch;
 }
 
+/** XDATA of the applications this program keeps (see XDATA_APPS): { APP: [[code, value], ...] } or null */
+export const XDATA_APPS = ['ASH_MARKUP'];
+function readXData(rec) {
+  let out = null, cur = null;
+  for (const [c, v] of rec.tags()) {
+    if (c === 1001) { cur = XDATA_APPS.includes(v) ? ((out ??= {})[v] = []) : null; continue; }
+    if (cur && c >= 1000 && c < 1072) cur.push([c, isStringCode(c) ? decodeU(v) : v]);
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------------------------
 let mlStyles = new Map(); // MLEADERSTYLE handle -> defaults (set per parse)
 function buildEntity(rec, doc, extra) {
@@ -439,6 +450,8 @@ function buildEntity(rec, doc, extra) {
   }
   if (!e) return null;
   if (rec.int(60) === 1) e.invisible = true;
+  const xd = readXData(rec);
+  if (xd) e.xdata = xd;
   if (flipped) {
     if (e.type === 'TEXT') { e.p = { x: -e.p.x, y: e.p.y }; e.rot = 180 - e.rot; }
     else if (['CIRCLE', 'ARC', 'LWPOLYLINE', 'SOLID', 'INSERT', 'HATCH'].includes(e.type)) {
