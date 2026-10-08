@@ -46,6 +46,16 @@ try {
     await page.mouse.click(box.x + s.x, box.y + s.y, opts);
   };
   const shot = async (name) => { if (SHOTS) await page.screenshot({ path: path.join(SHOTS, `${name}.png`) }); };
+  // One permanent 'filechooser' listener. page.waitForEvent() per dialog toggles Playwright's chooser interception on and
+  // off around every call, and a chooser opened right after such a toggle is sometimes lost (the page's input.click() ran,
+  // no event ever arrived). Keeping the interception on for the whole run removes that window.
+  let chooserWaiter = null;
+  page.on('filechooser', (c) => { const w = chooserWaiter; chooserWaiter = null; w?.(c); });
+  const pickFile = async (f) => {
+    const chooser = new Promise((r) => { chooserWaiter = r; });
+    await page.keyboard.press('Control+o');
+    await (await chooser).setFiles(path.join(ROOT, 'test', 'fixtures', f));
+  };
   const typeCmd = async (text) => { await page.locator('#cmd').fill(text); await page.locator('#cmd').press('Enter'); };
 
   step = 'ui present';
@@ -103,11 +113,7 @@ try {
   step = 'open a fixture DXF through the file chooser';
   const fixtures = ['hatch_r2000.dxf', 'blocks_r2000.dxf', 'text_r2000.dxf', 'dims_r2000.dxf', 'r2007_ac1021.dxf'];
   for (const f of fixtures) {
-    const chooser = page.waitForEvent('filechooser');
-    await page.keyboard.press('Control+o');
-    // the unsaved-changes dialog may appear first
-    if (await page.locator('#dlg[open]').count()) await page.locator('#dlg button', { hasText: "Don't save" }).click();
-    (await chooser).setFiles(path.join(ROOT, 'test', 'fixtures', f));
+    await pickFile(f);
     await page.waitForFunction((name) => window.app.file.name === name, f, { timeout: 8000 });
     assert.ok(await count() > 0, `${f} opened empty`);
     await page.waitForTimeout(100);
@@ -126,9 +132,7 @@ try {
   const tabCount = () => page.locator('#tabbar .tab').count();
   assert.equal(await tabCount(), 1 + fixtures.length); // the first (edited) drawing plus one tab per fixture
   const openFixture = async (f) => {
-    const chooser = page.waitForEvent('filechooser');
-    await page.keyboard.press('Control+o');
-    (await chooser).setFiles(path.join(ROOT, 'test', 'fixtures', f));
+    await pickFile(f);
     await page.waitForFunction((name) => window.app.file.name === name, f, { timeout: 8000 });
   };
   const before = await tabCount();
@@ -163,6 +167,23 @@ try {
   await page.keyboard.press('Control+y');
   assert.equal(await count(), n2 + 1);
 
+  step = 'dialogs: a button click does not cancel the dialog opened right after it';
+  {
+    // close() queues its 'close' event; it used to arrive after the next modal() had installed its handler and cancelled it
+    const r = await page.evaluate(async () => {
+      const { modal } = await import('/renderer/ui.js');
+      const first = modal('one', 'x', [{ label: 'A', value: 'a', primary: true }]);
+      document.querySelector('#dlg button').click();
+      let second = 'pending';
+      const p2 = modal('two', 'y', [{ label: 'B', value: 'b', primary: true }]).then((v) => { second = v; });
+      await new Promise((res) => setTimeout(res, 50)); // let the stale close event fire
+      const during = second;
+      document.querySelector('#dlg button').click(); await p2;
+      return { first: await first, during, second };
+    });
+    assert.deepEqual(r, { first: 'a', during: 'pending', second: 'b' });
+  }
+
   step = 'tabs: closing a drawing with unsaved changes asks first';
   await page.keyboard.press('Control+w');
   await page.locator('#dlg[open]').waitFor({ timeout: 3000 });
@@ -184,9 +205,7 @@ try {
 
   step = 'binary DXF is rejected with a message';
   {
-    const chooser = page.waitForEvent('filechooser');
-    await page.keyboard.press('Control+o');
-    (await chooser).setFiles(path.join(ROOT, 'test', 'fixtures', 'binary_sentinel.dxf'));
+    await pickFile('binary_sentinel.dxf');
     await page.waitForSelector('#dlg[open]');
     assert.match(await page.locator('#dlg').innerText(), /binary DXF/i);
     await page.locator('#dlg button.primary').click();

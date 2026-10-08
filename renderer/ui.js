@@ -30,7 +30,7 @@ export function modal(title, body, buttons = [{ label: 'OK', value: true, primar
       el('h2', { text: title }), el('div', { class: 'dlg-body' }, body),
       el('div', { class: 'dlg-btns' }, buttons.map((b) => el('button', { class: b.primary ? 'primary' : '', onclick: () => { d.close(); resolve(b.value); } }, b.label))),
     );
-    d.onclose = () => resolve(null);
+    d.onclose = () => { if (!d.open) resolve(null); }; // Esc. A button's close() fires its event later, maybe after the next modal() opened: ignore that stale one
     d.showModal();
     d.querySelector('input,textarea,select,button.primary')?.focus();
   });
