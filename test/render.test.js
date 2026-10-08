@@ -124,3 +124,61 @@ test('view math round trips', () => {
   assert.ok(Math.abs(before.x - after.x) < 1e-9 && Math.abs(before.y - after.y) < 1e-9);
   assert.equal(z.zoom, 8);
 });
+
+test('updateScene: bbox grows on insert, shrinks only when an edge item is removed', () => {
+  const doc = newDocument();
+  const edge = addEntity(doc, makeLine({ x: 0, y: 0 }, { x: 50, y: 0 }));
+  const mid = addEntity(doc, makeLine({ x: 10, y: 5 }, { x: 20, y: 5 }));
+  addEntity(doc, makeLine({ x: 5, y: -3 }, { x: 30, y: 8 }));
+  const sc = buildScene(doc);
+  assert.deepEqual(sc.bbox, { minx: 0, miny: -3, maxx: 50, maxy: 8 });
+  mid.p2 = { x: 25, y: 6 }; updateScene(sc, [mid.id]);
+  assert.equal(sc._bboxDirty, false, 'an interior edit does not trigger a recompute');
+  const far = addEntity(doc, makeLine({ x: 60, y: 0 }, { x: 70, y: 20 }));
+  updateScene(sc, [far.id]);
+  assert.equal(sc._bboxDirty, false);
+  assert.deepEqual(sc.bbox, { minx: 0, miny: -3, maxx: 70, maxy: 20 });
+  doc.entities = doc.entities.filter((e) => e.id !== far.id && e.id !== edge.id);
+  updateScene(sc, [far.id, edge.id]);
+  assert.deepEqual(sc.bbox, { minx: 5, miny: -3, maxx: 30, maxy: 8 });
+  assert.deepEqual(sc.items.map((it) => it.pos), [0, 1]);
+});
+
+test('updateScene on one entity touches O(1) scene items and document entities', () => {
+  const doc = newDocument();
+  for (let i = 0; i < 3000; i++) addEntity(doc, makeLine({ x: i, y: 0 }, { x: i + 0.5, y: 1 }));
+  const sc = buildScene(doc);
+  sc.grid = null;
+  const count = (arr) => {
+    const n = { get: 0, set: 0, find: 0 };
+    const p = new Proxy(arr, {
+      get(t, k) { if (typeof k === 'string' && /^\d+$/.test(k)) n.get++; if (k === 'find' || k === 'filter' || k === 'findIndex') n.find++; return t[k]; },
+      set(t, k, v) { if (/^\d+$/.test(String(k))) n.set++; t[k] = v; return true; },
+    });
+    return [p, n];
+  };
+  const [items, ni] = count(sc.items); sc.items = items;
+  const [ents, ne] = count(doc.entities); doc.entities = ents;
+  const target = doc.entities[1500]; ne.get = 0;
+  target.p2 = { x: 1500.25, y: 0.75 };
+  updateScene(sc, [target.id]);
+  assert.ok(ni.get + ni.set <= 4, `scene items touched: ${ni.get} get / ${ni.set} set`);
+  assert.ok(ne.get <= 4 && ne.find === 0, `entities touched: ${ne.get} get / ${ne.find} scans`);
+  assert.equal(sc.byId.get(target.id)[0].bbox.maxx, 1500.25);
+  assert.equal(sc.items[1500].id, target.id, 'edited in place: draw order kept');
+});
+
+test('updateScene validates the id -> index map after doc.entities is reassigned and an entry replaced', () => {
+  const doc = newDocument();
+  const ids = [];
+  for (let i = 0; i < 6; i++) ids.push(addEntity(doc, makeLine({ x: i * 10, y: 0 }, { x: i * 10 + 1, y: 0 })).id);
+  const sc = buildScene(doc);
+  doc.entities = doc.entities.filter((e) => e.id !== ids[0]);         // model.js: every index shifts by one
+  const i = doc.entities.findIndex((e) => e.id === ids[3]);
+  doc.entities[i] = { ...doc.entities[i], p1: { x: 100, y: 100 }, p2: { x: 101, y: 102 } }; // edit.js: replace in place
+  updateScene(sc, [ids[0], ids[3]]);
+  assert.equal(sc.byId.get(ids[0]), undefined);
+  const [it] = sc.byId.get(ids[3]);
+  assert.deepEqual(it.bbox, { minx: 100, miny: 100, maxx: 101, maxy: 102 });
+  assert.deepEqual(sc.items.map((x) => x.id), ids.slice(1));
+});

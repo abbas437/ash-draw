@@ -282,7 +282,26 @@ export function buildScene(doc) {
   const b = new Builder(doc);
   for (const e of doc.entities) b.emit(e, [1, 0, 0, 1, 0, 0], null, e.id, 0);
   b.items.forEach((it, i) => { it.pos = i; });
-  return { items: b.items, byId: b.byId, bbox: b.bbox, doc, version: 0, grid: null };
+  const entIndex = new Map();
+  doc.entities.forEach((e, i) => entIndex.set(e.id, i));
+  return {
+    items: b.items, byId: b.byId, doc, version: 0, grid: null,
+    entIndex, _entLen: doc.entities.length, _bbox: b.bbox, _bboxDirty: false,
+    // the scene bbox: grown on insert by updateScene, recomputed lazily only after an edge item was removed
+    get bbox() { if (this._bboxDirty) { this._bbox = itemsBox(this.items); this._bboxDirty = false; } return this._bbox; },
+    set bbox(v) { this._bbox = v; this._bboxDirty = false; },
+  };
+}
+
+function itemsBox(items) {
+  let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  for (let i = 0; i < items.length; i++) {
+    const b = items[i].bbox;
+    if (!b) continue;
+    if (b.minx < minx) minx = b.minx; if (b.miny < miny) miny = b.miny;
+    if (b.maxx > maxx) maxx = b.maxx; if (b.maxy > maxy) maxy = b.maxy;
+  }
+  return minx <= maxx ? { minx, miny, maxx, maxy } : null;
 }
 
 /** the scene's item grid, built on first use (drawing) and kept up to date by updateScene */
@@ -312,19 +331,64 @@ export function visibleItems(scene, minx, miny, maxx, maxy) {
   return out;
 }
 
-/** rebuild just the given entity ids (after edits); unknown ids are removed */
+/** the document entity with this id, through the scene's id -> index map. The map is only a hint: edit.js replaces
+ *  doc.entities[i] and model.js reassigns doc.entities, so every hit is checked against doc.entities[index]; a miss
+ *  first indexes entities appended since the last look, then (once per call) rebuilds the map. */
+function entityLookup(scene) {
+  let rebuilt = false;
+  const find = (ents, id) => { const i = scene.entIndex.get(id); return i !== undefined && ents[i]?.id === id ? ents[i] : null; };
+  return (id) => {
+    const ents = scene.doc.entities;
+    let e = find(ents, id);
+    if (e) return e;
+    if (ents.length > scene._entLen) { for (let i = scene._entLen; i < ents.length; i++) scene.entIndex.set(ents[i].id, i); }
+    scene._entLen = ents.length;
+    if ((e = find(ents, id)) || rebuilt) return e;
+    rebuilt = true;
+    scene.entIndex.clear();
+    for (let i = 0; i < ents.length; i++) scene.entIndex.set(ents[i].id, i);
+    return find(ents, id);
+  };
+}
+
+/** rebuild just the given entity ids (after edits); unknown ids are removed. Work is O(items of those ids): an entity
+ *  that yields as many items as before is replaced in place (keeping its draw order); otherwise its old items are
+ *  dropped (one compaction pass from the first of them) and the new ones appended. */
 export function updateScene(scene, ids) {
-  const set = new Set(ids);
-  const doc = scene.doc;
-  const grid = scene.grid;
-  for (const id of set) { if (grid) for (const it of scene.byId.get(id) ?? []) grid.remove(it); scene.byId.delete(id); }
-  scene.items = scene.items.filter((it) => !set.has(it.id));
-  const b = new Builder(doc);
-  for (const id of set) { const e = doc.entities.find((x) => x.id === id); if (e) b.emit(e, [1, 0, 0, 1, 0, 0], null, id, 0); }
-  for (const it of b.items) { scene.items.push(it); let l = scene.byId.get(it.id); if (!l) scene.byId.set(it.id, (l = [])); l.push(it); if (grid) grid.insert(it); }
-  for (let i = 0; i < scene.items.length; i++) scene.items[i].pos = i;
-  scene.bbox = null;
-  for (const it of scene.items) if (it.bbox) scene.bbox = unionBox(scene.bbox, it.bbox);
+  const items = scene.items, grid = scene.grid, look = entityLookup(scene);
+  const b = new Builder(scene.doc);
+  const added = [];
+  let firstDead = -1;
+  for (const id of new Set(ids)) {
+    const old = scene.byId.get(id) ?? [];
+    const e = look(id);
+    const start = b.items.length;
+    if (e) b.emit(e, [1, 0, 0, 1, 0, 0], null, id, 0);
+    const nu = b.items.slice(start);
+    const sb = scene._bboxDirty ? null : scene._bbox;
+    for (const it of old) {
+      if (grid) grid.remove(it);
+      const ib = it.bbox;
+      if (sb && ib && (ib.minx <= sb.minx || ib.miny <= sb.miny || ib.maxx >= sb.maxx || ib.maxy >= sb.maxy)) scene._bboxDirty = true;
+    }
+    if (nu.length === old.length) {
+      for (let k = 0; k < nu.length; k++) { const p = old[k].pos; nu[k].pos = p; items[p] = nu[k]; }
+    } else {
+      for (const it of old) { it._dead = true; if (firstDead < 0 || it.pos < firstDead) firstDead = it.pos; }
+      for (const it of nu) added.push(it);
+    }
+    if (nu.length) scene.byId.set(id, nu); else scene.byId.delete(id);
+    for (const it of nu) {
+      if (grid) grid.insert(it);
+      if (!scene._bboxDirty && it.bbox) scene._bbox = unionBox(scene._bbox, it.bbox);
+    }
+  }
+  if (firstDead >= 0) {
+    let w = firstDead;
+    for (let r = firstDead; r < items.length; r++) { const it = items[r]; if (it._dead) continue; if (w !== r) items[w] = it; it.pos = w++; }
+    items.length = w;
+  }
+  for (const it of added) { it.pos = items.length; items.push(it); }
   scene.version++;
   return scene;
 }
