@@ -634,6 +634,7 @@ try {
   await page.keyboard.press('Escape');
   await page.evaluate(async (b) => { const { setEntityProps } = await import('/src/core/edit.js'); setEntityProps(window.app.session, [b], { layer: 'B', color: 5 }); }, ma3.id);
   await typeCmd('ma'); await clickWorld(220, 180);
+  await page.waitForFunction(() => /S = settings/.test(document.querySelector('#prompt')?.textContent ?? ''), null, { timeout: 3000 }).catch(() => {});
   assert.match(await page.locator('#prompt').textContent(), /S = settings/);
   await typeCmd('s');
   await page.locator('#dlg input[name=layer]').uncheck();
