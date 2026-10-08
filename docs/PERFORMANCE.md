@@ -102,3 +102,21 @@ Same run, full case, fit frame by phase: query 63, bucket 148, tints 40, dots 92
 (165k items drawn as dots, 162k in the 10 line batches, 13k text bars, 5k hatch tints). The settle frame is still
 dominated by the line batches; next candidates are a ~1.5 px dot threshold for LINE/ARC items and skipping the
 `touches` pass in `visibleItems` when the view contains the whole scene.
+
+## Settle frame (branch settle, 2026-10-08)
+
+Done: `visibleItems` returns `scene.items` itself when the view contains the whole scene (no per-item bbox pass,
+no copy). Fit-frame `query` phase (clear + visibleItems) 35-60 ms -> 2 ms.
+
+Full bench after it (one run; the container's timings vary by about +-40 % between runs):
+fit frame by phase query 2, bucket 166, tints 42, dots 212, lines 389, bars 26 = 837 ms; settle after pan 346 ms,
+after zoom 209 ms; perceived pan 5.0 ms. A second run of the same tree gave settle pan 233 ms, zoom 187 ms. The
+~200 ms target is not met yet.
+
+Measured groundwork for the line batches (full case at fit, same 10 colour groups, in-page experiment):
+re-tracing the ~141k-162k path items into the context each frame costs ~105-115 ms of JavaScript, and stroking the
+same geometry from a prebuilt `Path2D` costs ~25-38 ms (world coordinates relative to a local origin, drawn with
+`setTransform(z, 0, 0, -z, ...)` and `lineWidth = 1 / z`; no difference against screen-space `Path2D`). Building
+the `Path2D`s costs ~145-195 ms, so it pays off only when cached across frames (per zoom band, culled per tile);
+miter joins / butt caps change nothing. Raising the path dot threshold to a 1.5 px bbox diagonal moves only ~20k
+items from the line batches to dots (161.5k -> 141.3k lines).
