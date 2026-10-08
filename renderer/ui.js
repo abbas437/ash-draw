@@ -86,7 +86,9 @@ export function renderLayers(app) {
   const used = new Map();
   for (const e of doc.entities) used.set(e.layer, (used.get(e.layer) ?? 0) + 1);
   box.replaceChildren(...rows.map((l) => el('div', { class: `layer${app.state.layer === l.name ? ' current' : ''}` },
-    el('button', { class: 'icon', title: l.visible && !l.frozen ? 'Hide layer' : 'Show layer', onclick: () => { setLayerProps(session, l.name, { visible: !l.visible, frozen: false }); } }, l.visible && !l.frozen ? '◉' : '○'),
+    // On/Off and Freeze/Thaw are independent flags (AutoCAD): toggling one never touches the other
+    el('button', { class: 'icon lay-on', title: l.visible !== false ? 'Turn layer off' : 'Turn layer on', onclick: () => { setLayerProps(session, l.name, { visible: l.visible === false }); } }, l.visible !== false ? '◉' : '○'),
+    el('button', { class: 'icon lay-frz', title: l.frozen ? 'Thaw layer' : 'Freeze layer', onclick: () => { setLayerProps(session, l.name, { frozen: !l.frozen }); } }, l.frozen ? '❄' : '☀'),
     el('button', { class: 'icon', title: l.locked ? 'Unlock layer' : 'Lock layer', onclick: () => { setLayerProps(session, l.name, { locked: !l.locked }); } }, l.locked ? '🔒' : '🔓'),
     el('span', { class: 'swatch', style: `background:${cssOfAci(Math.abs(l.color))}`, title: 'Layer colour (click to change)', onclick: (e) => colorMenu(e, (c) => setLayerProps(session, l.name, { color: c })) }),
     el('span', { class: 'lname', title: `${used.get(l.name) ?? 0} object(s)`, ondblclick: () => { app.state.layer = l.name; app.refreshPanels(); }, text: l.name }),
@@ -145,7 +147,7 @@ export function renderProperties(app) {
   const layerVal = ents.length ? (ents.every((e) => e.layer === ents[0].layer) ? ents[0].layer : null) : app.state.layer;
   const mixed = (v, make) => (v === null ? (() => { const s = make('__mixed__'); s.prepend(el('option', { value: '__mixed__', text: '— varies —' })); s.value = '__mixed__'; return s; })() : make(v));
   const rowsInfo = ents.length === 1 ? describe(ents[0], doc) : [];
-  const lts = [['BYLAYER', 'ByLayer'], ...[...doc.linetypes.keys()].filter((n) => n !== 'CONTINUOUS' || true).map((n) => [n, n])];
+  const lts = [['BYLAYER', 'ByLayer'], ...[...doc.linetypes.keys()].map((n) => [n, n])];
 
   const kids = [
     el('div', { class: 'phead', text: ents.length ? `${ents.length} selected${ents.length === 1 ? ` — ${ents[0].type}` : ''}` : 'Defaults for new objects' }),

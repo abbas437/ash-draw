@@ -262,6 +262,34 @@ try {
     await page.evaluate(() => window.app.setTheme('light'));
   }
 
+  step = 'layers: LAYISO / LAYUNISO, freeze hides objects, On/Off keeps the frozen flag through save and reopen';
+  await page.evaluate(async () => {
+    const M = await import('/src/core/model.js');
+    const doc = M.newDocument();
+    for (const n of ['WALL', 'DUCT']) M.addLayer(doc, { name: n });
+    M.addEntity(doc, M.makeLine({ x: 0, y: 0 }, { x: 10, y: 0 }, { layer: 'WALL' }));
+    M.addEntity(doc, M.makeLine({ x: 0, y: 5 }, { x: 10, y: 5 }, { layer: 'DUCT' }));
+    window.app.installDoc(doc, { path: null, name: 'layers.dxf', format: 'dxf' });
+  });
+  const lay = () => page.evaluate(() => Object.fromEntries([...window.app.doc.layers.values()].map((l) => [l.name, `${l.visible ? 'on' : 'off'}${l.frozen ? '+frozen' : ''}`])));
+  const shown = () => page.evaluate(() => [[5, 0], [5, 5]].map(([x, y]) => window.app.vp.pick({ x, y }, { tol: 1 })?.layer).filter(Boolean).join(','));
+  await page.evaluate(() => window.app.vp.setSelection([window.app.doc.entities[0].id]));
+  await typeCmd('layiso');
+  assert.deepEqual(await lay(), { 0: 'off', WALL: 'on', DUCT: 'off' });
+  await typeCmd('layuniso');
+  assert.deepEqual(await lay(), { 0: 'on', WALL: 'on', DUCT: 'on' });
+  const row = (n) => page.locator('#layers .layer', { has: page.locator('.lname', { hasText: new RegExp(`^${n}$`) }) });
+  await row('DUCT').locator('button.lay-frz').click();
+  assert.equal(await shown(), 'WALL', 'objects on a frozen layer are hidden');
+  await row('DUCT').locator('button.lay-on').click();
+  assert.deepEqual(await lay(), { 0: 'on', WALL: 'on', DUCT: 'off+frozen' }, 'On/Off must not thaw the layer');
+  const reread = await page.evaluate(async () => {
+    const { writeDxf } = await import('/src/core/dxfWrite.js'); const { readDxf } = await import('/src/core/dxfRead.js');
+    const l = readDxf(new TextEncoder().encode(writeDxf(window.app.doc))).layers.get('DUCT');
+    return [l.visible, l.frozen];
+  });
+  assert.deepEqual(reread, [false, true], 'DUCT off + frozen after save and reopen');
+
   step = 'csp';
   assert.deepEqual(await page.evaluate(() => window.__csp), []);
   assert.deepEqual(problems, []);
