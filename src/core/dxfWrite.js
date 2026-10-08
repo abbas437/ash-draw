@@ -12,6 +12,8 @@ const num = (n) => {
   const s = String(Number(n.toPrecision(15)));
   return s;
 };
+import { dimStyleTags } from './dimsStyle.js';
+import { dimensionTags, arrowEntities } from './dims.js';
 const encode = (s) => String(s ?? '').replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7e]/g, (c) => {
   const code = c.charCodeAt(0);
   return code < 32 ? ' ' : `\\U+${code.toString(16).toUpperCase().padStart(4, '0')}`;
@@ -58,7 +60,13 @@ export function writeDxf(doc, opts = {}) {
   const asGeometry = !!(opts && opts.dimensionsAsGeometry);
 
   // ---- collect what is used ---------------------------------------------------------------
-  const blockNames = [...doc.blocks.keys()];
+  // arrowhead blocks named by dimension styles (DIMBLK) that the drawing does not define yet
+  const allBlocks = new Map(doc.blocks);
+  const hasBlockCI = (n) => [...allBlocks.keys()].some((k) => k.toUpperCase() === String(n).toUpperCase());
+  for (const st of doc.dimStyles?.values() ?? []) {
+    if (st.DIMBLK && !hasBlockCI(st.DIMBLK)) allBlocks.set(st.DIMBLK, { name: st.DIMBLK, base: { x: 0, y: 0 }, entities: arrowEntities(st.DIMBLK, { x: 0, y: 0 }, { x: 1, y: 0 }, 1) });
+  }
+  const blockNames = [...allBlocks.keys()];
   const blockRec = new Map(blockNames.map((n) => [n, H()]));
   const allLists = [doc.entities, ...[...doc.blocks.values()].map((b) => b.entities)];
   const ltDefs = new Map(); // upper name -> def
@@ -215,6 +223,11 @@ export function writeDxf(doc, opts = {}) {
           for (const [c, v] of e.raw) o.p(c, v);
           return true;
         }
+        if (e.def && !asGeometry) {
+          head(o, e, 'DIMENSION', owner);
+          for (const [c, v] of dimensionTags(e)) if (typeof v === 'string') o.s(c, v); else o.p(c, v);
+          return true;
+        }
         head(o, { ...e }, 'INSERT', owner); o.p(100, 'AcDbBlockReference'); o.s(2, e.block); o.pt(10, 0, 0);
         if (!reportedDim) { reportedDim = true; report.notes.push(asGeometry ? 'Dimensions are saved as plain geometry in DWG files (they stay visible but are no longer editable as dimensions).' : 'A dimension without full source data was saved as plain geometry.'); }
         return true;
@@ -258,7 +271,7 @@ export function writeDxf(doc, opts = {}) {
   // ---- BLOCKS + ENTITIES (written first so handles exist; assembled later) -------------------
   const blocksOut = new Out();
   const entOut = new Out();
-  for (const [name, blk] of doc.blocks) {
+  for (const [name, blk] of allBlocks) {
     const rec = blockRec.get(name);
     blocksOut.p(0, 'BLOCK'); blocksOut.p(5, H()); blocksOut.p(330, rec); blocksOut.p(100, 'AcDbEntity'); blocksOut.p(8, '0');
     blocksOut.p(100, 'AcDbBlockBegin'); blocksOut.s(2, name); blocksOut.p(70, name.startsWith('*') ? 1 : 0);
@@ -302,7 +315,7 @@ export function writeDxf(doc, opts = {}) {
   // ---- tables ------------------------------------------------------------------------------------
   out.p(0, 'SECTION'); out.p(2, 'TABLES');
   const table = (name, count, extra) => { out.p(0, 'TABLE'); out.p(2, name); out.p(5, tbl[name]); out.p(330, 0); out.p(100, 'AcDbSymbolTable'); out.p(70, count); if (extra) out.p(100, extra); };
-  const rec = (type, name, sub, ownerTable, handleCode = 5) => { out.p(0, type); out.p(handleCode, H()); out.p(330, tbl[ownerTable]); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, sub); out.s(2, name); };
+  const rec = (type, name, sub, ownerTable, handleCode = 5) => { const h = H(); out.p(0, type); out.p(handleCode, h); out.p(330, tbl[ownerTable]); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, sub); out.s(2, name); return h; };
 
   table('VPORT', 1);
   rec('VPORT', '*Active', 'AcDbViewportTableRecord', 'VPORT');
@@ -347,8 +360,9 @@ export function writeDxf(doc, opts = {}) {
 
   const styles = [...styleDefs.values()];
   table('STYLE', styles.length);
+  const styleHandle = new Map();
   for (const st of styles) {
-    rec('STYLE', st.name === 'STANDARD' ? 'Standard' : st.name, 'AcDbTextStyleTableRecord', 'STYLE');
+    styleHandle.set(String(st.name).toUpperCase(), rec('STYLE', st.name === 'STANDARD' ? 'Standard' : st.name, 'AcDbTextStyleTableRecord', 'STYLE'));
     out.p(70, 0); out.p(40, st.height || 0); out.p(41, st.widthFactor || 1); out.p(50, st.oblique || 0); out.p(71, 0); out.p(42, 2.5);
     const file = st.fontFile && !/\.shx$/i.test(st.fontFile) ? st.fontFile : `${st.font || 'Arial'}.ttf`;
     out.s(3, file); out.p(4, '');
@@ -359,10 +373,20 @@ export function writeDxf(doc, opts = {}) {
   table('UCS', 0); out.p(0, 'ENDTAB');
   table('APPID', 1); rec('APPID', 'ACAD', 'AcDbRegAppTableRecord', 'APPID'); out.p(70, 0); out.p(0, 'ENDTAB');
 
-  const dimNames = ['Standard', ...(doc.header.dimStyles ?? []).filter((n) => n.toLowerCase() !== 'standard')];
+  const dimNames = ['Standard'];
+  for (const n of [...(doc.header.dimStyles ?? []), ...(doc.dimStyles?.keys() ?? [])]) if (!dimNames.some((d) => d.toLowerCase() === n.toLowerCase())) dimNames.push(n);
+  const dimModel = (n) => [...(doc.dimStyles?.values() ?? [])].find((st) => st.name.toLowerCase() === n.toLowerCase());
+  const dimHandle = (k, v) => {
+    const u = String(v).toUpperCase();
+    if (k === 'DIMTXSTY') return styleHandle.get(u);
+    const bn = blockNames.find((b) => b.toUpperCase() === u);
+    return bn ? blockRec.get(bn) : undefined;
+  };
   table('DIMSTYLE', dimNames.length, 'AcDbDimStyleTable');
   for (const dn of dimNames) {
-    rec('DIMSTYLE', dn, 'AcDbDimStyleTableRecord', 'DIMSTYLE', 105);
+    rec('DIMSTYLE', dimModel(dn)?.name ?? dn, 'AcDbDimStyleTableRecord', 'DIMSTYLE', 105);
+    const model = dimModel(dn);
+    if (model) { for (const [c, v] of dimStyleTags(model, dimHandle)) if (typeof v === 'string') out.s(c, v); else out.p(c, v); continue; }
     out.p(70, 0); out.p(3, ''); out.p(4, ''); out.p(40, 1); out.p(41, 2.5); out.p(42, 0.625); out.p(43, 3.75); out.p(44, 1.25);
     out.p(140, 2.5); out.p(141, 2.5); out.p(143, 0.03937007874); out.p(144, 1); out.p(146, 1); out.p(147, 0.625);
     out.p(71, 0); out.p(72, 0); out.p(73, 0); out.p(74, 0); out.p(75, 0); out.p(76, 0); out.p(77, 1); out.p(78, 8); out.p(79, 3);

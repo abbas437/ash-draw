@@ -13,6 +13,8 @@ import {
   makeSpline, makeSolid, makeInsert, makeHatch, makeDimension, makeLeader,
 } from './model.js';
 import { transformEntity } from './geom.js';
+import { dimStyleFromTags } from './dimsStyle.js';
+import { dimDefFromTags } from './dims.js';
 
 const DEG = Math.PI / 180;
 
@@ -292,6 +294,8 @@ function buildDimension(rec, o) {
   }
   const e = makeDimension(rec.str(2), { ...o, dimType: rec.int(70), p: rec.has(11) ? pt(rec, 11) : null, text: rec.str(1) });
   e.raw = hasSub ? raw : null;
+  e.style = rec.str(3, 'Standard');
+  if (hasSub) e.def = dimDefFromTags(raw);
   return e;
 }
 
@@ -510,7 +514,10 @@ export function parseDxf(text) {
 
   // TABLES
   if (secs.TABLES) {
+    const dimRecs = [], styleH = new Map(), blockRecH = new Map();
     for (const rec of records(tk, secs.TABLES.from, secs.TABLES.to)) {
+      if (rec.type === 'BLOCK_RECORD') blockRecH.set(rec.str(5), rec.str(2));
+      if (rec.type === 'STYLE') styleH.set(rec.str(5), rec.str(2));
       if (rec.type === 'LAYER') {
         const name = rec.str(2);
         if (!name) continue;
@@ -532,7 +539,7 @@ export function parseDxf(text) {
         addLinetype(doc, { name, description: rec.str(3), pattern: rec.allNum(49) });
       } else if (rec.type === 'DIMSTYLE') {
         const name = rec.str(2);
-        if (name) (doc.header.dimStyles ??= []).push(name);
+        if (name) { (doc.header.dimStyles ??= []).push(name); dimRecs.push(rec); }
       } else if (rec.type === 'STYLE') {
         const name = rec.str(2);
         if (!name) continue;
@@ -540,6 +547,10 @@ export function parseDxf(text) {
         const st = addTextStyle(doc, { name, font, height: rec.num(40), widthFactor: rec.num(41, 1) || 1, oblique: rec.num(50) });
         st.fontFile = rec.str(3);
       }
+    }
+    if (dimRecs.length) {
+      const resolve = (k, h) => (k === 'DIMBLK' ? blockRecH : styleH).get(h);
+      doc.dimStyles = new Map(dimRecs.map((r) => { const st = dimStyleFromTags(r.tags(), resolve); return [st.name, st]; }));
     }
   }
 
