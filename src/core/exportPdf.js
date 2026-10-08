@@ -9,7 +9,7 @@ import {
 } from 'pdf-lib';
 import { buildScene } from './render.js';
 import {
-  walkOps, colorRgb, lineweightMm, dashUnits, hatchFamilies, layoutText, markerSize, arrowTriangle,
+  walkOps, colorRgb, lineweightMm, dashUnits, hatchFamilies, layoutText, markerSize, arrowTriangle, runRgb, mtextItemLayout,
 } from './exportSvg.js';
 
 const PT_PER_MM = 72 / 25.4;
@@ -125,6 +125,27 @@ export async function exportPdf(doc, opts = {}) {
     };
   };
 
+  // MTEXT runs: Helvetica in its bold / oblique variants (embedded on first use), the Unicode font for other scripts
+  const HELV = { '00': helv };
+  const HELV_NAME = { '10': StandardFonts.HelveticaBold, '01': StandardFonts.HelveticaOblique, '11': StandardFonts.HelveticaBoldOblique };
+  const variant = (p) => `${p.bold ? 1 : 0}${p.italic ? 1 : 0}`;
+  const prepareMText = async (mt) => {
+    for (const para of mt.paras) {
+      for (const r of para.runs) {
+        if (!r.props) continue;
+        const key = variant(r.props);
+        if (!HELV[key]) HELV[key] = await pdf.embedFont(HELV_NAME[key]);
+        const t = r.stack ? r.stack.a + r.stack.b : r.text;
+        if (unicodeFont && [...t].some((ch) => !helvChars.has(ch.codePointAt(0)))) await fontFor([t]);
+      }
+    }
+  };
+  const runFont = (t, p, count = false) => {
+    if ([...t].every((ch) => helvChars.has(ch.codePointAt(0)))) return { font: HELV[variant(p)], text: t };
+    if (uniFont) return { font: uniFont, text: t };
+    return { font: HELV[variant(p)], text: [...t].map((ch) => (helvChars.has(ch.codePointAt(0)) ? ch : (count && missing++, '?'))).join('') };
+  };
+
   for (const it of scene.items) {
     if (it.kind === 'path') {
       ops.push(pushGraphicsState()); strokeState(it.style, dashPt(dashUnits(doc, it.style)));
@@ -156,6 +177,25 @@ export async function exportPdf(doc, opts = {}) {
       const s = msize / 3;
       ops.push(pushGraphicsState()); strokeState(it.style, null);
       ops.push(moveTo(X(it.p.x - s), Y(it.p.y)), lineTo(X(it.p.x + s), Y(it.p.y)), moveTo(X(it.p.x), Y(it.p.y - s)), lineTo(X(it.p.x), Y(it.p.y + s)), stroke(), popGraphicsState());
+    } else if (it.kind === 'text' && it.mt) {
+      await prepareMText(it.mt);
+      const lay = mtextItemLayout(it, (t, p) => { const f = runFont(t, p); return f.font.widthOfTextAtSize(f.text, p.h); });
+      const c = Math.cos(it.rot), s = Math.sin(it.rot);
+      const rc = (col) => runRgb(col, it.style, { monochrome }).map((v) => v / 255);
+      page.pushOperators(...ops.splice(0), pushGraphicsState(), concatTransformationMatrix(c, s, -s, c, X(it.p.x), Y(it.p.y)));
+      // layout is in drawing units, y down; the text frame is in page points, y up
+      for (const g of lay.glyphs) {
+        const f = runFont(g.text, g, true);
+        if (!f.text) continue;
+        page.pushOperators(pushGraphicsState(), concatTransformationMatrix(g.wf || 1, 0, Math.tan((g.oblique || 0) * Math.PI / 180), 1, g.x * k, -g.y * k));
+        page.drawText(f.text, { x: 0, y: 0, size: g.h * k, font: f.font, color: rgb(...rc(g.color)) });
+        page.pushOperators(popGraphicsState());
+      }
+      for (const r of lay.rules) {
+        const [cr, cg, cb] = rc(r.color);
+        page.pushOperators(setStrokingRgbColor(cr, cg, cb), setLineWidth(r.h * k * 0.06), moveTo(r.x1 * k, -r.y * k), lineTo(r.x2 * k, -r.y * k), stroke());
+      }
+      page.pushOperators(popGraphicsState());
     } else if (it.kind === 'text') {
       const { font, lines } = await fontFor(it.lines.map((l) => l.replace(/\t/g, ' ')));
       const lay = layoutText({ ...it, lines }, (t) => font.widthOfTextAtSize(t, it.h));

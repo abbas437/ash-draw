@@ -20,6 +20,7 @@ import { gripsOf, applyGrip, gripEdit, matchProps } from './grips.js';
 import { createModifyTools } from './tools-modify.js';
 import { createDimTools } from './tools-dims.js';
 import { createBlockTools } from './tools-blocks.js';
+import { createMTextTools } from './mtext-editor.js';
 import { tessellate, transformEntity, translation, rotation, scaling, mirrorLine, dist, DEG } from '../src/core/geom.js';
 
 const num = (s) => { const v = Number(String(s).trim().replace(',', '.')); return Number.isFinite(v) && String(s).trim() !== '' ? v : null; };
@@ -587,6 +588,7 @@ export function createTools(h) {
     ...createModifyTools(h, { Tool, ModifyTool }),
     ...createDimTools(h, { Tool }),
     ...createBlockTools(h, { Tool, ModifyTool }),
+    ...createMTextTools(h, { Tool }),
     matchprop: new MatchPropTool(h),
   };
 }
@@ -595,7 +597,7 @@ export const TOOL_ALIASES = {
   mea: 'measure', measuregeom: 'measure', area: 'area', aa: 'area',
   l: 'line', line: 'line', pl: 'pline', pline: 'pline', polyline: 'pline', rec: 'rect', rect: 'rect', rectangle: 'rect',
   c: 'circle', circle: 'circle', a: 'arc', arc: 'arc', el: 'ellipse', ellipse: 'ellipse', po: 'point', point: 'point',
-  t: 'text', text: 'text', mt: 'text', h: 'hatch', hatch: 'hatch', di: 'measure', dist: 'measure', measure: 'measure',
+  t: 'text', text: 'text', mt: 'mtext', mtext: 'mtext', h: 'hatch', hatch: 'hatch', di: 'measure', dist: 'measure', measure: 'measure',
   m: 'move', move: 'move', co: 'copy', cp: 'copy', copy: 'copy', ro: 'rotate', rotate: 'rotate', sc: 'scale', scale: 'scale',
   mi: 'mirror', mirror: 'mirror', o: 'offset', offset: 'offset', tr: 'trim', trim: 'trim', ex: 'extend', extend: 'extend',
   e: 'erase', erase: 'erase', x: 'explode', explode: 'explode', select: 'select', s: 'select',

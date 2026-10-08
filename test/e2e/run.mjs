@@ -681,6 +681,68 @@ try {
     near(iv[2].a[0].rot, 90, 'attribute rotation after reopen');
   }
 
+
+  step = 'MTEXT editor: MT two corners, Bold, Enter, Ctrl+Enter';
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => { const vp = window.app.vp; vp.view = { ...vp.view, cx: 600, cy: 600, zoom: 4 }; vp.selection.clear(); vp.render(); });
+  const mtexts = () => page.evaluate(() => window.app.doc.entities.filter((e) => e.type === 'MTEXT').map((e) => ({ id: e.id, text: e.text, p: e.p })));
+  const mtBefore = (await mtexts()).length;
+  const ed = '.mt-editor .mt-edit';
+  const selectText = (needle) => page.evaluate(([sel, t]) => {
+    const root = document.querySelector(sel), w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      const i = n.data.indexOf(t);
+      if (i >= 0) { const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + t.length); getSelection().removeAllRanges(); getSelection().addRange(r); return true; }
+    }
+    return false;
+  }, [ed, needle]);
+  await typeCmd('mt'); await clickWorld(580, 620); await clickWorld(640, 590);
+  await page.locator(ed).waitFor();
+  await page.keyboard.type('Hello');
+  assert.ok(await selectText('Hello'));
+  await page.locator('.mt-toolbar [data-cmd="bold"]').click();
+  await page.keyboard.press('End'); await page.keyboard.press('Enter'); await page.keyboard.type('line2');
+  await page.keyboard.press('Control+Enter');
+  assert.equal(await page.locator('.mt-editor').count(), 0, 'editor closed on Ctrl+Enter');
+  const mt1 = (await mtexts()).at(-1);
+  assert.equal((await mtexts()).length, mtBefore + 1);
+  assert.match(mt1.text, /^\{\\f[^;|]*\|b1\|i0;Hello\}\\P/, `bold group then \\P: ${mt1.text}`);
+  assert.match(mt1.text, /line2/);
+
+  step = 'MTEXT editor: double-click, Italic on line2, Undo';
+  await clickWorld(-1000, -1000); await page.keyboard.press('Escape');
+  const hit = await page.evaluate((id) => window.app.vp.scene.items.find((it) => it.mt && window.app.doc.entities.find((e) => e.id === id && e.p.x === it.p.x && e.p.y === it.p.y))?.bbox, mt1.id);
+  const dbl = async (x, y) => { const s = await page.evaluate(([a, b]) => window.app.vp.toScreen({ x: a, y: b }), [x, y]); const box = await page.locator('#cv').boundingBox(); await page.mouse.dblclick(box.x + s.x, box.y + s.y); };
+  await dbl(mt1.p.x + 2, (hit.maxy + hit.miny) / 2 + (hit.maxy - hit.miny) / 4);
+  await page.locator(ed).waitFor();
+  assert.equal(await page.evaluate((sel) => { const r = document.createRange(); const root = document.querySelector(sel); const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); const n = w.nextNode(); return n.data === 'Hello' && getComputedStyle(n.parentNode).fontWeight; }, ed), '700', 'editor shows Hello in bold');
+  assert.ok(await selectText('line2'));
+  await page.locator('.mt-toolbar [data-cmd="italic"]').click();
+  await page.keyboard.press('Control+Enter');
+  const mt2 = (await mtexts()).find((e) => e.id === mt1.id);
+  assert.match(mt2.text, /\|i1;line2\}/, `italic code: ${mt2.text}`);
+  assert.match(mt2.text, /\|b1\|i0;Hello\}/);
+  await page.mouse.click(5, 300); await page.keyboard.press('Control+z');
+  assert.equal((await mtexts()).find((e) => e.id === mt1.id).text, mt1.text, 'undo restores the previous content');
+
+  step = 'MTEXT editor: unknown codes survive an edit elsewhere';
+  const rawId = await page.evaluate(async () => {
+    const { addEntities } = await import('/src/core/edit.js');
+    const { makeMText } = await import('/src/core/model.js');
+    return addEntities(window.app.session, [makeMText({ x: 600, y: 560 }, 4, 'A\\Xzz;B tail', { width: 60 })])[0];
+  });
+  const rawEnt = (await mtexts()).at(-1);
+  assert.ok(rawId != null && rawEnt.text === 'A\\Xzz;B tail');
+  await page.evaluate(async (id) => { const { openMTextEditor } = await import('/renderer/mtext-editor.js'); openMTextEditor(window.app, window.app.doc.entities.find((e) => e.id === id)); }, rawEnt.id);
+  await page.locator(ed).waitFor();
+  assert.ok(await selectText('tail'));
+  await page.locator('.mt-toolbar [data-cmd="bold"]').click();
+  await page.mouse.click(5, 300);   // click outside commits
+  const rawAfter = (await mtexts()).find((e) => e.id === rawEnt.id).text;
+  assert.match(rawAfter, /\|b1\|i0;tail\}/, `bold applied: ${rawAfter}`);
+  assert.ok(rawAfter.includes('\\Xzz;'), `unknown code kept: ${rawAfter}`);
+  await page.keyboard.press('Escape');
+
   step = 'csp';
   assert.deepEqual(await page.evaluate(() => window.__csp), []);
   assert.deepEqual(problems, []);

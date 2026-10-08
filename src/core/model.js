@@ -117,7 +117,7 @@ export const makeText = (p, height, text, o = {}) => ({
 });
 export const makeMText = (p, height, text, o = {}) => ({
   ...base('MTEXT', o), p: pt(p), height, text, width: o.width ?? 0, rot: o.rot ?? 0,
-  attach: o.attach ?? 1, style: o.style ?? 'STANDARD',
+  attach: o.attach ?? 1, style: o.style ?? 'STANDARD', lineSpacing: o.lineSpacing ?? 1,
 });
 export const makeSpline = (o = {}) => ({
   ...base('SPLINE', o), degree: o.degree ?? 3, ctrl: (o.ctrl ?? []).map(pt), knots: o.knots ?? [],

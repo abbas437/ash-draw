@@ -5,6 +5,8 @@
 // Also holds the scene helpers shared with exportPdf.js (path walking, colours, lineweights, dashes,
 // hatch pattern lines, text layout).
 import { buildScene } from './render.js';
+import { aciToRgb } from './aci.js';
+import { layoutMText, approxMeasure } from './mtext.js';
 
 const TAU = Math.PI * 2;
 const OP_M = 0, OP_L = 1, OP_A = 2, OP_E = 3, OP_Z = 4;
@@ -54,6 +56,17 @@ export function colorRgb(style, { monochrome = false, darkBackground = false } =
   if (!c || c.auto || !c.rgb) return darkBackground ? [255, 255, 255] : [0, 0, 0];
   return c.rgb;
 }
+
+/** colour of an MTEXT run (null = the item's colour) as [r,g,b]; ACI 7 contrasts with the background */
+export function runRgb(c, style, colOpts = {}) {
+  if (colOpts.monochrome || !c) return colorRgb(style, colOpts);
+  if (c.rgb) return c.rgb;
+  if (c.aci === 7) return colOpts.darkBackground ? [255, 255, 255] : [0, 0, 0];
+  return aciToRgb(c.aci);
+}
+
+/** MTEXT layout of a scene item (local frame: origin at item.p, y down, drawing units) */
+export const mtextItemLayout = (it, measure = approxMeasure) => layoutMText(it.mt, { width: it.boxW, attach: it.attach, lineSpacing: it.lineSpacing, measure });
 
 /** plotted lineweight in mm; negative (default/ByLayer/ByBlock left over) = 0.25 mm */
 export function lineweightMm(style, lineweights = true) {
@@ -281,6 +294,19 @@ export function exportSvg(doc, opts = {}) {
         const pd = f.segs.map((s) => `M${num(s[0])} ${num(-s[1])}L${num(s[2])} ${num(-s[3])}`).join('');
         if (pd) out.push(`<path d="${pd}"${dashAttr(f.dashes)}/>`);
       }
+      out.push('</g>');
+    } else if (it.kind === 'text' && it.mt) {
+      // rich MTEXT: one <text> per glyph run, decorations (underline / overline / strike / fraction bar) as <line>
+      const lay = mtextItemLayout(it);
+      const deg = num(-it.rot * 180 / Math.PI);
+      const rc = (c) => `rgb(${runRgb(c, it.style, colOpts).map((v) => Math.round(v)).join(',')})`;
+      out.push(`<g transform="translate(${num(it.p.x)} ${num(-it.p.y)})${deg !== '0' ? ` rotate(${deg})` : ''}" stroke="none">`);
+      for (const g of lay.glyphs) {
+        const tf = `translate(${num(g.x)} ${num(g.y)})${g.oblique ? ` skewX(${num(-g.oblique)})` : ''}${g.wf && g.wf !== 1 ? ` scale(${num(g.wf)} 1)` : ''}`;
+        const attrs = `${g.bold ? ' font-weight="bold"' : ''}${g.italic ? ' font-style="italic"' : ''}${g.track && g.track !== 1 ? ` letter-spacing="${num((g.track - 1) * g.h * 0.6)}"` : ''}`;
+        out.push(`<text transform="${tf}" font-family="${xmlEscape(fontFamily(g.font || it.font))}" font-size="${num(g.h)}"${attrs} fill="${rc(g.color)}" xml:space="preserve">${xmlEscape(g.text)}</text>`);
+      }
+      for (const r of lay.rules) out.push(`<line x1="${num(r.x1)}" y1="${num(r.y)}" x2="${num(r.x2)}" y2="${num(r.y)}" stroke="${rc(r.color)}" stroke-width="${num(r.h * 0.06)}"/>`);
       out.push('</g>');
     } else if (it.kind === 'text') {
       const lay = layoutText(it, (s) => s.length * it.h * 0.6);
