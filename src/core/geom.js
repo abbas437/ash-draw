@@ -2,6 +2,7 @@
 // Pure ES module. Matrices are canvas-style [a,b,c,d,e,f]:  x' = a*x + c*y + e ; y' = b*x + d*y + f.
 
 import { mleaderParts, transformMLeader } from './mleader.js';
+import { nurbsOf, curveOfNurbs, curveCurveHits, nearestParam, slice as nurbsSlice, splineEntity, offsetNurbs, isClosed, derivsAt, domain, lineNurbs, joinCurves, subCurve } from './nurbs.js';
 
 const TAU = Math.PI * 2;
 const EPS = 1e-9;
@@ -585,6 +586,11 @@ function primIntersections(p, q) {
 /** All intersection points {x,y} between two entities (real intersections only; no extension). */
 export function intersections(e1, e2, doc = null) {
   const out = [];
+  // a control-point spline against another spline or an ellipse: polyline crossings refined by Newton on both curves
+  if ((e1.type === 'SPLINE' || e2.type === 'SPLINE') && SMOOTH.has(e1.type) && SMOOTH.has(e2.type)) {
+    const a = smoothCurve(e1), b = a && smoothCurve(e2);
+    if (a && b) return curveCurveHits(a, b).map((h) => ({ x: h.x, y: h.y }));
+  }
   // ellipses and control-point splines against exact primitives: crossings refined on the exact curve
   const c1 = EXACT_PRIMS.has(e2.type) && exactCurve(e1), c2 = !c1 && EXACT_PRIMS.has(e1.type) && exactCurve(e2);
   if (c1 || c2) {
@@ -819,6 +825,35 @@ function curveHits(cv, pr, full = false) {
   return out;
 }
 const EXACT_PRIMS = new Set(['LINE', 'ARC', 'CIRCLE', 'LWPOLYLINE']);
+const SMOOTH = new Set(['SPLINE', 'ELLIPSE']);
+/** Curve adaptor with a derivative {at, d1, t0, t1, n} for a control-point SPLINE or an ELLIPSE (else null). */
+function smoothCurve(e, fitToo = false) {
+  if (e.type === 'SPLINE') { const nu = (fitToo || (e.ctrl && e.ctrl.length >= 2)) && nurbsOf(e); return nu ? curveOfNurbs(nu) : null; }
+  const cv = exactCurve(e);
+  if (cv && e.type === 'ELLIPSE') { const { u, v } = ellipseAxes(e); cv.d1 = (t) => ({ x: -u.x * Math.sin(t) + v.x * Math.cos(t), y: -u.y * Math.sin(t) + v.y * Math.cos(t) }); }
+  return cv;
+}
+/** Crossings of spline `nu` with entity `cu`: [{x, y, t}] with t the spline parameter. */
+function splineHits(nu, cu, doc) {
+  const A = curveOfNurbs(nu), out = [];
+  const add = (h) => { if (!out.some((o) => Math.abs(o.t - h.t) <= 1e-12 * (1 + Math.abs(h.t)) || Math.hypot(o.x - h.x, o.y - h.y) < 1e-9)) out.push({ x: h.x, y: h.y, t: h.t }); };
+  const B = SMOOTH.has(cu.type) ? smoothCurve(cu, true) : null;
+  if (B) curveCurveHits(A, B).forEach(add);
+  else for (const pr of toPrims(cu, doc)) curveHits(A, pr).forEach(add);
+  return out;
+}
+/** Exact SPLINE piece of `e` from parameter a to b (closed splines: b may run past the end, through the seam). */
+export function splinePiece(e, a, b) {
+  const nu = nurbsOf(e);
+  return splineEntity(e, nurbsSlice(nu, a, b));
+}
+/** Parameter of the point of SPLINE `e` nearest p, its domain and whether it is closed. */
+export function splineParam(e, p) {
+  const nu = nurbsOf(e);
+  if (!nu) return null;
+  const [t0, t1] = domain(nu);
+  return { t: nearestParam(nu, p), t0, t1, closed: isClosed(nu) };
+}
 
 // ---- offset / trim / extend -----------------------------------------------------------------
 const PROPS = ['layer', 'color', 'linetype', 'lineweight', 'ltscale'];
@@ -848,7 +883,28 @@ export function offsetEntity(e, d, sidePt) {
   }
   if (e.type === 'LWPOLYLINE') { c.vertices = offsetPolyline(e, d, sidePt); return c; }
   if (e.type === 'ELLIPSE') return offsetEllipse(e, d, sidePt);
+  if (e.type === 'SPLINE') return offsetSpline(e, d, sidePt);
   throw unsupported(`offset of ${e.type}`);
+}
+// SPLINE -> cubic SPLINE interpolating exact normal-offset points, refined until the deviation from the true offset is
+// <= 1e-6 x (curve size + d). Closed splines: inside / outside decides (as polylines); open: the side of the nearest point.
+function offsetSpline(e, d, sidePt) {
+  const nu = nurbsOf(e);
+  if (!nu) throw unsupported('spline without control or fit points');
+  const closed = isClosed(nu), pl = tessellate(e)[0] || [];
+  let s;
+  if (closed) {
+    let area = 0;
+    for (let i = 0; i + 1 < pl.length; i++) area += pl[i].x * pl[i + 1].y - pl[i + 1].x * pl[i].y;
+    s = pointInPoly(sidePt, pl) === area > 0 ? d : -d;
+  } else {
+    const { p, d1 } = derivsAt(nu, nearestParam(nu, sidePt));
+    s = d1.x * (sidePt.y - p.y) - d1.y * (sidePt.x - p.x) >= 0 ? d : -d;
+  }
+  const b = boxOfPoints(pl), size = b ? Math.hypot(b.maxx - b.minx, b.maxy - b.miny) : 0;
+  const o = splineEntity(e, offsetNurbs(nu, s, 1e-6 * (size + d)), closed);
+  o.id = 0;
+  return o;
 }
 function unsupported(msg) { const err = new Error(`Not supported yet: ${msg}`); err.code = 'UNSUPPORTED'; return err; }
 
@@ -956,9 +1012,10 @@ function offsetEllipse(e, d, sidePt) {
 /** Trim a LINE / ARC / CIRCLE / LWPOLYLINE / ELLIPSE at the cutting edges, removing the part under `pick`.
  *  Returns {replace: [entities...]} (0, 1 or 2 pieces; ids 0 except the first keeps e.id) or null if nothing to trim. */
 export function trimEntity(e, cutters, pick, doc = null) {
-  if (e.type === 'SPLINE') { const err = new Error('Trimming splines is not supported yet; explode/convert first'); err.code = 'UNSUPPORTED'; throw err; }
+  const nu = e.type === 'SPLINE' ? nurbsOf(e) : null;
+  if (e.type === 'SPLINE' && !nu) throw unsupported('trim of a spline without control or fit points');
   const pts = [];
-  for (const cu of cutters) for (const p of intersections(e, cu, doc)) pts.push(p);
+  for (const cu of cutters) for (const p of nu ? splineHits(nu, cu, doc) : intersections(e, cu, doc)) pts.push(p);
   if (!pts.length) return null;
   const base = structuredClone(e); delete base.parent;
   if (e.type === 'LINE') {
@@ -1003,6 +1060,10 @@ export function trimEntity(e, cutters, pick, doc = null) {
     const full = ellipseFull(e), a0 = full ? normAngle(e.a0 ?? 0) : normAngle(e.a0), sw = full ? TAU : ccwSweep(a0, normAngle(e.a1));
     const rel = (p) => normAngle(ellipseParam(e, p) - a0);
     return byParam(rel, sw, full, (r0, r1) => ({ ...base, a0: normAngle(a0 + r0), a1: normAngle(a0 + r1) }));
+  }
+  if (nu) { // split exactly by knot insertion; a closed spline keeps the piece across its seam as one open spline
+    const [t0, t1] = domain(nu);
+    return byParam((p) => (p.t ?? nearestParam(nu, p)) - t0, t1 - t0, isClosed(nu), (r0, r1) => splineEntity(base, nurbsSlice(nu, t0 + r0, t0 + r1)));
   }
   if (e.type === 'LWPOLYLINE') {
     const segs = plSegs(e);
@@ -1086,6 +1147,20 @@ export function extendEntity(e, boundaries, pick) {
     const t = normAngle(ellipseParam(e, best.h));
     if (atStart) c.a0 = t; else c.a1 = t;
     return c;
+  }
+  if (e.type === 'SPLINE') { // straight extension along the end tangent; the original curve is kept exactly
+    const nu0 = nurbsOf(e);
+    if (!nu0 || isClosed(nu0)) return null;
+    const [t0, t1] = domain(nu0), nu = subCurve(nu0, t0, t1); // clamped at both ends
+    const s = derivsAt(nu, t0), f = derivsAt(nu, t1, true);
+    const atStart = dist(pick, s.p) < dist(pick, f.p);
+    const h = atStart ? rayHit({ x: s.p.x + s.d1.x, y: s.p.y + s.d1.y }, s.p) : rayHit({ x: f.p.x - f.d1.x, y: f.p.y - f.d1.y }, f.p);
+    if (!h) return null;
+    const L = Math.hypot(h.x - (atStart ? s.p.x : f.p.x), h.y - (atStart ? s.p.y : f.p.y));
+    const nn = atStart
+      ? joinCurves(lineNurbs(h, s.p, nu.p, t0 - L / Math.hypot(s.d1.x, s.d1.y), L / Math.hypot(s.d1.x, s.d1.y)), nu)
+      : joinCurves(nu, lineNurbs(f.p, h, nu.p, t1, L / Math.hypot(f.d1.x, f.d1.y)));
+    return splineEntity(c, nn);
   }
   throw unsupported(`extend of ${e.type}`);
 }
