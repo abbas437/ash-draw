@@ -14,7 +14,7 @@ const num = (n) => {
 };
 import { dimStyleTags } from './dimsStyle.js';
 import { dimensionTags, arrowEntities } from './dims.js';
-import { mleaderTags, mleaderStyleTags } from './mleader.js';
+import { mleaderTags, mleaderStyleTags, mleaderParts } from './mleader.js';
 import { viewportTags } from './layouts.js';
 const encode = (s) => String(s ?? '').replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7e]/g, (c) => {
   const code = c.charCodeAt(0);
@@ -48,9 +48,10 @@ class Out {
 }
 
 /** opts.dimensionsAsGeometry: write DIMENSION entities as plain INSERTs of their blocks (used for DWG, where the
- *  converter cannot handle every dimension type). */
+ *  converter cannot handle every dimension type), and MLEADERs as their lines, arrows and text (R2000 has no
+ *  multileaders, and LibreDWG drops the whole drawing when the DXF holds MLEADERSTYLE / MULTILEADER objects). */
 export function writeDxf(doc, opts = {}) {
-  let reportedDim = false;
+  let reportedDim = false, reportedMleader = false;
   const report = { version: 'AC1015', entities: 0, blocks: 0, skipped: {}, notes: [] };
   let nextHandle = 0x30;
   const H = () => (nextHandle++).toString(16).toUpperCase();
@@ -259,6 +260,13 @@ export function writeDxf(doc, opts = {}) {
       }
       case 'MLEADER': {
         if (!e.leaders?.length && !e.text) return false;
+        if (asGeometry) {
+          // R2000 DWG has no multileaders: LibreDWG drops every entity of a DXF that holds MLEADERSTYLE / MULTILEADER objects
+          const own = { layer: e.layer, color: e.color, linetype: e.linetype, lineweight: e.lineweight };
+          for (const sub of mleaderParts(e)) writeEntity(o, { ...sub, ...own }, owner);
+          if (!reportedMleader) { reportedMleader = true; report.notes.push('Multileaders are saved as plain geometry in DWG files (they stay visible but are no longer editable as multileaders).'); }
+          return true;
+        }
         head(o, e, 'MULTILEADER', owner);
         for (const [c, v] of mleaderTags(e, { style: hMleaderStyle, textStyle: '__STDSTYLE__' }, encode)) o.p(c, v);
         return true;
@@ -362,8 +370,10 @@ export function writeDxf(doc, opts = {}) {
   cls('ACDBDICTIONARYWDFLT', 'AcDbDictionaryWithDefault', 'ObjectDBX Classes', 0);
   cls('ACDBPLACEHOLDER', 'AcDbPlaceHolder', 'ObjectDBX Classes', 0);
   cls('LAYOUT', 'AcDbLayout', 'ObjectDBX Classes', 0);
-  cls('MLEADERSTYLE', 'AcDbMLeaderStyle', 'ACDB_MLEADERSTYLE_CLASS', 4095);
-  cls('MULTILEADER', 'AcDbMLeader', 'ACDB_MLEADER_CLASS', 1025);
+  if (!asGeometry) {
+    cls('MLEADERSTYLE', 'AcDbMLeaderStyle', 'ACDB_MLEADERSTYLE_CLASS', 4095);
+    cls('MULTILEADER', 'AcDbMLeader', 'ACDB_MLEADER_CLASS', 1025);
+  }
   out.p(0, 'ENDSEC');
 
   // ---- tables ------------------------------------------------------------------------------------
@@ -479,13 +489,13 @@ export function writeDxf(doc, opts = {}) {
   out.p(0, 'SECTION'); out.p(2, 'OBJECTS');
   out.p(0, 'DICTIONARY'); out.p(5, hRootDict); out.p(330, 0); out.p(100, 'AcDbDictionary'); out.p(281, 1);
   out.p(3, 'ACAD_GROUP'); out.p(350, hGroupDict); out.p(3, 'ACAD_LAYOUT'); out.p(350, hLayoutDict);
-  out.p(3, 'ACAD_MLEADERSTYLE'); out.p(350, hMleaderDict);
+  if (!asGeometry) { out.p(3, 'ACAD_MLEADERSTYLE'); out.p(350, hMleaderDict); }
   out.p(3, 'ACAD_MLINESTYLE'); out.p(350, hMlineDict); out.p(3, 'ACAD_PLOTSTYLENAME'); out.p(350, hPlotDict);
   const dict = (h, entries) => { out.p(0, 'DICTIONARY'); out.p(5, h); out.p(330, hRootDict); out.p(100, 'AcDbDictionary'); out.p(281, 1); for (const [k, v] of entries) { out.p(3, k); out.p(350, v); } };
   dict(hGroupDict, []);
   dict(hLayoutDict, [['Model', hModelLayout], ...paperLayouts.map((pl) => [pl.lo.name, pl.layoutH])]);
   dict(hMlineDict, [['Standard', hMlineStyle]]);
-  dict(hMleaderDict, [['Standard', hMleaderStyle]]);
+  if (!asGeometry) dict(hMleaderDict, [['Standard', hMleaderStyle]]);
   out.p(0, 'ACDBDICTIONARYWDFLT'); out.p(5, hPlotDict); out.p(330, hRootDict); out.p(100, 'AcDbDictionary'); out.p(281, 1);
   out.p(3, 'Normal'); out.p(350, hPlotPlaceholder); out.p(100, 'AcDbDictionaryWithDefault'); out.p(340, hPlotPlaceholder);
   out.p(0, 'ACDBPLACEHOLDER'); out.p(5, hPlotPlaceholder); out.p(330, hPlotDict);
@@ -505,8 +515,10 @@ export function writeDxf(doc, opts = {}) {
   out.p(0, 'MLINESTYLE'); out.p(5, hMlineStyle); out.p(102, '{ACAD_REACTORS'); out.p(330, hMlineDict); out.p(102, '}'); out.p(330, hMlineDict);
   out.p(100, 'AcDbMlineStyle'); out.p(2, 'Standard'); out.p(70, 0); out.p(3, ''); out.p(62, 256); out.p(51, 90); out.p(52, 90); out.p(71, 2);
   out.p(49, 0.5); out.p(62, 256); out.p(6, 'BYLAYER'); out.p(49, -0.5); out.p(62, 256); out.p(6, 'BYLAYER');
-  out.p(0, 'MLEADERSTYLE'); out.p(5, hMleaderStyle); out.p(102, '{ACAD_REACTORS'); out.p(330, hMleaderDict); out.p(102, '}'); out.p(330, hMleaderDict);
-  for (const [c, v] of mleaderStyleTags('__STDSTYLE__')) out.p(c, v);
+  if (!asGeometry) {
+    out.p(0, 'MLEADERSTYLE'); out.p(5, hMleaderStyle); out.p(102, '{ACAD_REACTORS'); out.p(330, hMleaderDict); out.p(102, '}'); out.p(330, hMleaderDict);
+    for (const [c, v] of mleaderStyleTags('__STDSTYLE__')) out.p(c, v);
+  }
   out.p(0, 'ENDSEC');
   out.p(0, 'EOF');
 

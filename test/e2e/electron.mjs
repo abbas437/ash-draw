@@ -16,7 +16,12 @@ const electronBin = process.env.ELECTRON_BIN || require('electron');
 const dwgIn = process.env.ASH_E2E_DWG;
 assert.ok(dwgIn, 'set ASH_E2E_DWG to a sample .dwg');
 const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'ash-draw-e2e-'));
+// the app's renderer imports renderer/vendor (made by `node scripts/vendor.js`); without it app.js never loads
+await fs.access(path.join(ROOT, 'renderer', 'vendor', 'pdf-lib.esm.js')).catch(() => { throw new Error('renderer/vendor is missing: run `node scripts/vendor.js` first'); });
 let step = 'launch';
+const setStep = (s) => { step = s; console.log(`step: ${s}`); };
+// fail fast instead of hanging: an awaited app call that never settles (e.g. a dialog the test does not answer)
+const bounded = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what} did not finish within ${ms} ms (an unanswered dialog?)`)), ms).unref())]);
 const app = await electron.launch({
   executablePath: electronBin,
   args: ['--disable-gpu', ROOT, dwgIn],
@@ -28,9 +33,10 @@ try {
   const win = await app.firstWindow();
   win.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   win.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
-  await win.waitForFunction(() => window.app && window.app.doc, null, { timeout: 20000 });
+  await win.waitForFunction(() => window.app && window.app.doc, null, { timeout: 20000 })
+    .catch((err) => { throw new Error(`the app did not load (${errors.join(' | ') || err.message})`); });
 
-  step = 'opened the DWG given on the command line';
+  setStep('opened the DWG given on the command line');
   await win.waitForFunction(() => window.app.file.format === 'dwg' && window.app.doc.entities.length > 0, null, { timeout: 30000 });
   const info = await win.evaluate(() => ({ n: window.app.doc.entities.length, name: window.app.file.name, electron: window.api.isElectron }));
   assert.ok(info.electron);
@@ -38,30 +44,30 @@ try {
   await win.waitForTimeout(300);
   if (process.env.E2E_SHOTS) await win.screenshot({ path: path.join(process.env.E2E_SHOTS, 'electron_dwg.png') });
 
-  step = 'save as DXF (native dialog stubbed)';
+  setStep('save as DXF (native dialog stubbed)');
   const dxfOut = path.join(tmp, 'out.dxf');
   await app.evaluate(({ dialog }, p) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: p }); }, dxfOut);
-  await win.evaluate(() => window.app.saveAs('dxf'));
+  await bounded(win.evaluate(() => window.app.saveAs('dxf')), 10000, "saveAs('dxf')");
   await win.waitForFunction(() => window.app.file.format === 'dxf', null, { timeout: 10000 });
   assert.match((await fs.readFile(dxfOut, 'utf8')).slice(0, 200), /SECTION/);
 
-  step = 'plain Save now overwrites the DXF without a dialog';
+  setStep('plain Save now overwrites the DXF without a dialog');
   const before = (await fs.stat(dxfOut)).mtimeMs;
   await win.waitForTimeout(50);
-  await win.evaluate(() => window.app.save());
+  await bounded(win.evaluate(() => window.app.save()), 10000, 'save()');
   await win.waitForTimeout(300);
   assert.ok((await fs.stat(dxfOut)).mtimeMs >= before);
 
-  step = 'Save over a file that would lose content asks first';
+  setStep('Save over a file that would lose content asks first');
   await win.evaluate(() => { window.app.doc.skipped = { XLINE: 1 }; });
   const saving = win.evaluate(() => window.app.save());
   await win.waitForSelector('#dlg[open] h2');
   assert.match(await win.locator('#dlg').innerText(), /Overwrite the original file\?[\s\S]*1 XLINE/);
   await win.locator('#dlg button', { hasText: 'Cancel' }).click();
-  assert.equal(await saving, false);
+  assert.equal(await bounded(saving, 10000, 'save()'), false);
   await win.evaluate(() => { window.app.doc.skipped = {}; });
 
-  step = 'save as DWG, verified by read-back';
+  setStep('save as DWG, verified by read-back');
   const dwgOut = path.join(tmp, 'out.dwg');
   await app.evaluate(({ dialog }, p) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: p }); }, dwgOut);
   const done = win.evaluate(() => window.app.saveAs('dwg'));
@@ -69,11 +75,12 @@ try {
   await win.waitForSelector('#dlg[open] h2', { timeout: 60000 });
   const title = await win.locator('#dlg h2').innerText();
   console.log('DWG save dialog:', title, '|', (await win.locator('#dlg .dlg-body').innerText()).slice(0, 160).replace(/\n/g, ' '));
+  assert.equal(title, 'DWG saved', 'the DWG read back differs from the drawing');
   await win.locator('#dlg button.primary').click();
-  await done;
+  await bounded(done, 10000, "saveAs('dwg')");
   assert.equal((await fs.readFile(dwgOut)).subarray(0, 4).toString(), 'AC10');
 
-  step = 'Print (Ctrl+P) prints the plot from a hidden PDF window, not the main window';
+  setStep('Print (Ctrl+P) prints the plot from a hidden PDF window, not the main window');
   await app.evaluate(({ webContents }) => {
     const fs = process.getBuiltinModule('node:fs');
     globalThis.__prints = [];
@@ -103,7 +110,7 @@ try {
   assert.equal(await fs.stat(path.dirname(job.file)).then(() => true, () => false), false, 'temp folder removed');
   assert.equal(printed.windows, 1, 'hidden print window closed');
 
-  step = 'Plot to PDF: window picked by two typed corners, 1:50 on A3';
+  setStep('Plot to PDF: window picked by two typed corners, 1:50 on A3');
   const pdfOut = path.join(tmp, 'plot.pdf');
   await app.evaluate(({ dialog }, p) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: p }); }, pdfOut);
   await win.locator('#menubar .menu > button', { hasText: 'File' }).click();
@@ -127,7 +134,7 @@ try {
   assert.ok(Math.abs(size.width - 1190.55) < 0.1 && Math.abs(size.height - 841.89) < 0.1, `page ${size.width} x ${size.height}`);
   if (await win.locator('#dlg[open]').count()) await win.locator('#dlg button.primary').click(); // warnings, if any
 
-  step = 'no renderer errors';
+  setStep('no renderer errors');
   assert.deepEqual(errors, []);
   console.log('draw electron e2e: OK');
 } catch (err) {
