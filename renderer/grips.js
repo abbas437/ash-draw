@@ -4,11 +4,12 @@
 //   applyGrip(e, i, p)         -> edited COPY of e with grip i dragged to p (null when the edit is impossible)
 //   gripEdit(session, id, i, p)-> one undo step; DIMENSIONs are regenerated into a fresh *D block
 //   editEntity(session, id, fn, label) -> one undo step replacing the entity by fn(copy)
+//   matchPropsEdit(session, src, ids, settings) -> MATCHPROP as one undo step (dimensions get a regenerated block)
 //   matchProps(src, dst, settings) -> copy of dst carrying the property groups of src that `settings` (MATCH_SETTINGS keys) leave on
 //   GRIP_MODES / nextGripMode(m) / gripMatrix(mode, base, arg) / gripModeEdit(s, ids, mode, base, arg, opts) -> grip MOVE/ROTATE/SCALE/MIRROR
 import { getEntity } from '../src/core/model.js';
 import { transformEntities } from '../src/core/edit.js';
-import { regenerateDimension } from '../src/core/dims.js';
+import { regenerateDimension, rebuildDimension } from '../src/core/dims.js';
 import { bulgeToArc, ccwSweep, DEG, compose, translation, rotation, scaling, invert, transformEntity, mirrorLine } from '../src/core/geom.js';
 
 const P = (p) => ({ x: p.x, y: p.y });
@@ -228,4 +229,17 @@ export function matchProps(src, dst, settings = defaultMatchSettings()) {
     }
   }
   return c;
+}
+
+/** MATCHPROP on `ids` as one undo step. A dimension whose style changed gets its block rebuilt (into a fresh *D block) so it looks the part. */
+export function matchPropsEdit(s, src, ids, settings = defaultMatchSettings()) {
+  return s.transact('Match properties', (tx) => {
+    for (const id of ids) {
+      const e = getEntity(s.doc, id);
+      if (!e) continue;
+      let c = matchProps(src, e, settings);
+      if (c.type === 'DIMENSION' && c.def && c.style !== e.style) c = rebuildDimension(s.doc, c);
+      tx.replace(c);
+    }
+  });
 }

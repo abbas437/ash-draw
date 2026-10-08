@@ -16,7 +16,7 @@ import {
   offsetCommand, trimCommand, extendCommand,
 } from '../src/core/edit.js';
 import { MeasureGeomTool } from './tools-measure.js';
-import { gripsOf, applyGrip, gripEdit, matchProps, nextGripMode, gripMatrix, gripModeEdit, MATCH_SETTINGS, defaultMatchSettings } from './grips.js';
+import { gripsOf, applyGrip, gripEdit, matchPropsEdit, nextGripMode, gripMatrix, gripModeEdit, MATCH_SETTINGS, defaultMatchSettings } from './grips.js';
 import { el, modal } from './ui.js';
 import { createModifyTools } from './tools-modify.js';
 import { createDimTools } from './tools-dims.js';
@@ -201,10 +201,7 @@ class MatchPropTool extends Tool {
     const ids = [...this.vp.selection].filter((id) => id !== this.src.id);
     this.vp.setSelection([this.src.id]);
     if (!ids.length) return;
-    const doc = this.vp.doc, src = this.src;
-    this.h.session.transact('Match properties', (tx) => {
-      for (const id of ids) { const e = doc.entities.find((x) => x.id === id); if (e) tx.replace(matchProps(src, e, this.settings)); }
-    });
+    matchPropsEdit(this.h.session, this.src, ids, this.settings);
   }
   key(e) { if (e.key === 'Escape' || e.key === 'Enter') { this.vp.setSelection([]); this.h.setTool('select'); return true; } return false; }
 }
