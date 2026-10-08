@@ -7,6 +7,7 @@
 //   parseDxf(text)             -> doc         (see model.js)
 //   readDxf(Uint8Array)        -> doc
 //   plainText(raw)             -> display string (text codes resolved)
+import { buildAttribute, linkAttribs } from './blocks.js';
 import {
   newDocument, addLayer, addLinetype, addTextStyle, addBlock, addEntity, BYLAYER,
   makeLine, makeCircle, makeArc, makeEllipse, makePolyline, makePoint, makeText, makeMText,
@@ -191,7 +192,6 @@ function isFlipped(rec) {
 }
 const FLIP = [-1, 0, 0, 1, 0, 0];
 
-const KNOWN_SKIP = new Set(['ATTDEF']); // not shown (the prompt text of a block attribute)
 
 // -- entity builders --------------------------------------------------------------------------
 function buildLwpolyline(rec, o) {
@@ -432,11 +432,7 @@ function buildEntity(rec, doc, extra) {
     case 'HATCH': e = buildHatch(rec, o, doc); break;
     case 'DIMENSION': e = buildDimension(rec, o); break;
     case 'LEADER': e = buildLeader(rec, o); break;
-    case 'ATTRIB': {
-      if (rec.int(70) & 1) return null; // invisible attribute
-      e = buildText(rec, o);
-      break;
-    }
+    case 'ATTDEF': case 'ATTRIB': e = buildAttribute(rec, buildText(rec, o)); break;
     default: return undefined;
   }
   if (!e) return null;
@@ -457,7 +453,7 @@ function readEntityList(recs, doc, target, stats) {
   for (let k = 0; k < recs.length; k++) {
     const rec = recs[k];
     const t = rec.type;
-    if (t === 'VERTEX' || t === 'SEQEND') continue; // consumed with their parent
+    if (t === 'VERTEX' || t === 'SEQEND' || t === 'ATTRIB') continue; // consumed with their parent
     let extra = {};
     if (t === 'POLYLINE') {
       const verts = [];
@@ -472,13 +468,12 @@ function readEntityList(recs, doc, target, stats) {
       while (j < recs.length && recs[j].type === 'ATTRIB') { attribs.push(recs[j]); j++; }
     }
     if (rec.int(67) === 1 && target === doc.entities) { stats.paper++; continue; }
-    if (KNOWN_SKIP.has(t)) continue;
     let e;
     try { e = buildEntity(rec, doc, extra); } catch (err) { e = undefined; stats.errors.push(`${t}: ${err.message}`); }
     if (e === undefined) { doc.skipped[t] = (doc.skipped[t] ?? 0) + 1; continue; }
     if (e === null) { doc.skipped[`${t} (unusable)`] = (doc.skipped[`${t} (unusable)`] ?? 0) + 1; continue; }
     addEntity(doc, e, target);
-    if (attribs) for (const a of attribs) { const ae = buildEntity(a, doc, {}); if (ae) addEntity(doc, ae, target); }
+    if (attribs) linkAttribs(e, attribs.map((a) => buildEntity(a, doc, {})));
   }
 }
 

@@ -8,6 +8,7 @@
 //   0 M x y | 1 L x y | 2 A cx cy r a0 sweep | 3 E cx cy rx ry rot t0 sweep | 4 Z
 // They are converted to screen space in JS doubles at draw time (Canvas paths are float32, so big
 // drawing coordinates would otherwise lose precision when zoomed in).
+import { blockContentView } from './blocks.js';
 import { resolveColor } from './aci.js';
 import {
   DEG, compose, translation, rotation, scaling, apply, isSimilarity, matScale, transformEntity, bulgeToArc,
@@ -93,10 +94,12 @@ class Builder {
         this.emitBlockContent(blk, compose(m, local), style, rootId, depth + 1);
       }
     }
+    // ATTRIBs live in the INSERT's own space (not the block's); invisible ones (flag 1) are hidden
+    for (const at of e.attribs ?? []) if (!(at.attrib.flags & 1)) this.emit(at, m, style, rootId, depth + 1);
   }
 
   emitBlockContent(blk, m, style, rootId, depth) {
-    for (const be of blk.entities) this.emit(be, m, style, rootId, depth);
+    for (const be of blk.entities) { const v = blockContentView(be); if (v) this.emit(v, m, style, rootId, depth); }
   }
 
   push(item, rootId) {

@@ -81,8 +81,9 @@ export function writeDxf(doc, opts = {}) {
 
   // ---- entity writer -------------------------------------------------------------------------
   function head(o, e, type, owner) {
+    const hd = H();
     o.p(0, type);
-    o.p(5, H());
+    o.p(5, hd);
     o.p(330, owner);
     o.p(100, 'AcDbEntity');
     o.s(8, e.layer || '0');
@@ -95,6 +96,7 @@ export function writeDxf(doc, opts = {}) {
     if (e.lineweight !== undefined && e.lineweight !== -1) o.p(370, e.lineweight < 0 ? e.lineweight : snapLw(e.lineweight));
     if (e.ltscale && e.ltscale !== 1) o.p(48, e.ltscale);
     if (e.invisible) o.p(60, 1);
+    return hd;
   }
 
   function writeSolidHatchLoops(o, loops) {
@@ -176,7 +178,9 @@ export function writeDxf(doc, opts = {}) {
         return true;
       }
       case 'TEXT': {
-        head(o, e, 'TEXT', owner); o.p(100, 'AcDbText'); o.pt(10, e.p.x, e.p.y); o.p(40, e.height); o.s(1, e.text);
+        // ATTDEF (e.attdef) and ATTRIB (e.attrib, written after their INSERT) share the TEXT body; value in 1
+        const kind = e.attdef ? 'ATTDEF' : e.attrib ? 'ATTRIB' : 'TEXT';
+        head(o, e, kind, owner); o.p(100, 'AcDbText'); o.pt(10, e.p.x, e.p.y); o.p(40, e.height); o.s(1, e.attdef ? e.attdef.default : e.text);
         if (e.rot) o.p(50, e.rot);
         if (e.widthFactor && e.widthFactor !== 1) o.p(41, e.widthFactor);
         const st = String(e.style || 'STANDARD').toUpperCase();
@@ -184,6 +188,14 @@ export function writeDxf(doc, opts = {}) {
         const aligned = (e.hAlign || 0) !== 0 || (e.vAlign || 0) !== 0;
         if (e.hAlign) o.p(72, e.hAlign);
         if (aligned) o.pt(11, e.p.x, e.p.y);
+        if (kind !== 'TEXT') {
+          const at = e.attdef ?? e.attrib;
+          o.p(100, kind === 'ATTDEF' ? 'AcDbAttributeDefinition' : 'AcDbAttribute');
+          if (e.attdef) o.s(3, e.attdef.prompt ?? '');
+          o.s(2, at.tag); o.p(70, at.flags || 0);
+          if (e.vAlign) o.p(74, e.vAlign);
+          return true;
+        }
         o.p(100, 'AcDbText');
         if (e.vAlign) o.p(73, e.vAlign);
         return true;
@@ -210,10 +222,15 @@ export function writeDxf(doc, opts = {}) {
       }
       case 'INSERT': {
         if (!doc.blocks.has(e.block)) { report.skipped['INSERT (block missing)'] = (report.skipped['INSERT (block missing)'] ?? 0) + 1; return false; }
-        head(o, e, 'INSERT', owner); o.p(100, 'AcDbBlockReference'); o.s(2, e.block); o.pt(10, e.p.x, e.p.y);
+        const atts = e.attribs?.length ? e.attribs : null;
+        const hIns = head(o, e, 'INSERT', owner); o.p(100, 'AcDbBlockReference'); if (atts) o.p(66, 1); o.s(2, e.block); o.pt(10, e.p.x, e.p.y);
         if (e.sx !== 1) o.p(41, e.sx); if (e.sy !== 1) o.p(42, e.sy); if (e.sx !== 1 || e.sy !== 1) o.p(43, 1);
         if (e.rot) o.p(50, e.rot);
         if ((e.cols || 1) > 1 || (e.rows || 1) > 1) { o.p(70, e.cols || 1); o.p(71, e.rows || 1); o.p(44, e.colSp || 0); o.p(45, e.rowSp || 0); }
+        if (atts) {
+          for (const a of atts) writeEntity(o, a, hIns);
+          o.p(0, 'SEQEND'); o.p(5, H()); o.p(330, hIns); o.p(100, 'AcDbEntity'); o.s(8, e.layer || '0');
+        }
         return true;
       }
       case 'DIMENSION': {

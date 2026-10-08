@@ -47,6 +47,13 @@ class Tx {
     this.ids.add(ne.id);
     return true;
   }
+  /** define (block object) or delete (null) the block definition `name` in doc.blocks */
+  block(name, blk) {
+    const before = this.doc.blocks.get(name) ?? null;
+    if (blk) this.doc.blocks.set(name, blk); else this.doc.blocks.delete(name);
+    this.ops.push({ k: 'block', name, before, after: blk });
+    this.structure = true;
+  }
   /** set (style object) or delete (null) the dimension style `name` in doc.dimStyles */
   dimStyle(name, style) {
     const m = (this.doc.dimStyles ??= new Map());
@@ -75,6 +82,7 @@ function applyInverse(doc, op) {
     case 'replace': { const i = doc.entities.findIndex((e) => e.id === op.after.id); if (i >= 0) doc.entities[i] = op.before; break; }
     case 'layer': if (op.before) doc.layers.set(op.name, { ...op.before }); else doc.layers.delete(op.name); break;
     case 'dimstyle': if (op.before) doc.dimStyles.set(op.name, op.before); else doc.dimStyles.delete(op.name); break;
+    case 'block': if (op.before) doc.blocks.set(op.name, op.before); else doc.blocks.delete(op.name); break;
     default: break;
   }
 }
@@ -85,6 +93,7 @@ function applyForward(doc, op) {
     case 'replace': { const i = doc.entities.findIndex((e) => e.id === op.before.id); if (i >= 0) doc.entities[i] = op.after; break; }
     case 'layer': if (op.after) doc.layers.set(op.name, { ...op.after }); else doc.layers.delete(op.name); break;
     case 'dimstyle': if (op.after) (doc.dimStyles ??= new Map()).set(op.name, op.after); else doc.dimStyles.delete(op.name); break;
+    case 'block': if (op.after) doc.blocks.set(op.name, op.after); else doc.blocks.delete(op.name); break;
     default: break;
   }
 }
@@ -134,7 +143,7 @@ export class Session {
     let structure = false;
     for (const op of [...step.ops].reverse()) {
       applyInverse(this.doc, op);
-      if (op.k === 'layer' || op.k === 'dimstyle') structure = true; else collectIds(op, ids);
+      if (op.k === 'layer' || op.k === 'dimstyle' || op.k === 'block') structure = true; else collectIds(op, ids);
     }
     this.redoStack.push(step);
     this.revision--;
@@ -149,7 +158,7 @@ export class Session {
     let structure = false;
     for (const op of step.ops) {
       applyForward(this.doc, op);
-      if (op.k === 'layer' || op.k === 'dimstyle') structure = true; else collectIds(op, ids);
+      if (op.k === 'layer' || op.k === 'dimstyle' || op.k === 'block') structure = true; else collectIds(op, ids);
     }
     this.undoStack.push(step);
     this.revision++;
