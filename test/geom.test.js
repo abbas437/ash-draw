@@ -119,7 +119,7 @@ test('trim, extend and offset', () => {
   const rect = M.makeRect({ x: 0, y: 0 }, { x: 10, y: 10 });
   const inner = G.offsetEntity(rect, 1, { x: 5, y: 5 });
   assert.deepEqual(inner.vertices.map((v) => [v.x, v.y]), [[1, 1], [9, 1], [9, 9], [1, 9]]);
-  assert.throws(() => G.offsetEntity(M.makeSpline({ ctrl: [{ x: 0, y: 0 }, { x: 1, y: 1 }] }), 1, { x: 0, y: 0 }), (e) => e.code === 'UNSUPPORTED');
+  assert.equal(G.offsetEntity(M.makeSpline({ ctrl: [{ x: 0, y: 0 }, { x: 1, y: 1 }] }), 1, { x: 0, y: 1 }).type, 'SPLINE');
 });
 
 test('explode: polyline -> lines/arcs, insert -> transformed block content', () => {

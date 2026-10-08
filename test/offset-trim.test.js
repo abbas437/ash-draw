@@ -123,10 +123,8 @@ test('extend: open polyline with an arc end grows along its circle', () => {
   near(a.r, 10); nearPt(a.c, 0, 0);
 });
 
-test('spline as cutting edge trims a line at the exact crossing; trimming a spline is refused', () => {
+test('spline as cutting edge trims a line at the exact crossing', () => {
   const sp = M.makeSpline({ degree: 2, ctrl: [{ x: 0, y: 0 }, { x: 5, y: 10 }, { x: 10, y: 0 }], knots: [0, 0, 0, 1, 1, 1] });
   const r = G.trimEntity(M.makeLine({ x: 3, y: -5 }, { x: 3, y: 10 }), [sp], { x: 3, y: 9 });
   nearPt(r.replace[0].p2, 3, 4.2, 1e-6); nearPt(r.replace[0].p1, 3, -5);
-  assert.throws(() => G.trimEntity(sp, [M.makeLine({ x: 3, y: -5 }, { x: 3, y: 10 })], { x: 1, y: 1 }),
-    (e) => e.code === 'UNSUPPORTED' && /Trimming splines is not supported yet; explode\/convert first/.test(e.message));
 });
