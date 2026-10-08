@@ -366,14 +366,20 @@ export function explode(e, doc) {
     for (let c = 0; c < cols; c++) {
       const off = { x: c * (e.colSp || 0), y: r * (e.rowSp || 0) };
       const m = compose(translation(p.x, p.y), compose(rotation(rot), compose(translation(off.x, off.y), compose(scaling(sx, sy), translation(-blk.base.x, -blk.base.y)))));
-      for (const be of blk.entities) {
+      for (const be0 of blk.entities) {
+        // attribute definitions: only constant, visible ones are shown (as their value); ATTRIBs are added below
+        const be = be0.attdef ? ((be0.attdef.flags & 3) === 2 ? { ...be0, attdef: undefined, text: be0.attdef.default } : null) : be0;
+        if (!be) continue;
         const t = transformEntity(be, m);
+        delete t.attdef;
         // BYBLOCK / layer "0" inheritance is resolved by the renderer through `parent`.
         t.parent = e;
         out.push(t);
       }
     }
   }
+  // visible ATTRIBs become plain TEXT (they are already in the INSERT's own space)
+  for (const at of e.attribs ?? []) if (!(at.attrib.flags & 1)) { const t = structuredClone(at); delete t.attrib; t.id = 0; t.parent = e; out.push(t); }
   return out;
 }
 
@@ -458,6 +464,7 @@ export function transformEntity(e, m) {
       const toNew = compose(rotation(-d.rot), compose([m[0], m[1], m[2], m[3], 0, 0], rotation(rot)));
       c.colSp = applyVec(toNew, { x: e.colSp || 0, y: 0 }).x;
       c.rowSp = applyVec(toNew, { x: 0, y: e.rowSp || 0 }).y;
+      if (e.attribs) c.attribs = e.attribs.map((at) => transformEntity(at, m));
       break;
     }
     case 'DIMENSION': {
