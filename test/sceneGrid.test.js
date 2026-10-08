@@ -65,3 +65,9 @@ test('visibleItems keeps scene order and follows updateScene', () => {
   assert.ok(vis.some((it) => it.id === mover.id) && !vis.some((it) => it.id === inView));
   assert.equal(scene.grid.size, scene.items.length);
 });
+
+test('visibleItems: a view containing the whole scene returns scene.items without a bbox pass', () => {
+  const scene = buildScene(mixedDoc());
+  const b = scene.bbox;
+  assert.equal(visibleItems(scene, b.minx - 1, b.miny - 1, b.maxx + 1, b.maxy + 1), scene.items);
+});
