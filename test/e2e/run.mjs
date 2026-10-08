@@ -678,6 +678,37 @@ try {
   near((await ents()).find((e) => e.id === gr.id).p1.y, 110, 'the earlier rotate is a separate step');
   await page.keyboard.press('Escape');
 
+  step = 'grips: right-click on a hot grip -> menu -> Rotate -> 90';
+  await page.evaluate((id) => window.app.vp.setSelection([id]), gr.id);
+  s0 = await scr(240, 150); await page.mouse.click(s0.x, s0.y);
+  await page.mouse.click(s0.x, s0.y, { button: 'right' });
+  await page.locator('.popmenu button', { hasText: /^Rotate$/ }).click();
+  assert.match(await page.locator('#prompt').textContent(), /\*\* ROTATE \*\*/);
+  await typeCmd('90');
+  grl = (await ents()).find((e) => e.id === gr.id);
+  near(grl.p1.x, 280, 'rotated via the menu: p1.x'); near(grl.p1.y, 150, 'rotated via the menu: p1.y');
+  await page.keyboard.press('Control+z'); await page.keyboard.press('Escape');
+
+  step = 'grips: Shift-click two polyline grips, drag -> both move, one undo restores';
+  await typeCmd('pl'); await typeCmd('200,170'); await typeCmd('220,170'); await typeCmd('220,190'); await typeCmd('');
+  const plE = (await ents()).filter((e) => e.type === 'LWPOLYLINE').at(-1);
+  await page.keyboard.press('Escape');
+  await page.evaluate((id) => window.app.vp.setSelection([id]), plE.id);
+  const vtx = async () => (await ents()).find((e) => e.id === plE.id).vertices.map((v) => [v.x, v.y]);
+  const pv0 = await vtx();
+  const sa = await scr(220, 170), sb = await scr(220, 190);
+  await page.keyboard.down('Shift'); await page.mouse.click(sa.x, sa.y); await page.mouse.click(sb.x, sb.y); await page.keyboard.up('Shift');
+  await page.mouse.move(sa.x, sa.y); await page.mouse.down();
+  await page.mouse.move(sa.x + 20, sa.y + 15, { steps: 4 }); await page.mouse.move(sa.x + 40, sa.y + 30, { steps: 4 }); await page.mouse.up();
+  const pv1 = await vtx();
+  const dx = pv1[1][0] - pv0[1][0], dy = pv1[1][1] - pv0[1][1];
+  assert.ok(Math.hypot(dx, dy) > 1, 'first hot grip moved');
+  near(pv1[2][0] - pv0[2][0], dx, 'second hot grip moved by the same dx'); near(pv1[2][1] - pv0[2][1], dy, 'second hot grip moved by the same dy');
+  assert.deepEqual(pv1[0], pv0[0], 'the cold vertex stays');
+  await page.keyboard.press('Control+z');
+  assert.deepEqual(await vtx(), pv0, 'one undo restores both');
+  await page.keyboard.press('Escape');
+
   step = 'blocks: ATTDEF + BLOCK (convert) + INSERT with attribute values';
   await typeCmd('new');
   await page.evaluate(() => { const vp = window.app.vp; vp.view = { ...vp.view, cx: 60, cy: 30, zoom: 6 }; vp.render(); });

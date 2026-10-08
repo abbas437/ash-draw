@@ -237,12 +237,12 @@ export class Viewport {
 
   _drawGrips() {
     if (!this.selection.size || this.selection.size > 300) return;
-    const { ctx } = this, hv = this.gripHover, hot = this.gripHot;
+    const { ctx } = this, hv = this.gripHover, hot = this.gripHot, hots = this.gripHots;
     ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1;
     for (const e of this.selectedEntities()) {
       gripsOf(e).forEach((g, i) => {
         const s = this.toScreen(g), is = (o) => o && o.id === e.id && o.i === i;
-        ctx.fillStyle = is(hot) ? '#ff2020' : is(hv) ? '#ff6ec7' : '#2d7dff';
+        ctx.fillStyle = is(hot) || hots?.some(is) ? '#ff2020' : is(hv) ? '#ff6ec7' : '#2d7dff';
         ctx.fillRect(s.x - 4, s.y - 4, 8, 8); ctx.strokeRect(s.x - 4.5, s.y - 4.5, 9, 9);
       });
     }
@@ -350,6 +350,6 @@ export class Viewport {
 }
 
 /** plain event object for tools (PointerEvent properties are prototype getters and do not survive a spread) */
-const mk = (e, raw, sx, sy, extra = {}) => ({ button: e.button, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey, raw, sx, sy, ...extra });
+const mk = (e, raw, sx, sy, extra = {}) => ({ button: e.button, clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey, raw, sx, sy, ...extra });
 
 const SNAP_LABEL = { end: 'Endpoint', mid: 'Midpoint', cen: 'Center', quad: 'Quadrant', int: 'Intersection', node: 'Node', ins: 'Insertion', per: 'Perpendicular', near: 'Nearest' };

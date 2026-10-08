@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as M from '../src/core/model.js';
 import { Session } from '../src/core/edit.js';
-import { gripsOf, applyGrip, gripEdit, editEntity, matchProps, bulgeThrough, nextGripMode, gripMatrix, gripModeEdit, defaultMatchSettings } from '../renderer/grips.js';
+import { gripsOf, applyGrip, gripEdit, editEntity, matchProps, matchPropsEdit, gripsStretch, bulgeThrough, nextGripMode, gripMatrix, gripModeEdit, defaultMatchSettings } from '../renderer/grips.js';
 import { transformEntity } from '../src/core/geom.js';
 
 const near = (a, b, tol = 1e-9) => assert.ok(Math.abs(a - b) <= tol, `${a} !~ ${b}`);
@@ -177,4 +177,39 @@ test('grip MOVE with Copy: repeated copies keep the original and fold into one u
   const mv = gripModeEdit(s, [l.id], 'ROTATE', base, { value: 90 });
   assert.equal(doc.entities.length, 1); nearPt(doc.entities[0].p1, 10, -10);
   assert.ok(mv.step);
+});
+
+test('matchPropsEdit: a new dimstyle regenerates the dimension block (text height changes)', async () => {
+  const { createDimension } = await import('../src/core/dims.js');
+  const { resolveDimStyle } = await import('../src/core/dimsStyle.js');
+  const s = new Session(M.newDocument());
+  const base = resolveDimStyle(s.doc, 'ISO-25');
+  s.transact('style', (tx) => { tx.dimStyle('BIG', { ...base, name: 'BIG', DIMTXT: 10 }); });
+  const def = { kind: 'linear', p1: { x: 0, y: 0 }, p2: { x: 100, y: 0 }, at: { x: 50, y: 20 }, angle: 0 };
+  const a = createDimension(s.doc, def, 'BIG');
+  const b = createDimension(s.doc, def, 'ISO-25');
+  const hs = (e) => s.doc.blocks.get(e.block).entities.filter((x) => x.type === 'TEXT' || x.type === 'MTEXT').map((x) => x.height);
+  assert.notDeepEqual(hs(a), hs(b));
+  matchPropsEdit(s, M.getEntity(s.doc, a.id), [b.id]);
+  const nb = M.getEntity(s.doc, b.id);
+  assert.equal(nb.style, 'BIG');
+  assert.notEqual(nb.block, b.block);
+  assert.deepEqual(hs(nb), hs(a));
+  s.undo();
+  assert.deepEqual(hs(M.getEntity(s.doc, b.id)), hs(b));
+});
+
+test('gripsStretch moves several grips by one displacement in one undo step', () => {
+  const s = new Session(M.newDocument());
+  const pl = M.makePolyline([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }]);
+  const ln = M.makeLine({ x: 20, y: 0 }, { x: 30, y: 0 });
+  s.transact('add', (tx) => { tx.add(pl); tx.add(ln); });
+  const n = s.undoStack.length;
+  assert.ok(gripsStretch(s, [{ id: pl.id, i: 1 }, { id: pl.id, i: 2 }, { id: ln.id, i: 1 }], { x: 5, y: 2 }));
+  assert.equal(s.undoStack.length, n + 1);
+  const p = M.getEntity(s.doc, pl.id).vertices;
+  nearPt(p[0], 0, 0); nearPt(p[1], 15, 2); nearPt(p[2], 15, 12); nearPt(p[3], 0, 10);
+  nearPt(M.getEntity(s.doc, ln.id).p2, 35, 2); nearPt(M.getEntity(s.doc, ln.id).p1, 20, 0);
+  s.undo();
+  nearPt(M.getEntity(s.doc, pl.id).vertices[1], 10, 0); nearPt(M.getEntity(s.doc, ln.id).p2, 30, 0);
 });
