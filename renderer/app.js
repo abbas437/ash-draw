@@ -7,6 +7,7 @@ import { layIsolate, layUnisolate, layFreeze, layOn, layThaw } from '../src/core
 import { Viewport, CANVAS_BG } from './viewport.js';
 import { createDocState, findTabByPath, indexAfterClose, cycleIndex, isBlankTab } from './tabs.js';
 import { createTools, TOOL_ALIASES } from './tools.js';
+import { dimStyleManager, dimStyleNames, dimVarsOf, setCurrentDimStyle } from './tools-dims.js';
 import { initSession } from './session.js';
 import { FindPanel } from './find.js';
 import { plotDialog } from './plot.js';
@@ -28,6 +29,7 @@ const TOOL_BUTTONS = [
     ['arraypolar', 'Array polar', 'ARRAYPOLAR', 'M7 1h2v2H7zM13 7h2v2h-2zM7 13h2v2H7zM1 7h2v2H1zM7.5 7.5h1v1h-1z'],
     ['arraypath', 'Array path', 'ARRAYPATH', 'M1 14C6 14 6 3 15 3M2 11h2v2H2zM7 6h2v2H7zM12 1h2v2h-2z']]],
   ['Dimension', [['dimlinear', 'Linear', 'DLI', 'M2 4v8M14 4v8M2 8h12M4 6 2 8l2 2M12 6l2 2-2 2'], ['dimaligned', 'Aligned', 'DAL', 'M2 12 12 2M4 14 14 4M5 11l6-6'],
+    ['dimangular', 'Angular', 'DAN', 'M2 14 14 14M2 14 11 3M8 14a6 6 0 0 0-2-4.6'],
     ['dimradius', 'Radius', 'DRA', 'M8 8l5-5M1 8a7 7 0 1 0 14 0A7 7 0 1 0 1 8'], ['dimdiameter', 'Diameter', 'DDI', 'M3 13 13 3M1 8a7 7 0 1 0 14 0A7 7 0 1 0 1 8'],
     ['dimcontinue', 'Continue', 'DCO', 'M1 4v8M8 4v8M15 4v8M1 8h14'], ['dimbaseline', 'Baseline', 'DBA', 'M1 3v11M8 7v7M15 3v11M1 9h7M1 5h14']]],
   ['Inquiry', [['measure', 'Measure', 'MEA'], ['area', 'Area', 'AREA']]],
@@ -71,7 +73,7 @@ class App {
     document.getElementById('z-out').onclick = () => this.vp.zoomBy(1 / 1.4);
     document.getElementById('z-fit').onclick = () => this.vp.zoomExtents();
     this.vp.on('selection', () => { this.refreshPanels(true); this.refreshStatus(); });
-    this.vp.on('change', () => { this.refreshPanels(); this.refreshStatus(); this.updateTitle(); });
+    this.vp.on('change', () => { this.refreshPanels(); this.refreshStatus(); this.updateTitle(); this.refreshDimStyles(); });
     this.vp.on('cursor', (p) => this.showCursor(p));
     window.addEventListener('beforeunload', (e) => { if (!this.closeConfirmed && this.tabs.some((t) => t.session.dirty)) { e.preventDefault(); e.returnValue = ''; } });
     api.onCloseRequest?.(() => this.closeAll());
@@ -126,7 +128,7 @@ class App {
     if (t.text?.(s)) { this.refreshPrompt(); return; }
     const low = s.toLowerCase();
     if (TOOL_ALIASES[low]) { this.setTool(TOOL_ALIASES[low]); return; }
-    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => this.vp.zoomExtents(), z: () => this.vp.zoomExtents(), 'zoom': () => this.vp.zoomExtents(), all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), find: () => this.find.open(), ...this.layerCommands() };
+    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => this.vp.zoomExtents(), z: () => this.vp.zoomExtents(), 'zoom': () => this.vp.zoomExtents(), all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), find: () => this.find.open(), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), ...this.layerCommands() };
     if (sys[low]) { sys[low](); return; }
     const last = this.vp.lastPoint ?? { x: 0, y: 0 };
     const dir = this.vp.lastPoint ? { x: this.vp.cursor.x - last.x, y: this.vp.cursor.y - last.y } : null;
@@ -185,7 +187,7 @@ class App {
     this.active = tab;
     this.vp.setSession(tab.session, { fit: fit || !tab.view, view: fit ? null : tab.view, selection: tab.selection, scene: tab.scene, index: tab.index, lastPoint: tab.lastPoint });
     tab.scene = tab.index = null;
-    this.refreshPanels(); this.refreshStatus(); this.updateTitle();
+    this.refreshPanels(); this.refreshStatus(); this.updateTitle(); this.refreshDimStyles();
   }
   activateIndex(i) { if (this.tabs[i] && this.tabs[i] !== this.active) this.switchTo(this.tabs[i]); }
   cycleTab(step) { this.activateIndex(cycleIndex(this.tabs.length, this.tabs.indexOf(this.active), step)); }
@@ -352,6 +354,7 @@ class App {
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-',
         ['Show lineweights', 'F9', () => this.toggle('lineweights')], ['Light / dark background', '', () => this.toggle('dark')], '-',
         ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark']]],
+      ['Dimension', [...TOOL_BUTTONS.find(([g]) => g === 'Dimension')[1].map(([id, label, alias]) => [label, alias, () => this.setTool(id)]), '-', ['Dimension style…', 'D', () => this.dimStyles()]]],
       ['Help', [['What this program can and cannot do', '', () => this.limitations()], ['About', '', () => this.about()]]],
     ];
     const bar = document.getElementById('menubar');
@@ -373,11 +376,24 @@ class App {
     document.addEventListener('click', closeMenus);
   }
 
+  /** fill the toolbar's dimension-style list from the active drawing (only when it changed) */
+  refreshDimStyles() {
+    const sel = this.dimStyleSel; if (!sel || !this.doc) return;
+    const names = dimStyleNames(this.doc), cur = dimVarsOf(this.doc).style;
+    if (sel.dataset.names !== names.join('\n')) { sel.replaceChildren(...names.map((n) => el('option', { value: n, text: n }))); sel.dataset.names = names.join('\n'); }
+    sel.value = names.find((n) => n.toLowerCase() === cur.toLowerCase()) ?? cur;
+  }
+  async dimStyles() { await dimStyleManager(this); this.refreshDimStyles(); }
+
   buildToolbar() {
     const box = document.getElementById('tools');
     for (const [group, items] of TOOL_BUTTONS) {
       box.append(el('div', { class: 'group', text: group }));
       for (const [id, label, alias, icon] of items) box.append(el('button', { 'data-tool': id, title: alias ? `${label} (${alias})` : label, onclick: () => this.setTool(id) }, icon ? toolIcon(icon) : null, label));
+      if (group === 'Dimension') {
+        this.dimStyleSel = el('select', { id: 'dimstyle', title: 'Current dimension style (DIMSTYLE)', onchange: (e) => setCurrentDimStyle(this.doc, e.target.value) });
+        box.append(this.dimStyleSel, el('button', { title: 'Dimension Style Manager (D)', onclick: () => this.dimStyles() }, 'Dim styles…'));
+      }
     }
     box.append(el('div', { class: 'group', text: 'Hatch' }));
     const pat = el('select', { title: 'Hatch pattern', onchange: (e) => { this.defaults.hatchPattern = e.target.value; } }, PATTERN_NAMES.map((n) => el('option', { value: n, text: n })));
