@@ -19,8 +19,8 @@ import { plainText } from './dxfRead.js';
 import { mleaderParts } from './mleader.js';
 import { patternLines, hasPattern } from './patterns.js';
 import { SceneGrid } from './sceneGrid.js';
-import { strokeLayout } from './shx.js';
-import { textFrame, textCorners } from './textMetrics.js';
+import { strokeLayout, shxSubstitute } from './shx.js';
+import { textFrame, textCorners, textAdvance } from './textMetrics.js';
 
 const TAU = Math.PI * 2;
 const OP_M = 0, OP_L = 1, OP_A = 2, OP_E = 3, OP_Z = 4;
@@ -242,6 +242,7 @@ class Builder {
             return;
           }
         }
+        if (mt && this.pushStrokeMText(e, mt, p, rot, s, style, lines, rootId)) return;
         this.push({
           kind: 'text', p, h, rot, lines, wf: e.widthFactor || 1, style, bbox: box, mtext: e.type === 'MTEXT', attach: e.attach || 1,
           boxW: e.type === 'MTEXT' ? (e.width || 0) * s : 0, hAlign: e.hAlign || 0, vAlign: e.vAlign || 0,
@@ -273,6 +274,78 @@ class Builder {
     // text strokes ignore the entity linetype (as in AutoCAD); start of the baseline and length for the LOD bar
     const st = style.lt === 'CONTINUOUS' ? style : { ...style, lt: 'CONTINUOUS', _ks: undefined, _key: undefined };
     this.push({ kind: 'path', ops, style: st, bbox, strokeText: { p: p0, h, rot, w: W } }, rootId);
+  }
+
+  /**
+   * MTEXT with SHX runs (style font or \f run font): one fixed layout measured with the stroke font for those runs and
+   * the canvas measure for the others; stroke runs (with their underline / overline / strike / fraction bars) become
+   * path items, one per colour and line; the other runs stay a text item that draws the fixed layout (it.lay).
+   * A run with a character the stroke font lacks stays on canvas. false: no stroke run (caller pushes the text item).
+   */
+  pushStrokeMText(e, mt, p, rot, s, style, lines, rootId) {
+    const ts = this.doc.textStyles.get(String(e.style || 'STANDARD').toUpperCase());
+    const styleFont = ts?.fontFile || ts?.font, ttFont = ts?.font || 'Arial';
+    let any = false;
+    for (const para of mt.paras) {
+      for (const r of para.runs) {
+        if (!r.props || !shxSubstitute(r.props.font ?? styleFont)) continue;
+        if (!strokeLayout(r.stack ? `${r.stack.a}${r.stack.b}/` : r.text, 1)) continue;
+        r.props = { ...r.props, stroke: true }; any = true;
+      }
+    }
+    if (!any) return false;
+    const measure = (t, pr) => (pr.stroke ? strokeLayout(t, pr.h).width : textAdvance(t, pr.font || ttFont, pr.bold, pr.italic) * pr.h);
+    const lay = layoutMText(mt, { width: (e.width || 0) * s, attach: e.attach || 1, lineSpacing: e.lineSpacing || 1, measure });
+    const c = Math.cos(rot), sn = Math.sin(rot);
+    // layout frame: origin p, x along the text, y DOWN
+    const W = (x, y) => ({ x: p.x + x * c + y * sn, y: p.y + x * sn - y * c });
+    let box = null;
+    for (const [x, y] of [[lay.x0, lay.y0], [lay.x0 + lay.width, lay.y0], [lay.x0 + lay.width, lay.y0 + lay.height], [lay.x0, lay.y0 + lay.height]]) box = growBox(box, W(x, y));
+    const lineOf = (y) => { let k = 0; lay.lines.forEach((l, i) => { if (Math.abs(l.y - y) < Math.abs(lay.lines[k].y - y)) k = i; }); return k; };
+    const groups = new Map();
+    const group = (color, y) => {
+      const li = lineOf(y), key = `${JSON.stringify(color)}|${li}`;
+      let g = groups.get(key);
+      if (!g) groups.set(key, (g = { color, line: lay.lines[li], ops: [], bbox: null, x0: Infinity, x1: -Infinity }));
+      return g;
+    };
+    const seg = (g, pts) => pts.forEach(([x, y], i) => {
+      const q = W(x, y);
+      g.ops.push(i ? OP_L : OP_M, q.x, q.y); g.bbox = growBox(g.bbox, q);
+      g.x0 = Math.min(g.x0, x); g.x1 = Math.max(g.x1, x);
+    });
+    const glyphs = [], rules = [];
+    for (const gl of lay.glyphs) {
+      if (!gl.stroke) { glyphs.push(gl); continue; }
+      const sl = strokeLayout(gl.text, gl.h, gl.track || 1), wf = gl.wf || 1, t = Math.tan((gl.oblique || 0) * DEG);
+      const g = group(gl.color, gl.y);
+      for (const st of sl.strokes) {
+        const pts = [];
+        for (let i = 0; i < st.length; i += 2) pts.push([gl.x + st[i] * wf + st[i + 1] * t, gl.y - st[i + 1]]);
+        seg(g, pts);
+      }
+    }
+    for (const r of lay.rules) {
+      if (r.stroke) seg(group(r.color, r.y), [[r.x1, r.y], [r.x2, r.y]]);
+      else rules.push(r);
+    }
+    // text strokes ignore the entity linetype (as in AutoCAD); a run colour overrides the entity colour
+    const base = style.lt === 'CONTINUOUS' ? style : { ...style, lt: 'CONTINUOUS', _ks: undefined, _key: undefined };
+    const styleOf = (col) => (!col ? base : { ...base, _ks: undefined, _key: undefined, _css: undefined,
+      color: col.rgb ? { rgb: col.rgb, auto: false } : col.aci === 7 ? { rgb: [255, 255, 255], auto: true } : { rgb: aciToRgb(col.aci), auto: false } });
+    for (const g of groups.values()) {
+      if (!g.ops.length) continue;
+      const l = g.line;
+      this.push({ kind: 'path', ops: g.ops, style: styleOf(g.color), bbox: unionBox(g.bbox, box), strokeText: { p: W(g.x0, l.y), h: l.h, rot, w: g.x1 - g.x0 } }, rootId);
+    }
+    if (glyphs.length || rules.length) {
+      this.push({
+        kind: 'text', p, h: (e.height || 1) * s, rot, lines, wf: e.widthFactor || 1, style, bbox: box, mtext: true, attach: e.attach || 1,
+        boxW: (e.width || 0) * s, hAlign: 0, vAlign: 0, font: ttFont, mt, lineSpacing: e.lineSpacing || 1,
+        lay: { ...lay, glyphs, rules },   // fixed layout: drawMText and the SVG / PDF export draw it as laid out here
+      }, rootId);
+    }
+    return true;
   }
 
   buildHatch(e, m, style, rootId) {
@@ -723,6 +796,7 @@ export const mtextFont = (g, px, fallback) => `${g.italic ? 'italic ' : ''}${g.b
 
 /** MTEXT layout of a scene item, measured with canvas fonts (cached on the item). */
 export function mtextLayout(ctx, it) {
+  if (it.lay) return it.lay;   // MTEXT with stroke (SHX) runs: fixed layout from buildScene
   if (it._lay) return it._lay;
   const REF = 100;
   const measure = (t, p) => { ctx.font = mtextFont(p, REF, it.font); return ctx.measureText(t).width * p.h / REF; };

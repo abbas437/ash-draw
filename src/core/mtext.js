@@ -5,6 +5,7 @@
 //   mtextPlain(raw)                   -> displayed string (paragraphs joined with '\n', stacks as a/b)
 //   serializeMText(model, { height }) -> raw MTEXT codes for the model
 //   layoutMText(model, { width, attach, lineSpacing, measure }) -> { lines, glyphs, rules, width, height }
+//     a run whose props.stroke is set is an SHX stroke-font run (render.js): cap-height first baseline, glyphs / rules flagged stroke
 // Reference: AutoCAD MTEXT format codes. \H<n>x; is relative to the CURRENT height; \c<n>; is BGR (0xBBGGRR).
 
 const SPECIAL = { c: 'Ø', d: '°', p: '±' };
@@ -194,7 +195,9 @@ export function layoutMText(model, { width = 0, attach = 1, lineSpacing = 1, mea
   const col = (attach - 1) % 3, row = Math.floor((attach - 1) / 3);
   const x0 = col === 0 ? 0 : col === 1 ? -boxW / 2 : -boxW;
   let y = 0;
-  lines.forEach((l, i) => { y += i === 0 ? 0.9 * l.h : 1.25 * l.h * lineSpacing; l.y = y; });
+  // first baseline: 0.9 h below the top for canvas fonts, the cap height for stroke (SHX, props.stroke) runs
+  const ascent = (l) => Math.max(0, ...l.parts.map((p) => (p.props.stroke ? 1 : 0.9) * p.props.h)) || 0.9 * l.h;
+  lines.forEach((l, i) => { y += i === 0 ? ascent(l) : 1.25 * l.h * lineSpacing; l.y = y; });
   const total = lines.length ? lines.at(-1).y + 0.25 * lines.at(-1).h : 0;
   const dy = row === 0 ? 0 : row === 1 ? -total / 2 : -total;
   const glyphs = [], rules = [];
@@ -207,7 +210,7 @@ export function layoutMText(model, { width = 0, attach = 1, lineSpacing = 1, mea
       const pr = p.props;
       const shift = pr.valign === 1 ? -(l.h - pr.h) * 0.45 : pr.valign === 2 ? -(l.h - pr.h) * 0.9 : 0;
       const by = l.y + shift;
-      const g = { font: pr.font, bold: pr.bold, italic: pr.italic, color: pr.color, oblique: pr.oblique, wf: pr.wf, track: pr.track };
+      const g = { font: pr.font, bold: pr.bold, italic: pr.italic, color: pr.color, oblique: pr.oblique, wf: pr.wf, track: pr.track, stroke: !!pr.stroke };
       if (p.stack) {
         const st = p.stack, sp = p.sp, w = p.w;
         if (st.type === '#') {
@@ -217,14 +220,14 @@ export function layoutMText(model, { width = 0, attach = 1, lineSpacing = 1, mea
         } else {
           glyphs.push({ ...g, text: st.a, x: x + (w - p.wa) / 2, y: by - pr.h * 0.55, h: sp.h });
           glyphs.push({ ...g, text: st.b, x: x + (w - p.wb) / 2, y: by + pr.h * 0.15, h: sp.h });
-          if (st.type === '/') rules.push({ x1: x, x2: x + w, y: by - pr.h * 0.4, h: pr.h, color: pr.color });
+          if (st.type === '/') rules.push({ x1: x, x2: x + w, y: by - pr.h * 0.4, h: pr.h, color: pr.color, stroke: !!pr.stroke });
         }
       } else if (p.text) {
         glyphs.push({ ...g, text: p.text, x, y: by, h: pr.h, w: p.w });
       }
-      if (pr.u) rules.push({ x1: x, x2: x + p.w, y: by + pr.h * 0.15, h: pr.h, color: pr.color });
-      if (pr.o) rules.push({ x1: x, x2: x + p.w, y: by - pr.h * 1.0, h: pr.h, color: pr.color });
-      if (pr.k) rules.push({ x1: x, x2: x + p.w, y: by - pr.h * 0.3, h: pr.h, color: pr.color });
+      if (pr.u) rules.push({ x1: x, x2: x + p.w, y: by + pr.h * 0.15, h: pr.h, color: pr.color, stroke: !!pr.stroke });
+      if (pr.o) rules.push({ x1: x, x2: x + p.w, y: by - pr.h * 1.0, h: pr.h, color: pr.color, stroke: !!pr.stroke });
+      if (pr.k) rules.push({ x1: x, x2: x + p.w, y: by - pr.h * 0.3, h: pr.h, color: pr.color, stroke: !!pr.stroke });
       x += p.w;
     }
   }

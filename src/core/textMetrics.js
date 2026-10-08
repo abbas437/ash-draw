@@ -1,7 +1,8 @@
 // TEXT geometry shared by render, pick/bbox and DXF write: the real text width (stroke font metrics for SHX
 // styles, a canvas measure registered by the app otherwise) and the 15 AutoCAD TEXT justifications.
 //
-//   setTextMeasure(fn)        fn(text, font) -> advance width at font size 1 (canvas); null: 0.6 h per character
+//   setTextMeasure(fn)        fn(text, font, bold, italic) -> advance width at font size 1 (canvas); null: 0.6 h per character
+//   textAdvance(text, font, bold, italic) -> that width (cached), 0.6 (bold 0.66) per character without a canvas
 //   textFrame(e, doc)         -> { o, rot, h, wf, w, top, desc, t, stroke }
 //       o: start of the baseline (DXF group 10 for every justification), rot in radians, h / wf the drawn height
 //       and width factor (Aligned scales h, Fit scales wf), w the drawn width, top / desc the extents above / below
@@ -15,16 +16,16 @@ import { mtextPlain } from './mtext.js';
 
 let measureFn = null;
 const cache = new Map();
-/** Register the canvas text measure (renderer); fn(text, font) -> width at font size 1. */
+/** Register the canvas text measure (renderer); fn(text, font, bold, italic) -> width at font size 1. */
 export function setTextMeasure(fn) { measureFn = fn; cache.clear(); }
 
-function canvasWidth(text, font) {
-  if (!measureFn) return [...text].length * 0.6;
-  const key = `${font}\u0000${text}`;
+export function textAdvance(text, font, bold = false, italic = false) {
+  if (!measureFn) return [...text].length * (bold ? 0.66 : 0.6);
+  const key = `${font}\u0000${bold ? 1 : 0}${italic ? 1 : 0}\u0000${text}`;
   let w = cache.get(key);
   if (w === undefined) {
     if (cache.size > 50000) cache.clear();
-    w = measureFn(text, font);
+    w = measureFn(text, font, bold, italic);
     cache.set(key, w);
   }
   return w;
@@ -39,7 +40,7 @@ export function textFrame(e, doc = null) {
   const st = doc?.textStyles?.get(String(e.style || 'STANDARD').toUpperCase());
   const lines = mtextPlain(e.text).split('\n');
   const sl = !e.ui && lines.length === 1 && shxSubstitute(st?.fontFile || st?.font) ? strokeLayout(lines[0], 1) : null;
-  const w1 = sl ? sl.width : Math.max(0, ...lines.map((l) => canvasWidth(l, st?.font || 'Arial')));
+  const w1 = sl ? sl.width : Math.max(0, ...lines.map((l) => textAdvance(l, st?.font || 'Arial')));
   const m = sl ? SHX_M : CANVAS_M;
   const t = Math.tan((e.oblique || 0) * Math.PI / 180);
   let h = e.height || 1, wf = e.widthFactor || 1, rot = (e.rot || 0) * Math.PI / 180;

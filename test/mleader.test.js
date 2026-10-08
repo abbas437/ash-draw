@@ -63,10 +63,11 @@ test('ezdxf MultiLeader reads: 2 leader lines, text, arrowheads at the tips; dra
   assert.equal(fills.length, 2);
   // each arrowhead's first vertex is the leader's tip
   assert.deepEqual(fills.map((f) => [f.ops[1], f.ops[2]]), [[0, 0], [0, 20]]);
-  const txt = items.find((it) => it.kind === 'text');
-  assert.equal(txt.lines.join(), 'SUPPLY AIR');
-  assert.deepEqual(txt.p, { x: 20, y: 10 });
-  assert.equal(items.filter((it) => it.kind === 'path').length, 2);
+  // the content is MTEXT in ezdxf's Standard style (txt font, SHX): drawn with the stroke font from the text position
+  assert.equal(items.filter((it) => it.kind === 'text').length, 0);
+  const txt = items.find((it) => it.strokeText);
+  assert.ok(txt.strokeText.p.x >= 20 && txt.strokeText.p.x < 21 && txt.strokeText.p.y < 10, JSON.stringify(txt.strokeText));
+  assert.equal(items.filter((it) => it.kind === 'path' && !it.strokeText).length, 2);
   const b = bboxOf(e, doc);
   assert.ok(b.minx <= 0 && b.maxy >= 20, JSON.stringify(b));
 

@@ -3,7 +3,7 @@
 // the public-domain Hershey "Roman Simplex" (hersheyFutural.js), the font AutoCAD's own simplex/romans derive from.
 //
 //   shxSubstitute(fontFile)        -> 'simplex' | null   (null: draw with canvas TrueType fonts as before)
-//   strokeLayout(text, h)          -> { strokes: [[x0,y0,x1,y1,...], ...], width } | null
+//   strokeLayout(text, h, track=1) -> { strokes: [[x0,y0,x1,y1,...], ...], width } | null
 //       local frame: origin at the baseline start, y UP, cap height = h (AutoCAD: SHX text height is the
 //       cap height); width = sum of the glyph advances. null when a character has no stroke glyph.
 //   STROKE_DESCENT                 -> descender depth as a fraction of the height (bottom alignment)
@@ -64,8 +64,8 @@ function simplex() {
   return g;
 }
 
-/** Stroke layout of one line of text at cap height h (see the header). */
-export function strokeLayout(text, h) {
+/** Stroke layout of one line of text at cap height h (see the header); track scales each advance (MTEXT \T). */
+export function strokeLayout(text, h, track = 1) {
   const glyphs = simplex();
   const k = h / CAP;
   const strokes = [];
@@ -74,7 +74,7 @@ export function strokeLayout(text, h) {
     const g = glyphs.get(ch.codePointAt(0));
     if (!g) return null;
     for (const s of g.strokes) strokes.push(s.map((v, i) => (i % 2 ? v * k : (v - g.l) * k + x)));
-    x += (g.r - g.l) * k;
+    x += (g.r - g.l) * k * track;
   }
   return { strokes, width: x };
 }

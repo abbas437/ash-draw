@@ -65,8 +65,8 @@ export function runRgb(c, style, colOpts = {}) {
   return aciToRgb(c.aci);
 }
 
-/** MTEXT layout of a scene item (local frame: origin at item.p, y down, drawing units) */
-export const mtextItemLayout = (it, measure = approxMeasure) => layoutMText(it.mt, { width: it.boxW, attach: it.attach, lineSpacing: it.lineSpacing, measure });
+/** MTEXT layout of a scene item (local frame: origin at item.p, y down, drawing units); a fixed it.lay (SHX runs) first */
+export const mtextItemLayout = (it, measure = approxMeasure) => it.lay ?? layoutMText(it.mt, { width: it.boxW, attach: it.attach, lineSpacing: it.lineSpacing, measure });
 
 /** plotted lineweight in mm; negative (default/ByLayer/ByBlock left over) = 0.25 mm */
 export function lineweightMm(style, lineweights = true) {

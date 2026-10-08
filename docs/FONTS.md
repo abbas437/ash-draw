@@ -18,7 +18,12 @@ with a bundled single-stroke font instead, so it looks and measures like AutoCAD
 - The strokes are ordinary drawing paths: screen, PDF and SVG export draw the same lines, in the entity
   lineweight and always continuous (text ignores the linetype, as in AutoCAD).
 - Fallback: a TEXT with a character outside the stroke font (e.g. Arabic, CJK from a big font) is drawn
-  with the canvas TrueType path as before. MTEXT and gdt.shx GD&T symbols still use TrueType fonts.
+  with the canvas TrueType path as before. gdt.shx GD&T symbols still use TrueType fonts.
+- MTEXT: runs in an SHX font (the style font, or a `\F`/`\f` run font) are stroked the same way (cap height, `\W`, `\Q`,
+  `\T`, `\C` colours, underline / overline / strike and stacks as strokes). Mixed MTEXT is laid out once in core
+  (stroke advances for SHX runs, the canvas measure for TrueType runs, wrap width with the same measure); the TrueType
+  runs keep that fixed layout on screen and in PDF / SVG. A run with a character the stroke font lacks stays on canvas.
+  The first line's baseline is one cap height below the top for SHX runs (0.9 h for TrueType).
 - To keep real TrueType text, give the style a TrueType font (e.g. `arial.ttf`); only SHX styles are
   substituted. Saving keeps the style's `.shx` file name, so AutoCAD uses its own SHX on reopen.
 
