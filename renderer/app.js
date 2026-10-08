@@ -18,7 +18,7 @@ const TOOL_BUTTONS = [
   ['Select', [['select', 'Select']]],
   ['Draw', [['line', 'Line', 'L'], ['pline', 'Polyline', 'PL'], ['rect', 'Rectangle', 'REC'], ['circle', 'Circle', 'C'], ['arc', 'Arc', 'A'], ['ellipse', 'Ellipse', 'EL'], ['point', 'Point', 'PO'], ['text', 'Text', 'T'], ['hatch', 'Hatch', 'H']]],
   ['Modify', [['move', 'Move', 'M'], ['copy', 'Copy', 'CO'], ['rotate', 'Rotate', 'RO'], ['scale', 'Scale', 'SC'], ['mirror', 'Mirror', 'MI'], ['offset', 'Offset', 'O'], ['trim', 'Trim', 'TR'], ['extend', 'Extend', 'EX'], ['explode', 'Explode', 'X'], ['erase', 'Erase', 'E']]],
-  ['Inquiry', [['measure', 'Measure', 'DI']]],
+  ['Inquiry', [['measure', 'Measure', 'MEA'], ['area', 'Area', 'AREA']]],
 ];
 
 class App {
