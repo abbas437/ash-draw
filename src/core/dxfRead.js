@@ -254,6 +254,7 @@ function buildMText(rec, o) {
   rot = ((rot % 360) + 360) % 360;
   return makeMText(pt(rec, 10), rec.num(40, 1), text, {
     ...o, width: rec.num(41), rot, attach: rec.int(71, 1), style: rec.str(7, 'STANDARD').toUpperCase(),
+    lineSpacing: rec.num(44, 1) > 0 ? rec.num(44, 1) : 1,
   });
 }
 

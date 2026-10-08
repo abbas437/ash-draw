@@ -211,6 +211,8 @@ export function writeDxf(doc, opts = {}) {
         const st = String(e.style || 'STANDARD').toUpperCase();
         o.s(7, styleDefs.has(st) ? styleDefs.get(st).name : 'Standard');
         if (e.rot) { const r = e.rot * DEG; o.pt(11, Math.cos(r), Math.sin(r)); }
+        // group 73 line spacing style (1 = at least), 44 line spacing factor
+        if (e.lineSpacing > 0 && e.lineSpacing !== 1) { o.p(73, 1); o.p(44, e.lineSpacing); }
         return true;
       }
       case 'POINT':
