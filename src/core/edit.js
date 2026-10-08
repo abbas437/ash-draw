@@ -127,11 +127,11 @@ export class Session {
       throw err;
     }
     if (tx.ops.length) {
-      this.undoStack.push({ id: ++this.stepSeq, label, ops: tx.ops });
+      this.undoStack.push({ id: ++this.stepSeq, label, ops: tx.ops, doc: this.doc });
       if (this.undoStack.length > UNDO_LIMIT) this.undoStack.shift();
       this.redoStack = [];
       this.revision++;
-      this._emit({ ids: [...tx.ids], structure: tx.structure, kind: 'do', label });
+      this._emit({ ids: [...tx.ids], structure: tx.structure, kind: 'do', label, doc: this.doc });
     }
     return result;
   }
@@ -142,12 +142,12 @@ export class Session {
     const ids = new Set();
     let structure = false;
     for (const op of [...step.ops].reverse()) {
-      applyInverse(this.doc, op);
+      applyInverse(step.doc ?? this.doc, op);
       if (op.k === 'layer' || op.k === 'dimstyle' || op.k === 'block') structure = true; else collectIds(op, ids);
     }
     this.redoStack.push(step);
     this.revision--;
-    this._emit({ ids: [...ids], structure, kind: 'undo', label: step.label });
+    this._emit({ ids: [...ids], structure, kind: 'undo', label: step.label, doc: step.doc });
     return true;
   }
 
@@ -157,12 +157,12 @@ export class Session {
     const ids = new Set();
     let structure = false;
     for (const op of step.ops) {
-      applyForward(this.doc, op);
+      applyForward(step.doc ?? this.doc, op);
       if (op.k === 'layer' || op.k === 'dimstyle' || op.k === 'block') structure = true; else collectIds(op, ids);
     }
     this.undoStack.push(step);
     this.revision++;
-    this._emit({ ids: [...ids], structure, kind: 'redo', label: step.label });
+    this._emit({ ids: [...ids], structure, kind: 'redo', label: step.label, doc: step.doc });
     return true;
   }
 

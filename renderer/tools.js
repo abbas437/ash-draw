@@ -27,7 +27,7 @@ const num = (s) => { const v = Number(String(s).trim().replace(',', '.')); retur
 const fmt = (v) => (Math.abs(v) >= 1000 ? v.toFixed(1) : Math.abs(v) >= 1 ? v.toFixed(3) : v.toPrecision(4)).replace(/\.?0+$/, '');
 const angleOf = (a, b) => Math.atan2(b.y - a.y, b.x - a.x);
 
-class Tool {
+export class Tool {
   constructor(host) { this.h = host; this.vp = host.vp; }
   get prompt() { return ''; }
   activate() { this.vp.preview = (c, v) => this.draw?.(c, v); }

@@ -45,7 +45,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 #tools .group { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.06em; margin:8px 2px 2px; }
 #tools button { width:100%; padding:5px 2px; text-align:center; font-size:12px; }
 #tools button.active { background:var(--accent2); border-color:var(--accent); color:var(--on-accent); }
-#docs { display:grid; grid-template-rows:auto 1fr; min-width:0; min-height:0; }
+#docs { display:grid; grid-template-rows:auto 1fr auto; min-width:0; min-height:0; }
 #tabbar { display:flex; overflow-x:auto; background:var(--bg); border-bottom:1px solid var(--line); min-height:28px; }
 #tabbar .tab { display:flex; align-items:center; gap:4px; padding:0 4px 0 10px; max-width:220px; border-right:1px solid var(--line); color:var(--dim); cursor:default; user-select:none; white-space:nowrap; }
 #tabbar .tab:hover { background:var(--hover); }
@@ -127,3 +127,8 @@ dialog label { display:block; margin:6px 0 2px; color:var(--dim); }
 .file-name { font-weight:600; }
 .file-folder, .file-note { font-size:12px; opacity:.75; word-break:break-all; }
 .file-missing { font-size:12px; color:var(--warn); }
+
+/* Model / layout tabs under the canvas (layouts-ui.js) */
+#spacebar { display:flex; gap:2px; background:var(--bg); border-top:1px solid var(--line); min-height:24px; overflow-x:auto; }
+#spacebar button { border:0; border-right:1px solid var(--line); background:transparent; padding:2px 12px; font-size:12px; cursor:pointer; color:inherit; }
+#spacebar button.active { background:var(--canvas); font-weight:600; }

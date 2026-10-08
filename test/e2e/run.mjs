@@ -743,6 +743,49 @@ try {
   assert.ok(rawAfter.includes('\\Xzz;'), `unknown code kept: ${rawAfter}`);
   await page.keyboard.press('Escape');
 
+  step = 'layouts: Model / Layout tabs, sheet, viewport at 1:50, viewport-frozen layer, MV';
+  await page.keyboard.press('Escape');
+  await page.evaluate(async () => {
+    const { readDxf } = await import('/src/core/dxfRead.js');
+    const bytes = new Uint8Array(await (await fetch('/test/fixtures/layouts_r2000.dxf')).arrayBuffer());
+    window.app.installDoc(readDxf(bytes), { path: null, name: 'layouts.dxf', format: 'dxf' });
+  });
+  assert.deepEqual(await page.locator('#spacebar button').allTextContents(), ['Model', 'Layout1', 'Layout2']);
+  await page.click('#spacebar button[data-space="Layout1"]');
+  assert.equal(await page.evaluate(() => window.app.vp.layout?.name), 'Layout1');
+  // ink pixels (dark on the white sheet) inside a paper-space rectangle, at 2 px per paper mm
+  const ink = (x0, y0, x1, y1) => page.evaluate(([x0, y0, x1, y1]) => {
+    const vp = window.app.vp;
+    vp.view = { ...vp.view, cx: 200, cy: 150, zoom: 2 }; vp.render();
+    const k = vp.canvas.width / vp.view.width, a = vp.toScreen({ x: x0, y: y1 }), b = vp.toScreen({ x: x1, y: y0 });
+    const w = Math.max(1, Math.round((b.x - a.x) * k)), h = Math.max(1, Math.round((b.y - a.y) * k));
+    const d = vp.ctx.getImageData(Math.round(a.x * k), Math.round(a.y * k), w, h).data;
+    const xs = [];
+    for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] < 600) xs.push(((i / 4) % w) / k);
+    return { n: xs.length, span: xs.length ? Math.max(...xs) - Math.min(...xs) : 0 };
+  }, [x0, y0, x1, y1]);
+  assert.ok((await ink(299, 19, 340, 26)).n > 20, 'paper-space title text drawn on the sheet');
+  // model line (0,0)-(1000,0) through a 1:50 viewport centred on (500,0): 20 mm of paper = 40 px, on y=150
+  const line = await ink(170, 149.5, 230, 150.5);
+  assert.ok(Math.abs(line.span - 40) <= 3, `model line 1:50 length ${line.span}px, expected 40`);
+  // circle on HIDE (frozen in the viewport): centre (500,500) r 200 -> paper (200,160) r 4
+  assert.equal((await ink(194, 157, 206, 166)).n, 0, 'viewport-frozen HIDE layer not drawn');
+  const vpsBefore = await page.evaluate(() => window.app.doc.entities.filter((e) => e.type === 'VIEWPORT').length);
+  await typeCmd('mv'); await typeCmd('20,200'); await typeCmd('120,260');
+  const vps = await page.evaluate(() => window.app.doc.entities.filter((e) => e.type === 'VIEWPORT'));
+  assert.equal(vps.length, vpsBefore + 1, 'MV adds a viewport to the layout');
+  assert.equal(await page.evaluate(() => window.app.fileDoc.entities.some((e) => e.type === 'VIEWPORT')), false, 'model space untouched');
+  const vpReread = await page.evaluate(async () => {
+    const { writeDxf } = await import('/src/core/dxfWrite.js'); const { readDxf } = await import('/src/core/dxfRead.js');
+    const d = readDxf(new TextEncoder().encode(writeDxf(window.app.fileDoc)));
+    return d.layouts.find((l) => l.name === 'Layout1').entities.filter((e) => e.type === 'VIEWPORT').map((e) => [e.c.x, e.c.y, e.width, e.height]);
+  });
+  assert.ok(vpReread.some(([x, y, w, h]) => Math.abs(x - 70) < 1e-6 && Math.abs(y - 230) < 1e-6 && Math.abs(w - 100) < 1e-6 && Math.abs(h - 60) < 1e-6), `MV viewport saved and reopened: ${JSON.stringify(vpReread)}`);
+  await page.keyboard.press('Control+z');
+  assert.equal(await page.evaluate(() => window.app.doc.entities.filter((e) => e.type === 'VIEWPORT').length), vpsBefore, 'undo removes the MV viewport');
+  await page.click('#spacebar button[data-space="Model"]');
+  assert.equal(await page.evaluate(() => window.app.vp.layout), null);
+
   step = 'csp';
   assert.deepEqual(await page.evaluate(() => window.__csp), []);
   assert.deepEqual(problems, []);
