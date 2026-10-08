@@ -3,6 +3,7 @@
 //   gripsOf(e)                 -> [{x, y, kind}]   kind: end | mid | vtx | seg | cen | quad | axis | ins | def | text
 //   applyGrip(e, i, p)         -> edited COPY of e with grip i dragged to p (null when the edit is impossible)
 //   gripEdit(session, id, i, p)-> one undo step; DIMENSIONs are regenerated into a fresh *D block
+//   gripsStretch(session, [{id,i}], d) -> several grips moved by d, one undo step
 //   editEntity(session, id, fn, label) -> one undo step replacing the entity by fn(copy)
 //   matchPropsEdit(session, src, ids, settings) -> MATCHPROP as one undo step (dimensions get a regenerated block)
 //   matchProps(src, dst, settings) -> copy of dst carrying the property groups of src that `settings` (MATCH_SETTINGS keys) leave on
@@ -160,6 +161,30 @@ export function editEntity(s, id, fn, label = 'Properties') {
   if (c.type === 'DIMENSION' && c.def) { c.block = freshDimBlock(s.doc); regenerateDimension(s.doc, c); } // old block stays for undo
   if (c.type === 'INSERT' && e.attribs?.length) carryAttribs(e, c);
   s.transact(label, (tx) => { tx.replace(c); });
+  return true;
+}
+
+/** STRETCH several hot grips by the same displacement d, as ONE undo step. picks = [{id, i}]; false when any edit is impossible. */
+export function gripsStretch(s, picks, d) {
+  const byId = new Map();
+  for (const { id, i } of picks) { if (!byId.has(id)) byId.set(id, []); byId.get(id).push(i); }
+  const out = [];
+  for (const [id, idx] of byId) {
+    const e = getEntity(s.doc, id);
+    if (!e) return false;
+    let c = e;
+    for (const i of idx) {
+      const g = gripsOf(c)[i];
+      c = g && applyGrip(c, i, add(g, d));
+      if (!c) return false;
+    }
+    c.id = e.id;
+    if (c.type === 'DIMENSION' && c.def) { c.block = freshDimBlock(s.doc); regenerateDimension(s.doc, c); }
+    if (c.type === 'INSERT' && e.attribs?.length) carryAttribs(e, c);
+    out.push(c);
+  }
+  if (!out.length) return false;
+  s.transact('Grip stretch', (tx) => { for (const c of out) tx.replace(c); });
   return true;
 }
 
