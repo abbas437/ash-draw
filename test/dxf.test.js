@@ -6,6 +6,7 @@ import path from 'node:path';
 import { readDxf, parseDxf, decodeDxfBytes, plainText } from '../src/core/dxfRead.js';
 import { writeDxf } from '../src/core/dxfWrite.js';
 import * as M from '../src/core/model.js';
+import { makeMLeader } from '../src/core/mleader.js';
 import { aciToRgb, resolveColor } from '../src/core/aci.js';
 import { fixture, expected, norm, ezdxfAvailable, validateWithEzdxf } from './helpers.js';
 
@@ -245,6 +246,20 @@ test('writer: dimensions can be written as plain geometry (for DWG)', () => {
   assert.equal(back.entities.filter((e) => e.type === 'DIMENSION').length, 0);
   assert.equal(back.entities.filter((e) => e.type === 'INSERT').length, 5);
   assert.ok(doc.lastWriteReport.notes.some((n) => /plain geometry/.test(n)));
+});
+
+test('writer: for DWG, multileaders become plain geometry and no MLEADERSTYLE object is written', () => {
+  // LibreDWG (R2000 output) silently drops every entity of a DXF that holds an MLEADERSTYLE object
+  const doc = M.newDocument();
+  doc.entities.push({ id: 1, type: 'ARC', layer: '0', color: 256, linetype: 'BYLAYER', lineweight: -1, ltscale: 1, c: { x: 0, y: 0 }, r: 5, a0: 0, a1: 90 });
+  doc.entities.push({ ...makeMLeader({ x: 0, y: 0 }, { x: 10, y: 10 }, 'NOTE'), id: 2, layer: '0', color: 1 });
+  const out = writeDxf(doc, { dimensionsAsGeometry: true });
+  assert.doesNotMatch(out, /MLEADERSTYLE|MULTILEADER/);
+  const back = readDxf(Buffer.from(out));
+  assert.deepEqual(back.entities.map((e) => e.type).sort(), ['ARC', 'LWPOLYLINE', 'MTEXT', 'SOLID']);
+  assert.ok(back.entities.filter((e) => e.type !== 'ARC').every((e) => e.color === 1));
+  assert.ok(doc.lastWriteReport.notes.some((n) => /Multileaders are saved as plain geometry/.test(n)));
+  assert.match(writeDxf(doc), /MLEADERSTYLE[\s\S]*MULTILEADER/, 'a plain DXF save keeps the multileader');
 });
 
 test('new drawing built from factories saves and passes an independent audit', (t) => {
