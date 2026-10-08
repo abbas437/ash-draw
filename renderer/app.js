@@ -19,9 +19,24 @@ const api = window.api;
 const TOOL_BUTTONS = [
   ['Select', [['select', 'Select']]],
   ['Draw', [['line', 'Line', 'L'], ['pline', 'Polyline', 'PL'], ['rect', 'Rectangle', 'REC'], ['circle', 'Circle', 'C'], ['arc', 'Arc', 'A'], ['ellipse', 'Ellipse', 'EL'], ['point', 'Point', 'PO'], ['text', 'Text', 'T'], ['hatch', 'Hatch', 'H']]],
-  ['Modify', [['move', 'Move', 'M'], ['copy', 'Copy', 'CO'], ['rotate', 'Rotate', 'RO'], ['scale', 'Scale', 'SC'], ['mirror', 'Mirror', 'MI'], ['offset', 'Offset', 'O'], ['trim', 'Trim', 'TR'], ['extend', 'Extend', 'EX'], ['explode', 'Explode', 'X'], ['erase', 'Erase', 'E']]],
+  ['Modify', [['move', 'Move', 'M'], ['copy', 'Copy', 'CO'], ['rotate', 'Rotate', 'RO'], ['scale', 'Scale', 'SC'], ['mirror', 'Mirror', 'MI'], ['offset', 'Offset', 'O'], ['trim', 'Trim', 'TR'], ['extend', 'Extend', 'EX'], ['explode', 'Explode', 'X'], ['erase', 'Erase', 'E'],
+    ['fillet', 'Fillet', 'F', 'M2 14V8a5 5 0 0 1 5-5h7'], ['chamfer', 'Chamfer', 'CHA', 'M2 14V7l4-4h8'],
+    ['break', 'Break', 'BR', 'M1 8h5M10 8h5M6 5v6M10 5v6'], ['join', 'Join', 'J', 'M1 8h5M10 8h5M5 5l3 3-3 3M11 5 8 8l3 3'],
+    ['lengthen', 'Lengthen', 'LEN', 'M1 8h10M11 5l4 3-4 3'], ['stretch', 'Stretch', 'STR', 'M1 4h7v8H1M8 8h7M12 5l3 3-3 3'],
+    ['arrayrect', 'Array rect', 'AR', 'M2 2h4v4H2zM10 2h4v4h-4zM2 10h4v4H2zM10 10h4v4h-4z'],
+    ['arraypolar', 'Array polar', 'ARRAYPOLAR', 'M7 1h2v2H7zM13 7h2v2h-2zM7 13h2v2H7zM1 7h2v2H1zM7.5 7.5h1v1h-1z'],
+    ['arraypath', 'Array path', 'ARRAYPATH', 'M1 14C6 14 6 3 15 3M2 11h2v2H2zM7 6h2v2H7zM12 1h2v2h-2z']]],
   ['Inquiry', [['measure', 'Measure', 'MEA'], ['area', 'Area', 'AREA']]],
 ];
+
+/** 16 px line icon for a toolbar button (one SVG path, drawn in the button's text colour). */
+function toolIcon(d) {
+  const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg'), path = document.createElementNS(ns, 'path');
+  for (const [k, v] of Object.entries({ width: 14, height: 14, viewBox: '0 0 16 16', 'aria-hidden': 'true', style: 'vertical-align:-2px;margin-right:4px' })) svg.setAttribute(k, v);
+  for (const [k, v] of Object.entries({ d, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })) path.setAttribute(k, v);
+  svg.append(path);
+  return svg;
+}
 
 class App {
   constructor() {
@@ -371,7 +386,7 @@ class App {
     const box = document.getElementById('tools');
     for (const [group, items] of TOOL_BUTTONS) {
       box.append(el('div', { class: 'group', text: group }));
-      for (const [id, label, alias] of items) box.append(el('button', { 'data-tool': id, title: alias ? `${label} (${alias})` : label, onclick: () => this.setTool(id) }, label));
+      for (const [id, label, alias, icon] of items) box.append(el('button', { 'data-tool': id, title: alias ? `${label} (${alias})` : label, onclick: () => this.setTool(id) }, icon ? toolIcon(icon) : null, label));
     }
     box.append(el('div', { class: 'group', text: 'Hatch' }));
     const pat = el('select', { title: 'Hatch pattern', onchange: (e) => { this.defaults.hatchPattern = e.target.value; } }, PATTERN_NAMES.map((n) => el('option', { value: n, text: n })));

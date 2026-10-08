@@ -16,6 +16,7 @@ import {
   offsetCommand, trimCommand, extendCommand,
 } from '../src/core/edit.js';
 import { MeasureGeomTool } from './tools-measure.js';
+import { createModifyTools } from './tools-modify.js';
 import { tessellate, transformEntity, translation, rotation, scaling, mirrorLine, dist, DEG } from '../src/core/geom.js';
 
 const num = (s) => { const v = Number(String(s).trim().replace(',', '.')); return Number.isFinite(v) && String(s).trim() !== '' ? v : null; };
@@ -512,6 +513,7 @@ export function createTools(h) {
     measure: new MeasureGeomTool(h), area: new MeasureGeomTool(h, 'AREA'),
     move: new MoveTool(h), copy: new MoveTool(h, true), rotate: new RotateTool(h), scale: new ScaleTool(h), mirror: new MirrorTool(h),
     offset: new OffsetTool(h), trim: new TrimTool(h), extend: new TrimTool(h, true), erase: new EraseTool(h), explode: new ExplodeTool(h),
+    ...createModifyTools(h, { Tool, ModifyTool }),
   };
 }
 
@@ -523,4 +525,7 @@ export const TOOL_ALIASES = {
   m: 'move', move: 'move', co: 'copy', cp: 'copy', copy: 'copy', ro: 'rotate', rotate: 'rotate', sc: 'scale', scale: 'scale',
   mi: 'mirror', mirror: 'mirror', o: 'offset', offset: 'offset', tr: 'trim', trim: 'trim', ex: 'extend', extend: 'extend',
   e: 'erase', erase: 'erase', x: 'explode', explode: 'explode', select: 'select', s: 'select',
+  f: 'fillet', fillet: 'fillet', cha: 'chamfer', chamfer: 'chamfer', br: 'break', break: 'break', j: 'join', join: 'join',
+  len: 'lengthen', lengthen: 'lengthen', str: 'stretch', stretch: 'stretch', ar: 'arrayrect', arrayrect: 'arrayrect',
+  arraypolar: 'arraypolar', arraypath: 'arraypath',
 };
