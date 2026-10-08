@@ -786,6 +786,24 @@ try {
   await page.click('#spacebar button[data-space="Model"]');
   assert.equal(await page.evaluate(() => window.app.vp.layout), null);
 
+  step = 'MLD: create "SUPPLY AIR", Undo removes it, Redo restores it, DXF save and reopen keeps it';
+  await typeCmd('new');
+  await page.evaluate(() => { const vp = window.app.vp; vp.view = { ...vp.view, cx: 30, cy: 10, zoom: 8 }; vp.render(); });
+  const mls = () => page.evaluate(() => window.app.doc.entities.filter((e) => e.type === 'MLEADER').map((e) => e.text));
+  await typeCmd('mld'); await typeCmd('0,0'); await typeCmd('30,20');
+  await page.locator('#dlg textarea').fill('SUPPLY AIR'); await page.locator('#dlg button.primary').click();
+  await page.waitForFunction(() => window.app.doc.entities.some((e) => e.type === 'MLEADER'));
+  assert.deepEqual(await mls(), ['SUPPLY AIR']);
+  await page.keyboard.press('Control+z');
+  assert.deepEqual(await mls(), []);
+  await page.keyboard.press('Control+y');
+  assert.deepEqual(await mls(), ['SUPPLY AIR']);
+  const mlBack = await page.evaluate(async () => {
+    const { writeDxf } = await import('/src/core/dxfWrite.js'); const { readDxf } = await import('/src/core/dxfRead.js');
+    return readDxf(new TextEncoder().encode(writeDxf(window.app.doc))).entities.filter((e) => e.type === 'MLEADER').map((e) => e.text);
+  });
+  assert.deepEqual(mlBack, ['SUPPLY AIR']);
+
   step = 'csp';
   assert.deepEqual(await page.evaluate(() => window.__csp), []);
   assert.deepEqual(problems, []);

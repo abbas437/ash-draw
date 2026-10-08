@@ -1,6 +1,8 @@
 // ASH Draw Studio - compare two drawings (used to check a DWG save by reading the file back).
 // compareDocuments(a, b) -> { ok, counts:{TYPE:[a,b]}, mismatched:{TYPE:n}, total }
+// Multileaders in `a` are compared as the lines, arrows and text a DWG save turns them into (R2000 has no multileader).
 //   ok = same entity counts and no geometry mismatches.
+import { mleaderParts } from './mleader.js';
 const PICK = {
   LINE: ['p1', 'p2'], CIRCLE: ['c', 'r'], ARC: ['c', 'r', 'a0', 'a1'], ELLIPSE: ['c', 'major', 'ratio'],
   LWPOLYLINE: ['vertices', 'closed'], POINT: ['p'], SOLID: ['pts'], SPLINE: ['ctrl', 'degree'],
@@ -16,7 +18,7 @@ const round = (v, d) => {
 const sig = (e, d) => JSON.stringify(round((PICK[e.type] ?? []).map((k) => e[k]), d));
 
 export function compareDocuments(a, b, digits = 5) {
-  const group = (doc) => { const g = {}; for (const e of doc.entities) (g[e.type] ??= []).push(e); return g; };
+  const group = (doc) => { const g = {}; for (const e of doc.entities) { for (const x of e.type === 'MLEADER' ? mleaderParts(e) : [e]) (g[x.type] ??= []).push(x); } return g; };
   const ga = group(a), gb = group(b);
   const counts = {}, mismatched = {};
   let total = 0, countsOk = true;

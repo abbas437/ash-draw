@@ -35,6 +35,7 @@ const TOOL_BUTTONS = [
   ['Dimension', [['dimlinear', 'Linear', 'DLI', 'M2 4v8M14 4v8M2 8h12M4 6 2 8l2 2M12 6l2 2-2 2'], ['dimaligned', 'Aligned', 'DAL', 'M2 12 12 2M4 14 14 4M5 11l6-6'],
     ['dimangular', 'Angular', 'DAN', 'M2 14 14 14M2 14 11 3M8 14a6 6 0 0 0-2-4.6'],
     ['dimradius', 'Radius', 'DRA', 'M8 8l5-5M1 8a7 7 0 1 0 14 0A7 7 0 1 0 1 8'], ['dimdiameter', 'Diameter', 'DDI', 'M3 13 13 3M1 8a7 7 0 1 0 14 0A7 7 0 1 0 1 8'],
+    ['mleader', 'Multileader', 'MLD', 'M2 14 7 6h6M2 14l2-.5M2 14l.5-2M9 4h5M9 8h5'],
     ['dimcontinue', 'Continue', 'DCO', 'M1 4v8M8 4v8M15 4v8M1 8h14'], ['dimbaseline', 'Baseline', 'DBA', 'M1 3v11M8 7v7M15 3v11M1 9h7M1 5h14']]],
   ['Inquiry', [['measure', 'Measure', 'MEA'], ['area', 'Area', 'AREA']]],
 ];

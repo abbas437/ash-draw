@@ -10,6 +10,7 @@ import { buildScene } from '../src/core/render.js';
 import { newDocument, addEntity } from '../src/core/model.js';
 import { makeMLeader } from '../src/core/mleader.js';
 import { bboxOf } from '../src/core/geom.js';
+import { compareDocuments } from '../src/core/verify.js';
 import { ezdxfAvailable, validateWithEzdxf } from './helpers.js';
 
 const skip = !ezdxfAvailable() && 'ezdxf not installed';
@@ -95,4 +96,18 @@ test('a created MLEADER writes a file ezdxf accepts and reads back', { skip }, (
   const e = parseDxf(readFileSync(out, 'utf8')).entities[0];
   assert.equal(e.type, 'MLEADER');
   assert.equal(e.text, 'EXHAUST\\PFAN');
+});
+
+test('DWG read-back check: a multileader is compared as the geometry the DWG save turns it into', () => {
+  const doc = newDocument();
+  addEntity(doc, makeMLeader({ x: 0, y: 0 }, { x: 20, y: 10 }, 'SUPPLY AIR', { textHeight: 2.5 }));
+  // what LibreDWG hands back: the same lines, arrow and text as plain entities
+  const back = parseDxf(writeDxf(doc, { dimensionsAsGeometry: true }));
+  assert.ok(!back.entities.some((e) => e.type === 'MLEADER'));
+  const cmp = compareDocuments(doc, back);
+  assert.equal(cmp.ok, true, JSON.stringify(cmp));
+  assert.equal(cmp.counts.MLEADER, undefined);
+  // a lost piece is still reported
+  back.entities = back.entities.filter((e) => e.type !== 'SOLID');
+  assert.equal(compareDocuments(doc, back).ok, false);
 });
