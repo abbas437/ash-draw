@@ -15,6 +15,7 @@ import { plotDialog } from './plot.js';
 import { initLayouts, restoreSpace, renderSpaceBar } from './layouts-ui.js';
 import { ComparePanel, runCompare } from './compare.js';
 import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
+import { loadDrawingXrefs, xrefPanel } from './xref-panel.js';
 import { el, message, modal, confirmDialog, textDialog, toast, renderLayers, renderProperties } from './ui.js';
 import {
   OPEN_FILTERS, loadDrawing, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, baseName, extOf, UNIT_NAMES,
@@ -142,7 +143,7 @@ class App {
     if (t.text?.(s)) { this.refreshPrompt(); return; }
     const low = s.toLowerCase();
     if (TOOL_ALIASES[low]) { this.setTool(TOOL_ALIASES[low]); return; }
-    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => this.vp.zoomExtents(), z: () => this.vp.zoomExtents(), 'zoom': () => this.vp.zoomExtents(), all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), find: () => this.find.open(), compare: () => this.compare(), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), ...this.layerCommands() };
+    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => this.vp.zoomExtents(), z: () => this.vp.zoomExtents(), 'zoom': () => this.vp.zoomExtents(), all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), find: () => this.find.open(), compare: () => this.compare(), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), ...this.layerCommands() };
     if (sys[low]) { sys[low](); return; }
     const last = this.vp.lastPoint ?? { x: 0, y: 0 };
     const dir = this.vp.lastPoint ? { x: this.vp.cursor.x - last.x, y: this.vp.cursor.y - last.y } : null;
@@ -250,6 +251,7 @@ class App {
     toast(`Opening ${f.name} …`, 60000);
     try {
       const { doc, format, notes } = await loadDrawing(api, f.name, f.bytes);
+      await loadDrawingXrefs(api, doc, f.path ?? null); // before the scene is built: it is built once, with the xrefs
       this.installDoc(doc, { path: f.path ?? null, name: f.name, format }, { replaceBlank: true });
       toast(`${f.name}: ${doc.entities.length.toLocaleString()} objects`, 2500);
       if (notes.length) await message('Opened with limitations', `${f.name} was opened, but:`, el('ul', {}, notes.map((n) => el('li', { text: n }))));
@@ -371,7 +373,8 @@ class App {
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-',
         ['Show lineweights', 'F9', () => this.toggle('lineweights')], ['Light / dark background', '', () => this.toggle('dark')], '-',
         ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark'], '-',
-        ['Show markups', '', () => toggleMarkups(this), () => markupsShown(this.doc)]]],
+        ['Show markups', '', () => toggleMarkups(this), () => markupsShown(this.doc)], '-',
+        ['External references…', 'XREF', () => xrefPanel(this)]]],
       ['Dimension', [...TOOL_BUTTONS.find(([g]) => g === 'Dimension')[1].map(([id, label, alias]) => [label, alias, () => this.setTool(id)]), '-', ['Dimension style…', 'D', () => this.dimStyles()]]],
       ['Help', [['What this program can and cannot do', '', () => this.limitations()], ['About', '', () => this.about()]]],
     ];
