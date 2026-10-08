@@ -16,6 +16,7 @@ import {
   offsetCommand, trimCommand, extendCommand,
 } from '../src/core/edit.js';
 import { MeasureGeomTool } from './tools-measure.js';
+import { gripsOf, applyGrip, gripEdit, matchProps } from './grips.js';
 import { createModifyTools } from './tools-modify.js';
 import { createDimTools } from './tools-dims.js';
 import { tessellate, transformEntity, translation, rotation, scaling, mirrorLine, dist, DEG } from '../src/core/geom.js';
@@ -74,13 +75,81 @@ class Selector {
 }
 
 class SelectTool extends Tool {
+  constructor(h) { super(h); this.sel = new Selector(this.vp); this.hot = null; }
+  get prompt() {
+    return this.hot ? '** STRETCH **  specify stretch point (Esc = cancel)' : 'Select objects (drag right-to-left = crossing, Shift = add/remove)';
+  }
+  /** grip under the screen point -> {id, i, base} (5 px pick box) */
+  gripAt(sx, sy) {
+    if (!this.vp.selection.size || this.vp.selection.size > 300) return null;
+    for (const e of this.vp.selectedEntities()) {
+      const gs = gripsOf(e);
+      for (let i = 0; i < gs.length; i++) { const s = this.vp.toScreen(gs[i]); if (Math.abs(s.x - sx) <= 5 && Math.abs(s.y - sy) <= 5) return { id: e.id, i, base: { x: gs[i].x, y: gs[i].y } }; }
+    }
+    return null;
+  }
+  setHover(g) { this.vp.gripHover = g; }
+  down(p, ev) {
+    if (this.hot) return;
+    const g = this.gripAt(ev.sx, ev.sy);
+    if (g) { this.hot = g; this.fresh = true; this.vp.gripHot = g; this.vp.lastPoint = g.base; this.h.refreshPrompt(); return; }
+    this.sel.down(p, ev);
+  }
+  move(p, ev) {
+    if (this.hot) return;
+    this.sel.move(p, ev);
+    if (!ev.dragging) this.setHover(this.gripAt(ev.sx, ev.sy));
+  }
+  up(p, ev) {
+    if (this.hot) { if (this.fresh && !ev.dragged) { this.fresh = false; return; } this.place(p); return; } // click-click or drag-release
+    this.sel.up(p, ev);
+  }
+  click(p) { if (this.hot) this.place(p); } // typed coordinate
+  place(p) {
+    const g = this.hot;
+    this.endGrip();
+    if (!gripEdit(this.h.session, g.id, g.i, p)) this.h.toast('That grip edit cannot be applied.');
+  }
+  endGrip() { this.hot = null; this.fresh = false; this.vp.gripHot = null; this.vp.lastPoint = null; this.h.refreshPrompt(); this.vp.requestRender(); }
+  key(e) {
+    if (e.key === 'Escape') { if (this.hot) this.endGrip(); else this.cancel(); return true; }
+    return false;
+  }
+  cancel() { if (this.hot) this.endGrip(); this.vp.setSelection([]); }
+  deactivate() { super.deactivate(); this.sel.start = null; this.hot = null; this.vp.gripHot = null; this.vp.gripHover = null; }
+  draw(c) {
+    if (!this.hot) return;
+    const e = this.vp.doc.entities.find((x) => x.id === this.hot.id);
+    const ne = e && applyGrip(e, this.hot.i, this.vp.cursor);
+    c.strokeStyle = this.vp.inkColor; c.setLineDash([4, 3]);
+    if (ne) for (const pl of tessellate(ne, this.vp.doc, 0.5 / this.vp.view.zoom)) this.poly(c, pl);
+    this.line(c, this.hot.base, this.vp.cursor);
+  }
+}
+
+/** MATCHPROP: pick a source object, then destination objects (click or window); Enter/Esc ends */
+class MatchPropTool extends Tool {
   constructor(h) { super(h); this.sel = new Selector(this.vp); }
-  get prompt() { return 'Select objects (drag right-to-left = crossing, Shift = add/remove)'; }
-  down(p, ev) { this.sel.down(p, ev); }
-  move(p, ev) { this.sel.move(p, ev); }
-  up(p, ev) { this.sel.up(p, ev); }
-  cancel() { this.vp.setSelection([]); }
-  deactivate() { super.deactivate(); this.sel.start = null; }
+  activate() { super.activate(); this.src = null; this.vp.setSelection([]); }
+  get prompt() { return this.src ? 'MATCHPROP  select destination object(s) (click or window, Enter = done)' : 'MATCHPROP  select source object'; }
+  down(p, ev) { if (this.src) this.sel.down(p, ev); }
+  move(p, ev) { if (this.src) this.sel.move(p, ev); }
+  up(p, ev) {
+    if (!this.src) {
+      const hit = this.vp.pick(ev.raw);
+      if (hit) { this.src = hit; this.vp.setSelection([hit.id]); }
+      return;
+    }
+    this.sel.up(p, ev);
+    const ids = [...this.vp.selection].filter((id) => id !== this.src.id);
+    this.vp.setSelection([this.src.id]);
+    if (!ids.length) return;
+    const doc = this.vp.doc, src = this.src;
+    this.h.session.transact('Match properties', (tx) => {
+      for (const id of ids) { const e = doc.entities.find((x) => x.id === id); if (e) tx.replace(matchProps(src, e)); }
+    });
+  }
+  key(e) { if (e.key === 'Escape' || e.key === 'Enter') { this.vp.setSelection([]); this.h.setTool('select'); return true; } return false; }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -516,6 +585,7 @@ export function createTools(h) {
     offset: new OffsetTool(h), trim: new TrimTool(h), extend: new TrimTool(h, true), erase: new EraseTool(h), explode: new ExplodeTool(h),
     ...createModifyTools(h, { Tool, ModifyTool }),
     ...createDimTools(h, { Tool }),
+    matchprop: new MatchPropTool(h),
   };
 }
 
@@ -532,4 +602,5 @@ export const TOOL_ALIASES = {
   arraypolar: 'arraypolar', arraypath: 'arraypath',
   dli: 'dimlinear', dimlinear: 'dimlinear', dal: 'dimaligned', dimaligned: 'dimaligned', dra: 'dimradius', dimradius: 'dimradius',
   ddi: 'dimdiameter', dimdiameter: 'dimdiameter', dco: 'dimcontinue', dimcontinue: 'dimcontinue', dba: 'dimbaseline', dimbaseline: 'dimbaseline',
+  ma: 'matchprop', matchprop: 'matchprop', painter: 'matchprop',
 };
