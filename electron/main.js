@@ -133,9 +133,11 @@ async function createWindow() {
   });
   if (state.maximized) win.maximize();
   win.once('ready-to-show', () => win.show());
-  // The renderer sets a beforeunload guard while there are unsaved changes; without this handler Electron would
-  // silently refuse to close the window. Ask the user instead.
+  // The renderer sets a beforeunload guard while a drawing has unsaved changes; without this handler Electron would
+  // silently refuse to close the window. The renderer then asks about each drawing (Save / Don't save / Cancel) and
+  // calls app:closeWindow when the user has answered all of them; if the renderer is not ready, ask here instead.
   win.webContents.on('will-prevent-unload', (event) => {
+    if (rendererReady) { win.webContents.send('app:closeRequest'); return; }
     const choice = dialog.showMessageBoxSync(win, {
       type: 'warning', buttons: ['Keep working', 'Discard changes and close'], defaultId: 0, cancelId: 0, noLink: true,
       title: 'Unsaved changes', message: 'There are unsaved changes.', detail: 'If you close now, they will be lost.',
@@ -225,6 +227,7 @@ function registerIpc() {
   handle('app:print', () => new Promise((resolve) => {
     win.webContents.print({}, (ok, reason) => resolve({ ok, reason: ok ? undefined : reason }));
   }));
+  handle('app:closeWindow', () => { setImmediate(() => win?.close()); return true; });
   handle('app:version', () => app.getVersion());
   handle('app:setTitle', (t) => {
     if (typeof t !== 'string') throw new TypeError('title must be a string');

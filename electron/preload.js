@@ -18,6 +18,13 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('app:openFile', listener);
     return () => ipcRenderer.removeListener('app:openFile', listener);
   },
+  onCloseRequest: (cb) => {
+    if (typeof cb !== 'function') throw new TypeError('callback must be a function');
+    const listener = () => cb();
+    ipcRenderer.on('app:closeRequest', listener);
+    return () => ipcRenderer.removeListener('app:closeRequest', listener);
+  },
+  closeWindow: () => invoke('app:closeWindow'),
   print: () => invoke('app:print'),
   setTitle: (t) => invoke('app:setTitle', t),
   showItem: (p) => invoke('shell:showItem', p),

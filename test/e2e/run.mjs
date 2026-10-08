@@ -103,7 +103,6 @@ try {
   step = 'open a fixture DXF through the file chooser';
   const fixtures = ['hatch_r2000.dxf', 'blocks_r2000.dxf', 'text_r2000.dxf', 'dims_r2000.dxf', 'r2007_ac1021.dxf'];
   for (const f of fixtures) {
-    page.once('dialog', (d) => d.accept());
     const chooser = page.waitForEvent('filechooser');
     await page.keyboard.press('Control+o');
     // the unsaved-changes dialog may appear first
@@ -122,6 +121,66 @@ try {
     });
     assert.ok(painted > 200, `${f}: canvas looks blank (${painted})`);
   }
+
+  step = 'tabs: every opened drawing gets its own tab';
+  const tabCount = () => page.locator('#tabbar .tab').count();
+  assert.equal(await tabCount(), 1 + fixtures.length); // the first (edited) drawing plus one tab per fixture
+  const openFixture = async (f) => {
+    const chooser = page.waitForEvent('filechooser');
+    await page.keyboard.press('Control+o');
+    (await chooser).setFiles(path.join(ROOT, 'test', 'fixtures', f));
+    await page.waitForFunction((name) => window.app.file.name === name, f, { timeout: 8000 });
+  };
+  const before = await tabCount();
+  await openFixture('basic_r2000.dxf');
+  const n1 = await count();
+  const view1 = await page.evaluate(() => ({ ...window.app.vp.view }));
+  await openFixture('colors_r2000.dxf');
+  assert.equal(await tabCount(), before + 2);
+  assert.deepEqual(await page.locator('#tabbar .tab .name').evaluateAll((els) => els.slice(-2).map((e) => e.textContent)), ['basic_r2000.dxf', 'colors_r2000.dxf']);
+  const n2 = await count();
+
+  step = 'tabs: an edit in tab 2 stays in tab 2';
+  await typeCmd('l'); await typeCmd('0,0'); await typeCmd('10,10'); await page.keyboard.press('Escape');
+  assert.equal(await count(), n2 + 1);
+  assert.equal(await page.locator('#tabbar .tab.active.dirty').count(), 1);
+  await page.keyboard.press('Control+Shift+Tab');
+  assert.equal(await page.evaluate(() => window.app.file.name), 'basic_r2000.dxf');
+  assert.equal(await count(), n1, 'tab 1 changed');
+  assert.deepEqual(await page.evaluate(() => { const v = window.app.vp.view; return { cx: v.cx, cy: v.cy, zoom: v.zoom }; }), { cx: view1.cx, cy: view1.cy, zoom: view1.zoom }, 'tab 1 view not restored');
+
+  step = 'tabs: undo in tab 1 does not touch tab 2';
+  await page.locator('#cv').focus();
+  await page.keyboard.press('Control+z');
+  assert.equal(await count(), n1, 'undo in tab 1 changed tab 1');
+  assert.equal(await page.evaluate(() => window.app.session.dirty), false, 'tab 1 shows unsaved changes');
+  await page.keyboard.press('Control+Tab');
+  assert.equal(await page.evaluate(() => window.app.file.name), 'colors_r2000.dxf');
+  assert.equal(await count(), n2 + 1, 'the line drawn in tab 2 is gone');
+  assert.equal(await page.locator('#tabbar .tab.active.dirty .dot').textContent(), '\u25CF');
+  await page.keyboard.press('Control+z');
+  assert.equal(await count(), n2, "tab 2's own undo step is gone");
+  await page.keyboard.press('Control+y');
+  assert.equal(await count(), n2 + 1);
+
+  step = 'tabs: closing a drawing with unsaved changes asks first';
+  await page.keyboard.press('Control+w');
+  await page.locator('#dlg[open]').waitFor({ timeout: 3000 });
+  assert.match(await page.locator('#dlg').textContent(), /Save changes to colors_r2000\.dxf\?/);
+  await page.locator('#dlg button', { hasText: 'Cancel' }).click();
+  assert.equal(await tabCount(), before + 2);
+  await page.keyboard.press('Control+w');
+  await page.locator('#dlg button', { hasText: "Don't save" }).click();
+  await page.waitForFunction((n) => document.querySelectorAll('#tabbar .tab').length === n, before + 1, { timeout: 3000 });
+  assert.equal(await page.evaluate(() => window.app.file.name), 'basic_r2000.dxf');
+
+  step = 'tabs: a clean tab closes without asking; Ctrl+N opens a new tab';
+  await page.keyboard.press('Control+w');
+  await page.waitForFunction((n) => document.querySelectorAll('#tabbar .tab').length === n, before, { timeout: 3000 });
+  assert.equal(await page.locator('#dlg[open]').count(), 0);
+  await page.keyboard.press('Control+n');
+  assert.equal(await tabCount(), before + 1);
+  assert.equal(await count(), 0);
 
   step = 'binary DXF is rejected with a message';
   {
@@ -221,7 +280,7 @@ try {
     await menu('View', 'Dark theme');
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'dark');
     assert.ok(lum(rgbOf(await page.evaluate(() => getComputedStyle(document.body).backgroundColor))) < 0.05);
-    await page.evaluate(() => window.app.newDrawing(true)); // nothing unsaved, so no beforeunload prompt
+    page.once('dialog', (d) => d.accept()); // drawings with unsaved changes are still open in other tabs: leave anyway
     await page.reload({ waitUntil: 'load' });
     await page.waitForFunction(() => window.app && window.app.doc && document.documentElement.dataset.theme === 'dark', null, { timeout: 10000 });
     assert.equal(await page.evaluate(() => window.app.vp.settings.dark), true);

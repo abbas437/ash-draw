@@ -51,6 +51,8 @@
     writeFile: () => Promise.reject(new Error('writeFile ' + NO_DESKTOP)),
     getLaunchFiles: () => Promise.resolve([]),
     onOpenFile: () => () => {},
+    onCloseRequest: () => () => {},
+    closeWindow: () => Promise.resolve(false),
     print: () => { window.print(); return Promise.resolve({ ok: true }); },
     setTitle: (t) => { document.title = String(t).slice(0, 200); return Promise.resolve(); },
     showItem: () => Promise.resolve(false),

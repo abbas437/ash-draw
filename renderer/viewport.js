@@ -40,14 +40,18 @@ export class Viewport {
   emit(name, ...a) { for (const f of this.listeners.get(name) ?? []) f(...a); }
 
   // ---- document ------------------------------------------------------------------------------
-  setSession(session, { fit = true } = {}) {
+  /** show a document. A file tab coming back to the front passes its saved view, selection, scene and index. */
+  setSession(session, { fit = true, view = null, selection = [], scene = null, index = null, lastPoint = null } = {}) {
+    if (this.session && this.session !== session) this.session.onChange = null;
     this.session = session;
     this.doc = session.doc;
-    this.scene = buildScene(this.doc);
-    this.index = new SpatialIndex(this.doc);
-    this.selection.clear();
+    this.scene = scene ?? buildScene(this.doc);
+    this.index = index ?? new SpatialIndex(this.doc);
+    this.selection = new Set(selection);
+    this.lastPoint = lastPoint;
     session.onChange = (info) => this._changed(info);
-    if (fit) this.zoomExtents(); else this.requestRender();
+    if (view) { this.view = { ...this.view, cx: view.cx, cy: view.cy, zoom: view.zoom }; this.requestRender(); this.emit('view'); }
+    else if (fit) this.zoomExtents(); else this.requestRender();
     this.emit('selection', this.selection);
     this.emit('doc');
   }
