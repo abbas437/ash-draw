@@ -10,7 +10,7 @@ import { fixture } from './helpers.js';
 import { readDxf } from '../src/core/dxfRead.js';
 import { newDocument, addEntity, makeLine, makeCircle, makeArc, makeText } from '../src/core/model.js';
 import { exportSvg } from '../src/core/exportSvg.js';
-import { exportPdf } from '../src/core/exportPdf.js';
+import { exportPdf, plotLayout, plotScale } from '../src/core/exportPdf.js';
 
 const FIXTURES = ['basic', 'blocks', 'colors', 'dims', 'extrusion', 'hatch', 'polylines', 'splines', 'text', 'unsupported'];
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'ash-export-'));
@@ -115,3 +115,44 @@ for (const name of ['hatch', 'blocks']) {
     assert.ok(ink > 100, `only ${ink} non-background pixels`);
   });
 }
+
+const MM = 72 / 25.4;
+test('plot: 1:50 of a 10000 mm line on A3 is 200 mm on paper, page A3 landscape, centred', () => {
+  const L = plotLayout({ minx: 0, miny: 0, maxx: 10000, maxy: 100 }, { pageSize: 'A3', scale: plotScale(50, 1) });
+  assert.ok(Math.abs((10000 * L.k) / MM - 200) < 1e-9, `${(10000 * L.k) / MM} mm`);
+  assert.ok(Math.abs(L.pw / MM - 420) < 0.1 && Math.abs(L.ph / MM - 297) < 0.1);
+  assert.ok(Math.abs(L.ox / MM - 110) < 0.1, 'centred: (420 - 200) / 2');
+  assert.deepEqual(L.warnings, []);
+  assert.ok(Math.abs(plotLayout({ minx: 0, miny: 0, maxx: 10000, maxy: 100 }, { pageSize: 'A3', scale: plotScale(50, 1), centre: false }).ox / MM - 10) < 1e-6, 'not centred: at the margin');
+  assert.equal(plotScale(50, 1000), 20, 'metres: 1:50 = 20 paper mm per metre');
+  assert.match(plotLayout({ minx: 0, miny: 0, maxx: 10000, maxy: 100 }, { pageSize: 'A4', scale: plotScale(20, 1) }).warnings[0], /does not fit/);
+});
+
+test('PDF: a plot window at 1:50 gives the chosen paper size', async () => {
+  const doc = docWith(makeLine({ x: 0, y: 0 }, { x: 10000, y: 0 }), makeLine({ x: 50000, y: 0 }, { x: 60000, y: 0 }));
+  const { bytes, warnings } = await exportPdf(doc, { pageSize: 'A3', orientation: 'portrait', scale: plotScale(50, 1), region: { minx: 0, miny: -100, maxx: 10000, maxy: 100 } });
+  const { width, height } = (await PDFDocument.load(bytes)).getPage(0).getSize();
+  assert.ok(Math.abs(width / MM - 297) < 0.1 && Math.abs(height / MM - 420) < 0.1, `${width} x ${height}`);
+  assert.deepEqual(warnings, []);
+});
+
+test('PDF: only what lies inside the plot window is drawn', { skip: !existsSync(PDFTOPPM) && 'pdftoppm not installed' }, async () => {
+  // window x 0..100 fitted on A4 landscape spans page x 53.5..243.5 mm; the second line (x 150..200) would reach the page edge
+  const doc = docWith(makeLine({ x: 0, y: 0 }, { x: 100, y: 0 }), makeLine({ x: 150, y: 0 }, { x: 200, y: 0 }));
+  const inkCols = async (region, name) => {
+    const { bytes } = await exportPdf(doc, { pageSize: 'A4', orientation: 'landscape', region });
+    const pdfFile = path.join(tmp, `${name}.pdf`), prefix = path.join(tmp, `${name}-render`);
+    writeFileSync(pdfFile, bytes);
+    assert.equal(spawnSync(PDFTOPPM, ['-png', '-r', '50', pdfFile, prefix]).status, 0);
+    const img = await loadImage(readFileSync(`${prefix}-1.png`));
+    const ctx = createCanvas(img.width, img.height).getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const px = ctx.getImageData(0, 0, img.width, img.height).data;
+    let right = 0;
+    const x0 = Math.round((250 / 297) * img.width);
+    for (let y = 0; y < img.height; y++) for (let x = x0; x < img.width; x++) if (px[(y * img.width + x) * 4] < 200) right++;
+    return right;
+  };
+  assert.equal(await inkCols({ minx: 0, miny: -50, maxx: 100, maxy: 50 }, 'win'), 0);
+  assert.ok(await inkCols(null, 'ext') > 0, 'extents plot draws to the right');
+});

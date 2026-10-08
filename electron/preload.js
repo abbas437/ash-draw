@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('app:closeRequest', listener);
   },
   closeWindow: () => invoke('app:closeWindow'),
-  print: () => invoke('app:print'),
+  print: (pdfBytes) => invoke('app:print', pdfBytes),
   setTitle: (t) => invoke('app:setTitle', t),
   showItem: (p) => invoke('shell:showItem', p),
   settingsGet: (k) => invoke('app:settingsGet', k),

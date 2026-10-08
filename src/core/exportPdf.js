@@ -5,7 +5,7 @@ import {
   PDFDocument, StandardFonts, PageSizes, rgb, PDFOperator, PDFOperatorNames,
   pushGraphicsState, popGraphicsState, setLineWidth, setDashPattern, setLineCap, setLineJoin,
   setStrokingRgbColor, setFillingRgbColor, moveTo, lineTo, appendBezierCurve, closePath, stroke,
-  clipEvenOdd, endPath, concatTransformationMatrix,
+  clip, clipEvenOdd, endPath, concatTransformationMatrix,
 } from 'pdf-lib';
 import { buildScene } from './render.js';
 import {
@@ -19,23 +19,17 @@ const fillEvenOdd = () => PDFOperator.of(PDFOperatorNames.FillEvenOdd);
 const SIZES = { A4: PageSizes.A4, A3: PageSizes.A3, A2: PageSizes.A2, A1: PageSizes.A1, A0: PageSizes.A0, Letter: PageSizes.Letter };
 
 /**
- * exportPdf(doc, opts) -> Promise<{bytes:Uint8Array, warnings:string[]}> (one page, vector).
- * opts: pageSize 'fit'|'A4'|'A3'|'A2'|'A1'|'A0'|'Letter' ('fit'), orientation 'auto'|'landscape'|'portrait',
- * margin (mm, 10), scale (null = fit to page | page mm per drawing unit), monochrome, lineweights,
- * unicodeFont (TTF/OTF bytes for text outside WinAnsi), scene (prebuilt).
+ * plotLayout(region, opts) -> {pw, ph, k, ox, oy, warnings}: page size (points) and the drawing -> page transform
+ * (page = o + k * drawing; k = points per drawing unit) for plotting `region` {minx,miny,maxx,maxy} (drawing units).
+ * opts: pageSize, orientation, margin (mm), scale (null = fit | paper mm per drawing unit), centre (true = centred on the
+ * page, false = region's lower-left corner at the lower-left margin).
  */
-export async function exportPdf(doc, opts = {}) {
-  const {
-    pageSize = 'fit', orientation = 'auto', margin = 10, scale = null, monochrome = false, lineweights = true, unicodeFont = null,
-  } = opts;
+export function plotLayout(region, { pageSize = 'fit', orientation = 'auto', margin = 10, scale = null, centre = true } = {}) {
   if (pageSize !== 'fit' && !SIZES[pageSize]) throw new Error(`Unknown page size: ${pageSize}`);
-  const scene = opts.scene || buildScene(doc);
+  const bb = region;
   const warnings = [];
-  const bb = scene.bbox || { minx: 0, miny: 0, maxx: 100, maxy: 100 };
   const w = Math.max(bb.maxx - bb.minx, 1e-9), h = Math.max(bb.maxy - bb.miny, 1e-9);
   const mPt = margin * PT_PER_MM;
-
-  // k = page points per drawing unit
   let pw, ph, k;
   if (pageSize === 'fit') {
     k = (scale > 0 ? scale : 1) * PT_PER_MM;
@@ -52,13 +46,33 @@ export async function exportPdf(doc, opts = {}) {
     k = scale > 0 ? scale * PT_PER_MM : Math.min((pw - 2 * mPt) / w, (ph - 2 * mPt) / h);
     if (scale > 0 && (w * k > pw - 2 * mPt + 1e-6 || h * k > ph - 2 * mPt + 1e-6)) warnings.push('Drawing does not fit inside the page margins at the requested scale');
   }
-  const ox = (pw - w * k) / 2 - bb.minx * k, oy = (ph - h * k) / 2 - bb.miny * k;
+  const ox = (centre ? (pw - w * k) / 2 : mPt) - bb.minx * k, oy = (centre ? (ph - h * k) / 2 : mPt) - bb.miny * k;
+  return { pw, ph, k, ox, oy, warnings };
+}
+
+/** Paper mm per drawing unit for a 1:n plot of a drawing whose unit is `mmPerUnit` millimetres. */
+export const plotScale = (n, mmPerUnit = 1) => mmPerUnit / n;
+
+/**
+ * exportPdf(doc, opts) -> Promise<{bytes:Uint8Array, warnings:string[]}> (one page, vector).
+ * opts: pageSize 'fit'|'A4'|'A3'|'A2'|'A1'|'A0'|'Letter' ('fit'), orientation 'auto'|'landscape'|'portrait',
+ * margin (mm, 10), scale (null = fit to page | page mm per drawing unit), centre (true), region (area to plot in drawing
+ * units, clipped; default the drawing extents), monochrome, lineweights, unicodeFont (TTF/OTF bytes for text outside
+ * WinAnsi), scene (prebuilt).
+ */
+export async function exportPdf(doc, opts = {}) {
+  const { monochrome = false, lineweights = true, unicodeFont = null, region = null } = opts;
+  const scene = opts.scene || buildScene(doc);
+  const bb = region || scene.bbox || { minx: 0, miny: 0, maxx: 100, maxy: 100 };
+  const { pw, ph, k, ox, oy, warnings } = plotLayout(bb, opts);
   const X = (x) => ox + x * k, Y = (y) => oy + y * k;
 
   const pdf = await PDFDocument.create();
   pdf.setTitle('ASH Draw Studio drawing');
   pdf.setCreator('ASH Draw Studio');
   const page = pdf.addPage([pw, ph]);
+  // a window or view plots only what lies inside it
+  if (region) page.pushOperators(pushGraphicsState(), moveTo(X(bb.minx), Y(bb.miny)), lineTo(X(bb.maxx), Y(bb.miny)), lineTo(X(bb.maxx), Y(bb.maxy)), lineTo(X(bb.minx), Y(bb.maxy)), closePath(), clip(), endPath());
   const helv = await pdf.embedFont(StandardFonts.Helvetica);
   const helvChars = new Set(helv.getCharacterSet());
   let uniFont = null, missing = 0;
@@ -159,6 +173,7 @@ export async function exportPdf(doc, opts = {}) {
     if (ops.length > 5000) page.pushOperators(...ops.splice(0));
   }
   if (ops.length) page.pushOperators(...ops.splice(0));
+  if (region) page.pushOperators(popGraphicsState());
   if (missing) warnings.push(`${missing} text characters could not be drawn (no Unicode font)`);
   const bytes = await pdf.save();
   return { bytes, warnings };

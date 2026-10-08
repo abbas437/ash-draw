@@ -53,7 +53,13 @@
     onOpenFile: () => () => {},
     onCloseRequest: () => () => {},
     closeWindow: () => Promise.resolve(false),
-    print: () => { window.print(); return Promise.resolve({ ok: true }); },
+    // browser preview: print the PDF from a hidden frame (the browser's own PDF viewer and print dialog)
+    print: (pdfBytes) => new Promise((resolve) => {
+      const url = URL.createObjectURL(new Blob([pdfBytes], { type: 'application/pdf' }));
+      const f = Object.assign(document.createElement('iframe'), { src: url, style: 'position:fixed;width:0;height:0;border:0' });
+      f.onload = () => { try { f.contentWindow.print(); resolve({ ok: true }); } catch (err) { resolve({ ok: false, reason: String(err) }); } setTimeout(() => { f.remove(); URL.revokeObjectURL(url); }, 60000); };
+      document.body.append(f);
+    }),
     setTitle: (t) => { document.title = String(t).slice(0, 200); return Promise.resolve(); },
     showItem: () => Promise.resolve(false),
     settingsGet: (k) => {

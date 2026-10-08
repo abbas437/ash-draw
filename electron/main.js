@@ -3,7 +3,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, screen, session, s
 import { randomBytes } from 'node:crypto';
 import { promises as fs, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createDwgBridge, DWG_OUT_VERSIONS } from './dwgBridge.js';
 import { cleanSession, isPathString, pushRecent, startupModeOf } from './sessionLists.js';
 
@@ -266,9 +266,29 @@ function registerIpc() {
     return { path: p };
   });
   handle('app:launchFiles', () => { rendererReady = true; return pendingFiles.splice(0); });
-  handle('app:print', () => new Promise((resolve) => {
-    win.webContents.print({}, (ok, reason) => resolve({ ok, reason: ok ? undefined : reason }));
-  }));
+  // Print a plot: the renderer builds the PDF; it is written to a private temp folder, shown in a hidden window by
+  // Electron's PDF viewer and printed from there with the system print dialog (printer, copies). Never the app window.
+  handle('app:print', async (bytes) => {
+    const pdf = asBytes(bytes, 'PDF data');
+    if (Buffer.from(pdf.subarray(0, 5)).toString('latin1') !== '%PDF-') throw new TypeError('not a PDF document');
+    const dir = await fs.mkdtemp(path.join(app.getPath('temp'), 'ash-draw-print-')); // created 0700
+    const file = path.join(dir, 'plot.pdf');
+    let pw = null;
+    try {
+      await fs.writeFile(file, pdf, { flag: 'wx', mode: 0o600 });
+      pw = new BrowserWindow({
+        show: false, parent: win,
+        webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, plugins: true, devTools: false },
+      });
+      await pw.loadURL(pathToFileURL(file).href);
+      return await new Promise((resolve) => {
+        pw.webContents.print({ silent: false }, (ok, reason) => resolve({ ok, reason: ok ? undefined : reason }));
+      });
+    } finally {
+      if (pw && !pw.isDestroyed()) pw.destroy();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
   handle('app:closeWindow', () => { setImmediate(() => win?.close()); return true; });
   handle('app:version', () => app.getVersion());
   handle('app:setTitle', (t) => {

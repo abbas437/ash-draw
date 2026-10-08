@@ -9,9 +9,10 @@ import { createDocState, findTabByPath, indexAfterClose, cycleIndex, isBlankTab 
 import { createTools, TOOL_ALIASES } from './tools.js';
 import { initSession } from './session.js';
 import { FindPanel } from './find.js';
+import { plotDialog } from './plot.js';
 import { el, message, modal, confirmDialog, textDialog, toast, renderLayers, renderProperties } from './ui.js';
 import {
-  OPEN_FILTERS, loadDrawing, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPdfBytes, exportPngBytes, buildScene, baseName, extOf, UNIT_NAMES,
+  OPEN_FILTERS, loadDrawing, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, baseName, extOf, UNIT_NAMES,
 } from './files.js';
 
 const api = window.api;
@@ -122,7 +123,7 @@ class App {
     if (t.text?.(s)) { this.refreshPrompt(); return; }
     const low = s.toLowerCase();
     if (TOOL_ALIASES[low]) { this.setTool(TOOL_ALIASES[low]); return; }
-    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => this.vp.zoomExtents(), z: () => this.vp.zoomExtents(), 'zoom': () => this.vp.zoomExtents(), all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), find: () => this.find.open(), ...this.layerCommands() };
+    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => this.vp.zoomExtents(), z: () => this.vp.zoomExtents(), 'zoom': () => this.vp.zoomExtents(), all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), find: () => this.find.open(), ...this.layerCommands() };
     if (sys[low]) { sys[low](); return; }
     const last = this.vp.lastPoint ?? { x: 0, y: 0 };
     const dir = this.vp.lastPoint ? { x: this.vp.cursor.x - last.x, y: this.vp.cursor.y - last.y } : null;
@@ -304,22 +305,9 @@ class App {
     const r = await api.saveFile({ defaultPath: `${baseName(this.file.name)}.${ext}`, filters: [{ name: label, extensions: [ext] }], bytes });
     if (r) toast(`Exported ${ext.toUpperCase()}`, 2000);
   }
-  async exportPdf() {
-    const size = el('select', {}, ['fit|Fit to drawing', 'A4|A4', 'A3|A3', 'A2|A2', 'A1|A1', 'A0|A0', 'Letter|Letter'].map((s) => { const [v, l] = s.split('|'); return el('option', { value: v, text: l }); }));
-    size.value = 'A3';
-    const ori = el('select', {}, ['auto|Automatic', 'landscape|Landscape', 'portrait|Portrait'].map((s) => { const [v, l] = s.split('|'); return el('option', { value: v, text: l }); }));
-    const mono = el('input', { type: 'checkbox' }), lw = el('input', { type: 'checkbox', checked: true });
-    const r = await modal('Export PDF', [el('label', {}, 'Page size'), size, el('label', {}, 'Orientation'), ori,
-      el('label', {}, mono, ' Black and white'), el('label', {}, lw, ' Use lineweights'),
-      el('p', { text: 'The drawing is exported as vector graphics, scaled to fit the page. Text outside the Western Latin character set (for example Arabic) cannot be drawn in this version.' })],
-    [{ label: 'Export', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
-    if (r !== 'ok') return;
-    try {
-      const out = await exportPdfBytes(this.doc, this.scene(), { pageSize: size.value, orientation: ori.value, monochrome: mono.checked, lineweights: lw.checked });
-      await this.saveBytes(out.bytes, 'pdf', 'PDF document');
-      if (out.warnings.length) await message('PDF exported with warnings', out.warnings.join('\n'));
-    } catch (err) { await message('Export failed', err.message || String(err)); }
-  }
+  /** Plot to PDF (the Print dialog with a Save button) */
+  exportPdf() { return plotDialog(this, 'pdf'); }
+  print() { return plotDialog(this, 'print'); }
   async exportSvg() {
     try { await this.saveBytes(await exportSvgBytes(this.doc, this.scene(), {}), 'svg', 'SVG image'); } catch (err) { await message('Export failed', err.message || String(err)); }
   }
@@ -356,7 +344,7 @@ class App {
     const vp = this.vp;
     const M = [
       ['File', [['New', 'Ctrl+N', () => this.newDrawing()], ['Open…', 'Ctrl+O', () => this.open()], ['Recent files…', '', () => this.sessionStore.showRecent().catch((err) => message('Could not open the file', err.message || String(err)))], ['Close', 'Ctrl+W', () => this.closeTab()], '-', ['Save', 'Ctrl+S', () => this.save()], ['Save as DXF…', '', () => this.saveAs('dxf')], ['Save as DWG… (experimental)', '', () => this.saveAs('dwg')], '-',
-        ['Export PDF…', '', () => this.exportPdf()], ['Export SVG…', '', () => this.exportSvg()], ['Export PNG image…', '', () => this.exportPng()]]],
+        ['Print…', 'Ctrl+P', () => this.print()], ['Plot to PDF…', '', () => this.exportPdf()], ['Export SVG…', '', () => this.exportSvg()], ['Export PNG image…', '', () => this.exportPng()]]],
       ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Paste', 'Ctrl+V', () => this.paste()], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()], ['Find and replace…', 'Ctrl+F', () => this.find.open()]]],
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-',
         ['Show lineweights', 'F9', () => this.toggle('lineweights')], ['Light / dark background', '', () => this.toggle('dark')], '-',
@@ -464,8 +452,8 @@ class App {
       if (ctrl) {
         if (e.key === 'Tab') { e.preventDefault(); this.cycleTab(e.shiftKey ? -1 : 1); return; }
         if (e.key === 'F4') { e.preventDefault(); this.closeTab(); return; }
-        if (typing && !['s', 'o', 'n', 'w', 'f'].includes(k)) return;
-        const map = { z: () => this.undo(), y: () => this.redo(), a: () => this.selectAll(), c: () => this.copySel(), v: () => this.paste(), s: () => this.save(), o: () => this.open(), n: () => this.newDrawing(), w: () => this.closeTab(), f: () => this.find.open() };
+        if (typing && !['s', 'o', 'n', 'w', 'f', 'p'].includes(k)) return;
+        const map = { z: () => this.undo(), y: () => this.redo(), a: () => this.selectAll(), c: () => this.copySel(), v: () => this.paste(), s: () => this.save(), o: () => this.open(), n: () => this.newDrawing(), w: () => this.closeTab(), f: () => this.find.open(), p: () => this.print() };
         if (map[k]) { e.preventDefault(); map[k](); }
         return;
       }

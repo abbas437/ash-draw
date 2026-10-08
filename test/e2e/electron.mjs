@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { _electron as electron } from 'playwright-core';
+import { PDFDocument } from 'pdf-lib';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const require = createRequire(import.meta.url);
@@ -71,6 +72,60 @@ try {
   await win.locator('#dlg button.primary').click();
   await done;
   assert.equal((await fs.readFile(dwgOut)).subarray(0, 4).toString(), 'AC10');
+
+  step = 'Print (Ctrl+P) prints the plot from a hidden PDF window, not the main window';
+  await app.evaluate(({ webContents }) => {
+    const fs = process.getBuiltinModule('node:fs');
+    globalThis.__prints = [];
+    Object.getPrototypeOf(webContents.getAllWebContents()[0]).print = function (opts, cb) {
+      const url = this.getURL();
+      globalThis.__prints.push({ id: this.id, url, opts, file: url.startsWith('file:') ? new URL(url).pathname : null, existed: url.startsWith('file:') && fs.existsSync(new URL(url).pathname) });
+      setTimeout(() => cb(true, ''), 0);
+    };
+  });
+  await win.locator('#cv').click({ position: { x: 5, y: 5 } }).catch(() => {});
+  await win.keyboard.press('Escape');
+  await win.keyboard.press('Control+P');
+  await win.waitForSelector('#dlg[open] h2');
+  assert.equal(await win.locator('#dlg h2').innerText(), 'Print');
+  await win.locator('#dlg select[name=pageSize]').selectOption('A4');
+  await win.locator('#dlg button.primary').click();
+  for (let i = 0; i < 200 && !(await app.evaluate(() => globalThis.__prints.length)); i++) await win.waitForTimeout(100);
+  await win.waitForTimeout(300); // print callback -> clean-up
+  const printed = await app.evaluate(({ BrowserWindow }) => ({ prints: globalThis.__prints, mainId: BrowserWindow.getAllWindows().find((w) => !w.getParentWindow()).webContents.id, windows: BrowserWindow.getAllWindows().length }));
+  assert.equal(printed.prints.length, 1, JSON.stringify(printed));
+  const [job] = printed.prints;
+  assert.notEqual(job.id, printed.mainId, 'printed the main window instead of the plot');
+  assert.match(job.url, /^file:.*\.pdf$/);
+  assert.ok(job.existed, 'the plot PDF existed while printing');
+  assert.equal(job.opts.silent, false);
+  assert.equal(await fs.stat(job.file).then(() => true, () => false), false, 'temp PDF removed');
+  assert.equal(await fs.stat(path.dirname(job.file)).then(() => true, () => false), false, 'temp folder removed');
+  assert.equal(printed.windows, 1, 'hidden print window closed');
+
+  step = 'Plot to PDF: window picked by two typed corners, 1:50 on A3';
+  const pdfOut = path.join(tmp, 'plot.pdf');
+  await app.evaluate(({ dialog }, p) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: p }); }, pdfOut);
+  await win.locator('#menubar .menu > button', { hasText: 'File' }).click();
+  await win.locator('#menubar .drop button', { hasText: 'Plot to PDF…' }).click();
+  await win.waitForSelector('#dlg[open] h2');
+  assert.equal(await win.locator('#dlg h2').innerText(), 'Plot to PDF');
+  await win.locator('#dlg select[name=pageSize]').selectOption('A3');
+  await win.locator('#dlg select[name=orientation]').selectOption('landscape');
+  await win.locator('#dlg input[name=fit]').uncheck();
+  await win.locator('#dlg input[name=scale]').fill('50');
+  await win.locator('#dlg button', { hasText: 'Pick window…' }).click();
+  const bb = await win.evaluate(() => window.app.scene().bbox);
+  for (const p of [`${bb.minx},${bb.miny}`, `${bb.maxx},${bb.maxy}`]) { await win.locator('#cmd').fill(p); await win.locator('#cmd').press('Enter'); }
+  await win.waitForSelector('#dlg[open] h2');
+  assert.match(await win.locator('#dlg .plot-window').innerText(), /^Window: \(/);
+  assert.equal(await win.locator('#dlg select[name=what]').inputValue(), 'window');
+  assert.equal(await win.locator('#dlg input[name=scale]').inputValue(), '50');
+  await win.locator('#dlg button.primary').click();
+  for (let i = 0; i < 100 && !(await fs.stat(pdfOut).then(() => true, () => false)); i++) await win.waitForTimeout(100);
+  const size = (await PDFDocument.load(await fs.readFile(pdfOut))).getPage(0).getSize();
+  assert.ok(Math.abs(size.width - 1190.55) < 0.1 && Math.abs(size.height - 841.89) < 0.1, `page ${size.width} x ${size.height}`);
+  if (await win.locator('#dlg[open]').count()) await win.locator('#dlg button.primary').click(); // warnings, if any
 
   step = 'no renderer errors';
   assert.deepEqual(errors, []);
