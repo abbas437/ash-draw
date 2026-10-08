@@ -19,6 +19,7 @@ import { plainText } from './dxfRead.js';
 import { mleaderParts } from './mleader.js';
 import { patternLines, hasPattern } from './patterns.js';
 import { SceneGrid } from './sceneGrid.js';
+import { shxSubstitute, strokeLayout, STROKE_DESCENT } from './shx.js';
 
 const TAU = Math.PI * 2;
 const OP_M = 0, OP_L = 1, OP_A = 2, OP_E = 3, OP_Z = 4;
@@ -94,7 +95,7 @@ class Builder {
     if (!blk) return;
     // an xref that is not loaded: its path in red at the insertion point (AutoCAD shows the same)
     if (blk.xref && blk.xref.status !== 'loaded') {
-      if (isSimilarity(m)) this.build({ type: 'TEXT', p: e.p, height: 2.5, text: blk.xref.path || blk.name, rot: 0 }, m, { color: { rgb: [255, 0, 0] }, lw: -3, lt: 'CONTINUOUS', lts: 1, layerName }, rootId);
+      if (isSimilarity(m)) this.build({ type: 'TEXT', p: e.p, height: 2.5, text: blk.xref.path || blk.name, rot: 0, ui: true }, m, { color: { rgb: [255, 0, 0] }, lw: -3, lt: 'CONTINUOUS', lts: 1, layerName }, rootId);
       return;
     }
     const style = this.styleFor(e, layer, inherit, layerName);
@@ -229,6 +230,11 @@ class Builder {
         for (const [x, y] of corners) {
           box = growBox(box, { x: p.x + x * Math.cos(rot) - y * Math.sin(rot), y: p.y + x * Math.sin(rot) + y * Math.cos(rot) });
         }
+        const tst = this.doc.textStyles.get(String(e.style || 'STANDARD').toUpperCase());
+        if (e.type === 'TEXT' && !e.ui && lines.length === 1 && shxSubstitute(tst?.fontFile || tst?.font)) {
+          const sl = strokeLayout(raw, h);
+          if (sl) { this.pushStrokeText(e, sl, p, h, rot, style, box, rootId); return; }
+        }
         this.push({
           kind: 'text', p, h, rot, lines, wf: e.widthFactor || 1, style, bbox: box, mtext: e.type === 'MTEXT', attach: e.attach || 1,
           boxW: e.type === 'MTEXT' ? (e.width || 0) * s : 0, hAlign: e.hAlign || 0, vAlign: e.vAlign || 0,
@@ -240,6 +246,30 @@ class Builder {
       }
       default: return;
     }
+  }
+
+  /** TEXT in an SHX style: the stroke font's glyphs as one path item (width factor, oblique, justification) */
+  pushStrokeText(e, sl, p, h, rot, style, estBox, rootId) {
+    const wf = e.widthFactor || 1, t = Math.tan((e.oblique || 0) * DEG), W = sl.width * wf;
+    const ha = e.hAlign || 0, va = e.vAlign || 0;
+    const dx = ha === 1 || ha === 4 ? -W / 2 : ha === 2 ? -W : 0;
+    const dy = va === 1 ? h * STROKE_DESCENT : va === 2 || (ha === 4 && !va) ? -h / 2 : va === 3 ? -h : 0;
+    const c = Math.cos(rot), sn = Math.sin(rot), ops = [];
+    let bbox = null;
+    for (const st of sl.strokes) {
+      for (let i = 0; i < st.length; i += 2) {
+        const y = st[i + 1] + dy, x = st[i] * wf + y * t + dx;
+        const q = { x: p.x + x * c - y * sn, y: p.y + x * sn + y * c };
+        ops.push(i ? OP_L : OP_M, q.x, q.y);
+        bbox = growBox(bbox, q);
+      }
+    }
+    // the item box also holds the estimated text box that pick and zoom extents use (geom.js textExtent)
+    bbox = unionBox(bbox, estBox);
+    // text strokes ignore the entity linetype (as in AutoCAD); start of the baseline and length for the LOD bar
+    const st = style.lt === 'CONTINUOUS' ? style : { ...style, lt: 'CONTINUOUS', _ks: undefined, _key: undefined };
+    const p0 = { x: p.x + (dx + dy * t) * c - dy * sn, y: p.y + (dx + dy * t) * sn + dy * c };
+    this.push({ kind: 'path', ops, style: st, bbox, strokeText: { p: p0, h, rot, w: W } }, rootId);
   }
 
   buildHatch(e, m, style, rootId) {
@@ -478,6 +508,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
       if (tiny || it._sp * z < 2) { bucket(tints, colorOf(it.style)).push(it); continue; }
     }
     if (tiny) { bucket(dots, colorOf(it.style)).push(it); continue; }
+    if (it.strokeText && it.strokeText.h * z < 2) { bucket(bars, colorOf(it.style)).push(it.strokeText); continue; }
     if (k === 'hatch' || k === 'fill') fills.push(it);
     else if (k === 'path' || k === 'hatchOutline') {
       const st = it.style;
@@ -584,7 +615,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
       ctx.beginPath();
       for (const it of list) {
         const x = sx(it.p.x), y = sy(it.p.y);
-        const w = (it._maxLen ??= Math.max(...it.lines.map((l) => l.length))) * it.h * z * 0.6 * it.wf;
+        const w = it.lines ? (it._maxLen ??= Math.max(...it.lines.map((l) => l.length))) * it.h * z * 0.6 * it.wf : it.w * z;
         ctx.moveTo(x, y); ctx.lineTo(x + w * Math.cos(it.rot), y - w * Math.sin(it.rot));
       }
       ctx.strokeStyle = col; ctx.stroke();

@@ -209,6 +209,7 @@ export function writeDxf(doc, opts = {}) {
         head(o, e, kind, owner); o.p(100, 'AcDbText'); o.pt(10, e.p.x, e.p.y); o.p(40, e.height); o.s(1, e.attdef ? e.attdef.default : e.text);
         if (e.rot) o.p(50, e.rot);
         if (e.widthFactor && e.widthFactor !== 1) o.p(41, e.widthFactor);
+        if (e.oblique) o.p(51, e.oblique);
         const st = String(e.style || 'STANDARD').toUpperCase();
         o.s(7, styleDefs.has(st) ? styleDefs.get(st).name : 'Standard');
         const aligned = (e.hAlign || 0) !== 0 || (e.vAlign || 0) !== 0;
@@ -447,7 +448,7 @@ export function writeDxf(doc, opts = {}) {
   for (const st of styles) {
     styleHandle.set(String(st.name).toUpperCase(), rec('STYLE', st.name === 'STANDARD' ? 'Standard' : st.name, 'AcDbTextStyleTableRecord', 'STYLE'));
     out.p(70, 0); out.p(40, st.height || 0); out.p(41, st.widthFactor || 1); out.p(50, st.oblique || 0); out.p(71, 0); out.p(42, 2.5);
-    const file = st.fontFile && !/\.shx$/i.test(st.fontFile) ? st.fontFile : `${st.font || 'Arial'}.ttf`;
+    const file = st.fontFile || `${st.font || 'Arial'}.ttf`; // an SHX file name is kept (drawn with the stroke substitute)
     out.s(3, file); out.p(4, '');
   }
   out.p(0, 'ENDTAB');
