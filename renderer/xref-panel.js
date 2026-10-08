@@ -5,7 +5,7 @@ import { loadOneXref, loadXrefs, relativePath, xrefStatusLabel } from './xrefs.j
 import { el, modal, toast } from './ui.js';
 
 const BAD = ['Not found', 'Unreadable', 'Circular reference'];
-const parser = (api) => async (bytes, r) => (await loadDrawing(api, r?.name ?? 'xref.dxf', bytes)).doc;
+const parser = (api) => async (bytes, r) => (await loadDrawing(api, 'xref.dxf', bytes)).doc;
 const reader = (api, hostPath) => (ref) => (hostPath ? api.xrefRead(hostPath, ref) : Promise.resolve(null));
 const opts = (hostPath) => ({ chain: hostPath ? [hostPath] : [], depth: 3, host: hostPath });
 

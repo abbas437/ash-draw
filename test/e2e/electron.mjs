@@ -100,6 +100,18 @@ try {
   assert.ok(!/REF\|WALL/.test(hostText) && !/777\.25/.test(afterHeader), 'xref content was written into the host');
   assert.ok(!back.layers.has('REF|WALL') && back.entities.every((e) => e.type !== 'LINE' || e.p2.x !== 777.25));
 
+  setStep('xrefs: a DWG xref loads (xref:read hands back DXF bytes)');
+  const dwgHost = path.join(xdir, 'host-dwg.dxf');
+  await fs.writeFile(dwgHost, (await fs.readFile(hostDxf, 'utf8')).replace('sub/ref.dxf', 'sub/arc.dwg'));
+  await fs.copyFile(dwgIn, path.join(xdir, 'sub', 'arc.dwg'));
+  await app.evaluate(({ dialog }, p) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [p] }); }, dwgHost);
+  await bounded(win.evaluate(() => window.app.open()), 15000, 'open()');
+  await win.waitForFunction(() => window.app.file.name === 'host-dwg.dxf', null, { timeout: 15000 });
+  await win.locator('#cmd').fill('xref'); await win.locator('#cmd').press('Enter');
+  await win.waitForSelector('#dlg[open] .xref-table');
+  assert.deepEqual(await xrefRows(), [['REF', 'Loaded'], ['GONE', 'Not found']]);
+  await win.locator('#dlg button.primary').click();
+
   setStep('save as DXF (native dialog stubbed)');
   const dxfOut = path.join(tmp, 'out.dxf');
   await app.evaluate(({ dialog }, p) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: p }); }, dxfOut);
