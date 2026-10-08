@@ -1,16 +1,22 @@
-// MTEXT in-place rich editor: a contenteditable box over the MTEXT at the current zoom, with a small toolbar
-// (bold, italic, underline, height, colour, paragraph alignment), and the MT tool (two corners).
+// MTEXT in-place rich editor: a contenteditable box over the MTEXT at the current zoom, with a toolbar strip above it
+// (font, height, bold/italic/underline/overline, colour, stack, symbols, justification, width factor, oblique,
+// paragraph alignment), and the MT tool (two corners).
 //   Enter = new paragraph, Ctrl+Enter or a click outside = commit (one undo step), Esc = cancel.
-// The DOM mirrors the parseMText model: one <div> per paragraph, one <span data-p> per run; formatting applied in
-// the editor wraps the selection in <span data-set> patches (newest wins). Unknown codes and stacks are kept as
-// non-editable spans and written back verbatim.
-import { parseMText, serializeMText, DEFAULT_PROPS } from '../src/core/mtext.js';
+// The DOM mirrors the parseMText model: one <div> per paragraph, one <span data-p> per run. Unknown codes, stacks and
+// non-breaking spaces (\~) are non-editable spans written back verbatim. A toolbar action reads the DOM into the model
+// with the selection as cell positions (mtext-dom.js), applies a src/core/mtext.js helper, re-renders and puts the
+// selection back. An empty selection applies to the whole text.
+import { parseMText, serializeMText, DEFAULT_PROPS, formatMText, toggleMText, insertMText, stackMText, unstackMText } from '../src/core/mtext.js';
 import { aciToRgb } from '../src/core/aci.js';
 import { makeMText } from '../src/core/model.js';
 import { addEntities, setText } from '../src/core/edit.js';
+import { ACI_CHOICES } from './ui.js';
+import { readEditor, pointAt } from './mtext-dom.js';
 
-const ACI = [[1, 'Red'], [2, 'Yellow'], [3, 'Green'], [4, 'Cyan'], [5, 'Blue'], [6, 'Magenta'], [7, 'White / black']];
 const ALIGN_CSS = ['left', 'center', 'right'];
+const FONTS = ['Arial', 'Arial Narrow', 'Calibri', 'Cambria', 'Consolas', 'Courier New', 'Georgia', 'Segoe UI', 'Tahoma', 'Times New Roman', 'Verdana'];
+const SYMBOLS = [['°', 'Degree'], ['±', 'Plus / minus'], ['Ø', 'Diameter'], ['≈', 'Almost equal'], ['∠', 'Angle'], ['℄', 'Centre line'], ['Δ', 'Delta'], ['≠', 'Not equal'], ['Ω', 'Ohm'], ['²', 'Squared'], ['³', 'Cubed'], ['\u00A0', 'Non-breaking space']];
+const ATTACH = ['Top left', 'Top centre', 'Top right', 'Middle left', 'Middle centre', 'Middle right', 'Bottom left', 'Bottom centre', 'Bottom right'];
 const cssColor = (c) => (!c || c.aci === 7 ? '' : `rgb(${(c.rgb ?? aciToRgb(c.aci)).join(',')})`);
 const h = (tag, attrs = {}, ...kids) => { const n = document.createElement(tag); Object.assign(n, attrs); n.append(...kids); return n; };
 
@@ -24,6 +30,9 @@ function styleRun(el, p, zoom) {
   s.fontSize = `${Math.max(4, p.h * zoom)}px`;
   s.color = cssColor(p.color);
   s.fontFamily = p.font ? `"${p.font}", Arial, sans-serif` : '';
+  s.display = p.wf !== 1 || p.oblique ? 'inline-block' : '';
+  s.transform = p.wf !== 1 || p.oblique ? `scaleX(${p.wf}) skewX(${-p.oblique}deg)` : '';
+  s.transformOrigin = 'left';
 }
 
 class MTextEditor {
@@ -33,8 +42,8 @@ class MTextEditor {
     this.height = ent ? ent.height : opts.height;
     this.zoom = app.vp.view.zoom;
     this.base = { ...DEFAULT_PROPS, h: this.height };
-    this.seq = 0;
-    const p = ent ? ent.p : opts.p, width = ent ? ent.width : opts.width, attach = ent ? ent.attach || 1 : 1;
+    const p = ent ? ent.p : opts.p, width = ent ? ent.width : opts.width;
+    this.attach = ent ? ent.attach || 1 : 1;
     this.newAt = ent ? null : { p, width };
     this.original = ent ? ent.text : '';
 
@@ -47,17 +56,14 @@ class MTextEditor {
     this.toolbar = this.buildToolbar();
     this.box = h('div', { className: 'mt-editor' }, this.toolbar, this.root);
     const rect = app.vp.canvas.getBoundingClientRect(), s = app.vp.toScreen(p);
-    const col = (attach - 1) % 3, row = Math.floor((attach - 1) / 3);
-    Object.assign(this.box.style, {
-      position: 'fixed', left: `${rect.left + s.x}px`, top: `${rect.top + s.y}px`, zIndex: 50,
-      transform: `translate(${-50 * col}%, ${-50 * row}%)`,
-    });
-    this.toolbar.style.cssText = 'position:absolute;bottom:100%;left:0;display:flex;gap:2px;white-space:nowrap;background:#f3f4f6;border:1px solid #9ca3af;padding:2px;font:12px "Segoe UI",sans-serif;color:#111';
+    Object.assign(this.box.style, { position: 'fixed', left: `${rect.left + s.x}px`, top: `${rect.top + s.y}px`, zIndex: 50 });
+    this.place();
 
     this.render(parseMText(this.original, { height: this.height }));
     document.body.append(this.box);
     this.onKey = (e) => this.key(e);
     this.root.addEventListener('keydown', this.onKey);
+    this.toolbar.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') { e.preventDefault(); this.close(); } });
     this.onSel = () => { const sel = getSelection(); if (sel.rangeCount && this.root.contains(sel.getRangeAt(0).commonAncestorContainer)) this.saved = sel.getRangeAt(0).cloneRange(); };
     document.addEventListener('selectionchange', this.onSel);
     this.onDown = (e) => { if (!this.box.contains(e.target)) this.commit(); };
@@ -67,33 +73,53 @@ class MTextEditor {
     getSelection().removeAllRanges(); getSelection().addRange(r);
   }
 
+  /** the box sits on the insertion point according to the attachment point */
+  place() {
+    const col = (this.attach - 1) % 3, row = Math.floor((this.attach - 1) / 3);
+    this.box.style.transform = `translate(${-50 * col}%, ${-50 * row}%)`;
+  }
+
   buildToolbar() {
+    const tag = (n, cmd, title) => { n.dataset.cmd = cmd; n.title = title; n.setAttribute('aria-label', title); return n; };
     const btn = (cmd, label, title, fn) => {
-      const b = h('button', { type: 'button', textContent: label, title });
-      b.dataset.cmd = cmd;
-      b.style.cssText = 'min-width:22px;padding:0 4px';
-      b.addEventListener('mousedown', (e) => { e.preventDefault(); fn(); });
+      const b = tag(h('button', { type: 'button', textContent: label }), cmd, title);
+      b.addEventListener('mousedown', (e) => e.preventDefault());   // keep the text selection
+      b.addEventListener('click', fn);
       return b;
     };
-    const height = h('input', { type: 'number', min: '0', step: 'any', value: String(this.height), title: 'Height of the selected text' });
-    height.dataset.cmd = 'height'; height.style.width = '64px';
-    height.addEventListener('change', () => { const v = +height.value; if (v > 0) this.apply(() => ({ h: v })); });
-    const color = h('select', { title: 'Colour of the selected text' },
-      h('option', { value: '', textContent: 'ByLayer' }), ...ACI.map(([i, n]) => h('option', { value: String(i), textContent: `${i} ${n}` })));
-    color.dataset.cmd = 'color';
-    color.addEventListener('change', () => { const v = color.value; this.apply(() => ({ color: v ? { aci: +v } : null })); });
-    const rgb = h('input', { type: 'color', title: 'True colour of the selected text' });
-    rgb.dataset.cmd = 'rgb'; rgb.style.width = '28px';
-    rgb.addEventListener('change', () => { const n = parseInt(rgb.value.slice(1), 16); this.apply(() => ({ color: { rgb: [n >> 16, (n >> 8) & 255, n & 255] } })); });
-    return h('div', { className: 'mt-toolbar' },
+    const num = (cmd, title, value, min, fn) => {
+      const n = tag(h('input', { type: 'number', min, step: 'any', value: String(value) }), cmd, title);
+      n.addEventListener('change', () => { const v = +n.value; if (n.value !== '' && Number.isFinite(v) && v >= +min) fn(v); });
+      return n;
+    };
+    const pick = (cmd, title, options, fn) => {
+      const s = tag(h('select', {}, ...options.map(([v, t]) => h('option', { value: String(v), textContent: t }))), cmd, title);
+      s.addEventListener('change', () => fn(s.value, s));
+      return s;
+    };
+    const styleFonts = [...(this.app.doc?.textStyles?.values() ?? [])].map((st) => String(st.font ?? '').replace(/\.(ttf|otf)$/i, '')).filter(Boolean);
+    const fonts = [...new Set([...FONTS, ...styleFonts])];
+    const fmt = (patch) => this.act((m, a, b) => formatMText(m, a, b, patch));
+    const bar = h('div', { className: 'mt-toolbar', role: 'toolbar', ariaLabel: 'Text formatting' },
+      pick('font', 'Font of the selected text', [['', 'Font'], ...fonts.map((f) => [f, f])], (v, s) => { if (v) fmt({ font: v }); s.value = ''; }),
+      num('height', 'Height of the selected text', this.height, '0', (v) => v > 0 && fmt({ h: v })),
       btn('bold', 'B', 'Bold (Ctrl+B)', () => this.toggle('bold')),
       btn('italic', 'I', 'Italic (Ctrl+I)', () => this.toggle('italic')),
       btn('underline', 'U', 'Underline (Ctrl+U)', () => this.toggle('u')),
-      height, color, rgb,
-      btn('left', '⇤', 'Align left', () => this.align(0)),
-      btn('center', '≡', 'Centre', () => this.align(1)),
-      btn('right', '⇥', 'Align right', () => this.align(2)),
+      btn('overline', 'O', 'Overline', () => this.toggle('o')),
+      pick('color', 'Colour of the selected text', [['', 'Colour'], ...ACI_CHOICES], (v, s) => { if (v) fmt({ color: +v === 256 ? null : { aci: +v } }); s.value = ''; }),
+      btn('stack', 'a/b', 'Stack the selected "a/b", "a#b" or "a^b"', () => this.act((m, a, b) => stackMText(m, a, b))),
+      btn('unstack', 'a b', 'Unstack', () => this.act((m, a, b) => unstackMText(m, a, b))),
+      pick('symbol', 'Insert a symbol', [['', 'Symbol'], ...SYMBOLS.map(([c, n]) => [c, c === '\u00A0' ? n : `${c}  ${n}`])], (v, s) => { if (v) this.act((m, a, b) => insertMText(m, a, b, v)); s.value = ''; }),
+      pick('attach', 'Justification (attachment point)', ATTACH.map((t, i) => [i + 1, t]), (v) => { this.attach = +v; this.place(); this.root.focus(); }),
+      num('wf', 'Width factor of the selected text', 1, '0.01', (v) => fmt({ wf: v })),
+      num('oblique', 'Oblique angle of the selected text (degrees)', 0, '-85', (v) => v <= 85 && fmt({ oblique: v })),
+      btn('left', '⇤', 'Align paragraph left', () => this.align(0)),
+      btn('center', '≡', 'Centre paragraph', () => this.align(1)),
+      btn('right', '⇥', 'Align paragraph right', () => this.align(2)),
       btn('ok', 'OK', 'Commit (Ctrl+Enter)', () => this.commit()));
+    bar.querySelector('[data-cmd="attach"]').value = String(this.attach);
+    return bar;
   }
 
   // ---- model <-> DOM --------------------------------------------------------------------------------
@@ -107,8 +133,12 @@ class MTextEditor {
         if (r.raw != null || r.stack) {
           // kept verbatim, not editable here
           s.contentEditable = 'false';
-          if (r.raw != null) { s.dataset.raw = r.raw; s.textContent = r.raw; s.title = 'Formatting code kept as is'; s.style.cssText = 'font-size:70%;color:#6b7280;background:#e5e7eb'; } else { s.dataset.stack = JSON.stringify(r); s.textContent = `${r.stack.a}/${r.stack.b}`; styleRun(s, r.props, this.zoom); }
-        } else { s.dataset.p = JSON.stringify(r.props); styleRun(s, r.props, this.zoom); s.textContent = r.text; }
+          if (r.raw != null) { s.dataset.raw = r.raw; s.textContent = r.raw; s.title = 'Formatting code kept as is'; s.className = 'mt-raw'; } else { s.dataset.stack = JSON.stringify(r); s.textContent = `${r.stack.a}/${r.stack.b}`; styleRun(s, r.props, this.zoom); }
+        } else {
+          s.dataset.p = JSON.stringify(r.props); styleRun(s, r.props, this.zoom);
+          // a real non-breaking space (\~) is its own non-editable span: the browser's own U+00A0 in typed text is a space
+          r.text.split('\u00A0').forEach((t, i) => { if (i) s.append(this.nbsp()); if (t) s.append(t); });
+        }
         div.append(s);
       }
       if (!div.childNodes.length) div.append(h('br'));
@@ -116,49 +146,8 @@ class MTextEditor {
     }
   }
 
-  /** properties of the text inside `node`: the innermost data-p run, then the data-set patches oldest first */
-  propsAt(node) {
-    let base = this.base;
-    const sets = [];
-    for (let n = node.nodeType === 1 ? node : node.parentNode; n && n !== this.root; n = n.parentNode) {
-      if (n.dataset?.p && base === this.base) base = JSON.parse(n.dataset.p);
-      if (n.dataset?.set) sets.push(JSON.parse(n.dataset.set));
-    }
-    sets.sort((a, b) => a.seq - b.seq);
-    let p = { ...base };
-    for (const { seq, ...patch } of sets) p = { ...p, ...patch };
-    return p;
-  }
-
-  model() {
-    const paras = [];
-    let para = null;
-    const newPara = (align) => { para = { align, runs: [] }; paras.push(para); };
-    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-    const visit = (c) => {
-      if (c.nodeType === 3) {
-        const t = c.data.replace(/ /g, ' ').replace(/[\r\n]/g, '');
-        if (!t) return;
-        const props = this.propsAt(c), last = para.runs.at(-1);
-        if (last && last.text != null && same(last.props, props)) last.text += t; else para.runs.push({ text: t, props });
-        return;
-      }
-      if (c.nodeType !== 1) return;
-      if (c.dataset.raw != null) { para.runs.push({ raw: c.dataset.raw }); return; }
-      if (c.dataset.stack) { para.runs.push(JSON.parse(c.dataset.stack)); return; }
-      if (c.tagName === 'BR') { if (c.nextSibling) newPara(para.align); return; }
-      if (c.tagName === 'DIV' || c.tagName === 'P') newPara(this.alignOf(c, para?.align ?? null));
-      for (const k of c.childNodes) visit(k);
-    };
-    let stray = false;
-    for (const c of this.root.childNodes) {
-      if (c.nodeType === 1 && (c.tagName === 'DIV' || c.tagName === 'P')) { newPara(this.alignOf(c, null)); stray = false; for (const k of c.childNodes) visit(k); } else { if (!stray) { newPara(null); stray = true; } visit(c); }
-    }
-    if (!paras.length) newPara(null);
-    return { paras };
-  }
-
-  alignOf(div, d) { return div.dataset.align != null && div.dataset.align !== '' ? +div.dataset.align : d; }
+  nbsp() { const n = h('span', { contentEditable: 'false', className: 'mt-nbsp', title: 'Non-breaking space', textContent: '\u00A0' }); n.dataset.nbsp = ''; return n; }
+  model() { return readEditor(this.root, this.base); }
   setAlign(div, a) { if (a == null) return; div.dataset.align = String(a); div.style.textAlign = ALIGN_CSS[a]; }
 
   // ---- formatting -----------------------------------------------------------------------------------
@@ -168,43 +157,26 @@ class MTextEditor {
     if (this.saved) { sel.removeAllRanges(); sel.addRange(this.saved); return this.saved; }
     return null;
   }
-  firstText(r) {
-    if (r.startContainer.nodeType === 3) return r.startContainer;
-    const w = document.createTreeWalker(r.commonAncestorContainer, NodeFilter.SHOW_TEXT);
-    for (let n = w.nextNode(); n; n = w.nextNode()) if (r.intersectsNode(n) && n.data) return n;
-    return null;
-  }
-  toggle(k) {
+  /** read the DOM with the selection as cell positions, apply fn(model, a, b) -> { model, a, b } | null, re-render, reselect */
+  act(fn) {
     const r = this.range();
-    if (!r || r.collapsed) return;
-    const t = this.firstText(r);
-    const on = t ? !!this.propsAt(t)[k] : false;
-    this.apply(() => ({ [k]: !on }));
+    const pts = r ? [{ node: r.startContainer, offset: r.startOffset }, { node: r.endContainer, offset: r.endOffset }] : [];
+    const { paras, at } = readEditor(this.root, this.base, pts);
+    const [a, b] = r ? at : [0, 0];
+    const res = fn({ paras, baseH: this.height }, a, b);
+    if (!res) return;
+    this.render(res.model);
+    this.select(res.a, res.b);
   }
-  /** wrap the selection (split per paragraph) in a <span data-set> carrying patch() */
-  apply(patch) {
-    const r = this.range();
-    if (!r || r.collapsed) return;
-    const divs = [...this.root.children].filter((d) => r.intersectsNode(d));
-    const made = [];
-    for (const d of divs.length ? divs : [this.root]) {
-      const sub = document.createRange();
-      sub.selectNodeContents(d);
-      if (r.compareBoundaryPoints(Range.START_TO_START, sub) > 0) sub.setStart(r.startContainer, r.startOffset);
-      if (r.compareBoundaryPoints(Range.END_TO_END, sub) < 0) sub.setEnd(r.endContainer, r.endOffset);
-      if (sub.collapsed) continue;
-      const span = h('span');
-      span.dataset.set = JSON.stringify({ ...patch(), seq: ++this.seq });
-      span.append(sub.extractContents());
-      sub.insertNode(span);
-      made.push(span);
-    }
-    for (const el of this.root.querySelectorAll('span[data-p], span[data-set]')) styleRun(el, this.propsAt(el), this.zoom);
-    if (!made.length) return;
-    const nr = document.createRange(); nr.setStartBefore(made[0]); nr.setEndAfter(made.at(-1));
-    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(nr);
-    this.saved = nr.cloneRange();
+  select(a, b) {
+    this.root.focus();
+    const s = pointAt(this.root, a), e = pointAt(this.root, b);
+    const r = document.createRange();
+    r.setStart(s.node, s.offset); r.setEnd(e.node, e.offset);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    this.saved = r.cloneRange();
   }
+  toggle(k) { this.act((m, a, b) => toggleMText(m, a, b, k)); }
   align(a) {
     const r = this.range();
     if (!r) return;
@@ -227,10 +199,13 @@ class MTextEditor {
     this.close();
     const { app } = this;
     if (this.ent) {
-      if (text !== this.original) setText(app.session, this.ent.id, { text });
+      const patch = {};
+      if (text !== this.original) patch.text = text;
+      if (this.attach !== (this.ent.attach || 1)) patch.attach = this.attach;
+      if (Object.keys(patch).length) setText(app.session, this.ent.id, patch);
     } else if (text.replace(/\\P/g, '').trim()) {
       app.defaults.textHeight = this.height;
-      addEntities(app.session, [makeMText(this.newAt.p, this.height, text, { ...app.newProps(), width: this.newAt.width, attach: 1 })]);
+      addEntities(app.session, [makeMText(this.newAt.p, this.height, text, { ...app.newProps(), width: this.newAt.width, attach: this.attach })]);
     }
   }
   close() {

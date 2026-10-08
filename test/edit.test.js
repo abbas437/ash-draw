@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  newDocument, makeLine, makeCircle, makeArc, makeRect, makeText, makeInsert, addBlock, addEntity, getEntity,
+  newDocument, makeLine, makeCircle, makeArc, makeRect, makeText, makeMText, makeInsert, addBlock, addEntity, getEntity,
 } from '../src/core/model.js';
 import {
   Session, transformEntities, addEntities, eraseEntities, moveEntities, rotateEntities, scaleEntities, mirrorEntities, explodeEntities,
@@ -137,6 +137,13 @@ test('properties, layers, text', () => {
   assert.ok(setText(s, t.id, { text: 'bye', height: 3 }));
   assert.equal(getEntity(s.doc, t.id).text, 'bye');
   assert.equal(setText(s, l.id, { text: 'x' }), false);
+  const [mt] = addEntities(s, [makeMText({ x: 0, y: 0 }, 2, 'A')]);
+  assert.ok(setText(s, mt.id, { text: 'B', attach: 5 }));
+  assert.deepEqual([getEntity(s.doc, mt.id).text, getEntity(s.doc, mt.id).attach], ['B', 5]);
+  s.undo();
+  assert.deepEqual([getEntity(s.doc, mt.id).text, getEntity(s.doc, mt.id).attach], ['A', 1], 'text and attach are one undo step');
+  setText(s, mt.id, { attach: 10 });
+  assert.equal(getEntity(s.doc, mt.id).attach, 1, 'attachment point outside 1..9 is ignored');
 });
 
 test('clipboard and onChange', () => {

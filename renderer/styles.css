@@ -156,3 +156,14 @@ dialog label { display:block; margin:6px 0 2px; color:var(--dim); }
 .cmp-pick label { display:flex; flex-direction:column; gap:2px; margin-bottom:8px; }
 .cmp-pick label > div { display:flex; gap:6px; }
 .cmp-pick select { flex:1; }
+/* MTEXT in-place editor toolbar */
+.mt-toolbar { position:absolute; bottom:100%; left:0; display:flex; align-items:center; gap:2px; white-space:nowrap; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:3px 3px 0 0; padding:2px; box-shadow:0 2px 6px var(--shadow); font:12px "Segoe UI", system-ui, sans-serif; }
+.mt-toolbar button { min-width:22px; padding:1px 4px; }
+.mt-toolbar button[data-cmd="bold"] { font-weight:700; }
+.mt-toolbar button[data-cmd="italic"] { font-style:italic; }
+.mt-toolbar button[data-cmd="underline"] { text-decoration:underline; }
+.mt-toolbar button[data-cmd="overline"] { text-decoration:overline; }
+.mt-toolbar select, .mt-toolbar input { padding:1px 2px; max-width:110px; }
+.mt-toolbar input[type="number"] { width:56px; }
+.mt-edit .mt-raw { font-size:70%; color:#6b7280; background:#e5e7eb; }
+.mt-edit .mt-nbsp { background:rgba(59,130,246,.18); }

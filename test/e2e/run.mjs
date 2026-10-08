@@ -750,6 +750,51 @@ try {
   assert.ok(rawAfter.includes('\\Xzz;'), `unknown code kept: ${rawAfter}`);
   await page.keyboard.press('Escape');
 
+  const openOn = async (text) => {
+    const id = await page.evaluate(async (t) => {
+      const { addEntities } = await import('/src/core/edit.js');
+      const { makeMText } = await import('/src/core/model.js');
+      const { openMTextEditor } = await import('/renderer/mtext-editor.js');
+      const eid = addEntities(window.app.session, [makeMText({ x: 600, y: 540 }, 4, t, { width: 80 })])[0].id;
+      openMTextEditor(window.app, window.app.doc.entities.find((e) => e.id === eid));
+      return eid;
+    }, text);
+    await page.locator(ed).waitFor();
+    return id;
+  };
+  const entOf = (id) => page.evaluate((i) => { const e = window.app.doc.entities.find((x) => x.id === i); return { text: e.text, attach: e.attach }; }, id);
+
+  step = 'MTEXT editor: a non-breaking space (\\~) survives an edit of another word';
+  const nbId = await openOn('A\\~B tail');
+  assert.ok(await selectText('tail'));
+  await page.locator('.mt-toolbar [data-cmd="bold"]').click();
+  await page.mouse.click(5, 300);
+  const nbAfter = (await entOf(nbId)).text;
+  assert.match(nbAfter, /\|b1\|i0;tail\}/, `bold applied: ${nbAfter}`);
+  assert.ok(nbAfter.startsWith('A\\~B '), `non-breaking space kept: ${nbAfter}`);
+  await page.keyboard.press('Escape');
+
+  step = 'MTEXT editor toolbar: Bold, colour, symbol, stack, justification';
+  const tbId = await openOn('Pump room');
+  assert.ok(await selectText('Pump'));
+  await page.locator('.mt-toolbar [data-cmd="bold"]').click();
+  assert.equal(await page.evaluate(() => getSelection().toString()), 'Pump', 'selection restored after Bold');
+  await page.locator('.mt-toolbar [data-cmd="color"]').selectOption('1');
+  assert.equal(await page.evaluate(() => getSelection().toString()), 'Pump', 'selection restored after the colour');
+  await page.keyboard.press('ArrowRight');
+  await page.locator('.mt-toolbar [data-cmd="symbol"]').selectOption('°');
+  await page.keyboard.press('End'); await page.keyboard.type(' 1/2');
+  assert.ok(await selectText('1/2'));
+  await page.locator('.mt-toolbar [data-cmd="stack"]').click();
+  assert.equal(await page.locator(`${ed} [data-stack]`).count(), 1, 'stack shown');
+  await page.locator('.mt-toolbar [data-cmd="attach"]').selectOption('5');
+  await page.keyboard.press('Control+Enter');
+  const tb = await entOf(tbId);
+  assert.match(tb.text, /^\{\\fArial\|b1\|i0;\\C1;Pump°\} room \\S1\/2;$/, `bold, red, degree and stack: ${tb.text}`);
+  assert.equal(tb.attach, 5, 'justification MC sets attach 5');
+  await page.mouse.click(5, 300); await page.keyboard.press('Control+z');
+  assert.deepEqual(await entOf(tbId), { text: 'Pump room', attach: 1 }, 'one undo step restores text and attach');
+
   step = 'layouts: Model / Layout tabs, sheet, viewport at 1:50, viewport-frozen layer, MV';
   await page.keyboard.press('Escape');
   await page.evaluate(async () => {
