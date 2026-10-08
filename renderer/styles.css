@@ -7,6 +7,7 @@
   --shadow:rgba(20,32,40,.18); --shadow-lg:rgba(20,32,40,.28); --backdrop:rgba(20,32,40,.35);
   --drop-bg:rgba(226,242,234,.88); --swatch-border:rgba(0,0,0,.45);
   --toast-bg:#fff6d6; --toast-text:#5a3c00; --selection:#b9dccb; --scroll-thumb:#b3bec4;
+  --danger:#b3261e;
 }
 [data-theme="dark"] {
   color-scheme: dark;
@@ -16,6 +17,7 @@
   --shadow:rgba(0,0,0,.53); --shadow-lg:rgba(0,0,0,.67); --backdrop:rgba(0,0,0,.53);
   --drop-bg:rgba(10,26,20,.8); --swatch-border:rgba(255,255,255,.4);
   --toast-bg:rgba(0,0,0,.8); --toast-text:#ffd400; --selection:#2f7a5a; --scroll-thumb:#4a565e;
+  --danger:#ff6b61;
 }
 ::selection { background:var(--selection); color:var(--text); }
 * { scrollbar-color:var(--scroll-thumb) transparent; }
@@ -156,3 +158,12 @@ dialog label { display:block; margin:6px 0 2px; color:var(--dim); }
 .cmp-pick label { display:flex; flex-direction:column; gap:2px; margin-bottom:8px; }
 .cmp-pick label > div { display:flex; gap:6px; }
 .cmp-pick select { flex:1; }
+
+/* External References panel (XREF) */
+.xref-table { border-collapse:collapse; min-width:560px; background:var(--panel2); color:var(--text); }
+.xref-table th, .xref-table td { border-bottom:1px solid var(--line); padding:4px 8px; text-align:left; vertical-align:middle; white-space:nowrap; }
+.xref-table th { background:var(--panel); color:var(--dim); font-weight:600; }
+.xref-table tr:hover td { background:var(--hover); }
+.xref-table td:nth-child(3) { max-width:280px; overflow:hidden; text-overflow:ellipsis; }
+.xref-table td:last-child { display:flex; gap:4px; }
+.xref-table .xref-status.bad { color:var(--danger); font-weight:600; }

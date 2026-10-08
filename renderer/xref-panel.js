@@ -4,6 +4,7 @@ import { loadDrawing, OPEN_FILTERS } from './files.js';
 import { loadOneXref, loadXrefs, relativePath, xrefStatusLabel } from './xrefs.js';
 import { el, modal, toast } from './ui.js';
 
+const BAD = ['Not found', 'Unreadable', 'Circular reference'];
 const parser = (api) => async (bytes, r) => (await loadDrawing(api, r?.name ?? 'xref.dxf', bytes)).doc;
 const reader = (api, hostPath) => (ref) => (hostPath ? api.xrefRead(hostPath, ref) : Promise.resolve(null));
 const opts = (hostPath) => ({ chain: hostPath ? [hostPath] : [], depth: 3, host: hostPath });
@@ -37,7 +38,7 @@ export async function xrefPanel(app) {
     body.replaceChildren(rows.length ? el('table', { class: 'xref-table' },
       el('tr', {}, ['Name', 'Status', 'Path', 'Inserts', ''].map((h) => el('th', { text: h }))),
       rows.map((x) => el('tr', { 'data-xref': x.name },
-        el('td', { text: x.name }), el('td', { class: 'xref-status', text: xrefStatusLabel(x) }), el('td', { text: x.path, title: x.block.xref.resolved ?? '' }), el('td', { text: String(x.inserts) }),
+        el('td', { text: x.name }), el('td', { class: `xref-status${BAD.includes(xrefStatusLabel(x)) ? ' bad' : ''}`, text: xrefStatusLabel(x) }), el('td', { text: x.path, title: x.block.xref.resolved ?? '' }), el('td', { text: String(x.inserts) }),
         el('td', {},
           el('button', { 'data-act': 'reload', onclick: () => reload(x) }, 'Reload'),
           el('button', { 'data-act': 'unload', onclick: () => { unloadXref(app.fileDoc, x.name); done(`${x.name} unloaded`); } }, 'Unload'),

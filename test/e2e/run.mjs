@@ -943,6 +943,21 @@ try {
   });
   for (const p of parity) { assert.ok(p.ink > 500, `parity view ${p.k}x is not empty`); assert.ok(p.diff <= 0.005, `parity view ${p.k}x: ${(p.diff * 100).toFixed(3)} % pixels differ`); }
 
+  step = 'XREF panel: a host opened in the browser lists its xrefs as Not found (no folder access), in red';
+  await pickFile('xref_host_r2000.dxf');
+  await page.waitForFunction(() => window.app.file.name === 'xref_host_r2000.dxf');
+  await typeCmd('xref');
+  await page.waitForSelector('#dlg[open] .xref-table');
+  const xrows = await page.$$eval('#dlg tr[data-xref]', (trs) => trs.map((tr) => {
+    const st = tr.querySelector('.xref-status');
+    return [tr.dataset.xref, st.textContent, tr.children[2].textContent, getComputedStyle(st).color];
+  }));
+  assert.deepEqual(xrows.map((r) => r.slice(0, 3)), [['REF', 'Not found', 'sub/ref.dxf'], ['GONE', 'Not found', 'missing.dxf']]);
+  for (const [, , , c] of xrows) { const [r, g, b] = rgbOf(c); assert.ok(r > 150 && g < 80 && b < 80, `status not red: ${c}`); }
+  assert.equal(await page.locator('#dlg tr[data-xref] button[data-act]').count(), 6);
+  await page.locator('#dlg button.primary').click();
+  await page.waitForSelector('#dlg[open]', { state: 'hidden' });
+
   step = 'csp';
   assert.deepEqual(await page.evaluate(() => window.__csp), []);
   assert.deepEqual(problems, []);

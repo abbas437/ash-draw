@@ -9,6 +9,10 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { _electron as electron } from 'playwright-core';
 import { PDFDocument } from 'pdf-lib';
+import { newDocument, addEntity, addLayer } from '../../src/core/model.js';
+import { writeDxf } from '../../src/core/dxfWrite.js';
+import { readDxf } from '../../src/core/dxfRead.js';
+import { listXrefs } from '../../src/core/xref.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const require = createRequire(import.meta.url);
@@ -54,6 +58,47 @@ try {
   assert.equal(await viaXref(dwgIn, 'no-such-xref.dxf'), null);
   const notGranted = await viaXref(path.join(tmp, 'not-opened.dxf'), dwgIn);
   assert.match(notGranted?.error ?? '', /not opened or chosen/, `a host that was not opened is refused: ${JSON.stringify(notGranted)}`);
+
+  setStep('xrefs: a host in a temp folder with ./sub/ref.dxf and a missing xref loads on open');
+  const xdir = path.join(tmp, 'xhost'), hostDxf = path.join(xdir, 'host.dxf');
+  await fs.mkdir(path.join(xdir, 'sub'), { recursive: true });
+  await fs.copyFile(path.join(ROOT, 'test', 'fixtures', 'xref_host_r2000.dxf'), hostDxf); // xrefs REF -> sub/ref.dxf, GONE -> missing.dxf
+  const refDoc = newDocument();
+  addLayer(refDoc, { name: 'WALL', color: 3 });
+  addEntity(refDoc, { type: 'LINE', layer: 'WALL', p1: { x: 3, y: 4 }, p2: { x: 777.25, y: 555.5 } });
+  await fs.writeFile(path.join(xdir, 'sub', 'ref.dxf'), writeDxf(refDoc));
+  await app.evaluate(({ dialog }, p) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [p] }); }, hostDxf);
+  await bounded(win.evaluate(() => window.app.open()), 15000, 'open()');
+  await win.waitForFunction(() => window.app.file.name === 'host.dxf', null, { timeout: 15000 });
+  const refLines = () => win.evaluate(() => window.app.scene().items.filter((it) => it.kind === 'path' && it.style.layerName === 'REF|WALL').length);
+  const xrefRows = () => win.$$eval('#dlg tr[data-xref]', (trs) => trs.map((tr) => [tr.dataset.xref, tr.querySelector('.xref-status').textContent]));
+  await win.locator('#cmd').fill('xref'); await win.locator('#cmd').press('Enter');
+  await win.waitForSelector('#dlg[open] .xref-table');
+  assert.deepEqual(await xrefRows(), [['REF', 'Loaded'], ['GONE', 'Not found']]);
+  assert.equal(await refLines(), 1, 'the line of sub/ref.dxf is in the scene');
+
+  setStep('xrefs: Unload hides the xref, Reload restores it');
+  await win.locator('#dlg tr[data-xref=REF] button[data-act=unload]').click();
+  await win.waitForFunction(() => document.querySelector('#dlg tr[data-xref=REF] .xref-status')?.textContent === 'Unloaded');
+  assert.equal(await refLines(), 0);
+  await win.locator('#dlg tr[data-xref=REF] button[data-act=reload]').click();
+  await win.waitForFunction(() => document.querySelector('#dlg tr[data-xref=REF] .xref-status')?.textContent === 'Loaded');
+  assert.equal(await refLines(), 1);
+  await win.locator('#dlg button.primary').click();
+
+  setStep('xrefs: Save keeps the relative xref path and writes none of the xref content into the host');
+  const hostBefore = (await fs.stat(hostDxf)).mtimeMs;
+  await win.waitForTimeout(50);
+  await bounded(win.evaluate(() => window.app.save()), 10000, 'save()');
+  for (let i = 0; i < 50 && (await fs.stat(hostDxf)).mtimeMs <= hostBefore; i++) await win.waitForTimeout(100);
+  assert.ok((await fs.stat(hostDxf)).mtimeMs > hostBefore, 'the host was not saved');
+  const hostText = await fs.readFile(hostDxf, 'utf8');
+  const back = readDxf(new TextEncoder().encode(hostText));
+  assert.deepEqual(listXrefs(back).map((x) => [x.name, x.path]), [['REF', 'sub/ref.dxf'], ['GONE', 'missing.dxf']]);
+  assert.equal(back.blocks.get('REF').entities.length, 0);
+  const afterHeader = hostText.slice(hostText.indexOf('ENDSEC')); // $EXTMAX may include the xref: only tables, blocks and entities matter
+  assert.ok(!/REF\|WALL/.test(hostText) && !/777\.25/.test(afterHeader), 'xref content was written into the host');
+  assert.ok(!back.layers.has('REF|WALL') && back.entities.every((e) => e.type !== 'LINE' || e.p2.x !== 777.25));
 
   setStep('save as DXF (native dialog stubbed)');
   const dxfOut = path.join(tmp, 'out.dxf');
