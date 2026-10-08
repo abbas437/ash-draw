@@ -322,6 +322,7 @@ export function setText(s, id, patch) {
   const c = structuredClone(e);
   if ('text' in patch) c.text = String(patch.text);
   if ('height' in patch && patch.height > 0) c.height = patch.height;
+  if (e.type === 'MTEXT' && Number.isInteger(patch.attach) && patch.attach >= 1 && patch.attach <= 9) c.attach = patch.attach;
   s.transact('Edit text', (tx) => { tx.replace(c); });
   return true;
 }
