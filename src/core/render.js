@@ -91,6 +91,11 @@ class Builder {
     if (depth >= MAX_DEPTH) return;
     const blk = this.doc.blocks.get(e.block);
     if (!blk) return;
+    // an xref that is not loaded: its path in red at the insertion point (AutoCAD shows the same)
+    if (blk.xref && blk.xref.status !== 'loaded') {
+      if (isSimilarity(m)) this.build({ type: 'TEXT', p: e.p, height: 2.5, text: blk.xref.path || blk.name, rot: 0 }, m, { color: { rgb: [255, 0, 0] }, lw: -3, lt: 'CONTINUOUS', lts: 1, layerName }, rootId);
+      return;
+    }
     const style = this.styleFor(e, layer, inherit, layerName);
     const cols = Math.max(1, e.cols || 1), rows = Math.max(1, e.rows || 1);
     const rot = (e.rot || 0) * DEG;

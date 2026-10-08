@@ -69,11 +69,11 @@ export function writeDxf(doc, opts = {}) {
     || (doc.layouts ?? []).some((l) => (l.entities ?? []).some(isML));
   const writeMlStyle = !asGeometry && hasMleaders;
   let paperMode = false;
-  const layerH = new Map([...doc.layers.keys()].map((n) => [n, H()]));
+  const layerH = new Map([...doc.layers].filter(([, l]) => !l.xrefDep).map(([n]) => [n, H()]));
 
   // ---- collect what is used ---------------------------------------------------------------
   // arrowhead blocks named by dimension styles (DIMBLK) that the drawing does not define yet
-  const allBlocks = new Map(doc.blocks);
+  const allBlocks = new Map([...doc.blocks].filter(([, b]) => !b.xrefDep)); // xref content is not written
   const hasBlockCI = (n) => [...allBlocks.keys()].some((k) => k.toUpperCase() === String(n).toUpperCase());
   for (const st of doc.dimStyles?.values() ?? []) {
     if (st.DIMBLK && !hasBlockCI(st.DIMBLK)) allBlocks.set(st.DIMBLK, { name: st.DIMBLK, base: { x: 0, y: 0 }, entities: arrowEntities(st.DIMBLK, { x: 0, y: 0 }, { x: 1, y: 0 }, 1) });
@@ -337,9 +337,9 @@ export function writeDxf(doc, opts = {}) {
   for (const [name, blk] of allBlocks) {
     const rec = blockRec.get(name);
     blocksOut.p(0, 'BLOCK'); blocksOut.p(5, H()); blocksOut.p(330, rec); blocksOut.p(100, 'AcDbEntity'); blocksOut.p(8, '0');
-    blocksOut.p(100, 'AcDbBlockBegin'); blocksOut.s(2, name); blocksOut.p(70, name.startsWith('*') ? 1 : 0);
-    blocksOut.pt(10, blk.base.x, blk.base.y); blocksOut.s(3, name); blocksOut.p(1, '');
-    for (const e of blk.entities) if (writeEntity(blocksOut, e, rec)) report.entities++;
+    blocksOut.p(100, 'AcDbBlockBegin'); blocksOut.s(2, name); blocksOut.p(70, blk.xref ? (blk.xref.flags ?? (blk.xref.overlay ? 12 : 4)) : name.startsWith('*') ? 1 : 0);
+    blocksOut.pt(10, blk.base.x, blk.base.y); blocksOut.s(3, name); blocksOut.s(1, blk.xref ? blk.xref.path : '');
+    if (!blk.xref) for (const e of blk.entities) if (writeEntity(blocksOut, e, rec)) report.entities++;
     blocksOut.p(0, 'ENDBLK'); blocksOut.p(5, H()); blocksOut.p(330, rec); blocksOut.p(100, 'AcDbEntity'); blocksOut.p(8, '0'); blocksOut.p(100, 'AcDbBlockEnd');
     report.blocks++;
   }
@@ -425,7 +425,7 @@ export function writeDxf(doc, opts = {}) {
   }
   out.p(0, 'ENDTAB');
 
-  const layers = [...doc.layers.values()];
+  const layers = [...doc.layers.values()].filter((l) => !l.xrefDep);
   table('LAYER', layers.length);
   for (const l of layers) {
     rec('LAYER', l.name, 'AcDbLayerTableRecord', 'LAYER', 5, layerH.get(l.name));

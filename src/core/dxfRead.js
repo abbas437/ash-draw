@@ -539,6 +539,7 @@ export function parseDxf(text) {
         stats.layerH.set(rec.str(5), name);
         const c = rec.int(62, 7);
         const flags = rec.int(70);
+        if (flags & 16) continue; // xref-dependent layer: recreated when the xref is loaded
         addLayer(doc, {
           name,
           color: rec.has(420) ? trueColor(rec.int(420)) : Math.abs(c) || 7,
@@ -589,14 +590,17 @@ export function parseDxf(text) {
     const flush = () => {
       if (!cur) return;
       const isLayoutBlock = /^[*$](model_space|paper_space)/i.test(cur.name);
-      if (!isLayoutBlock) {
+      if (cur.flags & 4) {
+        addBlock(doc, cur.name, cur.base, []).xref = { path: cur.path, flags: cur.flags, overlay: (cur.flags & 8) === 8, status: 'pending' };
+      } else if (cur.flags & 16) { /* xref-dependent block: recreated when the xref is loaded */
+      } else if (!isLayoutBlock) {
         const blk = addBlock(doc, cur.name, cur.base, []);
         readEntityList(list, doc, blk.entities, stats);
       } else if (/^[*$]paper_space./i.test(cur.name)) readEntityList(list, doc, stats.paperList(cur.name), stats);
       cur = null; list = [];
     };
     for (const rec of recs) {
-      if (rec.type === 'BLOCK') { flush(); cur = { name: rec.str(2), base: pt(rec, 10) }; }
+      if (rec.type === 'BLOCK') { flush(); cur = { name: rec.str(2), base: pt(rec, 10), flags: rec.int(70), path: rec.str(1) }; }
       else if (rec.type === 'ENDBLK') flush();
       else if (cur) list.push(rec);
     }

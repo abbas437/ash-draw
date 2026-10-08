@@ -47,6 +47,8 @@
     version: () => Promise.resolve('web'),
     openFiles,
     readFile: () => Promise.reject(new Error('readFile ' + NO_DESKTOP)),
+    xrefRead: () => Promise.resolve(null), // no folder access in the browser: xrefs stay "Not found"
+
     saveFile,
     writeFile: () => Promise.reject(new Error('writeFile ' + NO_DESKTOP)),
     getLaunchFiles: () => Promise.resolve([]),

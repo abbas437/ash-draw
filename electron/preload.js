@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('api', {
   version: () => invoke('app:version'),
   openFiles: (opts) => invoke('dialog:open', opts),
   readFile: (p) => invoke('file:read', p),
+  xrefRead: (hostPath, refPath) => invoke('xref:read', hostPath, refPath),
   saveFile: (opts) => invoke('dialog:save', opts),
   writeFile: (p, bytes) => invoke('file:write', { path: p, bytes }),
   getLaunchFiles: () => invoke('app:launchFiles'),
