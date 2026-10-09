@@ -1392,6 +1392,54 @@ try {
     assert.ok((await panel()).every((b) => b.label === 1), 'labels back on');
   }
 
+  step = 'large DXF opens in a worker: percentage in the toast, Cancel, UI keeps ticking';
+  {
+    // ~50 MB: 20,000 LINEs, each followed by a long 999 comment (bytes the reader must scan, little to hand back)
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ash-big-'));
+    const big = path.join(dir, 'big_synthetic.dxf');
+    const pad = `999\r\n${'c'.repeat(2400)}\r\n`;
+    const parts = ['  0\r\nSECTION\r\n  2\r\nHEADER\r\n  9\r\n$ACADVER\r\n  1\r\nAC1032\r\n  0\r\nENDSEC\r\n  0\r\nSECTION\r\n  2\r\nENTITIES\r\n'];
+    for (let i = 0; i < 20000; i++) parts.push(`  0\r\nLINE\r\n  8\r\n0\r\n 10\r\n${i}\r\n 20\r\n0\r\n 11\r\n${i}\r\n 21\r\n50\r\n${pad}`);
+    parts.push('  0\r\nENDSEC\r\n  0\r\nEOF\r\n');
+    await fs.writeFile(big, parts.join(''));
+    assert.ok((await fs.stat(big)).size > 45e6);
+    const watch = () => page.evaluate(() => {
+      // a 10 ms timer: the largest gap between ticks while the toast shows a percentage (the read phase)
+      const w = window.__tick = { maxGap: 0, pcts: new Set(), last: performance.now(), stop: false };
+      const t = document.getElementById('toast');
+      const tick = () => {
+        const now = performance.now(), m = /(\d+)%/.exec(t.textContent);
+        if (w.wasPct) w.maxGap = Math.max(w.maxGap, now - w.last);
+        w.wasPct = !!m; if (m) w.pcts.add(+m[1]);
+        w.last = now; if (!w.stop) setTimeout(tick, 10);
+      };
+      tick();
+    });
+    const pickPath = async (file) => { const ch = new Promise((r) => { chooserWaiter = r; }); await page.keyboard.press('Control+o'); await (await ch).setFiles(file); };
+    // Cancel: the worker stops, the current drawing stays
+    const before = await page.evaluate(() => window.app.file.name);
+    // click Cancel as soon as the first percentage shows (in the page, so the click cannot miss the read phase)
+    const clicked = page.evaluate(() => new Promise((res) => {
+      const t = document.getElementById('toast');
+      const mo = new MutationObserver(() => { if (/\d+%/.test(t.textContent)) { mo.disconnect(); t.querySelector('.toast-cancel').click(); res(true); } });
+      mo.observe(t, { childList: true, subtree: true, characterData: true });
+    }));
+    await pickPath(big);
+    assert.ok(await clicked);
+    await page.waitForFunction(() => /cancelled/.test(document.getElementById('toast').textContent), null, { timeout: 5000 });
+    assert.equal(await page.evaluate(() => window.app.file.name), before, 'a cancelled open leaves the drawing as it was');
+    // full open
+    await watch();
+    await pickPath(big);
+    await page.waitForFunction(() => window.app.file.name === 'big_synthetic.dxf', null, { timeout: 60000 });
+    const r = await page.evaluate(() => { window.__tick.stop = true; return { maxGap: window.__tick.maxGap, pcts: [...window.__tick.pcts], n: window.app.doc.entities.length }; });
+    assert.equal(r.n, 20000);
+    assert.ok(r.pcts.length >= 3, `progress percentages shown: ${r.pcts}`);
+    assert.ok(r.maxGap < 250, `UI froze for ${Math.round(r.maxGap)} ms while reading`);
+    console.log(`  large DXF: ${r.pcts.length} percentages shown, max timer gap ${Math.round(r.maxGap)} ms`);
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+
   step = 'csp';
   assert.deepEqual(await page.evaluate(() => window.__csp), []);
   assert.deepEqual(problems, []);

@@ -57,9 +57,18 @@ export async function textDialog({ title, value = '', height = 1 }) {
 }
 
 let toastTimer = 0;
+/** A toast that stays up with a percentage and a Cancel button: returns {set(fraction)}; any toast() replaces it. */
+export function progressToast(text, onCancel) {
+  const t = document.getElementById('toast');
+  const label = el('span', { class: 'toast-text', text });
+  t.replaceChildren(label, el('button', { class: 'toast-cancel', text: 'Cancel', onclick: onCancel }));
+  t.classList.add('show', 'busy');
+  clearTimeout(toastTimer);
+  return { set(f) { label.textContent = `${text} ${Math.round(f * 100)}%`; } };
+}
 export function toast(text, ms = 4500) {
   const t = document.getElementById('toast');
-  t.textContent = text; t.classList.add('show');
+  t.textContent = text; t.classList.add('show'); t.classList.remove('busy');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), ms);
 }

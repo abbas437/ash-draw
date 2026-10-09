@@ -3,9 +3,10 @@
 // Own group-code reader (instead of a third-party parser) so that HATCH, LEADER, layer settings,
 // true colour, line weights, text styles, extrusion and unknown-entity accounting are handled in one place.
 //
-//   decodeDxfBytes(Uint8Array) -> string      (throws Error{code:'BINARY_DXF'} for binary DXF)
+//   decodeDxfBytes(Uint8Array) -> string      (small inputs; same encoding detection as readDxf)
+//   tokenizeDxf(Uint8Array)    -> tokens      (throws Error{code:'BINARY_DXF'} for binary DXF, {code:'BAD_DXF'})
 //   parseDxf(text)             -> doc         (see model.js)
-//   readDxf(Uint8Array)        -> doc
+//   readDxf(Uint8Array, {onProgress}) -> doc   (onProgress(fraction 0..1) is called as the file is read)
 //   plainText(raw)             -> display string (text codes resolved)
 import { buildAttribute, linkAttribs } from './blocks.js';
 import {
@@ -24,7 +25,9 @@ import { imageDefFromTags, imageFromTags } from './image.js';
 const DEG = Math.PI / 180;
 
 // ---------------------------------------------------------------------------------------------
-// bytes -> text
+// bytes -> tokens. The file is never decoded as one string (V8 strings stop at ~512 M characters and a 500 MB DXF
+// is common for AutoCAD 2018 drawings): lines are found on the bytes, group codes are parsed from the bytes, and each
+// value is decoded only when it is read (one line at a time), so the token stream costs ~12 bytes per pair.
 const BINARY_SENTINEL = 'AutoCAD Binary DXF';
 
 const CODEPAGE_LABEL = {
@@ -34,7 +37,23 @@ const CODEPAGE_LABEL = {
   ANSI_1258: 'windows-1258', DOS866: 'ibm866', UTF8: 'utf-8', 'UTF-8': 'utf-8',
 };
 
-export function decodeDxfBytes(bytes) {
+/** true when every line of `body` holding a non-ASCII byte is valid UTF-8 (a "\n" byte never sits inside a UTF-8
+ *  sequence, so this equals validating the whole body), decoding at most one line at a time */
+function isUtf8(body) {
+  const fatal = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+  const n = body.length;
+  for (let i = 0; i < n; i++) {
+    if (body[i] < 0x80) continue;
+    let a = body.lastIndexOf(10, i) + 1, b = body.indexOf(10, i);
+    if (b < 0) b = n;
+    try { fatal.decode(body.subarray(a, b)); } catch { return false; }
+    i = b;
+  }
+  return true;
+}
+
+/** the text decoder of a DXF body: UTF-8 for AC1021+ or a BOM; older files UTF-8 when valid, else $DWGCODEPAGE */
+function dxfDecoder(bytes) {
   const head = new TextDecoder('latin1').decode(bytes.subarray(0, 32));
   if (head.startsWith(BINARY_SENTINEL)) {
     const err = new Error('This is a binary DXF file. Save it as ASCII DXF (or as DWG) and open it again.');
@@ -48,11 +67,15 @@ export function decodeDxfBytes(bytes) {
   const peek = new TextDecoder('latin1').decode(body.subarray(0, 8192));
   const ver = /\$ACADVER\s+1\s+(AC\d+)/.exec(peek)?.[1] ?? '';
   const cp = /\$DWGCODEPAGE\s+3\s+([^\r\n]+)/.exec(peek)?.[1]?.trim().toUpperCase();
-  const modern = ver >= 'AC1021';
-  if (modern || start) return new TextDecoder('utf-8').decode(body);
-  try { return new TextDecoder('utf-8', { fatal: true }).decode(body); } catch { /* not UTF-8 */ }
+  const utf8 = () => new TextDecoder('utf-8', { ignoreBOM: true });
+  if (ver >= 'AC1021' || start || isUtf8(body)) return { body, decoder: utf8() };
   const label = (cp && CODEPAGE_LABEL[cp]) || 'windows-1252';
-  try { return new TextDecoder(label).decode(body); } catch { return new TextDecoder('windows-1252').decode(body); }
+  try { return { body, decoder: new TextDecoder(label) }; } catch { return { body, decoder: new TextDecoder('windows-1252') }; }
+}
+/** whole-file text with the reader's encoding detection (small inputs only: readDxf never decodes the whole file) */
+export function decodeDxfBytes(bytes) {
+  const { body, decoder } = dxfDecoder(bytes);
+  return decoder.decode(body);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -66,61 +89,113 @@ export function plainText(raw) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// tokenizer: parallel arrays of group codes and raw values. `repaired` counts string values that were split over
-// several lines (LibreDWG's dwg2dxf breaks long group-1 values such as GEODATA WKT strings mid-word): a line where a
-// group code is expected that is not an integer, right after a string-valued pair, is joined onto that value.
+// tokenizer: group codes in an Int32Array, values as byte ranges decoded on demand by val(i). `repaired` counts string
+// values that were split over several lines (LibreDWG's dwg2dxf breaks long group-1 values such as GEODATA WKT strings
+// mid-word): a line where a group code is expected that is not an integer, right after a string-valued pair, is joined
+// onto that value.
 const INT_LINE = /^\s*-?\d+\s*$/;
-function tokenize(text) {
-  const codes = [];
-  const vals = [];
-  let repaired = 0;
-  let lastJoined = -1;
-  let pos = 0;
-  const n = text.length;
+const isWs = (b) => b === 32 || (b >= 9 && b <= 13);
+const PROGRESS_STEP = 1 << 22; // report progress every 4 MB
+
+/** Tokenize DXF bytes. `decoder` (a TextDecoder) skips the encoding detection (parseDxf passes UTF-8). */
+export function tokenizeDxf(bytes, { decoder = null, onProgress = null } = {}) {
+  let body = bytes;
+  if (!decoder) ({ body, decoder } = dxfDecoder(bytes));
+  const n = body.length;
+  const big = n > 0xfffffff0;
+  let cap = Math.max(1024, Math.ceil(n / 12));
+  let codes = new Int32Array(cap), vs = big ? new Float64Array(cap) : new Uint32Array(cap), ve = big ? new Float64Array(cap) : new Uint32Array(cap);
+  const grow = () => {
+    cap = Math.ceil(cap * 1.5);
+    const c2 = new Int32Array(cap); c2.set(codes); codes = c2;
+    const s2 = new vs.constructor(cap); s2.set(vs); vs = s2;
+    const e2 = new ve.constructor(cap); e2.set(ve); ve = e2;
+  };
+  const tmp = [];
+  const decode = (a, b) => {
+    const len = b - a;
+    if (len === 0) return '';
+    if (len <= 64) {
+      tmp.length = len;
+      let k = 0;
+      for (; k < len; k++) { const c = body[a + k]; if (c > 127) break; tmp[k] = c; }
+      if (k === len) return String.fromCharCode.apply(null, tmp);
+    }
+    return decoder.decode(body.subarray(a, b));
+  };
+  const ascii = (a, b) => { for (let k = a; k < b; k++) if (body[k] > 127) return false; return true; };
+  let joined = null; // token index -> rejoined value
+  let count = 0, repaired = 0, lastJoined = -1;
+  let pos = 0, ls = 0, le = 0, nextReport = PROGRESS_STEP;
+  // next line -> [ls, le) without the "\r"; false past the end (mirrors splitting the text at "\n")
   const nextLine = () => {
-    if (pos > n) return null;
-    let e = text.indexOf('\n', pos);
+    if (pos > n) return false;
+    let e = body.indexOf(10, pos);
     if (e < 0) e = n;
-    let line = text.slice(pos, e);
-    pos = e + 1;
-    if (line.endsWith('\r')) line = line.slice(0, -1);
-    return line;
+    ls = pos; le = e; pos = e + 1;
+    if (le > ls && body[le - 1] === 13) le--;
+    return true;
   };
   for (;;) {
-    const c = nextLine();
-    if (c === null) break;
-    if (c.trim() === '' && pos > n) break;
-    const last = codes.length - 1;
-    if (last >= 0 && !INT_LINE.test(c) && isStringCode(codes[last]) && codes[last] !== 0) {
-      vals[last] += c; // the break is mid-word, so no separator belongs in the value
+    if (!nextLine()) break;
+    if (onProgress && pos >= nextReport) { nextReport = pos + PROGRESS_STEP; onProgress(Math.min(pos, n) / n); }
+    const cs = ls, ce = le;
+    const plain = ascii(cs, ce);
+    const cText = plain ? null : decoder.decode(body.subarray(cs, ce));
+    if (pos > n) { // last line of the file: a blank one ends it
+      let k = cs; while (k < ce && isWs(body[k])) k++;
+      if (plain ? k === ce : cText.trim() === '') break;
+    }
+    let intLine;
+    if (plain) {
+      let k = cs; while (k < ce && isWs(body[k])) k++;
+      if (k < ce && body[k] === 45) k++;
+      const d = k; while (k < ce && body[k] >= 48 && body[k] <= 57) k++;
+      const digits = k > d; while (k < ce && isWs(body[k])) k++;
+      intLine = digits && k === ce;
+    } else intLine = INT_LINE.test(cText);
+    const last = count - 1;
+    if (last >= 0 && !intLine && isStringCode(codes[last]) && codes[last] !== 0) {
+      joined ??= new Map();
+      const prev = joined.has(last) ? joined.get(last) : decode(vs[last], ve[last]);
+      joined.set(last, prev + (plain ? decode(cs, ce) : cText)); // the break is mid-word, so no separator belongs in the value
       if (lastJoined !== last) { repaired++; lastJoined = last; }
       continue;
     }
-    const v = nextLine();
-    if (v === null) break;
-    const code = parseInt(c, 10);
+    if (!nextLine()) break;
+    let code;
+    if (intLine && plain) {
+      let k = cs; while (isWs(body[k])) k++;
+      const neg = body[k] === 45; if (neg) k++;
+      code = 0; while (k < ce && body[k] >= 48 && body[k] <= 57) code = code * 10 + body[k++] - 48;
+      if (neg) code = -code;
+    } else code = parseInt(plain ? decode(cs, ce) : cText, 10);
     if (Number.isNaN(code)) {
-      const err = new Error(`Not a DXF file (bad group code "${c.slice(0, 20)}" near line ${codes.length * 2 + 1}).`);
+      const err = new Error(`Not a DXF file (bad group code "${(plain ? decode(cs, ce) : cText).slice(0, 20)}" near line ${count * 2 + 1}).`);
       err.code = 'BAD_DXF';
       throw err;
     }
-    codes.push(code);
-    vals.push(v);
+    if (count === cap) grow();
+    codes[count] = code; vs[count] = ls; ve[count] = le; count++;
   }
-  return { codes, vals, repaired };
+  onProgress?.(1);
+  codes = codes.subarray(0, count);
+  const val = joined
+    ? (i) => { const j = joined.get(i); return j !== undefined ? j : decode(vs[i], ve[i]); }
+    : (i) => decode(vs[i], ve[i]);
+  return { codes, val, count, repaired };
 }
-
 const isStringCode = (c) => c < 10 || (c >= 100 && c <= 102) || c === 105 || (c >= 300 && c <= 369) || (c >= 390 && c <= 399) || (c >= 410 && c <= 419) || (c >= 430 && c <= 439) || (c >= 470 && c <= 481) || c === 999 || (c >= 1000 && c <= 1009);
 
 class Rec {
-  constructor(tk, a, b) { this.tk = tk; this.a = a; this.b = b; this.type = tk.vals[a]; }
+  constructor(tk, a, b) { this.tk = tk; this.a = a; this.b = b; this.type = tk.val(a); }
   get length() { return this.b - this.a; }
   code(i) { return this.tk.codes[this.a + i]; }
-  val(i) { return this.tk.vals[this.a + i]; }
+  val(i) { return this.tk.val(this.a + i); }
   /** first value for group code, or undefined */
   get(code) {
-    const { codes, vals } = this.tk;
-    for (let i = this.a + 1; i < this.b; i++) if (codes[i] === code) return isStringCode(code) ? decodeU(vals[i]) : vals[i];
+    const { codes, val } = this.tk;
+    for (let i = this.a + 1; i < this.b; i++) if (codes[i] === code) return isStringCode(code) ? decodeU(val(i)) : val(i);
     return undefined;
   }
   num(code, d = 0) { const v = this.get(code); if (v === undefined) return d; const x = parseFloat(v); return Number.isFinite(x) ? x : d; }
@@ -129,13 +204,13 @@ class Rec {
   has(code) { return this.get(code) !== undefined; }
   all(code) {
     const out = [];
-    const { codes, vals } = this.tk;
-    for (let i = this.a + 1; i < this.b; i++) if (codes[i] === code) out.push(isStringCode(code) ? decodeU(vals[i]) : vals[i]);
+    const { codes, val } = this.tk;
+    for (let i = this.a + 1; i < this.b; i++) if (codes[i] === code) out.push(isStringCode(code) ? decodeU(val(i)) : val(i));
     return out;
   }
   allNum(code) { return this.all(code).map(parseFloat); }
   /** array of [code, value] pairs (value strings) between a+1 and b */
-  tags() { const out = []; for (let i = this.a + 1; i < this.b; i++) out.push([this.tk.codes[i], this.tk.vals[i]]); return out; }
+  tags() { const out = []; for (let i = this.a + 1; i < this.b; i++) out.push([this.tk.codes[i], this.tk.val(i)]); return out; }
 }
 
 /** split a token range [from,to) into records starting at each group code 0 */
@@ -151,12 +226,12 @@ function records(tk, from, to) {
 
 function sections(tk) {
   const secs = {};
-  const { codes, vals } = tk;
+  const { codes, val } = tk;
   for (let i = 0; i < codes.length; i++) {
-    if (codes[i] === 0 && vals[i] === 'SECTION' && codes[i + 1] === 2) {
-      const name = vals[i + 1];
+    if (codes[i] === 0 && val(i) === 'SECTION' && codes[i + 1] === 2) {
+      const name = val(i + 1);
       let j = i + 2;
-      while (j < codes.length && !(codes[j] === 0 && vals[j] === 'ENDSEC')) j++;
+      while (j < codes.length && !(codes[j] === 0 && val(j) === 'ENDSEC')) j++;
       secs[name] = { from: i + 2, to: j };
       i = j;
     }
@@ -276,12 +351,12 @@ function ocsToPlan(rec, e) {
 function buildLwpolyline(rec, o) {
   const verts = [];
   let cur = null;
-  const { codes, vals } = rec.tk;
+  const { codes, val } = rec.tk;
   for (let i = rec.a + 1; i < rec.b; i++) {
     const c = codes[i];
-    if (c === 10) { cur = { x: parseFloat(vals[i]), y: 0, bulge: 0 }; verts.push(cur); }
-    else if (c === 20 && cur) cur.y = parseFloat(vals[i]);
-    else if (c === 42 && cur) cur.bulge = parseFloat(vals[i]) || 0;
+    if (c === 10) { cur = { x: parseFloat(val(i)), y: 0, bulge: 0 }; verts.push(cur); }
+    else if (c === 20 && cur) cur.y = parseFloat(val(i));
+    else if (c === 42 && cur) cur.bulge = parseFloat(val(i)) || 0;
   }
   const e = makePolyline(verts, (rec.int(70) & 1) === 1, o);
   const w = rec.num(43);
@@ -310,14 +385,14 @@ function buildSpline(rec, o) {
   const ctrl = [], fit = [];
   const knots = rec.allNum(40);
   const weights = rec.allNum(41);
-  const { codes, vals } = rec.tk;
+  const { codes, val } = rec.tk;
   let cc = null, ff = null;
   for (let i = rec.a + 1; i < rec.b; i++) {
     const c = codes[i];
-    if (c === 10) { cc = { x: parseFloat(vals[i]), y: 0 }; ctrl.push(cc); }
-    else if (c === 20 && cc) cc.y = parseFloat(vals[i]);
-    else if (c === 11) { ff = { x: parseFloat(vals[i]), y: 0 }; fit.push(ff); }
-    else if (c === 21 && ff) ff.y = parseFloat(vals[i]);
+    if (c === 10) { cc = { x: parseFloat(val(i)), y: 0 }; ctrl.push(cc); }
+    else if (c === 20 && cc) cc.y = parseFloat(val(i));
+    else if (c === 11) { ff = { x: parseFloat(val(i)), y: 0 }; fit.push(ff); }
+    else if (c === 21 && ff) ff.y = parseFloat(val(i));
   }
   const flags = rec.int(70);
   return makeSpline({ ...o, degree: rec.int(71, 3), ctrl, knots, weights: weights.length === ctrl.length && weights.length ? weights : null, fit, closed: (flags & 1) === 1 });
@@ -371,15 +446,15 @@ function buildDimension(rec, o) {
   const skip = new Set([0, 5, 8, 62, 420, 6, 370, 48, 60, 67, 102]);
   const raw = [];
   let hasSub = false;
-  const { codes, vals } = rec.tk;
+  const { codes, val } = rec.tk;
   let inGroup = false;
   for (let i = rec.a + 1; i < rec.b; i++) {
     const c = codes[i];
-    if (c === 102) { inGroup = !vals[i].startsWith('}') ? true : false; continue; }
+    if (c === 102) { inGroup = !val(i).startsWith('}') ? true : false; continue; }
     if (inGroup) continue;
-    if (c === 100) { if (vals[i] === 'AcDbEntity') continue; if (vals[i] === 'AcDbDimension') hasSub = true; }
+    if (c === 100) { if (val(i) === 'AcDbEntity') continue; if (val(i) === 'AcDbDimension') hasSub = true; }
     if (skip.has(c) || c >= 1000 || (c >= 330 && c <= 369)) continue;
-    raw.push([c, vals[i]]);
+    raw.push([c, val(i)]);
   }
   const e = makeDimension(rec.str(2), { ...o, dimType: rec.int(70), p: rec.has(11) ? pt(rec, 11) : null, text: rec.str(1) });
   e.raw = hasSub ? raw : null;
@@ -390,25 +465,25 @@ function buildDimension(rec, o) {
 
 function buildLeader(rec, o) {
   const pts = [];
-  const { codes, vals } = rec.tk;
+  const { codes, val } = rec.tk;
   let cur = null;
   for (let i = rec.a + 1; i < rec.b; i++) {
-    if (codes[i] === 10) { cur = { x: parseFloat(vals[i]), y: 0 }; pts.push(cur); }
-    else if (codes[i] === 20 && cur) cur.y = parseFloat(vals[i]);
+    if (codes[i] === 10) { cur = { x: parseFloat(val(i)), y: 0 }; pts.push(cur); }
+    else if (codes[i] === 20 && cur) cur.y = parseFloat(val(i));
   }
   if (pts.length < 2) return null;
   return makeLeader(pts, { ...o, arrow: rec.int(71, 1) !== 0 });
 }
 
 function buildHatch(rec, o, doc) {
-  const { codes, vals } = rec.tk;
+  const { codes, val } = rec.tk;
   let i = rec.a + 1;
   const end = rec.b;
   const seek = (code) => { while (i < end && codes[i] !== code) i++; return i < end; };
-  const f = (k) => parseFloat(vals[k]);
-  const n = (k) => parseInt(vals[k], 10);
+  const f = (k) => parseFloat(val(k));
+  const n = (k) => parseInt(val(k), 10);
   if (!seek(2)) return null;
-  const pattern = vals[i].trim() || 'SOLID';
+  const pattern = val(i).trim() || 'SOLID';
   const solid = rec.int(70) === 1;
   const nPaths = rec.int(91);
   if (!seek(91)) return null;
@@ -561,6 +636,7 @@ function readEntityList(recs, doc, target, stats) {
   for (let k = 0; k < recs.length; k++) {
     const rec = recs[k];
     const t = rec.type;
+    if (stats.tick && (k & 4095) === 0) stats.tick(rec.a);
     if (t === 'VERTEX' || t === 'SEQEND' || t === 'ATTRIB') continue; // consumed with their parent
     let extra = {};
     if (t === 'POLYLINE') {
@@ -589,7 +665,10 @@ function readEntityList(recs, doc, target, stats) {
 
 // ---------------------------------------------------------------------------------------------
 export function parseDxf(text) {
-  const tk = tokenize(text);
+  return parseTokens(tokenizeDxf(new TextEncoder().encode(text), { decoder: new TextDecoder('utf-8', { ignoreBOM: true }) }));
+}
+
+function parseTokens(tk, onProgress = null) {
   const secs = sections(tk);
   if (!secs.ENTITIES && !secs.HEADER && !secs.TABLES) {
     const err = new Error('This file does not look like a DXF drawing (no HEADER, TABLES or ENTITIES section).');
@@ -599,23 +678,23 @@ export function parseDxf(text) {
   const doc = newDocument();
   const paperLists = new Map();
   const blockRecH = new Map();
-  const stats = { errors: [], layerH: new Map(), paperList: (n) => paperLists.get(n.toUpperCase()) ?? paperLists.set(n.toUpperCase(), []).get(n.toUpperCase()) };
+  const stats = { errors: [], layerH: new Map(), tick: onProgress && ((i) => onProgress(i / tk.count)), paperList: (n) => paperLists.get(n.toUpperCase()) ?? paperLists.set(n.toUpperCase(), []).get(n.toUpperCase()) };
 
   // HEADER
   if (secs.HEADER) {
-    const { codes, vals } = tk;
+    const { codes, val } = tk;
     for (let i = secs.HEADER.from; i < secs.HEADER.to; i++) {
       if (codes[i] !== 9) continue;
-      const name = vals[i];
+      const name = val(i);
       let j = i + 1;
       const first = codes[j];
-      if (name === '$ACADVER') doc.header.version = vals[j];
-      else if (name === '$INSUNITS') doc.units = parseInt(vals[j], 10) || 0;
-      else if (name === '$DWGCODEPAGE') doc.header.codepage = vals[j];
-      else if (name === '$DIMSTYLE') doc.header.currentDimStyle = vals[j];
-      else if (name === '$LTSCALE') doc.header.ltscale = parseFloat(vals[j]) || 1;
-      else if (name === '$EXTMIN' && first === 10) doc.header.extmin = { x: parseFloat(vals[j]), y: parseFloat(vals[j + 1]) };
-      else if (name === '$EXTMAX' && first === 10) doc.header.extmax = { x: parseFloat(vals[j]), y: parseFloat(vals[j + 1]) };
+      if (name === '$ACADVER') doc.header.version = val(j);
+      else if (name === '$INSUNITS') doc.units = parseInt(val(j), 10) || 0;
+      else if (name === '$DWGCODEPAGE') doc.header.codepage = val(j);
+      else if (name === '$DIMSTYLE') doc.header.currentDimStyle = val(j);
+      else if (name === '$LTSCALE') doc.header.ltscale = parseFloat(val(j)) || 1;
+      else if (name === '$EXTMIN' && first === 10) doc.header.extmin = { x: parseFloat(val(j)), y: parseFloat(val(j + 1)) };
+      else if (name === '$EXTMAX' && first === 10) doc.header.extmax = { x: parseFloat(val(j)), y: parseFloat(val(j + 1)) };
       j++;
     }
   }
@@ -735,6 +814,10 @@ export function parseDxf(text) {
   return doc;
 }
 
-export function readDxf(bytes) {
-  return parseDxf(decodeDxfBytes(bytes));
+/** onProgress(fraction): the byte scan is the first half, reading the BLOCKS and ENTITIES records the second */
+export function readDxf(bytes, { onProgress = null } = {}) {
+  const tk = tokenizeDxf(bytes, { onProgress: onProgress && ((f) => onProgress(f / 2)) });
+  const doc = parseTokens(tk, onProgress && ((f) => onProgress(0.5 + f / 2)));
+  onProgress?.(1);
+  return doc;
 }
