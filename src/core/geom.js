@@ -215,6 +215,18 @@ export function tessellate(e, doc = null, tol = 0) {
       const q = p.length === 4 ? [p[0], p[1], p[3], p[2]] : p;
       return [[...q.map((a) => ({ ...a })), { ...q[0] }]];
     }
+    case '3DFACE': {
+      // each visible edge on its own (invisible-edge flags 1/2/4/8 = edges 1-2, 2-3, 3-4, 4-1); a zero-length edge is none
+      const p = e.pts, out = [];
+      if (!p || p.length < 3) return [];
+      for (let k = 0; k < 4; k++) {
+        const a = p[k], b = p[(k + 1) % 4] ?? p[2];
+        if (!a || !b || (e.inv & (1 << k)) || (a.x === b.x && a.y === b.y)) continue;
+        out.push([{ ...a }, { ...b }]);
+      }
+      return out;
+    }
+    case 'OLE2FRAME': { const a = e.p1, b = e.p2; return [[{ x: a.x, y: a.y }, { x: b.x, y: a.y }, { x: b.x, y: b.y }, { x: a.x, y: b.y }, { x: a.x, y: a.y }]]; }
     case 'POINT': return [[{ ...e.p }]];
     case 'IMAGE': { const q = imageCorners(e); return [[...q.map((a) => ({ ...a })), { ...q[0] }]]; }
     case 'WIPEOUT': { const q = wipeoutRing(e); return [[...q.map((a) => ({ ...a })), { ...q[0] }]]; }
@@ -428,7 +440,16 @@ export function transformEntity(e, m) {
     case 'LINE': c.p1 = apply(m, e.p1); c.p2 = apply(m, e.p2); break;
     case 'POINT': c.p = apply(m, e.p); break;
     case 'IMAGE': case 'WIPEOUT': return Object.assign(c, transformImage(e, m));
-    case 'SOLID': c.pts = e.pts.map((p) => apply(m, p)); break;
+    case 'SOLID': case '3DFACE': c.pts = e.pts.map((p) => apply(m, p)); break;
+    case 'OLE2FRAME': {
+      // the frame stays an axis-aligned rectangle: only flips / 90-degree turns / scales keep it one
+      const k = 1e-9 * Math.max(Math.abs(m[0]) + Math.abs(m[1]) + Math.abs(m[2]) + Math.abs(m[3]), 1);
+      const axis = (Math.abs(m[1]) < k && Math.abs(m[2]) < k) || (Math.abs(m[0]) < k && Math.abs(m[3]) < k);
+      if (!axis) throw Object.assign(new Error('Transform would turn this OLE frame off the axes.'), { code: 'SHEAR' });
+      const a = apply(m, e.p1), b = apply(m, e.p2);
+      c.p1 = { ...a, x: Math.min(a.x, b.x), y: Math.max(a.y, b.y) }; c.p2 = { ...b, x: Math.max(a.x, b.x), y: Math.min(a.y, b.y) };
+      break;
+    }
     case 'LEADER': c.pts = e.pts.map((p) => apply(m, p)); break;
     case 'MLEADER': return transformMLeader(e, (p) => apply(m, p));
     case 'MLINE': return transformMline(e, (p) => apply(m, p));

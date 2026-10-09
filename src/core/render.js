@@ -274,9 +274,33 @@ class Builder {
         const red = { color: { rgb: [255, 0, 0] }, lw: -3, lt: 'CONTINUOUS', lts: 1, layerName: style.layerName };
         this.push({ kind: 'path', ops, style: red, bbox, missingImage: e.path }, rootId);
         const W = Math.hypot(q[1].x - q[0].x, q[1].y - q[0].y), H = Math.hypot(q[3].x - q[0].x, q[3].y - q[0].y);
-        const h = Math.max(Math.min(W, H) / 12, 1e-9), ux = (q[1].x - q[0].x) / (W || 1), uy = (q[1].y - q[0].y) / (W || 1);
+        // label height capped at 2% of the frame's shorter side, at the frame's top-left corner, inside it
+        const h = Math.max(Math.min(W, H) * 0.02, 1e-9), ux = (q[1].x - q[0].x) / (W || 1), uy = (q[1].y - q[0].y) / (W || 1);
+        const vx = (q[3].x - q[0].x) / (H || 1), vy = (q[3].y - q[0].y) / (H || 1);
         const name = String(e.path || '').split(/[\\/]/).pop() || 'IMAGE';
-        this.build({ type: 'TEXT', p: { x: q[0].x + (ux - uy) * h, y: q[0].y + (uy + ux) * h }, height: h, text: name, rot: Math.atan2(uy, ux) / DEG, ui: true }, null, red, rootId);
+        this.build({ type: 'TEXT', p: { x: q[3].x + ux * h * 0.5 - vx * h * 1.2, y: q[3].y + uy * h * 0.5 - vy * h * 1.2 }, height: h, text: name, rot: Math.atan2(uy, ux) / DEG, ui: true }, null, red, rootId);
+        return;
+      }
+      case '3DFACE': {
+        const pls = tessellate(e);
+        if (!pls.length) return;
+        for (const pl of pls) { M(P(pl[0])); L(P(pl[1])); }
+        this.push(mkItem('path'), rootId); return;
+      }
+      case 'OLE2FRAME': {
+        // the embedded object is not rendered: its frame, a light diagonal cross and a small label
+        const a = e.p1, b = e.p2;
+        const q = [{ x: a.x, y: a.y }, { x: b.x, y: a.y }, { x: b.x, y: b.y }, { x: a.x, y: b.y }].map(P);
+        M(q[0]); L(q[1]); L(q[2]); L(q[3]); ops.push(OP_Z);
+        this.push(mkItem('path'), rootId);
+        const cross = { ...style, alpha: (style.alpha ?? 1) * 0.4 };
+        const cOps = [OP_M, q[0].x, q[0].y, OP_L, q[2].x, q[2].y, OP_M, q[1].x, q[1].y, OP_L, q[3].x, q[3].y];
+        this.push({ kind: 'path', ops: cOps, style: cross, bbox }, rootId);
+        const W = Math.hypot(q[1].x - q[0].x, q[1].y - q[0].y), H = Math.hypot(q[3].x - q[0].x, q[3].y - q[0].y);
+        if (!(W > 0 && H > 0)) return;
+        const h = Math.min(Math.min(W, H) * 0.1, W * 0.8 / 6), ux = (q[1].x - q[0].x) / W, uy = (q[1].y - q[0].y) / W;
+        const vx = (q[3].x - q[0].x) / H, vy = (q[3].y - q[0].y) / H; // up along the frame's left edge
+        this.build({ type: 'TEXT', p: { x: q[3].x + ux * h * 0.5 - vx * h * 1.2, y: q[3].y + uy * h * 0.5 - vy * h * 1.2 }, height: h, text: 'OLE object', rot: Math.atan2(uy, ux) / DEG, ui: true }, null, style, rootId);
         return;
       }
       case 'WIPEOUT': {

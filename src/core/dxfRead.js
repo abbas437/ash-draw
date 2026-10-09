@@ -626,6 +626,20 @@ function buildEntity(rec, doc, extra) {
     case 'MTEXT': e = buildMText(rec, o); break;
     case 'POINT': e = makePoint(pt(rec, 10), o); break;
     case 'SOLID': case 'TRACE': e = buildSolid(rec, o); break;
+    case '3DFACE': {
+      // projected to XY; 70 bits 1/2/4/8 hide the edges 1-2, 2-3, 3-4, 4-1 (a 3-corner face repeats corner 3)
+      const pts = [pt(rec, 10), pt(rec, 11), pt(rec, 12)];
+      pts.push(rec.has(13) ? pt(rec, 13) : { ...pts[2] });
+      e = { ...o, id: 0, type: '3DFACE', pts, inv: rec.int(70) & 15 };
+      break;
+    }
+    case 'OLE2FRAME': {
+      // frame only; the embedded object's binary data (310) is kept as read for a lossless write
+      const tags = rec.tags();
+      e = { ...o, id: 0, type: 'OLE2FRAME', p1: pt(rec, 10), p2: pt(rec, 11), version: rec.int(70), kind: rec.int(71), tile: rec.int(72),
+        desc: rec.has(3) ? rec.str(3) : '', data: tags.filter(([c]) => c === 310).map(([, v]) => v) };
+      break;
+    }
     case 'INSERT': e = buildInsert(rec, o); break;
     case 'HATCH': e = buildHatch(rec, o, doc); break;
     case 'DIMENSION': e = buildDimension(rec, o); break;

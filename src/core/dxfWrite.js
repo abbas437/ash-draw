@@ -261,6 +261,24 @@ export function writeDxf(doc, opts = {}) {
         if (e.lineSpacing > 0 && e.lineSpacing !== 1) { o.p(73, 1); o.p(44, e.lineSpacing); }
         return true;
       }
+      case '3DFACE': {
+        head(o, e, '3DFACE', owner); o.p(100, 'AcDbFace');
+        const p = e.pts; const p4 = p[3] ?? p[2];
+        o.pt(10, p[0].x, p[0].y); o.pt(11, p[1].x, p[1].y); o.pt(12, p[2].x, p[2].y); o.pt(13, p4.x, p4.y);
+        if (e.inv) o.p(70, e.inv);
+        return true;
+      }
+      case 'OLE2FRAME': {
+        head(o, e, 'OLE2FRAME', owner); o.p(100, 'AcDbOle2Frame');
+        o.p(70, e.version ?? 2); o.s(3, e.desc ?? 'OLE');
+        o.pt(10, e.p1.x, e.p1.y); o.pt(11, e.p2.x, e.p2.y);
+        o.p(71, e.kind ?? 2); o.p(72, e.tile ?? 0);
+        const data = e.data ?? [];
+        o.p(90, data.reduce((n, h) => n + (h.length >> 1), 0));
+        for (const h of data) o.p(310, h);
+        o.s(1, 'OLE');
+        return true;
+      }
       case 'POINT':
         head(o, e, 'POINT', owner); o.p(100, 'AcDbPoint'); o.pt(10, e.p.x, e.p.y); return true;
       case 'SOLID': {

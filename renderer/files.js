@@ -100,6 +100,8 @@ export async function loadDrawing(api, name, bytes, { onProgress = null, signal 
   const rep = doc.header?.repairedValues;
   if (rep) notes.push(`${rep} damaged text value${rep === 1 ? ' was' : 's were'} repaired (split over several lines in the file).`);
   const sk = Object.entries(doc.skipped || {});
+  const ole = [doc.entities, ...[...doc.blocks.values()].map((b) => b.entities)].reduce((n, l) => n + l.filter((x) => x.type === 'OLE2FRAME').length, 0);
+  if (ole) notes.push(`${ole} OLE object${ole === 1 ? '' : 's'} shown as frames (content not displayed).`);
   if (sk.length) notes.push(`Not displayed (unsupported object types): ${sk.map(([k, v]) => `${v} ${k}`).join(', ')}.`);
   return { doc, format, notes, warnings };
 }

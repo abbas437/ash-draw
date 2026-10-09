@@ -174,7 +174,8 @@ test('dimensions keep their anonymous block; leaders load', () => {
 test('unsupported entities are counted, not silently lost, and do not stop the load', () => {
   const doc = readDxf(fixture('unsupported_r2000.dxf'));
   assert.equal(M.countByType(doc).LINE, 2);
-  assert.equal(doc.skipped['3DFACE'], 1);
+  assert.equal(doc.skipped['3DFACE'], undefined); // drawn since 3DFACE support
+  assert.equal(M.countByType(doc)['3DFACE'], 1);
   assert.equal(doc.skipped.XLINE, 1);
   assert.equal(doc.skipped.RAY, 1);
   writeDxf(doc);
