@@ -88,6 +88,7 @@ paths the user chose in a dialog or passed on the command line during this sessi
 | `recentList()` / `recentOpen(path)` / `recentClear()` | The last 15 files (`exists` per entry); reopen one (null when it no longer exists); clear the list. |
 | `dwgAvailable()` | Whether the LibreDWG converters are present and usable. |
 | `dwgToDxf(bytes)` | Convert DWG bytes to DXF via `dwg2dxf.exe`. |
+| `dwgOpen(pathOrBytes)` | Open a DWG: main converts it (from a granted path, or from bytes) and returns `{url, size, warnings, engine}`; the DXF reader worker fetches the one-time `app://drawstudio/_open/<token>` URL, so the DXF is not cloned through IPC on the window thread. |
 | `dxfToDwg(dxfBytes, version)` | Convert DXF bytes to DWG via `dxf2dwg.exe`; `version` is `'r2000'` or `'r14'`. |
 
 ## Licence

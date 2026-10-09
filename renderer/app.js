@@ -230,7 +230,8 @@ class App {
   async openFromFile(f) {
     const open = findTabByPath(this.tabs, f.path);
     if (open) { this.switchTo(open); return; }
-    try { if (!f.bytes) f = { ...f, bytes: await api.readFile(f.path) }; } catch (err) { await message('Cannot open this file', err.message || String(err)); return; }
+    // a DWG is read and converted by main (dwg:open), not passed through this thread
+    try { if (!f.bytes && extOf(f.path) !== 'dwg') f = { ...f, bytes: await api.readFile(f.path) }; } catch (err) { await message('Cannot open this file', err.message || String(err)); return; }
     await this.loadFile(f);
   }
   async loadFile(f) {
@@ -240,7 +241,7 @@ class App {
     const pt = progressToast('Reading…', () => ac.abort());
     this.vp.setBusy(true); // the system wait cursor over the canvas until the drawing is shown (no hidden pointer)
     try {
-      const { doc, format, notes, warnings } = await loadDrawing(api, f.name, f.bytes, { onProgress: (x) => pt.set(x), signal: ac.signal });
+      const { doc, format, notes, warnings } = await loadDrawing(api, f.name, f.bytes, { onProgress: (x) => pt.set(x), signal: ac.signal, path: f.path ?? null });
       toast(`Opening ${f.name} …`, 60000); // read: now the view is built
       await loadDrawingXrefs(api, doc, f.path ?? null); // before the scene is built: it is built once, with the xrefs
       const missing = await loadDrawingImages(api, doc, f.path ?? null);
