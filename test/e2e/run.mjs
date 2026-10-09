@@ -1483,13 +1483,13 @@ try {
   {
     await page.evaluate(() => window.app.newDrawing());
     const menuItem = async (item) => { await page.locator('#menubar .menu > button', { hasText: 'View' }).click(); await page.locator('#menubar .drop button', { hasText: item }).click(); };
-    const panel = () => page.evaluate(() => [...document.querySelectorAll('#tools button')].map((b) => ({
+    const panel = () => page.evaluate(() => [...document.querySelectorAll('#tools button:not(.gmore)')].map((b) => ({
       svg: b.querySelectorAll('svg').length, fallback: !!b.querySelector('svg[data-fallback]'), label: b.querySelector('.lbl')?.getClientRects().length ?? 0, w: b.getBoundingClientRect().width, color: getComputedStyle(b.querySelector('svg') ?? b).color, tool: b.dataset.tool })));
     // icon contrast (WCAG 1.4.11, 3:1 for graphics) of every panel icon against its button
     const iconContrast = () => page.evaluate(() => {
       const L = (c) => { const [r, g, b] = c.match(/[\d.]+/g).slice(0, 3).map(Number).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
       let worst = { ratio: Infinity };
-      for (const b of document.querySelectorAll('#tools button')) {
+      for (const b of document.querySelectorAll('#tools button:not(.gmore)')) {
         const a = L(getComputedStyle(b.querySelector('svg')).color), bg = L(getComputedStyle(b).backgroundColor), ratio = (Math.max(a, bg) + 0.05) / (Math.min(a, bg) + 0.05);
         if (ratio < worst.ratio) worst = { ratio, what: b.title };
       }
@@ -1573,7 +1573,7 @@ try {
     assert.equal(await page.evaluate(() => [...document.querySelectorAll('#tools button .lbl')].every((l) => l.getClientRects().length === 0)), true, 'Top with labels off: icons only');
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'layout_top_placement.png') });
     await menuItem('Tool labels');
-    assert.equal(await page.evaluate(() => [...document.querySelectorAll('#tools button')].every((b) => b.querySelector('.lbl').getClientRects().length === 1)), true, 'Top with labels on: label under each icon');
+    assert.equal(await page.evaluate(() => [...document.querySelectorAll('#tools button[data-tool]')].filter((b) => b.getClientRects().length).every((b) => b.querySelector('.lbl').getClientRects().length === 1)), true, 'Top with labels on: label under each shown icon (groups pushed out of the band show a "Group ▾" button)');
     assert.ok(await page.evaluate(() => { const b = document.querySelector('#tools button[data-tool=line]'); return b.querySelector('.lbl').getBoundingClientRect().top >= b.querySelector('svg').getBoundingClientRect().bottom - 1; }), 'label sits under the icon');
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'layout_top_labels_on.png') });
     await menuItem('Tool labels');
@@ -1585,7 +1585,7 @@ try {
     // 1366 x 768, labels off: the Markup group is visible without scrolling
     await page.setViewportSize({ width: 1366, height: 768 });
     await page.waitForTimeout(150);
-    const mk = await page.evaluate(() => { const t = document.getElementById('tools').getBoundingClientRect(), b = [...document.querySelectorAll('#tools button.g-markup')].map((x) => x.getBoundingClientRect()), h = document.querySelector('#tools [data-head=markup]').getBoundingClientRect(); return { n: b.length, top: t.top, bottom: t.bottom, head: h.top, last: Math.max(...b.map((r) => r.bottom)), labels: document.getElementById('app').classList.contains('no-tool-labels') }; });
+    const mk = await page.evaluate(() => { const t = document.getElementById('tools').getBoundingClientRect(), b = [...document.querySelectorAll('#tools button.g-markup:not(.gmore)')].map((x) => x.getBoundingClientRect()), h = document.querySelector('#tools [data-head=markup]').getBoundingClientRect(); return { n: b.length, top: t.top, bottom: t.bottom, head: h.top, last: Math.max(...b.map((r) => r.bottom)), labels: document.getElementById('app').classList.contains('no-tool-labels') }; });
     assert.ok(mk.labels && mk.n === 3 && mk.head >= mk.top && mk.last <= mk.bottom, `Markup group visible at 1366x768 without scrolling: ${JSON.stringify(mk)}`);
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'layout_1366x768.png') });
     await page.setViewportSize({ width: 1400, height: 850 });

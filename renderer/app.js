@@ -18,7 +18,7 @@ import { initLayouts, restoreSpace, renderSpaceBar, layoutDoubleClick, exitMspac
 import { ComparePanel, runCompare } from './compare.js';
 import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
 import { loadDrawingXrefs, xrefPanel } from './xref-panel.js';
-import { TOOL_BUTTONS, buildToolPanel, iconButton, quickCommand, canvasDarkFrom, labelsFrom, placementFrom, PLACEMENTS, collapsedFrom, applyCollapsed, toolTitle } from './tool-panel.js';
+import { TOOL_BUTTONS, buildToolPanel, iconButton, quickCommand, canvasDarkFrom, labelsFrom, placementFrom, PLACEMENTS, collapsedFrom, applyCollapsed, toolTitle, moreButton, fitToolBand, initToolBand } from './tool-panel.js';
 import { iconSvg } from './icons.js';
 import { defaultLayout, cleanLayout, panelGroups, samePanel, quickRow, setQuickRow, compactKeys, foldMode, SEP } from './tool-layout.js';
 import { openCustomize, initToolContextMenu } from './tool-custom.js';
@@ -79,7 +79,7 @@ class App {
     api.settingsGet?.('tools.colours').then((v) => { if (v === false) this.setToolPanel('colours', false, false); }).catch(() => {});
     api.settingsGet?.('canvas.transparency').then((v) => { if (v === false) { this.vp.settings.transparency = false; this.refreshToggles(); this.vp.requestRender(); } }).catch(() => {});
     api.settingsGet?.('canvas.background').then((v) => this.setCanvasDark(canvasDarkFrom(v))).catch(() => {});
-    api.settingsGet?.('tools.collapsed').then((v) => { this.collapsed = collapsedFrom(v); applyCollapsed(document.getElementById('tools'), this.collapsed); }).catch(() => {});
+    api.settingsGet?.('tools.collapsed').then((v) => { this.collapsed = collapsedFrom(v); applyCollapsed(document.getElementById('tools'), this.collapsed); this.fitBand(); }).catch(() => {});
     api.settingsGet?.('tools.layout').then((v) => { if (v != null) this.setToolLayout(cleanLayout(v), false); }).catch(() => {});
     api.settingsGet?.('theme').then((t) => { if (t === 'dark') this.setTheme('dark', false); }).catch(() => {});
     api.settingsGet?.('measure.showLegs').then((v) => setShowLegs(v)).catch(() => {});
@@ -489,7 +489,8 @@ class App {
     const pat = el('select', { title: 'Hatch pattern', onchange: (e) => { this.defaults.hatchPattern = e.target.value; } }, PATTERN_NAMES.map((n) => el('option', { value: n, text: n })));
     pat.value = this.defaults.hatchPattern;
     const sc = el('input', { type: 'number', step: 'any', min: '0', value: '1', title: 'Hatch scale', style: 'width:100%', onchange: (e) => { const v = Number(e.target.value); if (v > 0) this.defaults.hatchScale = v; } });
-    box.append(el('div', { class: 'tgroup' }, el('div', { class: 'group g-draw', text: 'Hatch' }), pat, sc));
+    box.append(el('div', { class: 'tgroup', 'data-extra': 'hatch' }, el('div', { class: 'group g-draw', text: 'Hatch' }), el('div', { class: 'xbody' }, pat, sc), moreButton(el, 'Hatch', 'draw')));
+    initToolBand(box, () => this.toolPlacement === 'top');
     for (const [id, icon] of [['z-in', 'zoomin'], ['z-out', 'zoomout'], ['z-fit', 'zoomfit']]) { const b = document.getElementById(id); b.setAttribute('aria-label', b.title); b.replaceChildren(iconSvg(icon, 18)); }
   }
   /** (re)build the tool panel's groups from the customized layout (View > Customize tools…), before the Hatch group */
@@ -500,16 +501,20 @@ class App {
     buildToolPanel(frag, el, (id) => this.setTool(id), (group, body) => {
       if (group !== 'Dimension') return;
       this.dimStyleSel = el('select', { id: 'dimstyle', title: 'Current dimension style (DIMSTYLE)', onchange: (e) => setCurrentDimStyle(this.doc, e.target.value) });
-      body.append(this.dimStyleSel, iconButton(el, 'dimstyle', 'Dim styles…', { class: 'g-annotate', title: 'Dimension Style Manager (D)', onclick: () => this.dimStyles() }));
+      body.append(el('div', { class: 'gextra' }, this.dimStyleSel, iconButton(el, 'dimstyle', 'Dim styles…', { class: 'g-annotate', title: 'Dimension Style Manager (D)', onclick: () => this.dimStyles() })));
     }, (key, folded) => {
       this.collapsed = folded ? [...new Set([...this.collapsed, key])] : this.collapsed.filter((k) => k !== key);
       api.settingsSet?.('tools.collapsed', this.collapsed)?.catch?.(() => {});
+      this.fitBand();
     }, panelGroups(this.toolLayout));
     box.querySelector('.lbl-toggle').after(frag);
     applyCollapsed(box, this.collapsed);
     for (const b of box.querySelectorAll('button[data-tool]')) b.classList.toggle('active', b.dataset.tool === this.toolId);
     this.refreshDimStyles();
+    this.fitBand();
   }
+  /** Top band: push the groups that do not fit out to "Group ▾" buttons (tool-panel.js fitToolBand) */
+  fitBand() { fitToolBand(document.getElementById('tools'), this.toolPlacement === 'top'); }
   /** the Quick Access row under the menu bar: the chosen commands as icon buttons, coloured by group */
   buildQuickAccess() {
     document.getElementById('menubar').after(el('div', { id: 'qat', role: 'toolbar', 'aria-label': 'Quick Access' }));
@@ -552,6 +557,7 @@ class App {
   setFolded(keys) {
     this.collapsed = [...keys];
     applyCollapsed(document.getElementById('tools'), this.collapsed);
+    this.fitBand();
     api.settingsSet?.('tools.collapsed', this.collapsed)?.catch?.(() => {});
   }
   /** View > Tool labels / Tool group colours: classes on the panel, saved as settings 'tools.labels' and 'tools.colours' */
@@ -559,6 +565,7 @@ class App {
     this.panelOpts = { labels: true, colours: true, ...this.panelOpts, [opt]: !!on };
     document.getElementById('app').classList.toggle('no-tool-labels', !this.panelOpts.labels);
     document.getElementById('tools').classList.toggle('no-colours', !this.panelOpts.colours);
+    this.fitBand();
     if (save) api.settingsSet?.(`tools.${opt}`, !!on)?.catch?.(() => {});
   }
 
@@ -567,6 +574,7 @@ class App {
     this.toolPlacement = place = placementFrom(place);
     const app = document.getElementById('app');
     for (const p of PLACEMENTS) app.classList.toggle(`tools-${p}`, p === place);
+    this.fitBand();
     if (save) api.settingsSet?.('tools.placement', place)?.catch?.(() => {});
   }
 

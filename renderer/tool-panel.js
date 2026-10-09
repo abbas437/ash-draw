@@ -65,8 +65,77 @@ export function buildToolPanel(box, el, setTool, extras = () => {}, onToggle = (
       body.append(iconButton(el, id, label, { 'data-tool': id, 'data-group': key, class: `g-${key}`, title: toolTitle(label, alias), onclick: () => setTool(id) }));
     }
     extras(group, body);
-    box.append(el('div', { class: 'tgroup', 'data-group': key }, head, body)); // .tgroup is transparent in the Left panel, a column in the Top band
+    box.append(el('div', { class: 'tgroup', 'data-group': key }, head, body, moreButton(el, group, key))); // .tgroup is transparent in the Left panel, a column in the Top band
   }
+}
+
+/** the "Group ▾" button that stands in for a group pushed out of the Top band (shown only then); it opens the group's body as a dropdown */
+export function moreButton(el, group, key) {
+  return el('button', { type: 'button', class: `gmore g-${key}`, 'aria-haspopup': 'true', 'aria-expanded': 'false', title: `${group} tools`, 'aria-label': `${group} tools`, text: `${group} \u25BE` });
+}
+
+/** the group's body: its tool buttons (.gbody) or the Hatch controls (.xbody) */
+const bodyOf = (tg) => tg.querySelector(':scope > .gbody, :scope > .xbody');
+let pop = null; // the open dropdown: { tg, body, btn, off }
+
+/** close the open group dropdown; `refocus` returns focus to its "Group ▾" button */
+export function closeGroupMenu(refocus = false) {
+  if (!pop) return;
+  const { body, btn, off } = pop; pop = null;
+  off();
+  body.classList.remove('gpop'); body.style.left = body.style.top = body.style.maxHeight = '';
+  btn.setAttribute('aria-expanded', 'false');
+  if (refocus && btn.isConnected) btn.focus();
+}
+
+/** open a pushed-out group's tools under its "Group ▾" button; arrow keys move, Escape / Tab / outside click / choosing a tool close it */
+function openGroupMenu(tg, btn) {
+  closeGroupMenu();
+  const body = bodyOf(tg); if (!body) return;
+  body.classList.add('gpop');
+  const b = btn.getBoundingClientRect(), r = body.getBoundingClientRect();
+  body.style.left = `${Math.max(4, Math.min(b.left, innerWidth - r.width - 4))}px`;
+  body.style.top = `${b.bottom + 2}px`; body.style.maxHeight = `${innerHeight - b.bottom - 8}px`;
+  btn.setAttribute('aria-expanded', 'true');
+  const items = () => [...body.querySelectorAll('button, select, input')].filter((n) => !n.disabled && n.getClientRects().length);
+  const onKey = (e) => {
+    const list = items(), k = list.indexOf(document.activeElement);
+    if (e.key === 'Escape') closeGroupMenu(true);
+    else if (k < 0) return;
+    else if (e.key === 'Tab') { closeGroupMenu(); return; }
+    else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !['SELECT', 'INPUT'].includes(document.activeElement.tagName)) list[(k + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length].focus();
+    else return;
+    e.preventDefault(); e.stopPropagation();
+  };
+  const onDown = (e) => { if (!body.contains(e.target) && !btn.contains(e.target)) closeGroupMenu(); };
+  const onPick = (e) => { if (e.target.closest('button')) closeGroupMenu(); };
+  const onAway = () => closeGroupMenu();
+  document.addEventListener('keydown', onKey, true); document.addEventListener('pointerdown', onDown, true);
+  body.addEventListener('click', onPick); window.addEventListener('blur', onAway);
+  pop = { tg, body, btn, off: () => { document.removeEventListener('keydown', onKey, true); document.removeEventListener('pointerdown', onDown, true); body.removeEventListener('click', onPick); window.removeEventListener('blur', onAway); } };
+  items()[0]?.focus();
+}
+
+/**
+ * Top band: show every group, then push groups out from the right (each becomes its "Group ▾" button) until the band no longer
+ * overflows. Any other placement shows every group. `box` is #tools; `top` is true for the Top band.
+ */
+export function fitToolBand(box, top) {
+  closeGroupMenu();
+  const groups = [...box.querySelectorAll(':scope > .tgroup')];
+  for (const g of groups) g.classList.remove('ovf');
+  if (!top) return;
+  for (let i = groups.length - 1; i >= 0 && box.scrollWidth > box.clientWidth; i--) groups[i].classList.add('ovf');
+}
+
+/** wire the "Group ▾" buttons (one delegated listener) and refit the band when its width changes */
+export function initToolBand(box, isTop) {
+  box.addEventListener('click', (e) => {
+    const btn = e.target.closest('.gmore'); if (!btn) return;
+    if (pop?.btn === btn) closeGroupMenu(); else openGroupMenu(btn.closest('.tgroup'), btn);
+  });
+  let w = -1;
+  new ResizeObserver(() => { if (box.clientWidth !== w) { w = box.clientWidth; fitToolBand(box, isTop()); } }).observe(box);
 }
 
 /** fold the named groups (saved state) and unfold the others */

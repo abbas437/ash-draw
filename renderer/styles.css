@@ -81,19 +81,40 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 #app.no-tool-labels #tools .group { font-size:0; margin:3px 0 1px; padding:0; border-left:none; border-top:2px solid var(--gc, var(--line)); min-height:8px; }
 #app.no-tool-labels #tools .group::before { font-size:9px; line-height:8px; color:var(--dim); }
 #app.no-tool-labels #tools .gbody:not([hidden]) { display:grid; grid-template-columns:repeat(3, 1fr); gap:1px; } /* three icons per row keeps every group on screen at 1366x768 */
-#app.no-tool-labels #tools .gbody > select { grid-column:1 / -1; min-width:0; }
+#app.no-tool-labels #tools .gbody > select, #app.no-tool-labels #tools .gextra > select { grid-column:1 / -1; min-width:0; }
+#tools .gextra, #tools .xbody { display:contents; } /* Dimension style list + Dim styles, Hatch pattern + scale: wrappers for the Top band only */
+#tools .gmore { display:none; }
 #app.tools-hidden { --tools-w:0px; } #app.tools-hidden #tools { display:none; }
-/* View > Tool panel > Top: a band above the canvas, groups side by side, icons in two rows, small captions */
+/* View > Tool panel > Top: a band above the canvas, groups side by side; fixed height = caption + two rows of buttons;
+   groups that do not fit are pushed out from the right to a "Group ▾" button that opens them as a dropdown (tool-panel.js fitToolBand) */
+#app.tools-top { --row-h:28px; } #app.tools-top:not(.no-tool-labels) { --row-h:40px; }
 #app.tools-top #main { grid-template-columns: 1fr var(--side-w, 260px); grid-template-areas:"tools side" "docs side"; grid-template-rows:auto minmax(0,1fr); }
-#app.tools-top #tools { flex-direction:row; align-items:flex-start; gap:0; overflow-x:auto; overflow-y:hidden; border-right:none; border-bottom:1px solid var(--line); padding:3px 4px; }
+#app.tools-top #tools { flex-direction:row; align-items:stretch; gap:0; overflow:hidden; border-right:none; border-bottom:1px solid var(--line); padding:2px 4px; height:calc(2 * var(--row-h) + 21px); }
 #app.tools-top #tools .tgroup { display:flex; flex-direction:column; flex:none; gap:1px; padding:0 6px; border-left:1px solid var(--line); }
-#app.tools-top #tools .lbl-toggle { align-self:flex-start; margin-right:4px; }
-#app.tools-top #tools .group { font-size:10px; margin:0; padding:0 0 1px; border:none; border-bottom:2px solid var(--gc, var(--line)); min-height:0; }
-#app.tools-top #tools .gbody:not([hidden]) { display:grid; grid-template-columns:repeat(var(--cols, 4), auto); gap:1px; justify-content:start; }
-#app.tools-top #tools .gbody > select { grid-column:1 / -1; min-width:0; max-width:110px; }
-#app.tools-top #tools .tgroup > select, #app.tools-top #tools .tgroup > input { width:70px; }
-#app.tools-top #tools button { width:auto; justify-content:center; padding:3px 4px; }
-#app.tools-top:not(.no-tool-labels) #tools button { flex-direction:column; gap:1px; min-width:50px; font-size:10px; }
+#app.tools-top #tools .lbl-toggle + .tgroup { border-left-color:transparent; }
+#app.tools-top #tools .lbl-toggle { order:1; align-self:flex-start; margin:0 0 0 auto; line-height:14px; }
+#app.tools-top #tools .group { font-size:10px; line-height:14px; height:14px; margin:0; padding:0; border:none; min-height:0; white-space:nowrap; }
+#app.tools-top #tools .group::before { font-size:10px; line-height:14px; color:var(--gc, var(--dim)); } /* the group colour cue: the fold mark */
+#app.tools-top #tools .gbody:not([hidden]) { display:grid; grid-template-columns:repeat(var(--cols, 4), auto); grid-template-rows:repeat(2, var(--row-h)); gap:1px; justify-content:start; }
+#app.tools-top #tools .gbody:not([hidden]):has(> .gextra) { grid-template-columns:repeat(var(--cols, 4), auto) [x] auto; }
+#app.tools-top #tools button { width:auto; height:var(--row-h); justify-content:center; padding:3px 4px; }
+#app.tools-top:not(.no-tool-labels) #tools button { flex-direction:column; gap:1px; min-width:48px; max-width:64px; font-size:10px; line-height:12px; padding:2px 3px; }
+#app.tools-top:not(.no-tool-labels) #tools button .lbl { max-width:100%; }
+#app.tools-top #tools .gextra { grid-column:x; grid-row:1 / span 2; display:flex; flex-direction:column; justify-content:center; align-items:flex-start; gap:2px; padding-left:4px; }
+#app.tools-top #tools .gextra > select, #app.tools-top #tools .xbody > select, #app.tools-top #tools .xbody > input { height:24px; padding:1px 3px; min-width:0; }
+#app.tools-top #tools .gextra > select { width:110px; }
+#app.tools-top #tools .gextra button { flex-direction:row; height:24px; min-width:0; padding:1px 4px; }
+#app.tools-top #tools .gextra button .lbl { display:none; } /* icon only; the name stays in the tooltip */
+#app.tools-top #tools .xbody { display:flex; flex-direction:column; justify-content:center; gap:2px; flex:1; }
+#app.tools-top #tools .xbody > select, #app.tools-top #tools .xbody > input { width:100px; max-width:100px; } /* max-width beats the scale box's inline width:100% */
+#app.tools-top #tools .tgroup.ovf > .group, #app.tools-top #tools .tgroup.ovf > .gbody, #app.tools-top #tools .tgroup.ovf > .xbody { display:none; }
+#app.tools-top #tools .tgroup.ovf > .gmore { display:flex; flex:1; flex-direction:row; align-items:center; justify-content:center; height:auto; min-width:0; max-width:none; margin:2px 0; padding:2px 8px; font-size:11px; white-space:nowrap; background:none; border-color:transparent; box-shadow:inset 0 -2px var(--gc, var(--line)); }
+#app.tools-top #tools .tgroup.ovf > .gmore:hover, #app.tools-top #tools .tgroup.ovf > .gmore[aria-expanded="true"] { background:var(--hover); border-color:var(--line); }
+#app.tools-top #tools .tgroup.ovf > .gbody.gpop, #app.tools-top #tools .tgroup.ovf > .xbody.gpop { display:flex; flex-direction:column; align-items:stretch; position:fixed; z-index:30; gap:1px; padding:4px; min-width:160px; overflow-y:auto; background:var(--panel2); border:1px solid var(--line); border-radius:3px; box-shadow:0 6px 18px var(--shadow); }
+#app.tools-top #tools .gpop button { flex-direction:row; justify-content:flex-start; gap:6px; width:100%; min-width:0; max-width:none; height:auto; padding:3px 8px; font-size:12px; line-height:normal; }
+#app.tools-top #tools .gpop button .lbl { display:inline; }
+#app.tools-top #tools .gpop .gextra { padding:4px 0 0; align-items:stretch; }
+#app.tools-top #tools .gpop select, #app.tools-top #tools .gpop input { width:100%; max-width:none; }
 #tools button.active { background:var(--accent2); border-color:var(--accent); color:var(--on-accent); }
 #docs { display:grid; grid-template-rows:auto 1fr auto; min-width:0; min-height:0; }
 #tabbar { display:flex; overflow-x:auto; background:var(--bg); border-bottom:1px solid var(--line); min-height:28px; }
