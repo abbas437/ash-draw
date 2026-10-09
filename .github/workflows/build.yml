@@ -57,6 +57,12 @@ jobs:
             echo "::error title=bridge tests failed::$msg"
           fi
           exit $code
+      - name: Version from the release tag (so each test build has its own file names and About version)
+        if: (github.event_name == 'workflow_dispatch' && inputs.release_version != '') || startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          VERSION: ${{ inputs.release_version || github.ref_name }}
+        run: npm version "${VERSION#v}" --no-git-tag-version --allow-same-version
       - name: Build installer and portable exe
         shell: bash
         run: |
