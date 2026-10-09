@@ -73,10 +73,11 @@ function buildBody(get, set) {
 /** View > Customize tools…: edits a copy; OK applies and saves it */
 export async function openCustomize(app) {
   let draft = app.toolLayout;
+  const at = app.focusToken(); // the panel button that had the focus (opened from the right-click menu): its equivalent gets it back
   let body = null;
   body = buildBody(() => draft, (l, key) => { draft = l; body.render(key); });
   const r = await modal('Customize tools', body.root, [{ label: 'OK', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
-  if (r === 'ok') app.setToolLayout(draft);
+  if (r === 'ok') { app.setToolLayout(draft); app.restoreFocus(at); }
   return r === 'ok';
 }
 
@@ -148,6 +149,7 @@ function openContext(app, e) {
   document.addEventListener('keydown', onKey, true);
   window.addEventListener('blur', onAway);
   window.addEventListener('resize', onAway);
+  m.addEventListener('focusout', (e) => { if (!m.contains(e.relatedTarget)) closeContext(); }); // focus left the menu (typing moved it to the command line): close it
   m.querySelector('button:not(:disabled)')?.focus();
 }
 

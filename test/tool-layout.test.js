@@ -171,3 +171,27 @@ test('customize: View > Tools: Compact folds all but Select; the menu knows comp
   assert.equal(TL.foldMode([...TL.compactKeys(), 'select']), 'custom');
   assert.equal(TL.foldMode(['gone']), 'expanded');
 });
+
+test('customize: a stored list longer than MAX_LIST is cut before it is read (an entry past the cap is ignored)', () => {
+  const junk = Array.from({ length: TL.MAX_LIST }, (_, i) => `junk${i}`);
+  const l = TL.cleanLayout({ hidden: [...junk, 'trim'], quick: [...junk, 'undo'] });
+  assert.deepEqual(l.hidden, [], 'hidden: Trim sits past the cap');
+  assert.deepEqual(l.quick, [], 'quick: Undo sits past the cap');
+  assert.ok(l.hidden.length <= TL.MAX_LIST && l.quick.length <= TL.MAX_LIST);
+  assert.deepEqual(TL.cleanLayout({ hidden: [...junk.slice(1), 'trim'] }).hidden, ['trim'], 'one entry inside the cap still counts');
+});
+
+test('customize: the Dimension group stays in the panel (its style list lives there) with every dimension tool hidden or moved', () => {
+  let l = TL.defaultLayout();
+  for (const id of l.order.annotate) if (TL.canHide(id)) l = TL.setHidden(l, id, true);
+  const g = TL.panelGroups(l).find(([, key]) => key === 'annotate');
+  assert.ok(g, 'Dimension group kept');
+  assert.equal(g[0], 'Dimension');
+});
+
+test('customize: samePanel ignores Quick Access edits and sees panel edits', () => {
+  const d = TL.defaultLayout();
+  assert.equal(TL.samePanel(d, TL.quickRemove(d, 'undo')), true);
+  assert.equal(TL.samePanel(d, TL.setQuickRow(d, false)), true);
+  assert.equal(TL.samePanel(d, TL.setHidden(d, 'trim', true)), false);
+});

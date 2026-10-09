@@ -9,7 +9,7 @@ export const SEP = '|';
 export const ALWAYS_SHOWN = Object.freeze(['select']);
 /** the group View > Tools: Compact leaves open */
 export const COMPACT_KEEPS = 'select';
-const MAX_LIST = 1000; // longer stored lists are cut before they are looked at
+export const MAX_LIST = 1000; // longer stored lists are cut before they are looked at
 
 export const GROUP_KEYS = Object.freeze(TOOL_BUTTONS.map(([, key]) => key));
 const LABELS = new Map(TOOL_BUTTONS.map(([label, key]) => [key, label]));
@@ -77,11 +77,17 @@ const copy = (l) => ({ groupOrder: [...l.groupOrder], order: Object.fromEntries(
 /** the group a tool is in, or null */
 export const groupOf = (layout, id) => layout.groupOrder.find((g) => layout.order[g].includes(id)) ?? null;
 
-/** the panel as built: [[group label, key, [[id, label, alias] ...shown tools]]], groups without a shown tool left out */
+/** groups that carry a control besides tool buttons (the dimension style list): shown, header and control, even with every tool hidden or moved away */
+export const EXTRAS_GROUPS = Object.freeze(['annotate']);
+
+/** the panel as built: [[group label, key, [[id, label, alias] ...shown tools]]], groups without a shown tool left out (except EXTRAS_GROUPS) */
 export function panelGroups(layout) {
   return layout.groupOrder.map((g) => [groupLabel(g), g, layout.order[g].filter((id) => !layout.hidden.includes(id)).map((id) => [id, TOOLS.get(id).label, TOOLS.get(id).alias])])
-    .filter(([, , items]) => items.length);
+    .filter(([, key, items]) => items.length || EXTRAS_GROUPS.includes(key));
 }
+
+/** true when two layouts build the same tool panel (only the Quick Access row or its visibility differs) */
+export const samePanel = (a, b) => JSON.stringify([a.groupOrder, a.order, a.hidden]) === JSON.stringify([b.groupOrder, b.order, b.hidden]);
 
 /** the Quick Access row as built: [[colour key, id] or SEP]; a tool takes its group's colour, an app command 'file'; no separator at an end or twice */
 export function quickRow(layout) {

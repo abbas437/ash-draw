@@ -144,6 +144,50 @@ try {
     assert.deepEqual(await quickIds(), defaults.quick);
   }
 
+  step = 'Dimension set to none: the dimension style list and Dim styles button stay in the panel, and the list still sets the current style';
+  {
+    await menuItem('Customize tools…');
+    await page.click('#dlg [data-key="none:annotate"]');
+    await page.click('#dlg .dlg-btns button.primary');
+    assert.equal(await page.locator('#tools button[data-tool^=dim]:not([data-tool=dimstyle])').count(), 0, 'no dimension tool buttons');
+    assert.equal(await page.locator('#tools #dimstyle').isVisible(), true, '#dimstyle visible in the panel');
+    assert.equal(await page.locator('#tools button[aria-label="Dim styles…"]').isVisible(), true, 'Dim styles… button visible');
+    assert.equal(await page.evaluate(() => window.app.dimStyleSel === document.getElementById('dimstyle') && window.app.dimStyleSel.isConnected), true, 'dimStyleSel is the live element');
+    await page.selectOption('#dimstyle', 'Standard');
+    assert.equal(await page.evaluate(() => window.app.doc.header.currentDimStyle), 'Standard', 'the list sets the current dimension style');
+  }
+
+  step = 'focus stays in the panel: Add to Quick Access leaves the panel alone; Customize OK from the menu returns focus to the same tool';
+  {
+    await page.evaluate(() => { window.__line = document.querySelector('#tools button[data-tool=line]'); });
+    await page.click('#tools button[data-tool=line]', { button: 'right' });
+    const before = await quickIds();
+    await page.locator('.tcz-menu [data-act=qadd], .tcz-menu [data-act=qremove]').click();
+    assert.notDeepEqual(await quickIds(), before, 'Quick Access changed');
+    assert.equal(await page.evaluate(() => document.activeElement?.tagName === 'BUTTON' && !!document.activeElement.closest('#tools')), true, 'focus is on a panel button, not the page');
+    assert.equal(await page.evaluate(() => window.__line.isConnected), true, 'the panel was not rebuilt for a Quick Access edit');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => window.app.toolId), 'line', 'Enter on the focused button starts its tool (no repeat of the last command)');
+    await page.evaluate(() => window.app.setTool('select'));
+    await page.click('#tools button[data-tool=line]', { button: 'right' });
+    await page.locator('.tcz-menu [data-act=customize]').click();
+    await page.waitForSelector('#dlg[open] .tcz');
+    await page.locator('#dlg [data-key="show:extend"]').uncheck();
+    await page.click('#dlg .dlg-btns button.primary');
+    assert.equal(await page.locator('#tools button[data-tool=extend]').count(), 0, 'Extend hidden');
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.tool), 'line', 'focus back on Line after the panel was rebuilt');
+  }
+
+  step = 'the context menu closes when focus leaves it (typing goes to the command line) and Escape there is not hijacked';
+  {
+    await page.click('#tools button[data-tool=line]', { button: 'right' });
+    assert.equal(await page.locator('.tcz-menu').count(), 1);
+    await page.keyboard.press('x');
+    await page.waitForFunction(() => !document.querySelector('.tcz-menu') && document.activeElement?.id === 'cmd', null, { timeout: 3000 });
+    await page.keyboard.press('Escape');
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'cv', 'Escape reached the command line and returned to the drawing');
+  }
+
   assert.deepEqual(problems, []);
   console.log('draw tools-custom e2e: OK');
 } catch (err) {

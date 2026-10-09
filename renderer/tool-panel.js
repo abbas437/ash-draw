@@ -57,7 +57,7 @@ export function iconButton(el, icon, label, attrs) {
  */
 export function buildToolPanel(box, el, setTool, extras = () => {}, onToggle = () => {}, groups = TOOL_BUTTONS) {
   for (const [group, key, items] of groups) {
-    const body = el('div', { class: 'gbody', 'data-body': key, style: `--cols:${Math.min(items.length, Math.max(2, Math.ceil(items.length / 2)))}` }); // --cols: icons per row in the Top band (two rows)
+    const body = el('div', { class: 'gbody', 'data-body': key, style: `--cols:${Math.max(1, Math.min(items.length, Math.max(2, Math.ceil(items.length / 2))))}` }); // --cols: icons per row in the Top band (two rows)
     // the group header folds its buttons away (click or Enter/Space); onToggle(key, collapsed) saves the state
     const toggle = () => { body.hidden = !body.hidden; head.setAttribute('aria-expanded', String(!body.hidden)); onToggle(key, body.hidden); };
     const head = el('div', { class: `group g-${key}`, role: 'button', tabindex: '0', 'aria-expanded': 'true', 'data-head': key, title: `${group}: click to show or hide`, text: group, onclick: toggle, onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } } });

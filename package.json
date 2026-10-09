@@ -20,7 +20,7 @@
     "licenses": "node scripts/licenses.js",
     "test": "node --test \"test/**/*.test.{js,mjs,cjs}\"",
     "test:electron": "node --test \"electron/**/*.test.mjs\"",
-    "test:e2e": "node -e \"process.exit(require('fs').existsSync('test/e2e/run.mjs')?1:0)\" || node test/e2e/run.mjs",
+    "test:e2e": "node -e \"process.exit(require('fs').existsSync('test/e2e/run.mjs')?1:0)\" || (node test/e2e/run.mjs && node test/e2e/tools-custom.mjs)",
     "smoke": "node scripts/smoke-browser.mjs",
     "dist": "npm run fetch:libredwg && npm run vendor && npm run licenses && electron-builder --win nsis portable --x64 --publish never"
   },

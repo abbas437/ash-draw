@@ -18,7 +18,7 @@ import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
 import { loadDrawingXrefs, xrefPanel } from './xref-panel.js';
 import { TOOL_BUTTONS, buildToolPanel, iconButton, quickCommand, canvasDarkFrom, labelsFrom, placementFrom, PLACEMENTS, collapsedFrom, applyCollapsed, toolTitle } from './tool-panel.js';
 import { iconSvg } from './icons.js';
-import { defaultLayout, cleanLayout, panelGroups, quickRow, setQuickRow, compactKeys, foldMode, SEP } from './tool-layout.js';
+import { defaultLayout, cleanLayout, panelGroups, samePanel, quickRow, setQuickRow, compactKeys, foldMode, SEP } from './tool-layout.js';
 import { openCustomize, initToolContextMenu } from './tool-custom.js';
 import { loadDrawingImages } from './images.js';
 import { el, message, modal, confirmDialog, textDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
@@ -443,6 +443,8 @@ class App {
     box.append(el('div', { class: 'lbl-toggle', role: 'button', tabindex: '0', id: 'tool-labels-btn', title: 'Show or hide tool labels (View > Tool labels)', text: 'Aa', onclick: () => this.setToolPanel('labels', !this.panelOpts.labels) }));
     this.renderToolPanel();
     this.buildQuickAccess();
+    // Order is load-bearing: buildToolbar() runs before bindKeys(), so this document keydown listener is registered first and its
+    // stopImmediatePropagation on Shift+F10 / the menu key keeps bindKeys' plain F10 (Polar) from also firing. Do not move bindKeys() above it.
     initToolContextMenu(this);
     const pat = el('select', { title: 'Hatch pattern', onchange: (e) => { this.defaults.hatchPattern = e.target.value; } }, PATTERN_NAMES.map((n) => el('option', { value: n, text: n })));
     pat.value = this.defaults.hatchPattern;
@@ -482,10 +484,27 @@ class App {
     }));
     document.getElementById('app').classList.toggle('no-qat', !this.toolLayout.quickRow);
   }
+  /** a selector for the tool panel button or group header that has the focus (null elsewhere), to find its equivalent after a re-render */
+  focusToken() {
+    const a = document.activeElement;
+    if (!a?.closest?.('#tools')) return null;
+    if (a.dataset.tool) return `#tools button[data-tool="${CSS.escape(a.dataset.tool)}"]`;
+    if (a.dataset.head) return `#tools [data-head="${CSS.escape(a.dataset.head)}"]`;
+    return null;
+  }
+  /** focus the equivalent of a focusToken() element after the panel was rebuilt; its tool may be hidden now: then the first shown panel button, else the drawing */
+  restoreFocus(token) {
+    if (!token) return;
+    const shown = (n) => n && n.getClientRects().length;
+    const n = document.querySelector(token);
+    const to = shown(n) ? n : [...document.querySelectorAll('#tools button[data-tool]')].find(shown);
+    (to ?? this.vp.canvas).focus();
+  }
   /** apply a tool panel / Quick Access layout (tool-layout.js), saved as setting 'tools.layout' */
   setToolLayout(layout, save = true) {
+    const panelChanged = !samePanel(this.toolLayout, layout);
     this.toolLayout = layout;
-    this.renderToolPanel();
+    if (panelChanged) { const at = this.focusToken(); this.renderToolPanel(); this.restoreFocus(at); } // a Quick Access-only edit leaves the panel (and its focus) alone
     this.renderQuickAccess();
     if (save) api.settingsSet?.('tools.layout', layout)?.catch?.(() => {});
   }
