@@ -5,6 +5,8 @@ import { mleaderParts, transformMLeader } from './mleader.js';
 import { mlineParts, transformMline } from './mline.js';
 import { imageCorners, transformImage, wipeoutRing } from './image.js';
 import { textFrame, textCorners } from './textMetrics.js';
+import { buildDimension } from './dims.js';
+import { resolveDimStyle } from './dimsStyle.js';
 import { nurbsOf, curveOfNurbs, curveCurveHits, nearestParam, slice as nurbsSlice, splineEntity, offsetNurbs, isClosed, derivsAt, domain, lineNurbs, joinCurves, subCurve } from './nurbs.js';
 
 const TAU = Math.PI * 2;
@@ -388,6 +390,10 @@ export function explode(e, doc) {
   if (e.type !== 'INSERT' && e.type !== 'DIMENSION') return [];
   const blk = doc && doc.blocks.get(e.block);
   if (!blk) return [];
+  if (e.type === 'DIMENSION') {
+    const dc = dimensionContent(e, doc);
+    if (dc.regenerated) return dc.entities.map((be) => ({ ...structuredClone(be), parent: e }));
+  }
   const out = [];
   const cols = e.type === 'INSERT' ? Math.max(1, e.cols || 1) : 1;
   const rows = e.type === 'INSERT' ? Math.max(1, e.rows || 1) : 1;
@@ -402,6 +408,15 @@ export function explode(e, doc) {
         // attribute definitions: only constant, visible ones are shown (as their value); ATTRIBs are added below
         const be = be0.attdef ? ((be0.attdef.flags & 3) === 2 ? { ...be0, attdef: undefined, text: be0.attdef.default } : null) : be0;
         if (!be) continue;
+        if (be.type === 'DIMENSION') {
+          // a dimension whose block is not drawn (see dimensionContent) cannot stay a dimension-turned-INSERT of that
+          // block: its regenerated pieces come out instead, with the dimension's own properties for BYBLOCK / layer 0
+          const dc = dimensionContent(be, doc);
+          if (dc.regenerated) {
+            for (const g of dc.entities) { const t = transformEntity(inheritFrom(g, be), m); t.parent = e; out.push(t); }
+            continue;
+          }
+        }
         const t = transformEntity(be, m);
         delete t.attdef;
         // BYBLOCK / layer "0" inheritance is resolved by the renderer through `parent`.
@@ -413,6 +428,67 @@ export function explode(e, doc) {
   // visible ATTRIBs become plain TEXT (they are already in the INSERT's own space)
   for (const at of e.attribs ?? []) if (!(at.attrib.flags & 1)) { const t = structuredClone(at); delete t.attrib; t.id = 0; t.parent = e; out.push(t); }
   return out;
+}
+
+// ---- dimension content ------------------------------------------------------------------------
+const DIM_DEF_POINTS = ['p1', 'p2', 'at', 'vertex', 'center', 'p', 'feature', 'end', 'origin'];
+const DIM_STALE_RATIO = 50;
+const dimContentCache = new WeakMap();
+const finite = (b) => b && Number.isFinite(b.minx) && Number.isFinite(b.miny) && Number.isFinite(b.maxx) && Number.isFinite(b.maxy);
+const diag = (b) => Math.hypot(b.maxx - b.minx, b.maxy - b.miny);
+
+/** true when the anonymous block of dimension e lies far from e's own definition points (its distance from their box is
+ *  more than DIM_STALE_RATIO times the size of either box, and of the text height): geometry left in world coordinates
+ *  inside a block (a bound / exploded xref) that drawing under the block's matrix would transform a second time */
+function dimBlockStale(e, blk, doc) {
+  const d = e.def;
+  let db = null;
+  const put = (p) => { if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) db = growBox(db, p); };
+  for (const k of DIM_DEF_POINTS) put(d[k]);
+  for (const p of d.l1 ?? []) put(p);
+  for (const p of d.l2 ?? []) put(p);
+  put(e.p);
+  let bb = null;
+  for (const be of blk.entities) {
+    if (be.attdef) continue;
+    let b = null;
+    try { b = bboxOf(be, doc); } catch { b = null; }
+    if (finite(b)) bb = unionBox(bb, b);
+  }
+  if (!db || !bb) return false;
+  const st = resolveDimStyle(doc, e.style);
+  const h = (st.DIMTXT || 0) * (st.DIMSCALE > 0 ? st.DIMSCALE : 1);
+  const gap = Math.hypot(Math.max(0, db.minx - bb.maxx, bb.minx - db.maxx), Math.max(0, db.miny - bb.maxy, bb.miny - db.maxy));
+  return gap > DIM_STALE_RATIO * Math.max(diag(db), diag(bb), h);
+}
+
+/** What DIMENSION e draws, in its own coordinate space: { entities, regenerated }. Normally its anonymous block's
+ *  entities as stored (the exact look of the file); when that block is inconsistent with the definition points
+ *  (dimBlockStale), geometry built from the definition points by the dimension engine with the dimension's style
+ *  (regenerated: true; none when the engine cannot build it). AutoCAD leaves such blocks out of the extents. */
+export function dimensionContent(e, doc) {
+  const blk = doc?.blocks?.get(e.block);
+  if (!blk) return { entities: [], regenerated: false };
+  const c = dimContentCache.get(e);
+  if (c && c.blk === blk && c.n === blk.entities.length && c.first === blk.entities[0] && c.def === e.def) return c.r;
+  let r = { entities: blk.entities, regenerated: false };
+  if (e.def && dimBlockStale(e, blk, doc)) {
+    let entities = [];
+    try { entities = buildDimension(e.def, resolveDimStyle(doc, e.style)).entities; } catch { entities = []; }
+    r = { entities, regenerated: true };
+  }
+  dimContentCache.set(e, { blk, n: blk.entities.length, first: blk.entities[0], def: e.def, r });
+  return r;
+}
+
+/** copy of block entity g with the properties it takes from its container dim where it says BYBLOCK / layer 0 */
+function inheritFrom(g, dim) {
+  const t = { ...g };
+  if (t.layer === '0' || t.layer === undefined) t.layer = dim.layer;
+  if (t.color === 0) t.color = dim.color;
+  if (t.linetype === undefined || String(t.linetype).toUpperCase() === 'BYBLOCK') t.linetype = dim.linetype;
+  if (t.lineweight === -2) t.lineweight = dim.lineweight;
+  return t;
 }
 
 // ---- transform ------------------------------------------------------------------------------

@@ -14,7 +14,7 @@ import { resolveColor, runColor } from './aci.js';
 import { parseMText, layoutMText } from './mtext.js';
 import {
   DEG, compose, translation, rotation, scaling, apply, isSimilarity, matScale, transformEntity, bulgeToArc,
-  ccwSweep, tessellate, ellipsePoint, unionBox, growBox,
+  ccwSweep, tessellate, ellipsePoint, unionBox, growBox, dimensionContent,
 } from './geom.js';
 import { plainText } from './dxfRead.js';
 import { mleaderParts } from './mleader.js';
@@ -79,8 +79,9 @@ class Builder {
     if (layer && (layer.visible === false || layer.frozen)) return;
     if (e.type === 'INSERT') { this.emitInsert(e, m, inherit, rootId, depth, name, layer); return; }
     if (e.type === 'DIMENSION') {
-      const blk = this.doc.blocks.get(e.block);
-      if (blk) this.emitBlockContent(blk, m, this.styleFor(e, layer, inherit, name), rootId, depth);
+      // its anonymous block, or geometry regenerated from the definition points when that block is stale
+      const dc = dimensionContent(e, this.doc);
+      if (dc.entities.length) this.emitBlockContent(dc.entities, m, this.styleFor(e, layer, inherit, name), rootId, depth);
       return;
     }
     if (e.type === 'MLINE') {
@@ -155,8 +156,8 @@ class Builder {
     for (const at of e.attribs ?? []) if (!(at.attrib.flags & 1)) this.emit(at, m, style, rootId, depth + 1);
   }
 
-  emitBlockContent(blk, m, style, rootId, depth) {
-    for (const be of blk.entities) { const v = blockContentView(be); if (v) this.emit(v, m, style, rootId, depth); }
+  emitBlockContent(ents, m, style, rootId, depth) {
+    for (const be of ents) { const v = blockContentView(be); if (v) this.emit(v, m, style, rootId, depth); }
   }
 
   push(item, rootId) {
