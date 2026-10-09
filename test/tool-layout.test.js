@@ -30,3 +30,11 @@ test('every Quick Access command is in the panel definition (or is a named app c
   for (const id of ['select', 'line', 'pline', 'circle', 'text', 'move', 'copy', 'trim', 'erase', 'dimlinear', 'measure', 'mkc', 'mkr']) assert.ok(ids.includes(id) && panel.has(id), id);
   assert.equal(quickCommand('nope'), null);
 });
+
+test('tool panel placement: Left unless a saved placement is top or hidden', async () => {
+  const { placementFrom } = await import('../renderer/tool-panel.js');
+  assert.equal(placementFrom(undefined), 'left');
+  assert.equal(placementFrom('bogus'), 'left');
+  assert.equal(placementFrom('top'), 'top');
+  assert.equal(placementFrom('hidden'), 'hidden');
+});

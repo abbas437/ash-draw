@@ -42,8 +42,10 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 #menubar .drop hr { border:none; border-top:1px solid var(--line); margin:4px 0; }
 #menubar .drop kbd { color:var(--dim); font:inherit; }
 #menubar .title { margin-left:auto; color:var(--dim); padding-right:8px; }
-#main { display:grid; grid-template-columns: var(--tools-w, 138px) 1fr var(--side-w, 260px); min-height:0; }
-#app.no-tool-labels { --tools-w:76px; }
+#main { display:grid; grid-template-columns: var(--tools-w, 138px) 1fr var(--side-w, 260px); grid-template-areas:"tools docs side"; grid-template-rows:minmax(0,1fr); min-height:0; }
+#tools { grid-area:tools; } #docs { grid-area:docs; } #side { grid-area:side; }
+#tools .tgroup { display:contents; }
+#app.no-tool-labels { --tools-w:90px; }
 #app.no-side { --side-w:0px; } #app.no-side #side { display:none; }
 /* Quick Access row under the menu bar */
 #qat { display:flex; align-items:center; gap:2px; height:28px; padding:0 6px; /* even height keeps the canvas pixel grid as before */ background:var(--panel); border-bottom:1px solid var(--line); overflow-x:auto; }
@@ -74,12 +76,24 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 #app #tools.no-colours * { --gc:initial; }
 #tools button.active .ti { color:var(--on-accent); }
 /* View > Tool labels off: icon-only buttons, group names become separators (the name stays in the tooltip) */
-#app.no-tool-labels #tools button { justify-content:center; padding:4px 0; }
+#app.no-tool-labels #tools button { justify-content:center; padding:1px 0; }
 #app.no-tool-labels #tools button .lbl { display:none; }
-#app.no-tool-labels #tools .group { font-size:0; margin:5px 0 2px; padding:0; border-left:none; border-top:2px solid var(--gc, var(--line)); min-height:8px; }
+#app.no-tool-labels #tools .group { font-size:0; margin:3px 0 1px; padding:0; border-left:none; border-top:2px solid var(--gc, var(--line)); min-height:8px; }
 #app.no-tool-labels #tools .group::before { font-size:9px; line-height:8px; color:var(--dim); }
-#app.no-tool-labels #tools .gbody:not([hidden]) { display:grid; grid-template-columns:1fr 1fr; }
+#app.no-tool-labels #tools .gbody:not([hidden]) { display:grid; grid-template-columns:repeat(3, 1fr); gap:1px; } /* three icons per row keeps every group on screen at 1366x768 */
 #app.no-tool-labels #tools .gbody > select { grid-column:1 / -1; min-width:0; }
+#app.tools-hidden { --tools-w:0px; } #app.tools-hidden #tools { display:none; }
+/* View > Tool panel > Top: a band above the canvas, groups side by side, icons in two rows, small captions */
+#app.tools-top #main { grid-template-columns: 1fr var(--side-w, 260px); grid-template-areas:"tools side" "docs side"; grid-template-rows:auto minmax(0,1fr); }
+#app.tools-top #tools { flex-direction:row; align-items:flex-start; gap:0; overflow-x:auto; overflow-y:hidden; border-right:none; border-bottom:1px solid var(--line); padding:3px 4px; }
+#app.tools-top #tools .tgroup { display:flex; flex-direction:column; flex:none; gap:1px; padding:0 6px; border-left:1px solid var(--line); }
+#app.tools-top #tools .lbl-toggle { align-self:flex-start; margin-right:4px; }
+#app.tools-top #tools .group { font-size:10px; margin:0; padding:0 0 1px; border:none; border-bottom:2px solid var(--gc, var(--line)); min-height:0; }
+#app.tools-top #tools .gbody:not([hidden]) { display:grid; grid-template-columns:repeat(var(--cols, 4), auto); gap:1px; justify-content:start; }
+#app.tools-top #tools .gbody > select { grid-column:1 / -1; min-width:0; max-width:110px; }
+#app.tools-top #tools .tgroup > select, #app.tools-top #tools .tgroup > input { width:70px; }
+#app.tools-top #tools button { width:auto; justify-content:center; padding:3px 4px; }
+#app.tools-top:not(.no-tool-labels) #tools button { flex-direction:column; gap:1px; min-width:50px; font-size:10px; }
 #tools button.active { background:var(--accent2); border-color:var(--accent); color:var(--on-accent); }
 #docs { display:grid; grid-template-rows:auto 1fr auto; min-width:0; min-height:0; }
 #tabbar { display:flex; overflow-x:auto; background:var(--bg); border-bottom:1px solid var(--line); min-height:28px; }

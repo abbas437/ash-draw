@@ -16,7 +16,7 @@ import { initLayouts, restoreSpace, renderSpaceBar, layoutDoubleClick, exitMspac
 import { ComparePanel, runCompare } from './compare.js';
 import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
 import { loadDrawingXrefs, xrefPanel } from './xref-panel.js';
-import { TOOL_BUTTONS, buildToolPanel, iconButton, QUICK_ACCESS, quickCommand, canvasDarkFrom, labelsFrom, collapsedFrom, applyCollapsed, toolTitle } from './tool-panel.js';
+import { TOOL_BUTTONS, buildToolPanel, iconButton, QUICK_ACCESS, quickCommand, canvasDarkFrom, labelsFrom, placementFrom, PLACEMENTS, collapsedFrom, applyCollapsed, toolTitle } from './tool-panel.js';
 import { iconSvg } from './icons.js';
 import { loadDrawingImages } from './images.js';
 import { el, message, modal, confirmDialog, textDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
@@ -68,8 +68,10 @@ class App {
     this.setTheme('light', false);
     this.setCanvasDark(true); // model space is dark whatever the UI theme (View > Model space background)
     this.panelOpts = { labels: false, colours: true };
+    this.setToolPlacement('left', false);
     this.setToolPanel('labels', false, false); // compact icon grid by default
     api.settingsGet?.('tools.labels').then((v) => this.setToolPanel('labels', labelsFrom(v), false)).catch(() => {});
+    api.settingsGet?.('tools.placement').then((v) => this.setToolPlacement(placementFrom(v), false)).catch(() => {});
     api.settingsGet?.('tools.colours').then((v) => { if (v === false) this.setToolPanel('colours', false, false); }).catch(() => {});
     api.settingsGet?.('canvas.background').then((v) => this.setCanvasDark(canvasDarkFrom(v))).catch(() => {});
     api.settingsGet?.('tools.collapsed').then((v) => { this.collapsed = collapsedFrom(v); applyCollapsed(document.getElementById('tools'), this.collapsed); }).catch(() => {});
@@ -382,6 +384,7 @@ class App {
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-',
         ['Show lineweights', 'F9', () => this.toggle('lineweights')], ['Model space background: dark', '', () => this.toggle('dark'), () => this.vp.settings.dark], '-',
         ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark'],
+        ...PLACEMENTS.map((p) => [`Tool panel: ${p[0].toUpperCase()}${p.slice(1)}`, '', () => this.setToolPlacement(p), () => this.toolPlacement === p]),
         ['Tool labels', '', () => this.setToolPanel('labels', !this.panelOpts.labels), () => this.panelOpts.labels],
         ['Tool group colours', '', () => this.setToolPanel('colours', !this.panelOpts.colours), () => this.panelOpts.colours], '-',
         ['Show markups', '', () => toggleMarkups(this), () => markupsShown(this.doc)], '-',
@@ -430,11 +433,10 @@ class App {
       api.settingsSet?.('tools.collapsed', this.collapsed)?.catch?.(() => {});
     });
     this.buildQuickAccess();
-    box.append(el('div', { class: 'group g-draw', text: 'Hatch' }));
     const pat = el('select', { title: 'Hatch pattern', onchange: (e) => { this.defaults.hatchPattern = e.target.value; } }, PATTERN_NAMES.map((n) => el('option', { value: n, text: n })));
     pat.value = this.defaults.hatchPattern;
     const sc = el('input', { type: 'number', step: 'any', min: '0', value: '1', title: 'Hatch scale', style: 'width:100%', onchange: (e) => { const v = Number(e.target.value); if (v > 0) this.defaults.hatchScale = v; } });
-    box.append(pat, sc);
+    box.append(el('div', { class: 'tgroup' }, el('div', { class: 'group g-draw', text: 'Hatch' }), pat, sc));
     for (const [id, icon] of [['z-in', 'zoomin'], ['z-out', 'zoomout'], ['z-fit', 'zoomfit']]) { const b = document.getElementById(id); b.setAttribute('aria-label', b.title); b.replaceChildren(iconSvg(icon, 18)); }
   }
   /** the Quick Access row under the menu bar: the most used commands as icon buttons, coloured by group */
@@ -456,6 +458,14 @@ class App {
     document.getElementById('app').classList.toggle('no-tool-labels', !this.panelOpts.labels);
     document.getElementById('tools').classList.toggle('no-colours', !this.panelOpts.colours);
     if (save) api.settingsSet?.(`tools.${opt}`, !!on)?.catch?.(() => {});
+  }
+
+  /** View > Tool panel: 'left' (column), 'top' (band above the canvas) or 'hidden'; a class on #app, saved as 'tools.placement' */
+  setToolPlacement(place, save = true) {
+    this.toolPlacement = place = placementFrom(place);
+    const app = document.getElementById('app');
+    for (const p of PLACEMENTS) app.classList.toggle(`tools-${p}`, p === place);
+    if (save) api.settingsSet?.('tools.placement', place)?.catch?.(() => {});
   }
 
   buildStatus() {

@@ -39,6 +39,8 @@ export function quickCommand(id) {
 /** saved settings -> layout. Never-set values take the beta.10 defaults: model space dark, tool labels off (compact panel). */
 export const canvasDarkFrom = (saved) => saved !== 'light';
 export const labelsFrom = (saved) => saved === true;
+export const PLACEMENTS = ['left', 'top', 'hidden'];
+export const placementFrom = (saved) => (PLACEMENTS.includes(saved) ? saved : 'left');
 export const collapsedFrom = (saved) => (Array.isArray(saved) ? saved.filter((k) => typeof k === 'string') : []);
 
 /** tooltip of a command button: "Line (L)" */
@@ -55,7 +57,7 @@ export function iconButton(el, icon, label, attrs) {
  */
 export function buildToolPanel(box, el, setTool, extras = () => {}, onToggle = () => {}) {
   for (const [group, key, items] of TOOL_BUTTONS) {
-    const body = el('div', { class: 'gbody', 'data-body': key });
+    const body = el('div', { class: 'gbody', 'data-body': key, style: `--cols:${Math.min(items.length, Math.max(2, Math.ceil(items.length / 2)))}` }); // --cols: icons per row in the Top band (two rows)
     // the group header folds its buttons away (click or Enter/Space); onToggle(key, collapsed) saves the state
     const toggle = () => { body.hidden = !body.hidden; head.setAttribute('aria-expanded', String(!body.hidden)); onToggle(key, body.hidden); };
     const head = el('div', { class: `group g-${key}`, role: 'button', tabindex: '0', 'aria-expanded': 'true', 'data-head': key, title: `${group}: click to show or hide`, text: group, onclick: toggle, onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } } });
@@ -63,7 +65,7 @@ export function buildToolPanel(box, el, setTool, extras = () => {}, onToggle = (
       body.append(iconButton(el, id, label, { 'data-tool': id, 'data-group': key, class: `g-${key}`, title: toolTitle(label, alias), onclick: () => setTool(id) }));
     }
     extras(group, body);
-    box.append(head, body);
+    box.append(el('div', { class: 'tgroup' }, head, body)); // .tgroup is transparent in the Left panel, a column in the Top band
   }
 }
 

@@ -933,6 +933,28 @@ try {
     return { n: xs.length, span: xs.length ? Math.max(...xs) - Math.min(...xs) : 0 };
   }, [x0, y0, x1, y1]);
   assert.ok((await ink(299, 19, 340, 26)).n > 20, 'paper-space title text drawn on the sheet');
+  step = 'layout tab: white paper on a grey surround whatever the model background; ACI 7 on paper draws black';
+  {
+    const paperPx = (x, y, r = 0) => page.evaluate(([x, y, r]) => {
+      const vp = window.app.vp; vp.view = { ...vp.view, cx: 200, cy: 150, zoom: 2 }; vp.render();
+      const k = vp.canvas.width / vp.view.width, a = vp.toScreen({ x, y }), d = vp.ctx.getImageData(Math.round(a.x * k) - r, Math.round(a.y * k) - r, 2 * r + 1, 2 * r + 1).data;
+      let best = [d[0], d[1], d[2]];
+      for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] < best[0] + best[1] + best[2]) best = [d[i], d[i + 1], d[i + 2]];
+      return best;
+    }, [x, y, r]);
+    for (const dark of [true, false]) {
+      await page.evaluate((d) => window.app.setCanvasDark(d), dark);
+      const paper = await paperPx(200, 60), around = await paperPx(-20, 150);
+      assert.deepEqual(paper, [255, 255, 255], `paper is white with model background ${dark ? 'dark' : 'light'}`);
+      assert.ok(Math.abs(around[0] - 0x8a) < 8 && Math.abs(around[1] - 0x8f) < 8 && Math.abs(around[2] - 0x96) < 8, `surround is mid-grey (${around}) with model background ${dark ? 'dark' : 'light'}`);
+      if (SHOTS && !dark) await page.screenshot({ path: path.join(SHOTS, 'layout_tab_paper.png') });
+    }
+    await page.evaluate(() => window.app.setCanvasDark(true));
+    await typeCmd('l'); await typeCmd('20,60'); await typeCmd('60,60'); await page.keyboard.press('Escape');
+    const ln = await paperPx(40, 60, 2);
+    assert.ok(Math.max(...ln) < 160, `ACI 7 line on the paper (dark model background) is drawn dark, not white (a 1 px line may straddle two pixel rows): ${ln}`);
+    await page.keyboard.press('Control+z');
+  }
   // model line (0,0)-(1000,0) through a 1:50 viewport centred on (500,0): 20 mm of paper = 40 px, on y=150
   const line = await ink(170, 149.5, 230, 150.5);
   assert.ok(Math.abs(line.span - 40) <= 3, `model line 1:50 length ${line.span}px, expected 40`);
@@ -1412,6 +1434,57 @@ try {
     await page.reload(); await page.waitForFunction(() => window.app && window.app.doc && document.getElementById('app').classList.contains('no-tool-labels') && document.getElementById('tools').classList.contains('no-colours'), null, { timeout: 10000 });
     await menuItem('Tool labels'); await menuItem('Tool group colours');
     assert.ok((await panel()).every((b) => b.label === 1), 'labels back on');
+  }
+
+  step = 'tool panel: a folded group stays hidden after a reload; Top places it as a band above the canvas, Left restores; Markup visible at 1366x768';
+  {
+    const menuItem = async (item) => { await page.locator('#menubar .menu > button', { hasText: 'View' }).click(); await page.locator('#menubar .drop button', { hasText: item }).click(); };
+    const rect = (sel) => page.evaluate((q) => { const r = document.querySelector(q).getBoundingClientRect(); return { x: r.left, y: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height }; }, sel);
+    const bodyHidden = (key) => page.evaluate((k) => document.querySelector(`.gbody[data-body=${k}]`).hidden, key);
+    await page.evaluate(() => window.api.settingsSet('tools.collapsed', []));
+    await page.reload(); await page.waitForFunction(() => window.app && window.app.doc, null, { timeout: 10000 });
+    assert.equal(await bodyHidden('modify'), false, 'Modify group open at first');
+    if (await page.evaluate(() => !document.getElementById('app').classList.contains('no-tool-labels'))) await menuItem('Tool labels'); // labels off (the default)
+    await page.click('#tools [data-head=modify]');
+    assert.equal(await bodyHidden('modify'), true, 'click on the group header hides its buttons');
+    assert.equal(await page.locator('#tools button[data-tool=move]').isVisible(), false);
+    await page.reload(); await page.waitForFunction(() => window.app && window.app.doc && document.querySelector('.gbody[data-body=modify]')?.hidden, null, { timeout: 10000 });
+    assert.equal(await bodyHidden('modify'), true, 'folded group survives a reload');
+    assert.equal(await bodyHidden('draw'), false);
+    await page.click('#tools [data-head=modify]');
+    assert.equal(await bodyHidden('modify'), false);
+    assert.deepEqual(await page.evaluate(() => window.api.settingsGet('tools.collapsed')), [], 'unfolded state saved');
+
+    const cv0 = await rect('#cv'), side0 = await rect('#tools');
+    assert.ok(side0.r <= cv0.x + 1 && side0.w < 200, 'Left: panel is a column left of the canvas');
+    await menuItem('Tool panel: Top');
+    const band = await rect('#tools'), cv1 = await rect('#cv');
+    assert.ok(band.w > 600 && band.h < 200 && cv1.y >= band.b - 1, `Top: canvas top ${cv1.y} is below the band (${band.y}..${band.b}, ${band.w} px wide)`);
+    assert.ok(cv1.h < cv0.h - 20, `the canvas shrinks (${cv0.h} -> ${cv1.h})`);
+    assert.equal(await page.evaluate(() => window.api.settingsGet('tools.placement')), 'top');
+    const groupsAside = await page.evaluate(() => { const xs = [...document.querySelectorAll('#tools .tgroup')].map((g) => g.getBoundingClientRect().left); return xs.every((x, i) => !i || x > xs[i - 1]); });
+    assert.ok(groupsAside, 'Top: groups sit side by side');
+    assert.equal(await page.evaluate(() => [...document.querySelectorAll('#tools button .lbl')].every((l) => l.getClientRects().length === 0)), true, 'Top with labels off: icons only');
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'layout_top_placement.png') });
+    await menuItem('Tool labels');
+    assert.equal(await page.evaluate(() => [...document.querySelectorAll('#tools button')].every((b) => b.querySelector('.lbl').getClientRects().length === 1)), true, 'Top with labels on: label under each icon');
+    assert.ok(await page.evaluate(() => { const b = document.querySelector('#tools button[data-tool=line]'); return b.querySelector('.lbl').getBoundingClientRect().top >= b.querySelector('svg').getBoundingClientRect().bottom - 1; }), 'label sits under the icon');
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'layout_top_labels_on.png') });
+    await menuItem('Tool labels');
+    await page.reload(); await page.waitForFunction(() => window.app && window.app.doc && document.getElementById('app').classList.contains('tools-top'), null, { timeout: 10000 });
+    await menuItem('Tool panel: Left');
+    const cv2 = await rect('#cv'), side2 = await rect('#tools');
+    assert.ok(Math.abs(cv2.h - cv0.h) < 2 && side2.r <= cv2.x + 1, 'Left restores the column and the canvas height');
+
+    // 1366 x 768, labels off: the Markup group is visible without scrolling
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.waitForTimeout(150);
+    const mk = await page.evaluate(() => { const t = document.getElementById('tools').getBoundingClientRect(), b = [...document.querySelectorAll('#tools button.g-markup')].map((x) => x.getBoundingClientRect()), h = document.querySelector('#tools [data-head=markup]').getBoundingClientRect(); return { n: b.length, top: t.top, bottom: t.bottom, head: h.top, last: Math.max(...b.map((r) => r.bottom)), labels: document.getElementById('app').classList.contains('no-tool-labels') }; });
+    assert.ok(mk.labels && mk.n === 3 && mk.head >= mk.top && mk.last <= mk.bottom, `Markup group visible at 1366x768 without scrolling: ${JSON.stringify(mk)}`);
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'layout_1366x768.png') });
+    await page.setViewportSize({ width: 1400, height: 850 });
+    await page.waitForTimeout(150);
+    await menuItem('Tool labels'); // back on, as the next steps found it
   }
 
   step = 'large DXF opens in a worker: percentage in the toast, Cancel, UI keeps ticking';

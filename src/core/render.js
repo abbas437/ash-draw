@@ -1056,17 +1056,21 @@ export function docWithFrozen(doc, frozen) {
   return { ...doc, layers };
 }
 
+/** layout (paper space) colours: the sheet is always white and the surround mid-grey, whatever the model-space background */
+export const PAPER_COLOUR = '#ffffff';
+export const PAPER_SURROUND = '#8a8f96';
+
 /** Draw a layout: grey surround, white sheet with shadow, dashed printable area, viewports showing model space
  *  (scene per frozen-layer set from `modelScene(frozen)`), then the paper-space scene and its highlight. */
 export function drawLayout(ctx, paperScene, view, layout, paperRectsOf, modelScene, opts = {}) {
   const { width: W, height: H, zoom: z } = view, dpr = opts.dpr ?? 1;
   const sx = (x) => (x - view.cx) * z + W / 2, sy = (y) => H / 2 - (y - view.cy) * z;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.fillStyle = opts.surround ?? '#8a9099'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = opts.surround ?? PAPER_SURROUND; ctx.fillRect(0, 0, W, H);
   const { sheet, printable } = paperRectsOf(layout);
   const r = (b) => [sx(b.minx), sy(b.maxy), (b.maxx - b.minx) * z, (b.maxy - b.miny) * z];
   ctx.fillStyle = 'rgba(0,0,0,0.35)'; const sr = r(sheet); ctx.fillRect(sr[0] + 4, sr[1] + 4, sr[2], sr[3]);
-  ctx.fillStyle = '#ffffff'; ctx.fillRect(...sr);
+  ctx.fillStyle = PAPER_COLOUR; ctx.fillRect(...sr);
   ctx.strokeStyle = '#888'; ctx.lineWidth = 1; ctx.setLineDash([4, 3]); ctx.strokeRect(...r(printable)); ctx.setLineDash([]);
   const vports = paperScene.doc.entities.filter((e) => e.type === 'VIEWPORT' && e.vpId !== 1 && e.on !== false && e.width > 0 && e.height > 0);
   for (const v of vports) {
@@ -1078,10 +1082,10 @@ export function drawLayout(ctx, paperScene, view, layout, paperRectsOf, modelSce
     // model view centred on the viewport, D x D pixels so culling covers the rotated window
     ctx.translate(cx, cy); ctx.rotate(-(v.twist || 0)); ctx.translate(-D / 2, -D / 2);
     drawScene(ctx, modelScene(v.frozen ?? []), { cx: v.viewCenter.x, cy: v.viewCenter.y, zoom: k, width: D, height: D },
-      { ...opts, background: '#ffffff', noClear: true, baseTransform: ctx.getTransform(), highlight: v === opts.activeVp ? opts.modelHighlight : null });
+      { ...opts, background: PAPER_COLOUR, noClear: true, baseTransform: ctx.getTransform(), highlight: v === opts.activeVp ? opts.modelHighlight : null });
     ctx.restore();
   }
-  drawScene(ctx, paperScene, view, { ...opts, background: '#ffffff', noClear: true });
+  drawScene(ctx, paperScene, view, { ...opts, background: PAPER_COLOUR, noClear: true });
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
   for (const v of vports) {
