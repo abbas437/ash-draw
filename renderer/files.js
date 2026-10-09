@@ -29,11 +29,14 @@ export const UNIT_NAMES = { 0: 'unitless', 1: 'inches', 2: 'feet', 4: 'mm', 5: '
 
 /** Read DXF bytes in a module worker (the window stays responsive), or synchronously where there is no Worker.
  *  onProgress(fraction 0..1); `signal` (AbortSignal) stops the worker and rejects with Error{code:'CANCELLED'}.
- *  A whole, unshared buffer is transferred to the worker (the caller's `bytes` are detached afterwards). */
+ *  A whole, unshared buffer is transferred to the worker (the caller's `bytes` are detached afterwards).
+ *  `bytes` may instead be {url}: the worker fetches the DXF (a converted DWG, electron/main.js dwg:open). */
 export function readDxfAsync(bytes, { onProgress = null, signal = null } = {}) {
   const cancelled = () => Object.assign(new Error('Opening was cancelled.'), { code: 'CANCELLED' });
   if (signal?.aborted) return Promise.reject(cancelled());
-  if (typeof Worker === 'undefined') return Promise.resolve().then(() => readDxf(bytes, { onProgress }));
+  if (typeof Worker === 'undefined') {
+    return (bytes.url ? fetch(bytes.url).then(async (r) => new Uint8Array(await r.arrayBuffer())) : Promise.resolve(bytes)).then((b) => readDxf(b, { onProgress }));
+  }
   return new Promise((resolve, reject) => {
     const w = new Worker(new URL('./dxfWorker.js', import.meta.url), { type: 'module', name: 'dxf-reader' });
     const finish = () => { w.terminate(); signal?.removeEventListener('abort', abort); };
@@ -50,6 +53,7 @@ export function readDxfAsync(bytes, { onProgress = null, signal = null } = {}) {
       else resolve(asm.doc);
     };
     w.onerror = (e) => { finish(); reject(new Error(`The DXF reader stopped: ${e.message || 'worker error'}`)); };
+    if (bytes.url) { w.postMessage({ url: bytes.url }); return; }
     const whole = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength && !(typeof SharedArrayBuffer !== 'undefined' && bytes.buffer instanceof SharedArrayBuffer);
     const view = whole ? bytes : bytes.slice();
     w.postMessage({ bytes: view }, [view.buffer]);
@@ -67,20 +71,22 @@ export async function prepareView(doc, { signal = null, onProgress = null } = {}
 }
 
 /** Load a DWG/DXF. Returns {doc, format, notes[]}; throws Error with a user-readable message.
- *  opts: {onProgress(fraction), signal} for the DXF read (see readDxfAsync). */
-export async function loadDrawing(api, name, bytes, { onProgress = null, signal = null } = {}) {
+ *  opts: {onProgress(fraction), signal} for the DXF read (see readDxfAsync); `path`: the granted file, which a DWG
+ *  is then converted from without its bytes passing through the window (`bytes` may be null for a .dwg path). */
+export async function loadDrawing(api, name, bytes, { onProgress = null, signal = null, path = null } = {}) {
   const ext = extOf(name);
   let dxfBytes = bytes, format = 'dxf';
   const notes = [];
   let warnings = [];
-  if (ext === 'dwg' || looksLikeDwg(bytes)) {
+  if (ext === 'dwg' || (bytes && looksLikeDwg(bytes))) {
     format = 'dwg';
     if (!api.isElectron) throw new Error('Opening DWG files needs the desktop app (it includes the free LibreDWG converter). In this browser preview, please open a DXF file.');
     const av = await api.dwgAvailable();
     if (!av.available) throw new Error(`The DWG converter is not available: ${av.reason ?? 'unknown reason'}. DXF files can still be opened.`);
     try {
-      const res = await api.dwgToDxf(bytes);
-      dxfBytes = res.dxfBytes;
+      // dwg:open hands the DXF back as a URL the reader worker fetches (no big clone on this thread)
+      const res = api.dwgOpen ? await api.dwgOpen(path ?? bytes) : await api.dwgToDxf(bytes);
+      dxfBytes = res.url ? { url: res.url } : res.dxfBytes;
       warnings = Array.isArray(res.warnings) ? res.warnings : [];
     } catch (err) {
       const m = String(err.message || err).replace(/^Error invoking remote method '[^']*': (Error: )?/, '');

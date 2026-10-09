@@ -93,6 +93,26 @@ async function readGranted(p) {
   return new Uint8Array(await fs.readFile(p));
 }
 
+// ---- converted drawings for the DXF reader worker: one-time app://drawstudio/_open/<token> URLs ----
+// The DXF of a converted DWG (hundreds of MB for big drawings) is fetched by the window's reader worker instead of
+// being structured-cloned through IPC on the window's thread. A token is random, served once, and expires.
+const OPEN_PREFIX = '/_open/';
+const OPEN_TTL_MS = 5 * 60_000;
+const handoffs = new Map(); // token -> {bytes, timer}
+function handOff(bytes) {
+  const token = randomBytes(24).toString('hex');
+  const timer = setTimeout(() => handoffs.delete(token), OPEN_TTL_MS);
+  handoffs.set(token, { bytes, timer });
+  return `${SCHEME}://${HOST}${OPEN_PREFIX}${token}`;
+}
+function takeHandOff(pathname) {
+  const token = pathname.slice(OPEN_PREFIX.length), h = /^[0-9a-f]{48}$/.test(token) ? handoffs.get(token) : null;
+  if (!h) return null;
+  handoffs.delete(token);
+  clearTimeout(h.timer);
+  return h.bytes;
+}
+
 // ---- small JSON stores in userData ----
 const storePath = (n) => path.join(app.getPath('userData'), n);
 async function loadJson(n) { try { return JSON.parse(await fs.readFile(storePath(n), 'utf8')); } catch { return {}; } }
@@ -211,6 +231,11 @@ const MIME = {
 async function serveAppFile(request) {
   const url = new URL(request.url);
   if (url.host !== HOST) return new Response('Not found', { status: 404 });
+  if (url.pathname.startsWith(OPEN_PREFIX)) {
+    const bytes = request.method === 'GET' ? takeHandOff(url.pathname) : null;
+    if (!bytes) return new Response('Not found', { status: 404 });
+    return new Response(bytes, { headers: { 'content-type': 'application/octet-stream', 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' } });
+  }
   const file = path.resolve(APP_ROOT, '.' + decodeURIComponent(url.pathname));
   if (!SERVED_DIRS.some((d) => file.startsWith(d))) return new Response('Not found', { status: 404 });
   try {
@@ -389,6 +414,13 @@ function registerIpc() {
   });
   handle('dwg:available', () => dwg.available());
   handle('dwg:toDxf', (bytes) => dwg.toDxf(asBytes(bytes, 'DWG data')));
+  // Opening a DWG: the source is a granted path (read here, not in the window) or the DWG bytes; the DXF comes back
+  // as a one-time URL (handOff) that the window's reader worker fetches.
+  handle('dwg:open', async (src) => {
+    const bytes = typeof src === 'string' ? await readGranted(grantedPath(src)) : asBytes(src, 'DWG data');
+    const { dxfBytes, warnings, engine } = await dwg.toDxf(bytes);
+    return { url: handOff(dxfBytes), size: dxfBytes.byteLength, warnings, engine };
+  });
   handle('dwg:fromDxf', (opts) => {
     const o = plainObject(opts);
     const version = o.version ?? 'r2000';
