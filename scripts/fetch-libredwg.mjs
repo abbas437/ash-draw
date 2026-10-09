@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Fetches the upstream LibreDWG 0.13.3 Windows x64 binaries, verifies the pinned
+// Fetches the upstream LibreDWG 0.14.8597 (nightly) Windows x64 binaries, verifies the pinned
 // SHA-256, and extracts ONLY the converter executables (and the DLLs they import)
 // into build/libredwg/, together with the GPL-3.0 text and a source notice.
 //
@@ -19,21 +19,22 @@ import zlib from 'node:zlib';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 export const LIBREDWG = Object.freeze({
-  version: '0.13.3',
-  zipName: 'libredwg-0.13.3-win64.zip',
-  zipUrl: 'https://github.com/LibreDWG/libredwg/releases/download/0.13.3/libredwg-0.13.3-win64.zip',
-  zipSha256: 'b5133f8b6bd71b7e682a06ef5f99c93b40d628a791c30a31924a80d258c87173',
-  sourceName: 'libredwg-0.13.3.tar.xz',
-  sourceUrlGithub: 'https://github.com/LibreDWG/libredwg/releases/download/0.13.3/libredwg-0.13.3.tar.xz',
-  sourceUrlGnu: 'https://ftp.gnu.org/gnu/libredwg/libredwg-0.13.3.tar.xz',
-  sourceReleasePage: 'https://github.com/LibreDWG/libredwg/releases/tag/0.13.3',
-  // SHA-256 of the GitHub-hosted 0.13.3 source tarball, recorded 2026-10-07.
-  sourceSha256: '83f1f6e78a744777a481ff4520e4cef3f8ac4b2c1c25671077ca12fe81e8816e',
+  // 0.14.8597 is the upstream "libredwg windows nightly" pre-release. It is pinned (not 0.13.3) because
+  // 0.13.3 cannot read AutoCAD 2018 (R2018) DWGs: "read_R2004_section_info out of range".
+  version: '0.14.8597',
+  zipName: 'libredwg-0.14.8597-win64.zip',
+  zipUrl: 'https://github.com/LibreDWG/libredwg/releases/download/0.14.8597/libredwg-0.14.8597-win64.zip',
+  zipSha256: '7fee5c67c4f451f0542c0d6a3b12e91e99b15faf363fbf8b98ad84bac17ddfa2',
+  sourceName: 'libredwg-0.14.8597.tar.xz',
+  // GitHub only: ftp.gnu.org carries no tarballs for nightlies.
+  sourceUrlGithub: 'https://github.com/LibreDWG/libredwg/releases/download/0.14.8597/libredwg-0.14.8597.tar.xz',
+  sourceReleasePage: 'https://github.com/LibreDWG/libredwg/releases/tag/0.14.8597',
+  sourceSha256: 'af2646681858a78d756cfb9e0eeb6901f61be3d09ae8f56a98e94b1490dec4ed',
   // Import closure determined with `objdump -p`: dwg2dxf.exe and dxf2dwg.exe import
-  // only libredwg-0.dll (+ KERNEL32.dll, msvcrt.dll from Windows); libredwg-0.dll
-  // imports only KERNEL32.dll and msvcrt.dll. libpcre2-*.dll are imported only by
-  // dwggrep.exe and libiconv-2.dll by nothing we ship, so they are not bundled.
-  files: ['dwg2dxf.exe', 'dxf2dwg.exe', 'libredwg-0.dll'],
+  // libredwg-0.dll (+ KERNEL32.dll, msvcrt.dll from Windows); libredwg-0.dll imports
+  // libiconv-2.dll (+ KERNEL32.dll, msvcrt.dll). libpcre2-*.dll are imported only by
+  // dwggrep.exe, so they are not bundled. libiconv-2.dll is LGPL-2.1-or-later.
+  files: ['dwg2dxf.exe', 'dxf2dwg.exe', 'libredwg-0.dll', 'libiconv-2.dll'],
 });
 
 const OUT_DIR = path.join(ROOT, 'build', 'libredwg');
@@ -91,7 +92,7 @@ export function extractEntry(buf, entry, name) {
 
 function readmeSource(fileHashes) {
   const L = LIBREDWG;
-  return `LibreDWG ${L.version} - binaries bundled with ASH Draw Studio
+  return `LibreDWG ${L.version} (nightly build) - binaries bundled with ASH Draw Studio
 ==============================================================
 
 What these files are
@@ -111,6 +112,11 @@ under the GNU General Public License version 3 or (at your option) any later
 version (GPL-3.0-or-later). The full licence text is in the file COPYING in this
 folder. These programs come with ABSOLUTELY NO WARRANTY.
 
+libiconv-2.dll is GNU libiconv (Copyright (C) Free Software Foundation, Inc.), licensed
+under the GNU Lesser General Public License version 2.1 or later. It is an unmodified
+separate DLL that is only used by libredwg-0.dll; you may replace it with any
+compatible build of libiconv 2.x.
+
 How ASH Draw Studio uses them
 -----------------------------
 ASH Draw Studio is a separate program licensed under the MIT licence. It does not
@@ -125,7 +131,6 @@ The complete corresponding source code for these binaries is the LibreDWG
 ${L.version} release, available at no charge from:
 
   ${L.sourceReleasePage}
-  ${L.sourceUrlGnu}
   ${L.sourceUrlGithub}
   (SHA-256 of ${L.sourceName}: ${L.sourceSha256})
 

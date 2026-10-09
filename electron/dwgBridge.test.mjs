@@ -105,7 +105,7 @@ test('exit 0 without an output file is an error', { skip }, async () => {
 });
 
 test('size cap and input type are enforced before spawning', async () => {
-  assert.equal(MAX_BYTES, 200 * 1024 * 1024);
+  assert.equal(MAX_BYTES, 1536 * 1024 * 1024);
   const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'ash-cap-'));
   try {
     // Directory does not exist: if anything were spawned the error would be ENOENT instead.
@@ -155,5 +155,16 @@ test('dxf2dwg never accepts output from a failed run', { skip }, async () => {
   try {
     const b = createDwgBridge(f.dir, 'linux', { tmpRoot: f.tmpRoot });
     await assert.rejects(b.fromDxf(new Uint8Array([1])), /dxf2dwg failed \(exit code 1\)/);
+  } finally { await f.cleanup(); }
+});
+
+test('tens of MB of stderr do not fail a conversion that wrote valid output', { skip }, async () => {
+  // 40 MB, well past the old 10 MB capture cap that made execFile reject with ERR_CHILD_PROCESS_STDIO_MAXBUFFER
+  const f = await fakeDir(`${FIND_OUT}\n${GOOD_DXF}\nhead -c 41943040 /dev/zero | tr '\\0' 'E' >&2\nexit 0`);
+  try {
+    const b = createDwgBridge(f.dir, 'linux', { tmpRoot: f.tmpRoot });
+    const r = await b.toDxf(new Uint8Array([1, 2, 3]));
+    assert.match(Buffer.from(r.dxfBytes).toString(), /SECTION[\s\S]*EOF/);
+    assert.deepEqual(await fs.readdir(f.tmpRoot), []);
   } finally { await f.cleanup(); }
 });

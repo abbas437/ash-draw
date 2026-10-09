@@ -6,14 +6,15 @@
 // files in a private temporary directory.
 //
 // No Electron imports here, so this module can be unit-tested in plain Node.
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promises as fs, constants as fsc } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-export const MAX_BYTES = 200 * 1024 * 1024; // input/output size cap
+export const MAX_BYTES = 1536 * 1024 * 1024; // input/output size cap (a 120 MB DWG can expand to 500+ MB of DXF)
 export const TIMEOUT_MS = 120_000;
-export const MAX_BUFFER = 10 * 1024 * 1024; // stdout/stderr capture cap
+export const MAX_BUFFER = 10 * 1024 * 1024; // stdout capture cap for short probes (--version)
+export const STDERR_READ = 256 * 1024; // bytes of the converter's stderr log read back (LibreDWG can print many MB of ERROR lines)
 export const STDERR_LIMIT = 4096; // characters of stderr surfaced in errors
 // Versions dxf2dwg 0.13.3 accepts for `--as` AND can actually encode
 // ("Encoding currently only works for R13-R2000"; r12 is accepted but not encoded).
@@ -73,6 +74,43 @@ function run(file, args, opts) {
   });
 }
 
+// Runs a converter with stderr redirected to a file inside `logDir`, so any amount of console output
+// can neither fail the run nor be held in memory; only the first STDERR_READ bytes are read back.
+// Rejects with the same error shape as execFile (numeric `code`, `killed`, `signal`, `stderr`).
+async function runLogged(file, args, { cwd, timeout, logDir }) {
+  const logPath = path.join(logDir, 'stderr.log');
+  const fh = await fs.open(logPath, 'w');
+  const readLog = async () => {
+    try {
+      const buf = Buffer.alloc(STDERR_READ);
+      const { bytesRead } = await fs.open(logPath, 'r').then(async (h) => { try { return await h.read(buf, 0, STDERR_READ, 0); } finally { await h.close(); } });
+      return buf.subarray(0, bytesRead).toString('utf8');
+    } catch { return ''; }
+  };
+  try {
+    const result = await new Promise((resolve) => {
+      let killed = false;
+      let settled = false;
+      const done = (v) => { if (!settled) { settled = true; clearTimeout(timer); resolve(v); } };
+      const child = spawn(file, args, { cwd, windowsHide: true, shell: false, stdio: ['ignore', 'ignore', fh.fd] });
+      const timer = setTimeout(() => { killed = true; child.kill('SIGTERM'); }, timeout);
+      child.on('error', (error) => done({ error }));
+      child.on('close', (code, signal) => done({ code, signal, killed }));
+    });
+    const stderr = await readLog();
+    if (result.error) { result.error.stderr = stderr; throw result.error; }
+    if (result.code === 0 && !result.signal) return { stderr };
+    const err = new Error(`Command failed: ${path.basename(file)}`);
+    err.code = result.code ?? undefined; // null (killed by signal) must not look like an exit code
+    err.killed = result.killed;
+    err.signal = result.signal;
+    err.stderr = stderr;
+    throw err;
+  } finally {
+    await fh.close();
+  }
+}
+
 function describeFailure(name, err, timeoutMs) {
   const stderr = trimStderr(err.stderr);
   let why;
@@ -107,7 +145,7 @@ export function createDwgBridge(dir, platform = process.platform, opts = {}) {
   async function probe() {
     const mode = platform === 'win32' ? fsc.F_OK : fsc.X_OK;
     const required = [dwg2dxf, dxf2dwg];
-    if (platform === 'win32') required.push(path.join(dir, 'libredwg-0.dll'));
+    if (platform === 'win32') required.push(path.join(dir, 'libredwg-0.dll'), path.join(dir, 'libiconv-2.dll'));
     for (const f of required) {
       try { await fs.access(f, mode); } catch {
         return { available: false, version: null, reason: `LibreDWG converter missing: ${path.basename(f)} in ${dir}` };
@@ -134,9 +172,9 @@ export function createDwgBridge(dir, platform = process.platform, opts = {}) {
       let stderr = '';
       let failed = null;
       try {
-        ({ stderr } = await run(exe, [...extraArgs, '-y', '-o', outPath, inPath], execOpts(tmp, timeoutMs)));
+        ({ stderr } = await runLogged(exe, [...extraArgs, '-y', '-o', outPath, inPath], { cwd: tmp, timeout: timeoutMs, logDir: tmp }));
       } catch (err) {
-        // only a plain non-zero exit is recoverable: never timeout / ENOENT / maxBuffer / signal
+        // only a plain non-zero exit is recoverable: never timeout / ENOENT / signal
         if (!recover || typeof err.code !== 'number' || err.killed || err.signal) throw describeFailure(name, err, timeoutMs);
         failed = err;
         stderr = err.stderr;

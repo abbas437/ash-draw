@@ -149,10 +149,10 @@ OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 ```
 
-## LibreDWG 0.13.3 (GPL-3.0-or-later) - separate program, not part of the MIT-licensed app
+## LibreDWG 0.14.8597 (GPL-3.0-or-later) - separate program, not part of the MIT-licensed app
 
-The Windows build ships the **unmodified** upstream LibreDWG 0.13.3 executables
-`dwg2dxf.exe`, `dxf2dwg.exe` and their library `libredwg-0.dll` in
+The Windows build ships the **unmodified** upstream LibreDWG 0.14.8597 executables
+`dwg2dxf.exe`, `dxf2dwg.exe` and their library `libredwg-0.dll` (plus GNU libiconv's `libiconv-2.dll`, LGPL-2.1-or-later, an unmodified separate DLL used only by libredwg) in
 `resources/libredwg/`. ASH Draw Studio does not link to or load LibreDWG; it runs
 these programs as separate child processes (`execFile`, no shell) to convert DWG
 files to and from DXF through temporary files. LibreDWG is licensed under the GNU
@@ -160,10 +160,10 @@ General Public License version 3 or later; the full text is shipped as
 `resources/libredwg/COPYING`, and `resources/libredwg/README-SOURCE.txt` contains
 the source-code locations and a written offer.
 
-- Upstream binaries: https://github.com/LibreDWG/libredwg/releases/download/0.13.3/libredwg-0.13.3-win64.zip
-  (SHA-256 b5133f8b6bd71b7e682a06ef5f99c93b40d628a791c30a31924a80d258c87173)
-- Corresponding source: https://github.com/LibreDWG/libredwg/releases/tag/0.13.3 and
-  https://ftp.gnu.org/gnu/libredwg/libredwg-0.13.3.tar.xz
+- Upstream binaries: https://github.com/LibreDWG/libredwg/releases/download/0.14.8597/libredwg-0.14.8597-win64.zip
+  (SHA-256 7fee5c67c4f451f0542c0d6a3b12e91e99b15faf363fbf8b98ad84bac17ddfa2)
+- Corresponding source: https://github.com/LibreDWG/libredwg/releases/tag/0.14.8597 and
+  https://github.com/LibreDWG/libredwg/releases/download/0.14.8597/libredwg-0.14.8597.tar.xz
 - Copyright (C) Free Software Foundation, Inc. No warranty.
 
 This is the one deliberate exception to the permissive-licence allow-list, which

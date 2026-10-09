@@ -16,7 +16,7 @@ const START_URL = `${SCHEME}://${HOST}/renderer/index.html`;
 const SERVED_DIRS = ['renderer', 'src'].map((d) => path.join(APP_ROOT, d) + path.sep);
 const IS_DEV = process.argv.includes('--dev');
 const DRAWING_EXT = /\.(dxf|dwg)$/i;
-const MAX_FILE_BYTES = 512 * 1024 * 1024;
+const MAX_FILE_BYTES = 1536 * 1024 * 1024; // matches the DWG bridge cap: big DWGs expand to 500+ MB of DXF
 const MAX_IMAGE_BYTES = 64 * 1024 * 1024;
 const IMAGE_MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.bmp': 'image/bmp', '.gif': 'image/gif' };
 

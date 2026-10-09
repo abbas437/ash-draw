@@ -93,7 +93,7 @@ jobs:
             dist/ASH-Draw-Studio-Setup-*.exe
             dist/ASH-Draw-Studio-Portable-*.exe
             dist/SHA256SUMS.txt
-            dist/libredwg-0.13.3.tar.xz
+            dist/libredwg-*.tar.xz
           if-no-files-found: error
       - name: GitHub Release (tag builds only)
         if: startsWith(github.ref, 'refs/tags/v')
@@ -105,7 +105,7 @@ jobs:
             dist/ASH-Draw-Studio-Setup-*.exe \
             dist/ASH-Draw-Studio-Portable-*.exe \
             dist/SHA256SUMS.txt \
-            dist/libredwg-0.13.3.tar.xz \
+            dist/libredwg-*.tar.xz \
             --title "ASH Draw Studio $GITHUB_REF_NAME" \
             --generate-notes
       - name: GitHub Release (manual run with a version)
@@ -121,7 +121,7 @@ jobs:
             dist/ASH-Draw-Studio-Setup-*.exe \
             dist/ASH-Draw-Studio-Portable-*.exe \
             dist/SHA256SUMS.txt \
-            dist/libredwg-0.13.3.tar.xz \
+            dist/libredwg-*.tar.xz \
             --title "ASH Draw Studio $VERSION" \
             --generate-notes
 

@@ -28,9 +28,9 @@ Even so, the project uses the term descriptively only:
 
 ## 3. LibreDWG (GPL-3.0-or-later)
 
-DWG conversion uses GNU LibreDWG 0.13.3 (libredwg), licensed GPL-3.0-or-later.
+DWG conversion uses GNU LibreDWG 0.14.8597 (libredwg), licensed GPL-3.0-or-later.
 
-- **Unmodified**: `dwg2dxf.exe`, `dxf2dwg.exe` and `libredwg-0.dll` are taken byte-for-byte
+- **Unmodified**: `dwg2dxf.exe`, `dxf2dwg.exe`, `libredwg-0.dll` and `libiconv-2.dll` (GNU libiconv, LGPL-2.1-or-later, a separate unmodified DLL used only by libredwg) are taken byte-for-byte
   from the official upstream Windows x64 release archive. `scripts/fetch-libredwg.mjs` refuses
   the archive unless its SHA-256 matches the pinned value.
 - **Separate executables, no linking**: the app starts the converters as separate processes
@@ -40,9 +40,9 @@ DWG conversion uses GNU LibreDWG 0.13.3 (libredwg), licensed GPL-3.0-or-later.
 - **Shipped with** `resources/libredwg/COPYING` (GPL text) and
   `resources/libredwg/README-SOURCE.txt` (version, file hashes, source links and a written
   offer).
-- **Source**: https://github.com/LibreDWG/libredwg/releases/tag/0.13.3 and
-  https://ftp.gnu.org/gnu/libredwg/libredwg-0.13.3.tar.xz. The CI workflow downloads and
-  hash-verifies `libredwg-0.13.3.tar.xz` and attaches it to every tagged GitHub Release next to
+- **Source**: https://github.com/LibreDWG/libredwg/releases/tag/0.14.8597 and
+  https://github.com/LibreDWG/libredwg/releases/download/0.14.8597/libredwg-0.14.8597.tar.xz. The CI workflow downloads and
+  hash-verifies `libredwg-0.14.8597.tar.xz` and attaches it to every tagged GitHub Release next to
   the installers.
 - It is listed in `THIRD-PARTY-NOTICES.md` as the one deliberate exception to the
   permissive-licence allow-list (which applies to npm packages).
