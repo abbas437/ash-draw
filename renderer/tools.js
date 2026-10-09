@@ -24,6 +24,7 @@ import { createBlockTools } from './tools-blocks.js';
 import { createMTextTools } from './mtext-editor.js';
 import { createMLeaderTools } from './tools-mleader.js';
 import { createMarkupTools } from './markup.js';
+import { findBoundary } from '../src/core/boundary.js';
 import { tessellate, transformEntity, translation, rotation, scaling, mirrorLine, dist, DEG } from '../src/core/geom.js';
 
 const num = (s) => { const v = Number(String(s).trim().replace(',', '.')); return Number.isFinite(v) && String(s).trim() !== '' ? v : null; };
@@ -408,40 +409,23 @@ class TextTool extends Tool {
   autoHeight() { const v = this.vp.view; return +(v.height / v.zoom / 50).toPrecision(2); }
 }
 
-// ---- hatch: click inside a closed shape --------------------------------------------------------
-function closedLoops(doc, e) {
-  if (e.type === 'CIRCLE') return [{ pts: [{ x: e.c.x + e.r, y: e.c.y, bulge: 1 }, { x: e.c.x - e.r, y: e.c.y, bulge: 1 }], closed: true }];
-  if (e.type === 'LWPOLYLINE' && e.closed) return [{ pts: e.vertices.map((v) => ({ x: v.x, y: v.y, bulge: v.bulge || 0 })), closed: true }];
-  return null;
-}
-const polyArea = (pts) => { let a = 0; for (let i = 0; i < pts.length; i++) { const p = pts[i], q = pts[(i + 1) % pts.length]; a += p.x * q.y - q.x * p.y; } return Math.abs(a) / 2; };
-function inPoly(pt, pts) {
-  let inside = false;
-  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-    const a = pts[i], b = pts[j];
-    if ((a.y > pt.y) !== (b.y > pt.y) && pt.x < ((b.x - a.x) * (pt.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+// ---- hatch: click inside a closed region (AutoCAD "pick internal point") ---------------------------
+/** smallest closed region around p formed by lines, arcs, polylines, circles, ellipses, splines (also in blocks)
+ *  visible in the current view; hatch loops (outer first, then islands) or null */
+export function findHatchBoundary(doc, p, vp = null) {
+  let view = null;
+  if (vp?.view?.width && vp.view.height) {
+    const a = vp.toWorld(0, 0), b = vp.toWorld(vp.view.width, vp.view.height);
+    view = { minx: Math.min(a.x, b.x), miny: Math.min(a.y, b.y), maxx: Math.max(a.x, b.x), maxy: Math.max(a.y, b.y) };
   }
-  return inside;
-}
-export function findHatchBoundary(doc, p) {
-  const shapes = [];
-  for (const e of doc.entities) {
-    const loops = closedLoops(doc, e);
-    if (!loops) continue;
-    const pts = tessellate(e, doc, 0)[0];
-    if (pts && pts.length > 2) shapes.push({ e, loops, pts, area: polyArea(pts) });
-  }
-  const hit = shapes.filter((s) => inPoly(p, s.pts)).sort((a, b) => a.area - b.area)[0];
-  if (!hit) return null;
-  const islands = shapes.filter((s) => s !== hit && s.area < hit.area && inPoly(s.pts[0], hit.pts) && !inPoly(p, s.pts));
-  return [...hit.loops, ...islands.flatMap((s) => s.loops)];
+  return findBoundary(doc, p, { view });
 }
 
 class HatchTool extends Tool {
-  get prompt() { return 'HATCH  click inside a closed shape (closed polyline or circle)'; }
+  get prompt() { return 'HATCH  pick an internal point'; }
   click(p, ev) {
-    const loops = findHatchBoundary(this.vp.doc, ev?.raw ?? p);
-    if (!loops) { this.h.toast('No closed shape found around that point.'); return; }
+    const loops = findHatchBoundary(this.vp.doc, ev?.raw ?? p, this.vp);
+    if (!loops) { this.h.toast('No closed boundary found around that point'); return; }
     const d = this.h.defaults;
     this.add(makeHatch(loops, { ...this.props(), solid: d.hatchPattern === 'SOLID', pattern: d.hatchPattern, scale: d.hatchScale, angle: d.hatchAngle }));
   }

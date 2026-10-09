@@ -1294,6 +1294,34 @@ try {
   assert.deepEqual(shx.kinds, ['path', 'text']);
   assert.deepEqual(shx.filled, ['Arial text']);
 
+  step = 'HATCH pick point: box of 4 LINEs inside a frame polyline hatches the box only; Ctrl+Z and Edit > Undo remove it';
+  await page.locator('#cv').focus();
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Control+n');
+  assert.equal(await count(), 0);
+  await typeCmd('rec'); await typeCmd('0,0'); await typeCmd('420,297');
+  await typeCmd('l'); for (const q of ['100,100', '130,100', '130,120', '100,120', '100,100']) await typeCmd(q);
+  await page.keyboard.press('Escape');
+  assert.deepEqual((await types()).sort(), ['LINE', 'LINE', 'LINE', 'LINE', 'LWPOLYLINE']);
+  await page.evaluate(() => { const v = window.app.vp; v.view = { ...v.view, cx: 210, cy: 148, zoom: Math.min(v.view.width / 500, v.view.height / 350) }; v.render(); });
+  const hatchArea = () => page.evaluate(async () => {
+    const { entityMeasure } = await import('/src/core/measure.js');
+    const h = window.app.doc.entities.filter((e) => e.type === 'HATCH');
+    return h.length === 1 ? entityMeasure(h[0]).area : h.length ? -h.length : 0;
+  });
+  await page.click('#tools button[data-tool=hatch]');
+  await clickWorld(110, 110);
+  assert.ok(Math.abs(await hatchArea() - 600) < 1e-6, `hatch area ${await hatchArea()} (box is 600)`);
+  await page.keyboard.press('Control+z');
+  assert.equal(await hatchArea(), 0, 'Ctrl+Z removes the hatch');
+  await clickWorld(110, 110);
+  assert.ok(Math.abs(await hatchArea() - 600) < 1e-6, 'second hatch');
+  await page.locator('#menubar .menu > button', { hasText: 'Edit' }).click();
+  await page.locator('#menubar .drop button', { hasText: 'Undo' }).first().click();
+  assert.equal(await hatchArea(), 0, 'Edit > Undo removes the hatch');
+  assert.equal(await count(), 5);
+  await page.keyboard.press('Escape');
+
   step = 'csp';
   assert.deepEqual(await page.evaluate(() => window.__csp), []);
   assert.deepEqual(problems, []);

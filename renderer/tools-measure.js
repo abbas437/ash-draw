@@ -162,7 +162,7 @@ export class MeasureGeomTool {
       m = entityMeasure(e, e.type === 'SPLINE' ? shape[0] : null);
     }
     if (!m) { // nothing closed under the cursor: measure the closed boundary around the point, as HATCH finds it
-      const loops = findHatchBoundary(doc, raw);
+      const loops = findHatchBoundary(doc, raw, this.vp);
       const b = loops && { type: 'HATCH', loops };
       if (b) { m = entityMeasure(b); shape = tessellate(b, doc, 0); }
     }
