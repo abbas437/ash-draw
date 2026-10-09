@@ -266,12 +266,14 @@ function hatchLoopPoints(l, tol) {
     let pts = [];
     if (s.type === 'line') pts = [s.p1, s.p2];
     else if (s.type === 'arc') {
+      // A clockwise edge (73 = 0) stores the angles of its mirror image: it runs clockwise from -a0 to -a1, which is
+      // the counter-clockwise arc from -a1 to -a0 reversed (AutoCAD / ezdxf convention).
       let a0 = s.a0 * DEG, a1 = s.a1 * DEG;
-      if (s.ccw === false) { const t = a0; a0 = a1; a1 = t; }
+      if (s.ccw === false) { const t = a0; a0 = -a1; a1 = -t; }
       pts = arcPoints(s.c, s.r, a0, ccwSweep(a0, a1), tol);
       if (s.ccw === false) pts.reverse();
     } else if (s.type === 'ellipse') {
-      const ee = { c: s.c, major: s.major, ratio: s.ratio, a0: s.a0, a1: s.a1 };
+      const ee = s.ccw === false ? { c: s.c, major: s.major, ratio: s.ratio, a0: -s.a1, a1: -s.a0 } : { c: s.c, major: s.major, ratio: s.ratio, a0: s.a0, a1: s.a1 };
       pts = ellipsePoints(ee, tol);
       if (s.ccw === false) pts.reverse();
     } else if (s.type === 'spline') pts = splinePoints(s, tol);

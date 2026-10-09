@@ -177,3 +177,20 @@ test('mirrored TEXT stays readable (MIRRTEXT=0): only the insertion point is mir
   const c = te({ ...t, rot: 30 }, ml({ x: 0, y: 0 }, { x: 1, y: 0 }));
   assert.ok(Math.abs(c.rot - 330) < 1e-9 || Math.abs(c.rot + 30) < 1e-9, `rot ${c.rot}`);
 });
+
+// A clockwise hatch arc edge (DXF 73 = 0) stores its mirror image's angles: a0 = 30, a1 = 60 runs clockwise from -30 to
+// -60 degrees (a short arc below the x axis), not the long way round (a site plan drew a 20 km disc from such an edge).
+test('tessellate: clockwise hatch arc and ellipse edges use negated angles', () => {
+  const loop = (seg) => ({ type: 'HATCH', solid: true, pattern: 'SOLID', loops: [{ segs: [seg, { type: 'line', p1: { x: 5 * Math.SQRT2 * 0.7071, y: 0 }, p2: { x: 0, y: 0 } }], closed: true }] });
+  for (const seg of [
+    { type: 'arc', c: { x: 0, y: 0 }, r: 10, a0: 30, a1: 60, ccw: false },
+    { type: 'ellipse', c: { x: 0, y: 0 }, major: { x: 10, y: 0 }, ratio: 1, a0: 30 * Math.PI / 180, a1: 60 * Math.PI / 180, ccw: false },
+  ]) {
+    const pts = G.tessellate(loop(seg)).flat();
+    const arcPts = pts.filter((p) => Math.hypot(p.x, p.y) > 9.9);
+    assert.ok(arcPts.length >= 2, seg.type);
+    for (const p of arcPts) assert.ok(p.y < 0 && p.x > 0, `${seg.type} point ${JSON.stringify(p)} is not on the short clockwise arc`);
+    const first = arcPts[0];
+    assert.ok(Math.abs(first.x - 10 * Math.cos(-Math.PI / 6)) < 1e-6 && Math.abs(first.y - 10 * Math.sin(-Math.PI / 6)) < 1e-6, `${seg.type} starts at -30 deg: ${JSON.stringify(first)}`);
+  }
+});
