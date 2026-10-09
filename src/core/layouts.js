@@ -87,14 +87,25 @@ export function newLayout(name, tab) {
   };
 }
 
-/** paper sheet and printable area in layout coordinates (printable lower-left at 0,0, the AutoCAD convention) */
+/** paper millimetres per layout unit: inch layouts draw in inches, and a plot scale other than 1:1 (142 paper units =
+ *  143 drawing units) scales the sheet as AutoCAD shows it (e.g. inches at 1:25.585 -> about 1 mm per unit) */
+export function paperMmPerUnit(plot) {
+  const n = plot.scaleNum, d = plot.scaleDen, s = n > 0 && d > 0 && Number.isFinite(n / d) ? n / d : 1;
+  return (plot.units === 0 ? 25.4 : 1) * s;
+}
+
+/** paper sheet and printable area in layout coordinates. AutoCAD convention: printable lower-left at 0,0; but a plot of
+ *  the extents / display / limits / a window (plotType != 5) places the paper around what it plots, and the layout's
+ *  limits (LIMMIN/LIMMAX) then record where the sheet is: used when they are the sheet's size. */
 export function paperRects(layout) {
   const p = layout.plot;
-  const swap = p.rotation === 1 || p.rotation === 3, u = p.units === 0 ? 25.4 : 1; // paper size and margins are mm; inch layouts draw in inches
+  const swap = p.rotation === 1 || p.rotation === 3, u = paperMmPerUnit(p); // paper size and margins are mm
   const w = ((swap ? p.paperH : p.paperW) || 420) / u, h = ((swap ? p.paperW : p.paperH) || 297) / u;
   const m = { l: p.margins.l / u, b: p.margins.b / u, r: p.margins.r / u, t: p.margins.t / u };
-  const sheet = { minx: -m.l, miny: -m.b, maxx: w - m.l, maxy: h - m.b };
-  const printable = { minx: 0, miny: 0, maxx: w - m.l - m.r, maxy: h - m.b - m.t };
+  const lo = layout.limMin, hi = layout.limMax, near = (a, b) => Math.abs(a - b) <= 0.01 * b;
+  const o = p.plotType !== 5 && lo && hi && near(hi.x - lo.x, w) && near(hi.y - lo.y, h) ? { x: lo.x + m.l, y: lo.y + m.b } : { x: 0, y: 0 };
+  const sheet = { minx: o.x - m.l, miny: o.y - m.b, maxx: o.x + w - m.l, maxy: o.y + h - m.b };
+  const printable = { minx: o.x, miny: o.y, maxx: o.x + w - m.l - m.r, maxy: o.y + h - m.b - m.t };
   return { sheet, printable };
 }
 
@@ -142,9 +153,9 @@ export function viewportAt(entities, p) {
   return null;
 }
 
-/** PDF page for plotting a layout at 1:1: page size in points = the paper, k = points per paper unit (mm or inch),
+/** PDF page for plotting a layout: page size in points = the paper, k = points per layout unit (paperMmPerUnit),
  *  sheet = the paper in layout coordinates (page = (layout - sheet.min) * k) */
 export function layoutPage(layout) {
-  const { sheet } = paperRects(layout), k = layout.plot.units === 0 ? 72 : 72 / 25.4;
+  const { sheet } = paperRects(layout), k = (72 / 25.4) * paperMmPerUnit(layout.plot);
   return { pw: (sheet.maxx - sheet.minx) * k, ph: (sheet.maxy - sheet.miny) * k, k, sheet };
 }
