@@ -269,27 +269,29 @@ export function exportSvg(doc, opts = {}) {
   const dashAttr = (arr) => (arr ? ` stroke-dasharray="${arr.map(num).join(',')}"` : '');
   let clipN = 0;
 
+  // transparency: the item's opacity on its own element (a group for clipped hatches and text runs)
+  const op = (st) => { const a = opts.transparency === false ? 1 : st.alpha ?? 1; return a < 1 ? ` opacity="${num(a)}"` : ''; };
   for (const it of scene.items) {
-    const col = rgb(it.style);
+    const col = rgb(it.style), oa = op(it.style);
     if (it.kind === 'path') {
       const sw = strokeW(it.style);
-      out.push(`<path d="${svgPathData(it.ops)}" stroke="${col}" stroke-width="${sw}"${dashAttr(dashUnits(doc, it.style))}/>`);
+      out.push(`<path d="${svgPathData(it.ops)}" stroke="${col}" stroke-width="${sw}"${dashAttr(dashUnits(doc, it.style))}${oa}/>`);
       if (it.arrow) {
         const t = arrowTriangle(it.arrow, msize);
-        out.push(`<path d="M${t.map((p) => `${num(p.x)} ${num(-p.y)}`).join('L')}Z" fill="${col}" stroke="none"/>`);
+        out.push(`<path d="M${t.map((p) => `${num(p.x)} ${num(-p.y)}`).join('L')}Z" fill="${col}" stroke="none"${oa}/>`);
       }
     } else if (it.kind === 'fill' || (it.kind === 'hatch' && it.solid)) {
-      out.push(`<path d="${svgPathData(it.ops)}" fill="${col}" fill-rule="evenodd" stroke="none"/>`);
+      out.push(`<path d="${svgPathData(it.ops)}" fill="${col}" fill-rule="evenodd" stroke="none"${oa}/>`);
     } else if (it.kind === 'hatch') {
       const fams = hatchFamilies(it);
       const d = svgPathData(it.ops);
       if (fams === null) {
-        out.push(`<path d="${d}" fill="${col}" fill-opacity="0.3" fill-rule="evenodd" stroke="none"/>`);
+        out.push(`<path d="${d}" fill="${col}" fill-opacity="0.3" fill-rule="evenodd" stroke="none"${oa}/>`);
         continue;
       }
       const id = `hatch${++clipN}`;
       const sw = strokeW(it.style);
-      out.push(`<clipPath id="${id}"><path d="${d}" clip-rule="evenodd"/></clipPath><g clip-path="url(#${id})" stroke="${col}" stroke-width="${sw}">`);
+      out.push(`<clipPath id="${id}"><path d="${d}" clip-rule="evenodd"/></clipPath><g clip-path="url(#${id})" stroke="${col}" stroke-width="${sw}"${oa}>`);
       for (const f of fams) {
         const pd = f.segs.map((s) => `M${num(s[0])} ${num(-s[1])}L${num(s[2])} ${num(-s[3])}`).join('');
         if (pd) out.push(`<path d="${pd}"${dashAttr(f.dashes)}/>`);
@@ -300,7 +302,7 @@ export function exportSvg(doc, opts = {}) {
       const lay = mtextItemLayout(it);
       const deg = num(-it.rot * 180 / Math.PI);
       const rc = (c) => `rgb(${runRgb(c, it.style, colOpts).map((v) => Math.round(v)).join(',')})`;
-      out.push(`<g transform="translate(${num(it.p.x)} ${num(-it.p.y)})${deg !== '0' ? ` rotate(${deg})` : ''}" stroke="none">`);
+      out.push(`<g transform="translate(${num(it.p.x)} ${num(-it.p.y)})${deg !== '0' ? ` rotate(${deg})` : ''}" stroke="none"${oa}>`);
       for (const g of lay.glyphs) {
         const tf = `translate(${num(g.x)} ${num(g.y)})${g.oblique ? ` skewX(${num(-g.oblique)})` : ''}${g.wf && g.wf !== 1 ? ` scale(${num(g.wf)} 1)` : ''}`;
         const attrs = `${g.bold ? ' font-weight="bold"' : ''}${g.italic ? ' font-style="italic"' : ''}${g.track && g.track !== 1 ? ` letter-spacing="${num((g.track - 1) * g.h * 0.6)}"` : ''}`;
@@ -313,10 +315,10 @@ export function exportSvg(doc, opts = {}) {
       const deg = num(-it.rot * 180 / Math.PI);
       const tf = `translate(${num(it.p.x)} ${num(-it.p.y)})${deg !== '0' ? ` rotate(${deg})` : ''}${it.wf !== 1 ? ` scale(${num(it.wf)} 1)` : ''}`;
       const spans = lay.lines.map((l) => `<tspan x="0" y="${num(l.y)}">${xmlEscape(l.text)}</tspan>`).join('');
-      out.push(`<text transform="${tf}" font-family="${xmlEscape(fontFamily(it.font))}" font-size="${num(it.h)}" text-anchor="${lay.anchor}" fill="${col}" stroke="none" xml:space="preserve">${spans}</text>`);
+      out.push(`<text transform="${tf}" font-family="${xmlEscape(fontFamily(it.font))}" font-size="${num(it.h)}" text-anchor="${lay.anchor}" fill="${col}" stroke="none"${oa} xml:space="preserve">${spans}</text>`);
     } else if (it.kind === 'point') {
       const s = msize / 3, x = it.p.x, y = -it.p.y;
-      out.push(`<path d="M${num(x - s)} ${num(y)}L${num(x + s)} ${num(y)}M${num(x)} ${num(y - s)}L${num(x)} ${num(y + s)}" stroke="${col}" stroke-width="${strokeW(it.style)}"/>`);
+      out.push(`<path d="M${num(x - s)} ${num(y)}L${num(x + s)} ${num(y)}M${num(x)} ${num(y - s)}L${num(x)} ${num(y + s)}" stroke="${col}" stroke-width="${strokeW(it.style)}"${oa}/>`);
     }
   }
   out.push('</g>', '</svg>', '');

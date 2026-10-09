@@ -7,6 +7,8 @@
 //    TEXT/MTEXT/INSERT `rot` are DEGREES CCW.
 //  - color: integer ACI index (256 = BYLAYER, 0 = BYBLOCK) or {r,g,b} truecolor.
 //  - lineweight: millimetres (>= 0), or -1 BYLAYER, -2 BYBLOCK, -3 DEFAULT.
+//  - alpha (transparency, DXF 440): 0..255 by value (255 opaque), -2 BYBLOCK; absent = BYLAYER (layer.alpha, absent = opaque).
+//    Transparency percent t <-> alpha: alpha = floor((100 - t) * 2.55), t = round((255 - alpha) / 2.55).
 
 export const SUPPORTED_TYPES = [
   'LINE', 'LWPOLYLINE', 'CIRCLE', 'ARC', 'ELLIPSE', 'SPLINE', 'TEXT', 'MTEXT',
@@ -48,6 +50,7 @@ export function addLayer(doc, props) {
     locked: props.locked ?? false,
     plot: props.plot ?? true,
   };
+  if (props.alpha !== undefined && props.alpha >= 0) layer.alpha = props.alpha; // transparency: alpha 0..255 (absent = opaque)
   if (props.xrefDep) layer.xrefDep = props.xrefDep; // layer owned by an external reference: not written, dropped on unload
   doc.layers.set(key, layer);
   return layer;
@@ -98,8 +101,13 @@ function base(type, o) {
     linetype: o.linetype ?? 'BYLAYER',
     lineweight: o.lineweight ?? -1,
     ltscale: o.ltscale ?? 1,
+    ...(o.alpha !== undefined ? { alpha: o.alpha } : {}),
   };
 }
+
+/** transparency percent (0..90 in AutoCAD) <-> alpha byte */
+export const alphaFromPercent = (t) => Math.floor((100 - t) * 255 / 100);
+export const percentFromAlpha = (a) => Math.round((255 - a) * 100 / 255);
 const pt = (p) => ({ x: p.x, y: p.y });
 
 export const makeLine = (p1, p2, o = {}) => ({ ...base('LINE', o), p1: pt(p1), p2: pt(p2) });

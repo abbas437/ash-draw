@@ -43,6 +43,14 @@ function linetypeOf(e, layer, inherit) {
   return lt;
 }
 
+/** opacity 0..1 from the entity's alpha (ByLayer: the layer's, ByBlock: the enclosing INSERT's) */
+function opacityOf(e, layer, inherit) {
+  const a = e.alpha;
+  if (a === -2) return inherit ? inherit.alpha ?? 1 : 1;
+  if (a >= 0) return a / 255;
+  return layer && layer.alpha >= 0 ? layer.alpha / 255 : 1;
+}
+
 class Builder {
   constructor(doc) {
     this.doc = doc;
@@ -95,7 +103,7 @@ class Builder {
     const lw = lineweightOf(e, layer, inherit);
     const lt = linetypeOf(e, layer, inherit);
     const lts = (e.ltscale ?? 1) * this.globalLt;
-    return { color, lw, lt, lts, layerName };
+    return { color, lw, lt, lts, layerName, alpha: opacityOf(e, layer, inherit) };
   }
 
   emitInsert(e, m, inherit, rootId, depth, layerName, layer) {
@@ -579,6 +587,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
   const sy = (y) => H / 2 - (y - view.cy) * z;
   const minx = view.cx - W / 2 / z, maxx = view.cx + W / 2 / z, miny = view.cy - H / 2 / z, maxy = view.cy + H / 2 / z;
   const hi = opts.highlight instanceof Set ? opts.highlight : null;
+  const aOf = opts.transparency === false ? () => 1 : (st) => st.alpha ?? 1; // View > Transparency off: all opaque
   const colorOf = (st) => (st.color.auto ? (dark ? '#ffffff' : '#000000') : (st._css ??= rgbCss(st.color.rgb)));
   const lwPx = (st) => {
     if (!opts.showLineweight) return 1;
@@ -620,7 +629,11 @@ export function drawScene(ctx, scene, view, opts = {}) {
   const drawItems = (vis) => {
     const fills = [], marks = [], texts = [], images = [], batches = new Map(), dots = new Map(), tints = new Map(), bars = new Map();
     const lwSig = opts.showLineweight ? (opts.pixelsPerMm ?? 3.78) : 0;
-    const bucket = (map, key) => { let l = map.get(key); if (!l) map.set(key, (l = [])); return l; };
+    // per colour and opacity: list.col, list.a
+    const bucket = (map, st) => {
+      const col = colorOf(st), a = aOf(st), key = a === 1 ? col : `${col}|${a}`;
+      let l = map.get(key); if (!l) { map.set(key, (l = [])); l.col = col; l.a = a; } return l;
+    };
     for (const it of vis) {
       const k = it.kind;
       if (k === 'wipeout') continue;
@@ -630,20 +643,20 @@ export function drawScene(ctx, scene, view, opts = {}) {
       const tiny = b && (b.maxx - b.minx) * z < 1 && (b.maxy - b.miny) * z < 1;
       if (k === 'hatch' && !it.solid && it.lines) {
         it._sp ??= patternSpacing(it.lines);
-        if (tiny || it._sp * z < 2) { bucket(tints, colorOf(it.style)).push(it); continue; }
+        if (tiny || it._sp * z < 2) { bucket(tints, it.style).push(it); continue; }
       }
       if (k === 'image') { images.push(it); continue; }
-      if (tiny) { bucket(dots, colorOf(it.style)).push(it); continue; }
-      if (it.strokeText && it.strokeText.h * z < 2) { bucket(bars, colorOf(it.style)).push(it.strokeText); continue; }
+      if (tiny) { bucket(dots, it.style).push(it); continue; }
+      if (it.strokeText && it.strokeText.h * z < 2) { bucket(bars, it.style).push(it.strokeText); continue; }
       if (k === 'hatch' || k === 'fill') fills.push(it);
       else if (k === 'path' || k === 'hatchOutline') {
         const st = it.style;
-        if (st._ks !== lwSig) { st._ks = lwSig; st._key = `${st.color.auto ? 'a' : st.color.rgb.join(',')}|${lwPx(st)}|${st.lt}|${st.lts}`; }
+        if (st._ks !== lwSig) { st._ks = lwSig; st._key = `${st.color.auto ? 'a' : st.color.rgb.join(',')}|${lwPx(st)}|${st.lt}|${st.lts}|${st.alpha ?? 1}`; }
         let bt = batches.get(st._key);
         if (!bt) batches.set(st._key, (bt = { st, items: [] }));
         bt.items.push(it);
       } else if (k === 'text') {
-        if (!it.mt && it.h * z < 2) bucket(bars, colorOf(it.style)).push(it);
+        if (!it.mt && it.h * z < 2) bucket(bars, it.style).push(it);
         else texts.push(it);
       }
     }
@@ -659,9 +672,9 @@ export function drawScene(ctx, scene, view, opts = {}) {
     // 1. hatches and solid fills; LOD tints first (one fill per colour), then the per-item fills and patterns
     const fillAlphaPattern = opts.patternFallbackAlpha ?? 0.25;
     if (tints.size) {
-      ctx.save(); ctx.globalAlpha = fillAlphaPattern;
-      for (const [col, list] of tints) {
-        ctx.fillStyle = col;
+      ctx.save();
+      for (const list of tints.values()) {
+        ctx.globalAlpha = fillAlphaPattern * list.a; ctx.fillStyle = list.col;
         ctx.beginPath();
         // single-loop boundaries share one non-zero path, all wound the same way so overlaps do not cancel
         for (const it of list) if (loopCount(it) === 1) traceLoopCcw(ctx, it, sx, sy);
@@ -672,23 +685,27 @@ export function drawScene(ctx, scene, view, opts = {}) {
     }
     prof?.('tints');
     for (const it of fills) {
-      const col = colorOf(it.style);
+      const col = colorOf(it.style), a = aOf(it.style);
+      ctx.globalAlpha = a;
       if (it.kind === 'fill' || it.solid) {
         ctx.beginPath(); tracePath(it.ops);
         ctx.fillStyle = col; ctx.fill('evenodd');
       } else if (it.lines) {
-        drawPatternHatch(ctx, it, view, col, tracePath, sx, sy, fillAlphaPattern);
+        drawPatternHatch(ctx, it, view, col, tracePath, sx, sy, fillAlphaPattern * a);
       } else {
-        ctx.beginPath(); tracePath(it.ops); ctx.save(); ctx.globalAlpha = fillAlphaPattern; ctx.fillStyle = col; ctx.fill('evenodd'); ctx.restore();
+        ctx.beginPath(); tracePath(it.ops); ctx.save(); ctx.globalAlpha = fillAlphaPattern * a; ctx.fillStyle = col; ctx.fill('evenodd'); ctx.restore();
       }
     }
+    ctx.globalAlpha = 1;
     prof?.('fills');
 
     // LOD dots: one 1-px rect per covered pixel and colour, one fill per colour
     if (dots.size) {
       const Wi = Math.ceil(W), Hi = Math.ceil(H), stamp = dotStamp(Wi * Hi);
       let ci = 0;
-      for (const [col, list] of dots) {
+      for (const list of dots.values()) {
+        const col = list.col;
+        ctx.globalAlpha = list.a;
         const mark = dotFrame * 256 + (ci++ & 255);
         ctx.beginPath();
         for (const it of list) {
@@ -702,6 +719,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
         }
         ctx.fillStyle = col; ctx.fill();
       }
+      ctx.globalAlpha = 1;
     }
     prof?.('dots');
 
@@ -709,17 +727,18 @@ export function drawScene(ctx, scene, view, opts = {}) {
     for (const { st, items } of batches.values()) {
       ctx.beginPath();
       for (const it of items) tracePath(it.ops);
-      ctx.strokeStyle = colorOf(st);
+      ctx.strokeStyle = colorOf(st); ctx.globalAlpha = aOf(st);
       ctx.lineWidth = lwPx(st);
       const dash = dashFor(doc, st, z);
       ctx.setLineDash(dash ?? []);
       ctx.stroke();
     }
-    ctx.setLineDash([]);
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
     prof?.('lines');
 
     // leader arrow heads and points
     for (const it of marks) {
+      ctx.globalAlpha = aOf(it.style);
       if (it.arrow) {
         ctx.fillStyle = colorOf(it.style);
         const a = it.arrow[0], b = it.arrow[1];
@@ -736,12 +755,14 @@ export function drawScene(ctx, scene, view, opts = {}) {
       }
     }
 
+    ctx.globalAlpha = 1;
     prof?.('marks');
 
     // 3. text; LOD bars (text under 2 px) as one stroke per colour
     if (bars.size) {
-      ctx.save(); ctx.globalAlpha = 0.5; ctx.lineWidth = 1;
-      for (const [col, list] of bars) {
+      ctx.save(); ctx.lineWidth = 1;
+      for (const list of bars.values()) {
+        const col = list.col; ctx.globalAlpha = 0.5 * list.a;
         ctx.beginPath();
         for (const it of list) {
           const x = sx(it.p.x), y = sy(it.p.y);
@@ -754,9 +775,11 @@ export function drawScene(ctx, scene, view, opts = {}) {
     }
     prof?.('bars');
     for (const it of texts) {
+      ctx.globalAlpha = aOf(it.style);
       if (it.mt) drawMText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style), dark);
       else drawText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style));
     }
+    ctx.globalAlpha = 1;
     prof?.('text');
   };
   if (!levels) drawItems(vis);
@@ -923,7 +946,7 @@ function drawMText(ctx, it, x, y, z, color, dark) {
   for (const g of lay.glyphs) {
     const px = g.h * z;
     ctx.fillStyle = colOf(g.color);
-    if (px < 2) { ctx.globalAlpha = 0.5; ctx.fillRect(g.x * z, g.y * z - 1, (g.w ?? g.text.length * g.h * 0.6) * z, 1); ctx.globalAlpha = 1; continue; }
+    if (px < 2) { const ga = ctx.globalAlpha; ctx.globalAlpha = ga * 0.5; ctx.fillRect(g.x * z, g.y * z - 1, (g.w ?? g.text.length * g.h * 0.6) * z, 1); ctx.globalAlpha = ga; continue; }
     ctx.save();
     ctx.translate(g.x * z, g.y * z);
     if (g.oblique) ctx.transform(1, 0, -Math.tan(g.oblique * DEG), 1, 0, 0);

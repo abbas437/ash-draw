@@ -118,6 +118,8 @@ export function writeDxf(doc, opts = {}) {
     if (e.lineweight !== undefined && e.lineweight !== -1) o.p(370, e.lineweight < 0 ? e.lineweight : snapLw(e.lineweight));
     if (e.ltscale && e.ltscale !== 1) o.p(48, e.ltscale);
     if (e.invisible) o.p(60, 1);
+    if (e.alpha === -2) o.p(440, 0x01000000);
+    else if (e.alpha >= 0) o.p(440, 0x02000000 | e.alpha);
     return hd;
   }
 
@@ -485,6 +487,7 @@ export function writeDxf(doc, opts = {}) {
     if (l.plot === false) out.p(290, 0);
     out.p(370, l.lineweight < 0 || l.lineweight === undefined ? -3 : snapLw(l.lineweight));
     out.p(390, hPlotPlaceholder);
+    if (l.alpha >= 0) { xdApps.add('AcCmTransparency'); out.s(1001, 'AcCmTransparency'); out.p(1071, 0x02000000 | l.alpha); }
   }
   out.p(0, 'ENDTAB');
 

@@ -254,6 +254,24 @@ function readColor(rec) {
   return BYLAYER;
 }
 
+/** transparency value (entity 440, layer xdata AcCmTransparency 1071): 0x01000000 ByBlock -> -2, 0x02000000 | alpha
+ *  byte -> alpha 0..255 (255 opaque); anything else (absent, 0 = ByLayer) -> undefined */
+function readAlpha(v) {
+  if (v === undefined) return undefined;
+  const n = parseInt(v, 10) >>> 0;
+  if (n & 0x02000000) return n & 255;
+  if (n & 0x01000000) return -2;
+  return undefined;
+}
+function layerAlpha(rec) {
+  let app = false;
+  for (const [c, v] of rec.tags()) {
+    if (c === 1001) app = v === 'AcCmTransparency';
+    else if (app && c === 1071) return readAlpha(v);
+  }
+  return undefined;
+}
+
 function common(rec) {
   const lw = rec.has(370) ? rec.int(370) : -1;
   const o = {
@@ -263,6 +281,8 @@ function common(rec) {
     lineweight: lw >= 0 ? lw / 100 : lw,
     ltscale: rec.has(48) ? rec.num(48, 1) : 1,
   };
+  const a = readAlpha(rec.get(440));
+  if (a !== undefined) o.alpha = a;
   return o;
 }
 
@@ -728,6 +748,7 @@ function parseTokens(tk, onProgress = null) {
           frozen: (flags & 1) === 1,
           locked: (flags & 4) === 4,
           plot: rec.int(290, 1) !== 0,
+          alpha: layerAlpha(rec),
         });
       } else if (rec.type === 'LTYPE') {
         const name = rec.str(2);

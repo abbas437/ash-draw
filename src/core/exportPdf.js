@@ -5,7 +5,7 @@ import {
   PDFDocument, StandardFonts, PageSizes, rgb, PDFOperator, PDFOperatorNames,
   pushGraphicsState, popGraphicsState, setLineWidth, setDashPattern, setLineCap, setLineJoin,
   setStrokingRgbColor, setFillingRgbColor, moveTo, lineTo, appendBezierCurve, closePath, stroke,
-  clip, clipEvenOdd, endPath, concatTransformationMatrix,
+  clip, clipEvenOdd, endPath, concatTransformationMatrix, setGraphicsState,
 } from 'pdf-lib';
 import { buildScene, docWithFrozen } from './render.js';
 import { layoutPage, viewportScale } from './layouts.js';
@@ -107,13 +107,24 @@ export async function exportPdf(doc, opts = {}) {
     },
   });
   const dashPt = (arr) => (arr ? arr.map((d) => d * k) : null);
+  // transparency: one ExtGState (CA / ca) per opacity, set inside the item's graphics state
+  const gsNames = new Map();
+  const opacity = (style) => (opts.transparency === false ? 1 : style.alpha ?? 1);
+  const alphaState = (style) => {
+    const a = opacity(style);
+    if (a >= 1) return;
+    let name = gsNames.get(a);
+    if (!name) gsNames.set(a, (name = page.node.newExtGState('GSa', pdf.context.obj({ Type: 'ExtGState', CA: a, ca: a }))));
+    ops.push(setGraphicsState(name));
+  };
   const strokeState = (style, dashes) => {
+    alphaState(style);
     const [r, g, b] = colOf(style);
     ops.push(setStrokingRgbColor(r, g, b), setLineWidth(lwPt(style)), setLineCap(1), setLineJoin(1));
     // a pattern too fine to see on paper is drawn continuous
     if (dashes && dashes.reduce((s, d) => s + d, 0) >= 1) ops.push(setDashPattern(dashes, 0));
   };
-  const fillState = (style) => { const [r, g, b] = colOf(style); ops.push(setFillingRgbColor(r, g, b)); };
+  const fillState = (style) => { alphaState(style); const [r, g, b] = colOf(style); ops.push(setFillingRgbColor(r, g, b)); };
   let msize;
 
   /** one font per text item: Helvetica when every character is WinAnsi, else the Unicode font, else '?' substitutes */
@@ -173,7 +184,7 @@ export async function exportPdf(doc, opts = {}) {
       if (fams === null) {
         // too dense to draw line by line: a light tint of the hatch colour
         const [r, g, b] = colOf(it.style).map((v) => 1 - (1 - v) * 0.3);
-        ops.push(setFillingRgbColor(r, g, b)); pathOps(it.ops); ops.push(fillEvenOdd(), popGraphicsState());
+        alphaState(it.style); ops.push(setFillingRgbColor(r, g, b)); pathOps(it.ops); ops.push(fillEvenOdd(), popGraphicsState());
         continue;
       }
       pathOps(it.ops); ops.push(clipEvenOdd(), endPath());
@@ -198,11 +209,12 @@ export async function exportPdf(doc, opts = {}) {
         const f = runFont(g.text, g, true);
         if (!f.text) continue;
         page.pushOperators(pushGraphicsState(), concatTransformationMatrix(g.wf || 1, 0, Math.tan((g.oblique || 0) * Math.PI / 180), 1, g.x * k, -g.y * k));
-        page.drawText(f.text, { x: 0, y: 0, size: g.h * k, font: f.font, color: rgb(...rc(g.color)) });
+        page.drawText(f.text, { x: 0, y: 0, size: g.h * k, font: f.font, color: rgb(...rc(g.color)), opacity: opacity(it.style) });
         page.pushOperators(popGraphicsState());
       }
       for (const r of lay.rules) {
         const [cr, cg, cb] = rc(r.color);
+        alphaState(it.style); page.pushOperators(...ops.splice(0));
         page.pushOperators(setStrokingRgbColor(cr, cg, cb), setLineWidth(r.h * k * 0.06), moveTo(r.x1 * k, -r.y * k), lineTo(r.x2 * k, -r.y * k), stroke());
       }
       page.pushOperators(popGraphicsState());
@@ -216,7 +228,7 @@ export async function exportPdf(doc, opts = {}) {
         if (!l.text) continue;
         page.pushOperators(pushGraphicsState(), concatTransformationMatrix(wf * c, wf * s, -s, c, X(it.p.x), Y(it.p.y)));
         // layout is in drawing units, y down; the text frame is in page points, y up
-        page.drawText(l.text, { x: l.x * k, y: -l.y * k, size: it.h * k, font, color: rgb(r, g, b) });
+        page.drawText(l.text, { x: l.x * k, y: -l.y * k, size: it.h * k, font, color: rgb(r, g, b), opacity: opacity(it.style) });
         page.pushOperators(popGraphicsState());
       }
     }
