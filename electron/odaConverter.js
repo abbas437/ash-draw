@@ -12,8 +12,8 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-export const ODA_TIMEOUT_MS = 5 * 60_000;
-export const ODA_MAX_BYTES = 512 * 1024 * 1024;
+export const ODA_TIMEOUT_MS = 10 * 60_000;
+export const ODA_MAX_BYTES = 1536 * 1024 * 1024; // same cap as the LibreDWG bridge
 export const ODA_OUT_VERSION = 'ACAD2018';
 export const ODA_EXE = 'ODAFileConverter.exe';
 export const ODA_DOWNLOAD_URL = 'https://www.opendesign.com/guestfiles/oda_file_converter';

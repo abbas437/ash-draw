@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 export const MAX_BYTES = 1536 * 1024 * 1024; // input/output size cap (a 120 MB DWG can expand to 500+ MB of DXF)
-export const TIMEOUT_MS = 120_000;
+export const TIMEOUT_MS = 10 * 60_000; // a 120 MB AutoCAD 2018 DWG converts to a 500+ MB DXF
 export const MAX_BUFFER = 10 * 1024 * 1024; // stdout capture cap for short probes (--version)
 export const STDERR_READ = 256 * 1024; // bytes of the converter's stderr log read back (LibreDWG can print many MB of ERROR lines)
 export const STDERR_LIMIT = 4096; // characters of stderr surfaced in errors
