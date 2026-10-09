@@ -631,9 +631,18 @@ class TrimTool extends Tool {
   key(e) { if (e.key === 'Escape') { this.cancel(); return true; } return e.key === 'Enter' ? (this.cancel(), true) : false; }
 }
 
+/** PAN (P): a left drag moves the view (middle drag and Space + drag pan in every tool); Esc / Enter back to Select */
+class PanTool extends Tool {
+  get prompt() { return 'PAN  drag to move the view (Esc or Enter: back to Select)'; }
+  activate() { this.vp.preview = null; this.vp.panTool = true; this.vp._syncCursor(); }
+  deactivate() { super.deactivate(); this.vp.panTool = false; this.vp._syncCursor(); }
+  key(e) { if (e.key === 'Escape' || e.key === 'Enter') { this.cancel(); return true; } return false; }
+  rightClick() { this.cancel(); }
+}
+
 export function createTools(h) {
   return {
-    select: new SelectTool(h),
+    select: new SelectTool(h), pan: new PanTool(h),
     line: new LineTool(h), pline: new PolylineTool(h), rect: new RectTool(h), circle: new CircleTool(h),
     arc: new ArcTool(h), ellipse: new EllipseTool(h), point: new PointTool(h), text: new TextTool(h), hatch: new HatchTool(h),
     measure: new MeasureGeomTool(h), area: new MeasureGeomTool(h, 'AREA'),
@@ -656,7 +665,7 @@ export const TOOL_ALIASES = {
   t: 'text', text: 'text', mt: 'mtext', mtext: 'mtext', h: 'hatch', hatch: 'hatch', di: 'measure', dist: 'measure', measure: 'measure',
   m: 'move', move: 'move', co: 'copy', cp: 'copy', copy: 'copy', ro: 'rotate', rotate: 'rotate', sc: 'scale', scale: 'scale',
   mi: 'mirror', mirror: 'mirror', o: 'offset', offset: 'offset', tr: 'trim', trim: 'trim', ex: 'extend', extend: 'extend',
-  e: 'erase', erase: 'erase', x: 'explode', explode: 'explode', select: 'select', s: 'select',
+  e: 'erase', erase: 'erase', x: 'explode', explode: 'explode', select: 'select', s: 'select', p: 'pan', pan: 'pan',
   f: 'fillet', fillet: 'fillet', cha: 'chamfer', chamfer: 'chamfer', br: 'break', break: 'break', j: 'join', join: 'join',
   len: 'lengthen', lengthen: 'lengthen', str: 'stretch', stretch: 'stretch', ar: 'arrayrect', arrayrect: 'arrayrect',
   arraypolar: 'arraypolar', arraypath: 'arraypath',

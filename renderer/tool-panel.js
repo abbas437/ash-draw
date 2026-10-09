@@ -3,7 +3,7 @@ import { iconSvg } from './icons.js';
 
 /** [group, colour key, [[command id, label, alias?], ...]]; the colour key picks the group's icon colour in styles.css */
 export const TOOL_BUTTONS = [
-  ['Select', 'select', [['select', 'Select']]],
+  ['Select', 'select', [['select', 'Select'], ['pan', 'Pan', 'P']]],
   ['Draw', 'draw', [['line', 'Line', 'L'], ['pline', 'Polyline', 'PL'], ['rect', 'Rectangle', 'REC'], ['circle', 'Circle', 'C'], ['arc', 'Arc', 'A'], ['ellipse', 'Ellipse', 'EL'], ['point', 'Point', 'PO'], ['text', 'Text', 'T'], ['hatch', 'Hatch', 'H']]],
   ['Modify', 'modify', [['move', 'Move', 'M'], ['copy', 'Copy', 'CO'], ['rotate', 'Rotate', 'RO'], ['scale', 'Scale', 'SC'], ['mirror', 'Mirror', 'MI'], ['offset', 'Offset', 'O'], ['trim', 'Trim', 'TR'], ['extend', 'Extend', 'EX'], ['explode', 'Explode', 'X'], ['erase', 'Erase', 'E'],
     ['fillet', 'Fillet', 'F'], ['chamfer', 'Chamfer', 'CHA'], ['break', 'Break', 'BR'], ['join', 'Join', 'J'], ['lengthen', 'Lengthen', 'LEN'], ['stretch', 'Stretch', 'STR'],
@@ -21,7 +21,7 @@ export const APP_COMMANDS = { new: ['New', 'Ctrl+N'], open: ['Open', 'Ctrl+O'], 
 /** the Quick Access row under the menu bar: [colour key, [command id ...]]; ids are panel tools or APP_COMMANDS */
 export const QUICK_ACCESS = [
   ['file', ['new', 'open', 'save', 'undo', 'redo']],
-  ['select', ['select', 'zoomfit']],
+  ['select', ['select', 'pan', 'zoomfit']],
   ['draw', ['line', 'pline', 'circle', 'text']],
   ['modify', ['move', 'copy', 'trim', 'erase']],
   ['annotate', ['dimlinear']], ['inquiry', ['measure']],

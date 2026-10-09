@@ -76,6 +76,26 @@ try {
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'layout_default_compact.png') });
   }
 
+  step = 'Pan tool: hand button next to Select (panel and Quick Access), left drag pans, Esc back to Select, P alias';
+  {
+    const nb = await page.evaluate(() => ['#tools', '#qat'].map((s) => { const b = [...document.querySelectorAll(`${s} button[data-tool], ${s} button[data-cmd]`)].map((x) => x.dataset.tool ?? x.dataset.cmd); return b[b.indexOf('select') + 1]; }));
+    assert.deepEqual(nb, ['pan', 'pan'], `button after Select: ${nb}`);
+    await page.locator('#tools button[data-tool=pan]').click();
+    assert.equal(await page.evaluate(() => window.app.toolId), 'pan');
+    const v0 = await page.evaluate(() => ({ ...window.app.vp.view }));
+    const box = await page.locator('#cv').boundingBox();
+    await page.mouse.move(box.x + 300, box.y + 300); await page.mouse.down(); await page.mouse.move(box.x + 400, box.y + 350, { steps: 4 }); await page.mouse.up();
+    const v1 = await page.evaluate(() => ({ ...window.app.vp.view, cur: window.app.vp.canvas.style.cursor, n: window.app.doc.entities.length }));
+    assert.ok(Math.abs((v0.cx - v1.cx) * v0.zoom - 100) < 1 && Math.abs((v1.cy - v0.cy) * v0.zoom - 50) < 1, `left drag pans: ${JSON.stringify([v0, v1])}`);
+    assert.equal(v1.cur, 'grab', 'Pan shows the hand cursor, not a hidden one');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.evaluate(() => [window.app.toolId, window.app.vp.canvas.style.cursor].join()), 'select,');
+    await typeCmd('p');
+    assert.equal(await page.evaluate(() => window.app.toolId), 'pan');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => window.app.toolId), 'select');
+  }
+
   step = 'draw a line with the mouse';
   await page.evaluate(() => window.app.vp.zoomBy(0.0001)); // tiny zoom so clicks map to large world units
   await page.evaluate(() => { window.app.vp.view = { ...window.app.vp.view, cx: 50, cy: 25, zoom: 8 }; window.app.vp.render(); });
@@ -1536,11 +1556,13 @@ try {
     assert.ok((await fs.stat(big)).size > 45e6);
     const watch = () => page.evaluate(() => {
       // a 10 ms timer: the largest gap between ticks while the toast shows a percentage (the read phase)
-      const w = window.__tick = { maxGap: 0, pcts: new Set(), last: performance.now(), stop: false };
+      const w = window.__tick = { maxGap: 0, maxAll: 0, started: false, pcts: new Set(), last: performance.now(), stop: false };
       const t = document.getElementById('toast');
       const tick = () => {
         const now = performance.now(), m = /(\d+)%/.exec(t.textContent);
         if (w.wasPct) w.maxGap = Math.max(w.maxGap, now - w.last);
+        if (w.started) w.maxAll = Math.max(w.maxAll, now - w.last); // the whole open, after 100% too (until the drawing is shown)
+        if (m) w.started = true;
         w.wasPct = !!m; if (m) w.pcts.add(+m[1]);
         w.last = now; if (!w.stop) setTimeout(tick, 10);
       };
@@ -1563,11 +1585,13 @@ try {
     await watch();
     await pickPath(big);
     await page.waitForFunction(() => window.app.file.name === 'big_synthetic.dxf', null, { timeout: 60000 });
-    const r = await page.evaluate(() => { window.__tick.stop = true; return { maxGap: window.__tick.maxGap, pcts: [...window.__tick.pcts], n: window.app.doc.entities.length }; });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))); // the first frame too
+    const r = await page.evaluate(() => { window.__tick.stop = true; return { maxGap: window.__tick.maxGap, maxAll: window.__tick.maxAll, pcts: [...window.__tick.pcts], n: window.app.doc.entities.length }; });
     assert.equal(r.n, 20000);
     assert.ok(r.pcts.length >= 3, `progress percentages shown: ${r.pcts}`);
     assert.ok(r.maxGap < 250, `UI froze for ${Math.round(r.maxGap)} ms while reading`);
-    console.log(`  large DXF: ${r.pcts.length} percentages shown, max timer gap ${Math.round(r.maxGap)} ms`);
+    assert.ok(r.maxAll < 250, `UI froze for ${Math.round(r.maxAll)} ms during the open (after the read reached 100%)`);
+    console.log(`  large DXF: ${r.pcts.length} percentages shown, max timer gap ${Math.round(r.maxGap)} ms reading, ${Math.round(r.maxAll)} ms whole open`);
     await fs.rm(dir, { recursive: true, force: true });
   }
 

@@ -235,6 +235,7 @@ class App {
     if (open) { this.switchTo(open); return; } // already open: show its tab
     const ac = new AbortController();
     const pt = progressToast(`Opening ${f.name} …`, () => ac.abort());
+    this.vp.setBusy(true); // the system wait cursor over the canvas until the drawing is shown (no hidden pointer)
     try {
       const { doc, format, notes, warnings } = await loadDrawing(api, f.name, f.bytes, { onProgress: (x) => pt.set(x), signal: ac.signal });
       toast(`Opening ${f.name} …`, 60000); // read: now the view is built
@@ -253,7 +254,7 @@ class App {
           [{ label: 'Open download page', value: 'dl', primary: true }, { label: 'OK', value: null }]);
         if (r === 'dl') api.openOdaDownload?.().catch(() => {});
       } else await message('Cannot open this file', err.message || String(err));
-    }
+    } finally { this.vp.setBusy(false); }
   }
   /** objects that were read but cannot be written back (they would vanish from an overwritten file) */
   droppedContent() {

@@ -38,3 +38,10 @@ test('tool panel placement: Left unless a saved placement is top or hidden', asy
   assert.equal(placementFrom('top'), 'top');
   assert.equal(placementFrom('hidden'), 'hidden');
 });
+
+test('Pan sits right next to Select in the side panel and in the Quick Access row', () => {
+  const sel = TOOL_BUTTONS.find(([, key]) => key === 'select')[2].map(([id]) => id);
+  assert.deepEqual(sel.slice(0, 2), ['select', 'pan']);
+  const qa = QUICK_ACCESS.flatMap(([, list]) => list);
+  assert.equal(qa[qa.indexOf('select') + 1], 'pan');
+});

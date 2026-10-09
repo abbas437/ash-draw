@@ -45,6 +45,8 @@ export class Viewport {
     this._raf = 0;
     this._spaceDown = false;
     this._pan = null;
+    this.panTool = false;              // the Pan tool is active: a left drag pans (tools.js PanTool)
+    this.busy = false;                 // opening / preparing / a long command: the system wait cursor, no crosshair
     this._gesture = null;              // 'pan' | 'zoom' while the cached bitmap stands in for the scene
     this._settleT = 0;
     this._frame = null;                // last scene frame: { key, view, exact } with its bitmap in this._buf
@@ -287,8 +289,13 @@ export class Viewport {
     c.fillText(SNAP_LABEL[m.kind] ?? m.kind, s.x + r + 3, s.y - r - 2);
     c.restore();
   }
+  /** the canvas CSS cursor: none only while the crosshair is drawn (it is not while busy, panning or in Pan) */
+  _syncCursor() {
+    this.canvas.style.cursor = this._pan ? 'grabbing' : this.busy ? 'wait' : this.panTool || this._spaceDown ? 'grab' : '';
+  }
+  setBusy(on) { this.busy = !!on; this._syncCursor(); this.requestRender(); }
   _drawCrosshair() {
-    if (!this.showCross) return;
+    if (!this.showCross || this.busy || this.panTool) return;
     const c = this.ctx, s = this.toScreen(this.cursor);
     c.save(); c.strokeStyle = this.settings.dark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.55)'; c.lineWidth = 1;
     c.beginPath(); c.moveTo(s.x - 10, s.y); c.lineTo(s.x + 10, s.y); c.moveTo(s.x, s.y - 10); c.lineTo(s.x, s.y + 10); c.stroke();
@@ -309,11 +316,11 @@ export class Viewport {
     cv.addEventListener('pointerdown', (e) => {
       cv.focus();
       const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
-      if (e.button === 1 || (e.button === 0 && this._spaceDown)) {
+      if (e.button === 1 || (e.button === 0 && (this._spaceDown || this.panTool))) {
         this._pan = { x: e.clientX, y: e.clientY };
         this.beginGesture('pan');
         cv.setPointerCapture(e.pointerId);
-        cv.style.cursor = 'grabbing';
+        this._syncCursor();
         return;
       }
       const res = this.resolve(sx, sy);
@@ -335,7 +342,7 @@ export class Viewport {
       this._moved(sx, sy, e);
     });
     cv.addEventListener('pointerup', (e) => {
-      if (this._pan) { this._pan = null; cv.style.cursor = ''; this.endGesture(); return; }
+      if (this._pan) { this._pan = null; this._syncCursor(); this.endGesture(); return; }
       if (e.button !== 0 || !this._down) return;
       const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
       const res = this.resolve(sx, sy);
@@ -345,8 +352,8 @@ export class Viewport {
     });
     cv.addEventListener('pointerleave', () => { this.showCross = false; this.snapMarker = null; this.requestRender(); this.emit('cursor', null); });
     cv.addEventListener('pointerenter', () => { this.showCross = true; });
-    window.addEventListener('keydown', (e) => { if (e.code === 'Space' && document.activeElement === cv) { this._spaceDown = true; cv.style.cursor = 'grab'; } });
-    window.addEventListener('keyup', (e) => { if (e.code === 'Space') { this._spaceDown = false; cv.style.cursor = ''; } });
+    window.addEventListener('keydown', (e) => { if (e.code === 'Space' && document.activeElement === cv) { this._spaceDown = true; this._syncCursor(); } });
+    window.addEventListener('keyup', (e) => { if (e.code === 'Space') { this._spaceDown = false; this._syncCursor(); } });
     new ResizeObserver(() => this.resize()).observe(cv);
   }
 
