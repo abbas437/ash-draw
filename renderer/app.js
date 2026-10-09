@@ -19,7 +19,7 @@ import { loadDrawingXrefs, xrefPanel } from './xref-panel.js';
 import { TOOL_BUTTONS, buildToolPanel, iconButton } from './tool-panel.js';
 import { iconSvg } from './icons.js';
 import { loadDrawingImages } from './images.js';
-import { el, message, modal, confirmDialog, textDialog, toast, renderLayers, renderProperties } from './ui.js';
+import { el, message, modal, confirmDialog, textDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
 import {
   OPEN_FILTERS, loadDrawing, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, baseName, extOf, UNIT_NAMES,
 } from './files.js';
@@ -225,9 +225,11 @@ class App {
   async loadFile(f) {
     const open = findTabByPath(this.tabs, f.path);
     if (open) { this.switchTo(open); return; } // already open: show its tab
-    toast(`Opening ${f.name} …`, 60000);
+    const ac = new AbortController();
+    const pt = progressToast(`Opening ${f.name} …`, () => ac.abort());
     try {
-      const { doc, format, notes, warnings } = await loadDrawing(api, f.name, f.bytes);
+      const { doc, format, notes, warnings } = await loadDrawing(api, f.name, f.bytes, { onProgress: (x) => pt.set(x), signal: ac.signal });
+      toast(`Opening ${f.name} …`, 60000); // read: now the view is built
       await loadDrawingXrefs(api, doc, f.path ?? null); // before the scene is built: it is built once, with the xrefs
       const missing = await loadDrawingImages(api, doc, f.path ?? null);
       if (missing.length) notes.push(`Raster images not found (shown as a red frame with the file name): ${missing.join(', ')}.`);
@@ -236,6 +238,7 @@ class App {
       if (notes.length) await message('Opened with limitations', `${f.name} was opened, but:`, el('div', {}, [el('ul', {}, notes.map((n) => el('li', { text: n }))), ...(warnings?.length ? [el('details', {}, [el('summary', { text: 'Converter messages' }), el('pre', { text: warnings.join('\n') })])] : [])]));
     } catch (err) {
       toast('', 1);
+      if (err.code === 'CANCELLED') { toast(`Opening ${f.name} was cancelled.`, 2500); return; }
       if (err.odaHint) {
         const [text, detail] = String(err.message).split(/ \[(?=[^[]*\]$)/);
         const r = await modal('Cannot open this file', [el('p', { text }), detail ? el('details', {}, [el('summary', { text: 'Converter messages' }), el('pre', { text: detail.replace(/\]$/, '') })]) : null],

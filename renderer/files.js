@@ -24,8 +24,34 @@ export function unitsPerMm(doc) {
 }
 export const UNIT_NAMES = { 0: 'unitless', 1: 'inches', 2: 'feet', 4: 'mm', 5: 'cm', 6: 'm', 7: 'km', 13: 'microns' };
 
-/** Load a DWG/DXF. Returns {doc, format, notes[]}; throws Error with a user-readable message. */
-export async function loadDrawing(api, name, bytes) {
+/** Read DXF bytes in a module worker (the window stays responsive), or synchronously where there is no Worker.
+ *  onProgress(fraction 0..1); `signal` (AbortSignal) stops the worker and rejects with Error{code:'CANCELLED'}.
+ *  A whole, unshared buffer is transferred to the worker (the caller's `bytes` are detached afterwards). */
+export function readDxfAsync(bytes, { onProgress = null, signal = null } = {}) {
+  const cancelled = () => Object.assign(new Error('Opening was cancelled.'), { code: 'CANCELLED' });
+  if (signal?.aborted) return Promise.reject(cancelled());
+  if (typeof Worker === 'undefined') return Promise.resolve().then(() => readDxf(bytes, { onProgress }));
+  return new Promise((resolve, reject) => {
+    const w = new Worker(new URL('./dxfWorker.js', import.meta.url), { type: 'module', name: 'dxf-reader' });
+    const finish = () => { w.terminate(); signal?.removeEventListener('abort', abort); };
+    const abort = () => { finish(); reject(cancelled()); };
+    signal?.addEventListener('abort', abort);
+    w.onmessage = ({ data }) => {
+      if (data.progress !== undefined) { onProgress?.(data.progress / 100); return; }
+      finish();
+      if (data.error) reject(Object.assign(new Error(data.error.message), data.error.code ? { code: data.error.code } : {}));
+      else resolve(data.doc);
+    };
+    w.onerror = (e) => { finish(); reject(new Error(`The DXF reader stopped: ${e.message || 'worker error'}`)); };
+    const whole = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength && !(typeof SharedArrayBuffer !== 'undefined' && bytes.buffer instanceof SharedArrayBuffer);
+    const view = whole ? bytes : bytes.slice();
+    w.postMessage({ bytes: view }, [view.buffer]);
+  });
+}
+
+/** Load a DWG/DXF. Returns {doc, format, notes[]}; throws Error with a user-readable message.
+ *  opts: {onProgress(fraction), signal} for the DXF read (see readDxfAsync). */
+export async function loadDrawing(api, name, bytes, { onProgress = null, signal = null } = {}) {
   const ext = extOf(name);
   let dxfBytes = bytes, format = 'dxf';
   const notes = [];
@@ -48,7 +74,7 @@ export async function loadDrawing(api, name, bytes) {
     throw new Error(`Unsupported file type ".${ext}". Open a DWG or DXF file.`);
   }
   let doc;
-  try { doc = readDxf(dxfBytes); } catch (err) {
+  try { doc = await readDxfAsync(dxfBytes, { onProgress, signal }); } catch (err) {
     if (err.code === 'BINARY_DXF') throw new Error('This is a binary DXF file, which is not supported. Save it as an ASCII DXF, or open the DWG instead.');
     if (err.code === 'BAD_DXF') throw new Error('This file is not a valid DXF drawing.');
     throw err;
