@@ -620,6 +620,11 @@ function buildEntity(rec, doc, extra) {
       e = { ...o, id: 0, type: 'IMAGE', ...imageFromTags(tags, imageDefs.get(h) ?? null) };
       break;
     }
+    case 'WIPEOUT': {
+      e = { ...o, id: 0, type: 'WIPEOUT', ...imageFromTags(rec.tags(), null) };
+      delete e.def; delete e.path;
+      break;
+    }
     case 'ATTDEF': case 'ATTRIB': e = buildAttribute(rec, buildText(rec, o)); break;
     default: return undefined;
   }
@@ -749,6 +754,7 @@ function parseTokens(tk, onProgress = null) {
   if (secs.OBJECTS) {
     for (const rec of records(tk, secs.OBJECTS.from, secs.OBJECTS.to)) {
       if (rec.type === 'IMAGEDEF') imageDefs.set(rec.str(5), imageDefFromTags(rec.tags()));
+      if (rec.type === 'WIPEOUTVARIABLES') doc.header.wipeoutFrame = rec.int(70); // WIPEOUTFRAME: 0 hidden, 1 shown + plotted, 2 shown only
       if (rec.type !== 'MLEADERSTYLE') continue;
       const st = mleaderStyleFromTags(rec.tags());
       mlStyles.set(rec.str(5), st);

@@ -2,7 +2,7 @@
 // Pure ES module. Matrices are canvas-style [a,b,c,d,e,f]:  x' = a*x + c*y + e ; y' = b*x + d*y + f.
 
 import { mleaderParts, transformMLeader } from './mleader.js';
-import { imageCorners, transformImage } from './image.js';
+import { imageCorners, transformImage, wipeoutRing } from './image.js';
 import { textFrame, textCorners } from './textMetrics.js';
 import { nurbsOf, curveOfNurbs, curveCurveHits, nearestParam, slice as nurbsSlice, splineEntity, offsetNurbs, isClosed, derivsAt, domain, lineNurbs, joinCurves, subCurve } from './nurbs.js';
 
@@ -216,6 +216,7 @@ export function tessellate(e, doc = null, tol = 0) {
     }
     case 'POINT': return [[{ ...e.p }]];
     case 'IMAGE': { const q = imageCorners(e); return [[...q.map((a) => ({ ...a })), { ...q[0] }]]; }
+    case 'WIPEOUT': { const q = wipeoutRing(e); return [[...q.map((a) => ({ ...a })), { ...q[0] }]]; }
     case 'LEADER': return e.pts && e.pts.length > 1 ? [e.pts.map((a) => ({ ...a }))] : [];
     case 'MLEADER': return mleaderParts(e).flatMap((sub) => (sub.type === 'MTEXT' ? [[{ ...sub.p }]] : tessellate(sub, doc, tol)));
     case 'HATCH': return (e.loops || []).map((l) => hatchLoopPoints(l, tol)).filter((l) => l.length > 1);
@@ -418,7 +419,7 @@ export function transformEntity(e, m) {
   switch (e.type) {
     case 'LINE': c.p1 = apply(m, e.p1); c.p2 = apply(m, e.p2); break;
     case 'POINT': c.p = apply(m, e.p); break;
-    case 'IMAGE': return Object.assign(c, transformImage(e, m));
+    case 'IMAGE': case 'WIPEOUT': return Object.assign(c, transformImage(e, m));
     case 'SOLID': c.pts = e.pts.map((p) => apply(m, p)); break;
     case 'LEADER': c.pts = e.pts.map((p) => apply(m, p)); break;
     case 'MLEADER': return transformMLeader(e, (p) => apply(m, p));
