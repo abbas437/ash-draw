@@ -1294,6 +1294,64 @@ try {
   assert.deepEqual(shx.kinds, ['path', 'text']);
   assert.deepEqual(shx.filled, ['Arial text']);
 
+  step = 'tool panel: icons, tooltips, labels off (icon-only, still works), group colours off, both themes legible';
+  {
+    await page.evaluate(() => window.app.newDrawing());
+    const menuItem = async (item) => { await page.locator('#menubar .menu > button', { hasText: 'View' }).click(); await page.locator('#menubar .drop button', { hasText: item }).click(); };
+    const panel = () => page.evaluate(() => [...document.querySelectorAll('#tools button')].map((b) => ({
+      svg: b.querySelectorAll('svg').length, fallback: !!b.querySelector('svg[data-fallback]'), label: b.querySelector('.lbl')?.getClientRects().length ?? 0, w: b.getBoundingClientRect().width, color: getComputedStyle(b.querySelector('svg') ?? b).color, tool: b.dataset.tool })));
+    // icon contrast (WCAG 1.4.11, 3:1 for graphics) of every panel icon against its button
+    const iconContrast = () => page.evaluate(() => {
+      const L = (c) => { const [r, g, b] = c.match(/[\d.]+/g).slice(0, 3).map(Number).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+      let worst = { ratio: Infinity };
+      for (const b of document.querySelectorAll('#tools button')) {
+        const a = L(getComputedStyle(b.querySelector('svg')).color), bg = L(getComputedStyle(b).backgroundColor), ratio = (Math.max(a, bg) + 0.05) / (Math.min(a, bg) + 0.05);
+        if (ratio < worst.ratio) worst = { ratio, what: b.title };
+      }
+      return worst;
+    });
+    let btns = await panel();
+    assert.ok(btns.length >= 45, `${btns.length} panel buttons`);
+    assert.deepEqual(btns.filter((b) => b.svg !== 1 || b.fallback).map((b) => b.tool ?? 'other'), [], 'every panel button has its own <svg> icon');
+    assert.ok(btns.every((b) => b.label === 1), 'labels shown by default');
+    assert.equal(await page.locator('#tools button[data-tool=line]').getAttribute('title'), 'Line (L)');
+    const lineColour = btns.find((b) => b.tool === 'line').color, moveColour = btns.find((b) => b.tool === 'move').color, textColour = await page.evaluate(() => getComputedStyle(document.body).color);
+    assert.notEqual(lineColour, moveColour, 'Draw and Modify icons are coloured differently');
+    assert.notEqual(lineColour, textColour, 'group colour differs from the text colour');
+    assert.equal(await page.locator('#zoombar svg').count(), 3, 'zoom bar buttons have icons');
+    for (const theme of ['light', 'dark']) {
+      if (theme === 'dark') await menuItem('Dark theme');
+      const r = await iconContrast();
+      assert.ok(r.ratio >= 3, `${theme} icon contrast ${r.ratio.toFixed(2)} at ${r.what}`);
+      if (SHOTS) await page.locator('#tools').screenshot({ path: path.join(SHOTS, `tools_${theme}.png`) });
+    }
+    await menuItem('Dark theme');
+    // labels off: icon-only narrow buttons that still run their command
+    await menuItem('Tool labels');
+    btns = await panel();
+    assert.ok(btns.every((b) => b.label === 0 && b.svg === 1), 'labels hidden, icons kept');
+    assert.ok(btns.every((b) => b.w < 50), `icon-only buttons are narrow (${Math.max(...btns.map((b) => b.w))} px)`);
+    assert.equal(await page.evaluate(() => window.api.settingsGet('tools.labels')), false);
+    if (SHOTS) await page.locator('#tools').screenshot({ path: path.join(SHOTS, 'tools_icons_only.png') });
+    await page.evaluate(() => { const vp = window.app.vp; vp.resize?.(); vp.view = { ...vp.view, cx: 50, cy: 25, zoom: 8 }; vp.render(); });
+    await page.click('#tools button[data-tool=line]');
+    await clickWorld(0, 0); await clickWorld(40, 0);
+    await page.keyboard.press('Escape');
+    assert.deepEqual(await types(), ['LINE'], 'Line from the icon-only button draws a line');
+    await page.click('#tools button[data-tool=select]');
+    // group colours off: every icon in the text colour
+    await menuItem('Tool group colours');
+    btns = await panel();
+    const plain = await page.evaluate(() => getComputedStyle(document.querySelector('#tools button[data-tool=line]')).color);
+    assert.equal(btns.find((b) => b.tool === 'line').color, plain, 'colours off: icon drawn in the button text colour');
+    assert.equal(btns.find((b) => b.tool === 'move').color, plain);
+    assert.equal(await page.evaluate(() => window.api.settingsGet('tools.colours')), false);
+    // both remembered after a reload, then switched back on
+    await page.reload(); await page.waitForFunction(() => window.app && window.app.doc && document.getElementById('app').classList.contains('no-tool-labels') && document.getElementById('tools').classList.contains('no-colours'), null, { timeout: 10000 });
+    await menuItem('Tool labels'); await menuItem('Tool group colours');
+    assert.ok((await panel()).every((b) => b.label === 1), 'labels back on');
+  }
+
   step = 'csp';
   assert.deepEqual(await page.evaluate(() => window.__csp), []);
   assert.deepEqual(problems, []);

@@ -4,3 +4,4 @@ dist/
 build/libredwg/
 .cache/
 *.log
+test/e2e/out/
