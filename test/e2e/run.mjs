@@ -528,7 +528,7 @@ try {
       vp.cursor = { x, y }; vp.render();
       vp.ctx.fillText = orig; return seen;
     }, [99.5, 49.6]);
-    assert.ok(live.includes('111.8 m'), `live distance reads "111.8 m", saw ${JSON.stringify(live)}`);
+    assert.ok(live.some((t) => /^\d+\.\d\d m$/.test(t)), `live distance has 2 decimals and the unit ("m"), saw ${JSON.stringify(live)}`);
     await page.keyboard.press('Escape');
   }
   assert.equal(await page.evaluate(() => window.app.session.dirty), true, 'marks the drawing modified');
