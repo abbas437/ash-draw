@@ -10,7 +10,7 @@
 // drawing coordinates would otherwise lose precision when zoomed in).
 import { blockContentView } from './blocks.js';
 import { imageCorners, imageClipWorld, wipeoutRing } from './image.js';
-import { resolveColor, aciToRgb } from './aci.js';
+import { resolveColor, runColor } from './aci.js';
 import { parseMText, layoutMText } from './mtext.js';
 import {
   DEG, compose, translation, rotation, scaling, apply, isSimilarity, matScale, transformEntity, bulgeToArc,
@@ -103,7 +103,9 @@ class Builder {
     const lw = lineweightOf(e, layer, inherit);
     const lt = linetypeOf(e, layer, inherit);
     const lts = (e.ltscale ?? 1) * this.globalLt;
-    return { color, lw, lt, lts, layerName, alpha: opacityOf(e, layer, inherit) };
+    const st = { color, lw, lt, lts, layerName, alpha: opacityOf(e, layer, inherit) };
+    if (e.type === 'MTEXT') st.byLayer = resolveColor({ color: 256 }, layer, insertColor); // \C256 runs
+    return st;
   }
 
   emitInsert(e, m, inherit, rootId, depth, layerName, layer) {
@@ -385,8 +387,7 @@ class Builder {
     }
     // text strokes ignore the entity linetype (as in AutoCAD); a run colour overrides the entity colour
     const base = style.lt === 'CONTINUOUS' ? style : { ...style, lt: 'CONTINUOUS', _ks: undefined, _key: undefined };
-    const styleOf = (col) => (!col ? base : { ...base, _ks: undefined, _key: undefined, _css: undefined,
-      color: col.rgb ? { rgb: col.rgb, auto: false } : col.aci === 7 ? { rgb: [255, 255, 255], auto: true } : { rgb: aciToRgb(col.aci), auto: false } });
+    const styleOf = (col) => { const rc = runColor(col, style); return !rc ? base : { ...base, _ks: undefined, _key: undefined, _css: undefined, color: rc }; };
     for (const g of groups.values()) {
       if (!g.ops.length) continue;
       const l = g.line;
@@ -939,7 +940,7 @@ export function mtextLayout(ctx, it) {
 function drawMText(ctx, it, x, y, z, color, dark) {
   ctx.save();
   const lay = mtextLayout(ctx, it);
-  const colOf = (c) => (!c ? color : c.rgb ? rgbCss(c.rgb) : c.aci === 7 ? (dark ? '#ffffff' : '#000000') : rgbCss(aciToRgb(c.aci)));
+  const colOf = (c) => { const rc = runColor(c, it.style); return !rc ? color : rc.auto ? (dark ? '#ffffff' : '#000000') : rgbCss(rc.rgb); };
   ctx.translate(x, y);
   ctx.rotate(-it.rot);
   ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';

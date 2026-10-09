@@ -1,7 +1,7 @@
 // MTEXT inline formatting: parser, serialiser and layout (pure, no DOM).
 //   parseMText(raw, { height = 1 })  -> { paras: [{ align, runs: [Run] }] }
 //     Run = { text, props } | { stack: { a, b, type }, props } | { raw }   (raw = unknown code kept verbatim)
-//     props = { font, bold, italic, u, o, k, color: null | { aci } | { rgb: [r,g,b] }, h, oblique, wf, track, valign }
+//     props = { font, bold, italic, u, o, k, color: null (the MTEXT's colour) | { aci } (256 = its layer's) | { rgb: [r,g,b] }, h, oblique, wf, track, valign }
 //   mtextPlain(raw)                   -> displayed string (paragraphs joined with '\n', stacks as a/b)
 //   serializeMText(model, { height }) -> raw MTEXT codes for the model
 //   layoutMText(model, { width, attach, lineSpacing, measure }) -> { lines, glyphs, rules, width, height }
@@ -50,7 +50,7 @@ export function parseMText(raw, { height = 1 } = {}) {
       case 'U':
         if (/^\+[0-9A-Fa-f]{4}$/.test(s.slice(i + 2, i + 7))) { buf += String.fromCharCode(parseInt(s.slice(i + 3, i + 7), 16)); i += 7; continue; }
         break;
-      case 'C': { const v = Math.trunc(num(arg, 256)); set('color', v === 0 || v === 256 ? null : { aci: v }); i = next; continue; }
+      case 'C': { const v = Math.trunc(num(arg, 256)); set('color', v === 0 ? null : { aci: v }); i = next; continue; } // \C0 ByBlock = the MTEXT's colour; \C256 ByLayer
       case 'c': { const v = Math.trunc(num(arg, 0)) & 0xffffff; set('color', { rgb: [v & 255, (v >> 8) & 255, (v >> 16) & 255] }); i = next; continue; }
       case 'H': { const rel = /x$/i.test(arg); const v = num(rel ? arg.slice(0, -1) : arg, 1); set('h', rel ? props.h * v : v); i = next; continue; }
       case 'F': case 'f': {
@@ -102,7 +102,7 @@ function codesFor(p, base) {
   let out = '';
   if (p.font !== base.font || p.bold !== base.bold || p.italic !== base.italic) out += `\\f${p.font ?? 'Arial'}|b${p.bold ? 1 : 0}|i${p.italic ? 1 : 0};`;
   if (JSON.stringify(p.color) !== JSON.stringify(base.color)) {
-    if (!p.color) out += '\\C256;';
+    if (!p.color) out += '\\C0;';
     else if (p.color.aci != null) out += `\\C${p.color.aci};`;
     else { const [r, g, b] = p.color.rgb; out += `\\c${r | (g << 8) | (b << 16)};`; }
   }

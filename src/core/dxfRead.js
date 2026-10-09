@@ -16,6 +16,7 @@ import {
 } from './model.js';
 import { transformEntity, applyVec, apply, det, matScale } from './geom.js';
 import { dimStyleFromTags } from './dimsStyle.js';
+import { decodeColor } from './aci.js';
 import { dimDefFromTags } from './dims.js';
 import { mtextPlain } from './mtext.js';
 import { mleaderFromTags, mleaderStyleFromTags } from './mleader.js';
@@ -250,7 +251,7 @@ function normLt(name) {
 
 function readColor(rec) {
   if (rec.has(420)) return trueColor(rec.int(420));
-  if (rec.has(62)) { const c = rec.int(62); return c < 0 ? -c : c; }
+  if (rec.has(62)) { const c = decodeColor(rec.int(62)); return c === undefined ? BYLAYER : typeof c === 'number' ? Math.abs(c) : c; }
   return BYLAYER;
 }
 
@@ -736,15 +737,15 @@ function parseTokens(tk, onProgress = null) {
         const name = rec.str(2);
         if (!name) continue;
         stats.layerH.set(rec.str(5), name);
-        const c = rec.int(62, 7);
+        const raw = rec.int(62, 7), c = decodeColor(raw);   // raw CmColor values (converters) decoded; off = negative ACI
         const flags = rec.int(70);
         if (flags & 16) continue; // xref-dependent layer: recreated when the xref is loaded
         addLayer(doc, {
           name,
-          color: rec.has(420) ? trueColor(rec.int(420)) : Math.abs(c) || 7,
+          color: rec.has(420) ? trueColor(rec.int(420)) : c && typeof c === 'object' ? c : Math.abs(c ?? 7) % 256 || 7,
           linetype: normLt(rec.str(6, 'CONTINUOUS')),
           lineweight: rec.has(370) ? (rec.int(370) >= 0 ? rec.int(370) / 100 : rec.int(370)) : -3,
-          visible: c >= 0,
+          visible: !(raw < 0 && raw >= -256),
           frozen: (flags & 1) === 1,
           locked: (flags & 4) === 4,
           plot: rec.int(290, 1) !== 0,

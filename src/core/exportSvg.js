@@ -5,7 +5,7 @@
 // Also holds the scene helpers shared with exportPdf.js (path walking, colours, lineweights, dashes,
 // hatch pattern lines, text layout).
 import { buildScene } from './render.js';
-import { aciToRgb } from './aci.js';
+import { runColor } from './aci.js';
 import { layoutMText, approxMeasure } from './mtext.js';
 
 const TAU = Math.PI * 2;
@@ -59,10 +59,8 @@ export function colorRgb(style, { monochrome = false, darkBackground = false } =
 
 /** colour of an MTEXT run (null = the item's colour) as [r,g,b]; ACI 7 contrasts with the background */
 export function runRgb(c, style, colOpts = {}) {
-  if (colOpts.monochrome || !c) return colorRgb(style, colOpts);
-  if (c.rgb) return c.rgb;
-  if (c.aci === 7) return colOpts.darkBackground ? [255, 255, 255] : [0, 0, 0];
-  return aciToRgb(c.aci);
+  const rc = colOpts.monochrome ? null : runColor(c, style);
+  return colorRgb(rc ? { color: rc } : style, colOpts);
 }
 
 /** MTEXT layout of a scene item (local frame: origin at item.p, y down, drawing units); a fixed it.lay (SHX runs) first */

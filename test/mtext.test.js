@@ -29,7 +29,8 @@ test('underline / overline / strike', () => {
 
 test('colour: ACI and true colour (BGR)', () => {
   assert.deepEqual(one('\\C3;g').props.color, { aci: 3 });
-  assert.equal(one('\\C256;g').props.color, null);
+  assert.deepEqual(one('\\C256;g').props.color, { aci: 256 }, '\\C256 = ByLayer (the layer of the MTEXT)');
+  assert.equal(one('\\C0;g').props.color, null, '\\C0 = ByBlock (the colour of the MTEXT)');
   assert.deepEqual(one('\\c779263;y').props.color, { rgb: [255, 227, 11] });
 });
 

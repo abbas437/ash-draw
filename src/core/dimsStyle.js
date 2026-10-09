@@ -7,12 +7,15 @@
 //   resolveDimStyle(doc, name)       -> doc.dimStyles entry or default
 //   ensureDimStyle(doc, name)        -> adds the default to doc.dimStyles when missing
 
-/** variable -> [group code, kind]; kind: 'n' number, 'i' integer, 's' string, 'h' handle (name resolved) */
+import { aciField } from './aci.js';
+
+/** variable -> [group code, kind]; kind: 'n' number, 'i' integer, 'c' colour (ACI 0..256; raw CmColor values from
+ *  converters are decoded), 's' string, 'h' handle (name resolved) */
 export const DIMVARS = {
   DIMPOST: [3, 's'], DIMSCALE: [40, 'n'], DIMASZ: [41, 'n'], DIMEXO: [42, 'n'], DIMDLI: [43, 'n'], DIMEXE: [44, 'n'],
   DIMRND: [45, 'n'], DIMTXT: [140, 'n'], DIMLFAC: [144, 'n'], DIMGAP: [147, 'n'],
   DIMTIH: [73, 'i'], DIMTOH: [74, 'i'], DIMTAD: [77, 'i'], DIMZIN: [78, 'i'], DIMAZIN: [79, 'i'],
-  DIMTOFL: [172, 'i'], DIMCLRD: [176, 'i'], DIMCLRE: [177, 'i'], DIMCLRT: [178, 'i'], DIMADEC: [179, 'i'],
+  DIMTOFL: [172, 'i'], DIMCLRD: [176, 'c'], DIMCLRE: [177, 'c'], DIMCLRT: [178, 'c'], DIMADEC: [179, 'i'],
   DIMDEC: [271, 'i'], DIMAUNIT: [275, 'i'], DIMLUNIT: [277, 'i'], DIMDSEP: [278, 'i'], DIMJUST: [280, 'i'],
   DIMTXSTY: [340, 'h'], DIMBLK: [342, 'h'],
 };
@@ -43,6 +46,7 @@ export function dimStyleFromTags(tags, resolve = () => '') {
     const v = map.get(code);
     if (kind === 's') st[k] = v;
     else if (kind === 'h') st[k] = resolve(k, v) ?? '';
+    else if (kind === 'c') st[k] = aciField(v, st[k]);
     else { const x = kind === 'i' ? parseInt(v, 10) : parseFloat(v); if (Number.isFinite(x)) st[k] = x; }
   }
   // R12 files keep DIMBLK as a name in group 5
@@ -58,7 +62,7 @@ export function dimStyleTags(style, handles = () => undefined) {
     const v = style[k];
     if (v === undefined) continue;
     if (kind === 'h') { if (v) { const h = handles(k, v); if (h) out.push([code, h]); } }
-    else out.push([code, v]);
+    else out.push([code, kind === 'c' ? aciField(v) : v]);
   }
   return out;
 }

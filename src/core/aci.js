@@ -41,19 +41,73 @@ export function rgbToCss([r, g, b]) {
 }
 
 /**
+ * A colour value as read from a file -> ACI 0..256 (negative = layer off, kept), { r, g, b } true colour, or undefined
+ * (unresolvable). Converters such as LibreDWG pass the raw 32-bit CmColor of a DWG through (DIMSTYLE DIMCLRD/E/T,
+ * sometimes group 62): high byte 0xC0 ByLayer, 0xC1 ByBlock, 0xC2 true colour (low 24 bits), 0xC3 ACI (low byte),
+ * 0xC8 none (treated as ByBlock).
+ */
+export function decodeColor(v) {
+  if (v && typeof v === 'object') return v;
+  const n = typeof v === 'string' ? Number(v.trim()) : v;
+  if (!Number.isInteger(n)) return undefined;
+  if (n >= -256 && n <= 256) return n;
+  const u = n >>> 0;
+  switch (u >>> 24) {
+    case 0xc0: return 256;
+    case 0xc1: case 0xc8: return 0;
+    case 0xc2: return { r: (u >> 16) & 255, g: (u >> 8) & 255, b: u & 255 };
+    case 0xc3: return u & 255;
+    default: return undefined;
+  }
+}
+
+/** nearest ACI 1..255 to an [r,g,b] (for file fields that hold an ACI only) */
+export function rgbToAci([r, g, b]) {
+  let best = 7, bd = Infinity;
+  for (let i = 1; i < 256; i++) {
+    const [x, y, z] = TABLE[i], d = (x - r) ** 2 + (y - g) ** 2 + (z - b) ** 2;
+    if (d < bd) { bd = d; best = i; }
+  }
+  return best;
+}
+
+/** a colour for a file field that holds an ACI 0..256 only (DIMCLRD/E/T): raw values decoded, true colour -> nearest
+ *  ACI, unresolvable -> `fallback` */
+export function aciField(v, fallback = 0) {
+  const c = decodeColor(v);
+  if (c && typeof c === 'object') return rgbToAci([c.r, c.g, c.b]);
+  return c === undefined ? fallback : Math.abs(c);
+}
+
+const AUTO = Object.freeze({ rgb: [255, 255, 255], auto: true });
+
+/**
  * Resolve an entity's drawing colour.
- *  entity.color: ACI int, 256 BYLAYER, 0 BYBLOCK, or {r,g,b}.
+ *  entity.color: ACI int, 256 BYLAYER, 0 BYBLOCK, or {r,g,b} (raw CmColor values are decoded).
  *  layer: the entity's layer object (or null). insertColor: resolved colour of the enclosing INSERT
  *  (used for BYBLOCK), same return shape.
  * Returns { rgb:[r,g,b], auto:boolean } where auto=true means "ACI 7: swap white/black by background".
+ * Anything unresolvable is `auto` (the foreground), never a fixed white.
  */
 export function resolveColor(entity, layer, insertColor = null) {
-  let c = entity.color;
+  let c = decodeColor(entity.color);
   if (c && typeof c === 'object') return { rgb: [c.r, c.g, c.b], auto: false };
-  if (c === 256 || c === undefined || c === null) c = layer ? layer.color : 7;
-  if (c === 0) return insertColor ?? { rgb: [255, 255, 255], auto: true };
+  if (c === 256 || c === undefined || c === null) c = layer ? decodeColor(layer.color) : 7;
+  if (c === 0) return insertColor ?? { ...AUTO };
   if (c && typeof c === 'object') return { rgb: [c.r, c.g, c.b], auto: false };
-  c = Math.abs(c); // negative layer colour = layer is off; the colour itself is still |c|
-  if (c === 7) return { rgb: [255, 255, 255], auto: true };
+  c = Math.abs(c ?? 7); // negative layer colour = layer is off; the colour itself is still |c|
+  if (c === 7 || !(c >= 1 && c <= 255)) return { ...AUTO };
   return { rgb: aciToRgb(c), auto: false };
+}
+
+/**
+ * Colour of an MTEXT run (\C / \c) as { rgb, auto }; null = the MTEXT's own colour (no code, or \C0 ByBlock).
+ * \C256 (ByLayer) is the MTEXT's layer colour: style.byLayer, set by the scene for MTEXT items.
+ */
+export function runColor(c, style) {
+  if (!c) return null;
+  if (c.rgb) return { rgb: c.rgb, auto: false };
+  if (c.aci === 256) return style?.byLayer ?? null;
+  if (c.aci === 0) return null;
+  return resolveColor({ color: c.aci }, null);
 }

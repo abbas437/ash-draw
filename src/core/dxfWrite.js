@@ -15,6 +15,7 @@ const num = (n) => {
   return s;
 };
 import { dimStyleTags } from './dimsStyle.js';
+import { decodeColor } from './aci.js';
 import { dimensionTags, arrowEntities } from './dims.js';
 import { mleaderTags, mleaderStyleTags, mleaderParts } from './mleader.js';
 import { viewportTags } from './layouts.js';
@@ -113,8 +114,9 @@ export function writeDxf(doc, opts = {}) {
       if (ltKnown(e.linetype)) o.s(6, ltDefs.get(String(e.linetype).toUpperCase())?.name ?? e.linetype);
       else report.notes.push(`Linetype "${e.linetype}" is not defined; written as BYLAYER.`);
     }
-    if (typeof e.color === 'number') { if (e.color !== 256) o.p(62, e.color); }
-    else if (e.color && typeof e.color === 'object') o.p(420, (e.color.r << 16) | (e.color.g << 8) | e.color.b);
+    const col = decodeColor(e.color); // only ACI 0..256 or 420 true colour are written (raw CmColor values decoded)
+    if (typeof col === 'number') { if (col !== 256) o.p(62, col); }
+    else if (col && typeof col === 'object') o.p(420, (col.r << 16) | (col.g << 8) | col.b);
     if (e.lineweight !== undefined && e.lineweight !== -1) o.p(370, e.lineweight < 0 ? e.lineweight : snapLw(e.lineweight));
     if (e.ltscale && e.ltscale !== 1) o.p(48, e.ltscale);
     if (e.invisible) o.p(60, 1);
@@ -479,9 +481,9 @@ export function writeDxf(doc, opts = {}) {
   for (const l of layers) {
     rec('LAYER', l.name, 'AcDbLayerTableRecord', 'LAYER', 5, layerH.get(l.name));
     out.p(70, (l.frozen ? 1 : 0) | (l.locked ? 4 : 0));
-    const c = typeof l.color === 'number' ? l.color : 7;
-    out.p(62, l.visible === false ? -Math.abs(c || 7) : Math.abs(c || 7));
-    if (l.color && typeof l.color === 'object') out.p(420, (l.color.r << 16) | (l.color.g << 8) | l.color.b);
+    const lc = decodeColor(l.color), c = typeof lc === 'number' ? Math.abs(lc) % 256 || 7 : 7;
+    out.p(62, l.visible === false ? -c : c);
+    if (lc && typeof lc === 'object') out.p(420, (lc.r << 16) | (lc.g << 8) | lc.b);
     const lt = ltKnown(l.linetype) ? (ltDefs.get(String(l.linetype).toUpperCase())?.name ?? 'Continuous') : 'Continuous';
     out.s(6, lt === 'CONTINUOUS' ? 'Continuous' : lt);
     if (l.plot === false) out.p(290, 0);
