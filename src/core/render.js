@@ -573,6 +573,56 @@ function dashFor(doc, style, zoom) {
   return arr.length % 2 ? [...arr, ...arr] : arr;
 }
 
+/** CSS px around the view inside which path coordinates are handed to the canvas unchanged (see drawScene) */
+const GUARD_PX = 2048;
+/** arcs with a larger screen radius are drawn as chords of their visible part */
+const ARC_MAX_PX = 1e5;
+/** Liang-Barsky: parameter range [t0, t1] of p + t (dx, dy), t in [0, 1], inside the box; null when outside */
+export function clipSegment(px, py, dx, dy, x0, y0, x1, y1) {
+  let t0 = 0, t1 = 1;
+  const edge = (p, q) => {
+    if (p === 0) return q >= 0;
+    const r = q / p;
+    if (p < 0) { if (r > t1) return false; if (r > t0) t0 = r; } else { if (r < t0) return false; if (r < t1) t1 = r; }
+    return true;
+  };
+  if (!edge(-dx, px - x0) || !edge(dx, x1 - px) || !edge(-dy, py - y0) || !edge(dy, y1 - py)) return null;
+  return [t0, t1];
+}
+/** Sutherland-Hodgman: ring [x0, y0, x1, y1, ...] clipped to the box; `out(points)` gets the result when not empty */
+export function clipRing(ring, x0, y0, x1, y1, out) {
+  let pts = ring;
+  const pass = (inside, cut) => {
+    const n = pts.length, res = [];
+    for (let i = 0; i < n; i += 2) {
+      const ax = pts[i], ay = pts[i + 1], bx = pts[(i + 2) % n], by = pts[(i + 3) % n], ia = inside(ax, ay), ib = inside(bx, by);
+      if (ia) res.push(ax, ay);
+      if (ia !== ib) res.push(...cut(ax, ay, bx, by));
+    }
+    pts = res;
+  };
+  const cx = (x) => (ax, ay, bx, by) => [x, ay + (by - ay) * (x - ax) / (bx - ax)];
+  const cy = (y) => (ax, ay, bx, by) => [ax + (bx - ax) * (y - ay) / (by - ay), y];
+  pass((x) => x >= x0, cx(x0)); if (pts.length) pass((x) => x <= x1, cx(x1));
+  if (pts.length) pass((x, y) => y >= y0, cy(y0)); if (pts.length) pass((x, y) => y <= y1, cy(y1));
+  if (pts.length >= 6) out(pts);
+}
+/** angle range [a, b] (radians, b - a < pi) seen from world centre (cx, cy) covering the view grown by `pad` px;
+ *  null when the centre is inside it */
+function arcWindow(cx, cy, view, pad) {
+  const hw = (view.width / 2 + pad) / view.zoom, hh = (view.height / 2 + pad) / view.zoom;
+  const ox = view.cx - cx, oy = view.cy - cy;
+  if (Math.abs(ox) <= hw && Math.abs(oy) <= hh) return null;
+  const ref = Math.atan2(oy, ox);
+  let lo = Infinity, hi = -Infinity;
+  for (const [x, y] of [[ox - hw, oy - hh], [ox + hw, oy - hh], [ox + hw, oy + hh], [ox - hw, oy + hh]]) {
+    let a = Math.atan2(y, x) - ref;
+    a -= Math.round(a / TAU) * TAU;
+    lo = Math.min(lo, a); hi = Math.max(hi, a);
+  }
+  return [ref + lo, ref + hi];
+}
+
 export function drawScene(ctx, scene, view, opts = {}) {
   const { width: W, height: H, zoom: z } = view;
   const bg = opts.background ?? '#1b1f23';
@@ -614,6 +664,106 @@ export function drawScene(ctx, scene, view, opts = {}) {
         i += 8;
       } else if (op === OP_Z) { ctx.closePath(); i += 1; } else break;
     }
+  };
+
+  // Deep zoom: screen coordinates of far-away parts of visible items grow without bound (a 9 km line at 1 mm/px ends
+  // ~1e7 px off screen). GPU canvas backends drop or distort paths with such coordinates, and one bad point loses the
+  // whole batch. So paths are clipped in doubles to a guard band around the view before they reach the canvas:
+  // strokes segment by segment (dash phase kept), fill rings with Sutherland-Hodgman.
+  const gx0 = -GUARD_PX, gy0 = -GUARD_PX, gx1 = W + GUARD_PX, gy1 = H + GUARD_PX;
+  const inGuard = (x, y) => x >= gx0 && x <= gx1 && y >= gy0 && y <= gy1;
+  const far = (ops) => {
+    for (let i = 0; i < ops.length;) {
+      const op = ops[i];
+      if (op === OP_M || op === OP_L) { if (!inGuard(sx(ops[i + 1]), sy(ops[i + 2]))) return true; i += 3; }
+      else if (op === OP_A) { const r = ops[i + 3] * z, x = sx(ops[i + 1]), y = sy(ops[i + 2]); if (!inGuard(x - r, y - r) || !inGuard(x + r, y + r)) return true; i += 6; }
+      else if (op === OP_E) { const r = Math.max(ops[i + 3], ops[i + 4]) * z, x = sx(ops[i + 1]), y = sy(ops[i + 2]); if (!inGuard(x - r, y - r) || !inGuard(x + r, y + r)) return true; i += 8; }
+      else if (op === OP_Z) i += 1; else break;
+    }
+    return false;
+  };
+  /** stroke outline of `ops` clipped to the guard band; `period` (px) keeps the dash phase of clipped segments */
+  const strokePath = (ops, period = 0) => {
+    if (!far(ops)) { tracePath(ops); return; }
+    let px = 0, py = 0, fx = 0, fy = 0, pen = false, L = 0;
+    const seg = (qx, qy) => { // p -> q, both screen
+      const dx = qx - px, dy = qy - py, len = Math.hypot(dx, dy);
+      if (pen && inGuard(qx, qy)) ctx.lineTo(qx, qy);
+      else {
+        const t = clipSegment(px, py, dx, dy, gx0, gy0, gx1, gy1);
+        if (!t) pen = false;
+        else {
+          if (!pen || t[0] > 0) {
+            let t0 = t[0];
+            if (period > 0 && len > 0) { const back = (L + t0 * len) % period; if (back <= GUARD_PX) t0 -= back / len; }
+            ctx.moveTo(px + dx * t0, py + dy * t0);
+          }
+          ctx.lineTo(px + dx * t[1], py + dy * t[1]);
+          pen = t[1] === 1;
+        }
+      }
+      if (period > 0) L += len;
+      px = qx; py = qy;
+    };
+    for (let i = 0; i < ops.length;) {
+      const op = ops[i];
+      if (op === OP_M) { px = fx = sx(ops[i + 1]); py = fy = sy(ops[i + 2]); L = 0; pen = inGuard(px, py); if (pen) ctx.moveTo(px, py); i += 3; }
+      else if (op === OP_L) { seg(sx(ops[i + 1]), sy(ops[i + 2])); i += 3; }
+      else if (op === OP_Z) { seg(fx, fy); i += 1; }
+      else if (op === OP_A || op === OP_E) {
+        const e = op === OP_E, n = e ? 8 : 6, cx = ops[i + 1], cy = ops[i + 2], R = ops[i + 3];
+        const Ry = e ? ops[i + 4] : R, rot = e ? ops[i + 5] : 0, a0 = ops[e ? i + 6 : i + 4], sw = ops[e ? i + 7 : i + 5];
+        const r = Math.max(R, Ry) * z, ccx = sx(cx), ccy = sy(cy);
+        const at = (t) => { const c = Math.cos(t) * R, s = Math.sin(t) * Ry, cr = Math.cos(rot), sr = Math.sin(rot); return [sx(cx + c * cr - s * sr), sy(cy + c * sr + s * cr)]; };
+        const [ex, ey] = at(a0 + sw);
+        if (R * z < 0.01 || ccx + r < gx0 || ccx - r > gx1 || ccy + r < gy0 || ccy - r > gy1) { pen = false; px = ex; py = ey; i += n; continue; }
+        if (r <= ARC_MAX_PX) { // small enough: native arc, starting with a move if the pen was lifted
+          if (!pen) { const [bx, by] = at(a0); ctx.moveTo(bx, by); }
+          if (e) ctx.ellipse(ccx, ccy, R * z, Math.max(Ry * z, 0.01), -rot, -a0, -(a0 + sw), sw > 0);
+          else ctx.arc(ccx, ccy, r, -a0, -(a0 + sw), sw > 0);
+          if (period > 0) L += Math.abs(sw) * r;
+          pen = true; px = ex; py = ey; i += n; continue;
+        }
+        // huge radius: only the part near the view, as chords within 0.1 px of the curve, through the segment clipper
+        const step = 2 * Math.sqrt(0.2 / r), win = e ? null : arcWindow(cx, cy, view, GUARD_PX), d = Math.sign(sw) || 1;
+        const lo = Math.min(a0, a0 + sw), hi = Math.max(a0, a0 + sw), pieces = [];
+        if (!win) pieces.push([lo, hi]);
+        else for (let k = Math.floor((lo - win[1]) / TAU); k <= Math.ceil((hi - win[0]) / TAU); k++) {
+          const p0 = Math.max(lo, win[0] + k * TAU), p1 = Math.min(hi, win[1] + k * TAU);
+          if (p1 > p0) pieces.push([p0, p1]);
+        }
+        if (d < 0) pieces.reverse();
+        for (const [p0, p1] of pieces) {
+          if ((p1 - p0) / step > 200000) continue;
+          const s0 = d > 0 ? p0 : p1, s1 = d > 0 ? p1 : p0, m = Math.max(1, Math.ceil((p1 - p0) / step));
+          const L0 = L;
+          if (period > 0) L = L0 + Math.abs(s0 - a0) * r;
+          pen = false; [px, py] = at(s0);
+          for (let j = 1; j <= m; j++) { const [qx, qy] = at(s0 + (s1 - s0) * j / m); seg(qx, qy); }
+          L = L0;
+        }
+        if (period > 0) L += Math.abs(sw) * r;
+        pen = false; px = ex; py = ey; i += n;
+      } else break;
+    }
+  };
+  /** fill outline of `ops`: rings made of lines are clipped to the guard band (fills stay correct inside it) */
+  const fillPath = (ops) => {
+    if (!far(ops)) { tracePath(ops); return; }
+    let ring = [], plain = true, start = 0;
+    const flush = (end) => {
+      if (plain) clipRing(ring, gx0, gy0, gx1, gy1, (pts) => { for (let j = 0; j < pts.length; j += 2) (j ? ctx.lineTo(pts[j], pts[j + 1]) : ctx.moveTo(pts[j], pts[j + 1])); ctx.closePath(); });
+      else tracePath(ops.slice(start, end));
+      ring = []; plain = true;
+    };
+    for (let i = 0; i < ops.length;) {
+      const op = ops[i];
+      if (op === OP_M) { if (ring.length || !plain) flush(i); start = i; ring.push(sx(ops[i + 1]), sy(ops[i + 2])); i += 3; }
+      else if (op === OP_L) { ring.push(sx(ops[i + 1]), sy(ops[i + 2])); i += 3; }
+      else if (op === OP_Z) i += 1;
+      else if (op === OP_A) { plain = false; i += 6; } else if (op === OP_E) { plain = false; i += 8; } else break;
+    }
+    if (ring.length || !plain) flush(ops.length);
   };
 
   // one pass over the visible items buckets them for the drawing phases (grid-culled, scene order kept).
@@ -679,7 +829,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
         // single-loop boundaries share one non-zero path, all wound the same way so overlaps do not cancel
         for (const it of list) if (loopCount(it) === 1) traceLoopCcw(ctx, it, sx, sy);
         ctx.fill();
-        for (const it of list) if (loopCount(it) !== 1) { ctx.beginPath(); tracePath(it.ops); ctx.fill('evenodd'); }
+        for (const it of list) if (loopCount(it) !== 1) { ctx.beginPath(); fillPath(it.ops); ctx.fill('evenodd'); }
       }
       ctx.restore();
     }
@@ -688,12 +838,12 @@ export function drawScene(ctx, scene, view, opts = {}) {
       const col = colorOf(it.style), a = aOf(it.style);
       ctx.globalAlpha = a;
       if (it.kind === 'fill' || it.solid) {
-        ctx.beginPath(); tracePath(it.ops);
+        ctx.beginPath(); fillPath(it.ops);
         ctx.fillStyle = col; ctx.fill('evenodd');
       } else if (it.lines) {
-        drawPatternHatch(ctx, it, view, col, tracePath, sx, sy, fillAlphaPattern * a);
+        drawPatternHatch(ctx, it, view, col, fillPath, sx, sy, fillAlphaPattern * a);
       } else {
-        ctx.beginPath(); tracePath(it.ops); ctx.save(); ctx.globalAlpha = fillAlphaPattern * a; ctx.fillStyle = col; ctx.fill('evenodd'); ctx.restore();
+        ctx.beginPath(); fillPath(it.ops); ctx.save(); ctx.globalAlpha = fillAlphaPattern * a; ctx.fillStyle = col; ctx.fill('evenodd'); ctx.restore();
       }
     }
     ctx.globalAlpha = 1;
@@ -725,11 +875,11 @@ export function drawScene(ctx, scene, view, opts = {}) {
 
     // 2. line work, batched by style
     for (const { st, items } of batches.values()) {
+      const dash = dashFor(doc, st, z), period = dash ? dash.reduce((a, b) => a + b, 0) : 0;
       ctx.beginPath();
-      for (const it of items) tracePath(it.ops);
+      for (const it of items) strokePath(it.ops, period);
       ctx.strokeStyle = colorOf(st); ctx.globalAlpha = aOf(st);
       ctx.lineWidth = lwPx(st);
-      const dash = dashFor(doc, st, z);
       ctx.setLineDash(dash ?? []);
       ctx.stroke();
     }
@@ -787,7 +937,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
     const per = Array.from({ length: levels + 1 }, () => ({ wipe: [], items: [] }));
     for (const it of vis) (it.kind === 'wipeout' ? per[it.wl].wipe : per[it.wl].items).push(it);
     for (const { wipe, items } of per) {
-      if (wipe.length) { ctx.beginPath(); for (const it of wipe) tracePath(it.ops); ctx.fillStyle = bg; ctx.fill(); }
+      if (wipe.length) { ctx.beginPath(); for (const it of wipe) fillPath(it.ops); ctx.fillStyle = bg; ctx.fill(); }
       if (items.length) drawItems(items);
     }
   }
@@ -803,7 +953,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
       const list = scene.byId.get(id);
       if (!list) continue;
       for (const it of list) {
-        if (it.kind === 'path' || it.kind === 'hatch' || it.kind === 'fill' || it.kind === 'image' || it.kind === 'wipeout') { ctx.beginPath(); tracePath(it.ops); ctx.stroke(); }
+        if (it.kind === 'path' || it.kind === 'hatch' || it.kind === 'fill' || it.kind === 'image' || it.kind === 'wipeout') { ctx.beginPath(); strokePath(it.ops, 9); ctx.stroke(); }
         else if (it.kind === 'text' || it.kind === 'point') {
           const b = it.bbox;
           if (b) ctx.strokeRect(sx(b.minx) - 2, sy(b.maxy) - 2, (b.maxx - b.minx) * z + 4, (b.maxy - b.miny) * z + 4);
@@ -1031,9 +1181,20 @@ export function fitView(bbox, width, height, margin = 0.05) {
 }
 export const screenToWorld = (view, sx, sy) => ({ x: view.cx + (sx - view.width / 2) / view.zoom, y: view.cy - (sy - view.height / 2) / view.zoom });
 export const worldToScreen = (view, p) => ({ x: (p.x - view.cx) * view.zoom + view.width / 2, y: view.height / 2 - (p.y - view.cy) * view.zoom });
-export function zoomAt(view, sx, sy, factor) {
+/** zoom range (px per drawing unit) for a drawing with extents `bbox`: out to 1/1000 of the fitted zoom, in to
+ *  1e-9 of the extents per pixel, and never so deep that a pixel is under 2^-36 of the largest coordinate (doubles
+ *  then still place points to ~1e-5 px, so panning does not wobble) */
+export function zoomLimits(bbox, width, height) {
+  if (!bbox || !Number.isFinite(bbox.minx)) return { min: 1e-9, max: 1e9 };
+  const size = Math.max(bbox.maxx - bbox.minx, bbox.maxy - bbox.miny, 1e-6);
+  const mag = Math.max(Math.abs(bbox.minx), Math.abs(bbox.maxx), Math.abs(bbox.miny), Math.abs(bbox.maxy), size);
+  const fit = fitView(bbox, width, height, 0.04).zoom;
+  return { min: fit / 1000, max: Math.max(fit, Math.min(1e9 / size, 2 ** 36 / mag)) };
+}
+export function zoomAt(view, sx, sy, factor, limits = { min: 1e-9, max: 1e9 }) {
   const before = screenToWorld(view, sx, sy);
-  const zoom = Math.min(1e9, Math.max(1e-9, view.zoom * factor));
+  const zoom = Math.min(Math.max(limits.max, Math.min(view.zoom, 1e9)), Math.max(Math.min(limits.min, view.zoom), view.zoom * factor));
+  if (zoom === view.zoom) return view;
   const v = { ...view, zoom };
   const after = screenToWorld(v, sx, sy);
   return { ...v, cx: v.cx + (before.x - after.x), cy: v.cy + (before.y - after.y) };

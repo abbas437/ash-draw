@@ -1,6 +1,6 @@
 // ASH Draw Studio - canvas viewport: view state, pan/zoom, snapping, selection, overlays.
 // The active tool receives world-space events through vp.tool (see tools.js).
-import { buildScene, updateScene, drawScene, drawLayout, fitView, screenToWorld, worldToScreen, zoomAt } from '../src/core/render.js';
+import { buildScene, updateScene, drawScene, drawLayout, fitView, screenToWorld, worldToScreen, zoomAt, zoomLimits } from '../src/core/render.js';
 import { SpatialIndex, findSnap, orthoPoint, polarPoint, pickEntity, selectInBox } from '../src/core/pick.js';
 import { bboxOf, growBox } from '../src/core/geom.js';
 import { gripsOf } from './grips.js';
@@ -122,8 +122,13 @@ export class Viewport {
     this.view = fitView(b, this.view.width, this.view.height, 0.04);
     this.requestRender(); this.emit('view');
   }
+  /** zoom about a screen point, within zoomLimits of the model extents (paper space: of the sheet; inside a viewport
+   *  only the absolute range) */
   zoomBy(f, sx = this.view.width / 2, sy = this.view.height / 2) {
-    this.view = zoomAt(this.view, sx, sy, f);
+    const b = this.mspace ? null : this.layout ? paperRects(this.layout).sheet : this.scene?.bbox;
+    const v = zoomAt(this.view, sx, sy, f, zoomLimits(b, this.view.width, this.view.height));
+    if (v === this.view) return;
+    this.view = v;
     this.requestRender(); this.emit('view');
   }
   panPixels(dx, dy) {
