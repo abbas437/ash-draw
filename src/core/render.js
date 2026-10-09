@@ -59,7 +59,9 @@ class Builder {
     this.doc = doc;
     this.items = [];
     this.byId = new Map();
-    this.bbox = null;
+    this.bbox = null; // drawing extents: items built from ui placeholders (unloaded xref path, image / OLE label) excluded
+    this.uiBox = null; // the extents of those placeholder items (the scene bbox when there is nothing else)
+    this._ui = false;
     this.globalLt = doc.header.ltscale || 1;
     this.work = 0; this.frac = 0; // insertSteps: block entities since its last yield; the progress it yields
   }
@@ -163,11 +165,20 @@ class Builder {
     let list = this.byId.get(rootId);
     if (!list) this.byId.set(rootId, (list = []));
     list.push(item);
-    if (item.bbox) this.bbox = unionBox(this.bbox, item.bbox);
+    if (this._ui) item.ui = true;
+    if (item.bbox) { if (this._ui) this.uiBox = unionBox(this.uiBox, item.bbox); else this.bbox = unionBox(this.bbox, item.bbox); }
+  }
+
+  /** build(); the items of a `ui: true` entity (a placeholder label) are marked ui and kept out of the drawing extents
+   *  (zoom extents / fit), as AutoCAD keeps an unloaded xref's path at 0,0 out of EXTMIN/EXTMAX. Still drawn and picked. */
+  build(e, m, style, rootId) {
+    if (!e.ui || this._ui) { this._build(e, m, style, rootId); return; }
+    this._ui = true;
+    try { this._build(e, m, style, rootId); } finally { this._ui = false; }
   }
 
   /** ops builders; `m` is a similarity matrix (or null when e is already in world coordinates) */
-  build(e, m, style, rootId) {
+  _build(e, m, style, rootId) {
     const P = (p) => (m ? apply(m, p) : p);
     const s = m ? matScale(m) : 1;
     const flip = m ? m[0] * m[3] - m[1] * m[2] < 0 : false;
@@ -503,22 +514,23 @@ export function* buildSceneSteps(doc) {
   }
   return {
     items: b.items, byId: b.byId, doc, version: 0, grid: null,
-    entIndex, _entLen: doc.entities.length, _bbox: b.bbox, _bboxDirty: false,
+    entIndex, _entLen: doc.entities.length, _bbox: b.bbox ?? b.uiBox, _bboxDirty: false,
     // the scene bbox: grown on insert by updateScene, recomputed lazily only after an edge item was removed
     get bbox() { if (this._bboxDirty) { this._bbox = itemsBox(this.items); this._bboxDirty = false; } return this._bbox; },
     set bbox(v) { this._bbox = v; this._bboxDirty = false; },
   };
 }
 
-function itemsBox(items) {
+/** the drawing extents of the items: ui placeholder items left out unless there is nothing else */
+function itemsBox(items, ui = false) {
   let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
   for (let i = 0; i < items.length; i++) {
     const b = items[i].bbox;
-    if (!b) continue;
+    if (!b || (!ui && items[i].ui)) continue;
     if (b.minx < minx) minx = b.minx; if (b.miny < miny) miny = b.miny;
     if (b.maxx > maxx) maxx = b.maxx; if (b.maxy > maxy) maxy = b.maxy;
   }
-  return minx <= maxx ? { minx, miny, maxx, maxy } : null;
+  return minx <= maxx ? { minx, miny, maxx, maxy } : ui ? null : itemsBox(items, true);
 }
 
 /** the scene's item grid, built on first use (drawing) and kept up to date by updateScene */
@@ -595,7 +607,11 @@ export function updateScene(scene, ids) {
     if (nu.length) scene.byId.set(id, nu); else scene.byId.delete(id);
     for (const it of nu) {
       if (grid) grid.insert(it);
-      if (!scene._bboxDirty && it.bbox) scene._bbox = unionBox(scene._bbox, it.bbox);
+      if (scene._bboxDirty || !it.bbox) continue;
+      if (it.ui) { if (!scene._bbox) scene._bboxDirty = true; continue; } // a placeholder alone: its own box (itemsBox)
+      // the bbox was the placeholders' alone (nothing else drawn): recompute, so they drop out of it
+      if (scene._bbox && !items.some((o) => o.bbox && !o.ui && !o._dead && o !== it)) scene._bboxDirty = true;
+      else scene._bbox = unionBox(scene._bbox, it.bbox);
     }
   }
   if (firstDead >= 0) {

@@ -231,3 +231,24 @@ test('a huge-radius arc with a small sweep adds only its own span to the scene e
   assert.ok(Math.abs(b.minx + x) < 1e-6 && Math.abs(b.maxx - x) < 1e-6, JSON.stringify(b));
   assert.ok(Math.abs(b.maxy) < 1e-6 && b.miny > -10, JSON.stringify(b)); // top at the 90 deg quadrant, not -280000
 });
+
+test('extents leave out an unloaded xref placeholder at 0,0 (still drawn); a document of placeholders only fits them', () => {
+  const doc = newDocument();
+  addBlock(doc, 'SURVEY', { x: 0, y: 0 }).xref = { path: 'C:\\site\\survey.dwg', status: 'Not found', flags: 4 };
+  addEntity(doc, makeInsert('SURVEY', { x: 0, y: 0 }));
+  const line = addEntity(doc, makeLine({ x: 600000, y: 2700000 }, { x: 600100, y: 2700050 }));
+  const sc = buildScene(doc);
+  assert.ok(sc.items.some((it) => it.ui), 'the xref path is drawn');
+  assert.deepEqual(sc.bbox, { minx: 600000, miny: 2700000, maxx: 600100, maxy: 2700050 });
+  sc._bboxDirty = true; // recomputed from the items (itemsBox): the same
+  assert.deepEqual(sc.bbox, { minx: 600000, miny: 2700000, maxx: 600100, maxy: 2700050 });
+  const ph = addEntity(doc, makeInsert('SURVEY', { x: -10, y: -10 }));
+  updateScene(sc, [ph.id]);
+  assert.deepEqual(sc.bbox, { minx: 600000, miny: 2700000, maxx: 600100, maxy: 2700050 }, 'a placeholder added later does not grow it');
+  doc.entities = doc.entities.filter((e) => e.id !== line.id);
+  updateScene(sc, [line.id]);
+  assert.ok(sc.bbox && sc.bbox.maxx < 1000, 'placeholders only: their own box');
+  const back = addEntity(doc, makeLine({ x: 600000, y: 2700000 }, { x: 600100, y: 2700050 }));
+  updateScene(sc, [back.id]);
+  assert.deepEqual(sc.bbox, { minx: 600000, miny: 2700000, maxx: 600100, maxy: 2700050 }, 'real geometry again: placeholders drop out');
+});
