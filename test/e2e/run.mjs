@@ -520,6 +520,17 @@ try {
   assert.match(await panel(), /^Delta X = 100 m, Delta Y = 50 m$/m);
   assert.match(await page.locator('#measure-panel .mp-units').textContent(), /Units: m$/);
   assert.equal(await page.locator('#units').textContent(), 'Units: m');
+  { // the live value while dragging a distance uses the drawing's precision and unit, like the result
+    await typeCmd('mea'); await clickWorld(0.6, 0.4);
+    const live = await page.evaluate(async ([x, y]) => {
+      const vp = window.app.vp, seen = [], orig = vp.ctx.fillText;
+      vp.ctx.fillText = function (t, ...r) { seen.push(String(t)); return orig.call(this, t, ...r); };
+      vp.cursor = { x, y }; vp.render();
+      vp.ctx.fillText = orig; return seen;
+    }, [99.5, 49.6]);
+    assert.ok(live.includes('111.8 m'), `live distance reads "111.8 m", saw ${JSON.stringify(live)}`);
+    await page.keyboard.press('Escape');
+  }
   assert.equal(await page.evaluate(() => window.app.session.dirty), true, 'marks the drawing modified');
   const savedUnits = () => page.evaluate(async () => {
     const { writeDxf } = await import('/src/core/dxfWrite.js'); const { readDxf } = await import('/src/core/dxfRead.js');

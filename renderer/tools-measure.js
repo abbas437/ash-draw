@@ -292,7 +292,7 @@ export class MeasureGeomTool {
     if (this.mode === 'distance' && this.pts.length) {
       c.beginPath(); path([this.pts[0], cur]); c.stroke();
       const s = S(cur); c.fillStyle = vp.inkColor; c.font = '12px "Segoe UI", sans-serif';
-      c.fillText(f4(dist(this.pts[0], cur)), s.x + 14, s.y + 18);
+      c.fillText(this.len(dist(this.pts[0], cur)), s.x + 14, s.y + 18);
     }
     if (this.mode === 'angle' && this.sub === 'vertex' && this.pts.length) { c.beginPath(); path([...this.pts.slice(1, 2), this.pts[0], cur]); c.stroke(); }
   }

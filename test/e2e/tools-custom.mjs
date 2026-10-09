@@ -188,6 +188,55 @@ try {
     assert.equal(await page.evaluate(() => document.activeElement?.id), 'cv', 'Escape reached the command line and returned to the drawing');
   }
 
+  step = 'Top band at 1280 px with labels: no horizontal overflow, groups as tall as the band body';
+  {
+    await page.evaluate(() => window.app.setToolPlacement('top', false));
+    await page.evaluate(() => window.app.setToolPanel('labels', true, false));
+    await page.setViewportSize({ width: 1280, height: 850 });
+    await page.evaluate(() => window.app.fitBand());
+    const m = await page.evaluate(() => {
+      const box = document.getElementById('tools');
+      const gs = [...box.querySelectorAll(':scope > .tgroup')].filter((g) => g.getClientRects().length);
+      return { sw: box.scrollWidth, cw: box.clientWidth, n: gs.length, hs: gs.map((g) => g.getBoundingClientRect().height), body: box.clientHeight - parseFloat(getComputedStyle(box).paddingTop) - parseFloat(getComputedStyle(box).paddingBottom) };
+    });
+    assert.ok(m.sw <= m.cw, `no horizontal overflow (${m.sw} > ${m.cw})`);
+    assert.ok(m.n > 0);
+    assert.ok(m.hs.every((h) => Math.abs(h - m.body) <= 1), `every visible group is as tall as the band body (${m.body}): ${m.hs}`);
+  }
+
+  step = 'Top band: a collapsed group opens a popup with its tools; choosing one activates it and closes the popup; Escape closes';
+  {
+    const ovf = () => page.evaluate(() => document.querySelectorAll('#tools .tgroup.ovf').length);
+    const n1280 = await ovf();
+    assert.ok(n1280 >= 1, 'at least one group collapsed at 1280');
+    const g = await page.evaluate(() => { const t = document.querySelector('#tools .tgroup.ovf'); return t.dataset.group; });
+    const tg = `#tools .tgroup.ovf[data-group="${g}"]`;
+    assert.equal(await page.locator(`${tg} > .gpop`).count(), 0, 'closed: no popup');
+    await page.click(`${tg} > .gmore`);
+    const pop = await page.evaluate((s) => {
+      const b = document.querySelector(`${s} > .gpop`); if (!b) return null;
+      return { ids: [...b.querySelectorAll('button[data-tool]')].map((x) => x.dataset.tool), vis: b.getClientRects().length > 0 };
+    }, tg);
+    assert.ok(pop && pop.vis, 'popup shown');
+    assert.deepEqual(pop.ids, await panelIds(g), 'popup lists the group tool buttons');
+    assert.ok(pop.ids.length > 0);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#tools .gpop').count(), 0, 'Escape closes the popup');
+    await page.click(`${tg} > .gmore`);
+    const pick = pop.ids.find((id) => id !== 'select') ?? pop.ids[0];
+    await page.evaluate(() => window.app.setTool('select'));
+    await page.click(`${tg} > .gpop button[data-tool="${pick}"]`);
+    assert.equal(await page.evaluate(() => window.app.toolId), pick, 'the tool is active');
+    assert.equal(await page.locator('#tools .gpop').count(), 0, 'the popup closed');
+    await page.evaluate(() => window.app.setTool('select'));
+
+    step = 'Top band: widening to 1920 with labels off re-expands groups';
+    await page.evaluate(() => window.app.setToolPanel('labels', false, false));
+    await page.setViewportSize({ width: 1920, height: 850 });
+    await page.waitForFunction((n) => document.querySelectorAll('#tools .tgroup.ovf').length < n, n1280, { timeout: 5000 });
+    assert.ok(await ovf() < n1280);
+  }
+
   assert.deepEqual(problems, []);
   console.log('draw tools-custom e2e: OK');
 } catch (err) {
