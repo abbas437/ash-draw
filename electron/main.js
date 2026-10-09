@@ -5,6 +5,7 @@ import { promises as fs, mkdirSync, readFileSync, renameSync, statSync, writeFil
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createDwgBridge, DWG_OUT_VERSIONS } from './dwgBridge.js';
+import { createHandoffStore } from './handoff.js';
 import { createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isOdaExeName, ODA_DOWNLOAD_URL } from './odaConverter.js';
 import { cleanSession, isPathString, pushRecent, startupModeOf } from './sessionLists.js';
 import { xrefCandidates } from '../src/core/xref.js';
@@ -97,21 +98,9 @@ async function readGranted(p) {
 // The DXF of a converted DWG (hundreds of MB for big drawings) is fetched by the window's reader worker instead of
 // being structured-cloned through IPC on the window's thread. A token is random, served once, and expires.
 const OPEN_PREFIX = '/_open/';
-const OPEN_TTL_MS = 5 * 60_000;
-const handoffs = new Map(); // token -> {bytes, timer}
-function handOff(bytes) {
-  const token = randomBytes(24).toString('hex');
-  const timer = setTimeout(() => handoffs.delete(token), OPEN_TTL_MS);
-  handoffs.set(token, { bytes, timer });
-  return `${SCHEME}://${HOST}${OPEN_PREFIX}${token}`;
-}
-function takeHandOff(pathname) {
-  const token = pathname.slice(OPEN_PREFIX.length), h = /^[0-9a-f]{48}$/.test(token) ? handoffs.get(token) : null;
-  if (!h) return null;
-  handoffs.delete(token);
-  clearTimeout(h.timer);
-  return h.bytes;
-}
+const handoffs = createHandoffStore({ ttlMs: 60_000, maxEntries: 2 });
+const handOff = (bytes) => `${SCHEME}://${HOST}${OPEN_PREFIX}${handoffs.put(bytes)}`;
+const tokenOf = (url) => { try { const u = new URL(String(url)); return u.host === HOST && u.pathname.startsWith(OPEN_PREFIX) ? u.pathname.slice(OPEN_PREFIX.length) : null; } catch { return null; } };
 
 // ---- small JSON stores in userData ----
 const storePath = (n) => path.join(app.getPath('userData'), n);
@@ -232,7 +221,7 @@ async function serveAppFile(request) {
   const url = new URL(request.url);
   if (url.host !== HOST) return new Response('Not found', { status: 404 });
   if (url.pathname.startsWith(OPEN_PREFIX)) {
-    const bytes = request.method === 'GET' ? takeHandOff(url.pathname) : null;
+    const bytes = request.method === 'GET' ? handoffs.take(url.pathname.slice(OPEN_PREFIX.length)) : null;
     if (!bytes) return new Response('Not found', { status: 404 });
     return new Response(bytes, { headers: { 'content-type': 'application/octet-stream', 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' } });
   }
@@ -421,6 +410,8 @@ function registerIpc() {
     const { dxfBytes, warnings, engine } = await dwg.toDxf(bytes);
     return { url: handOff(dxfBytes), size: dxfBytes.byteLength, warnings, engine };
   });
+  // the window gives a hand-off back unserved (a cancelled or failed open), so main does not hold the DXF until it expires
+  handle('dwg:release', (url) => { const t = tokenOf(url); if (t) handoffs.release(t); });
   handle('dwg:fromDxf', (opts) => {
     const o = plainObject(opts);
     const version = o.version ?? 'r2000';

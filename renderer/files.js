@@ -35,7 +35,7 @@ export function readDxfAsync(bytes, { onProgress = null, signal = null } = {}) {
   const cancelled = () => Object.assign(new Error('Opening was cancelled.'), { code: 'CANCELLED' });
   if (signal?.aborted) return Promise.reject(cancelled());
   if (typeof Worker === 'undefined') {
-    return (bytes.url ? fetch(bytes.url).then(async (r) => new Uint8Array(await r.arrayBuffer())) : Promise.resolve(bytes)).then((b) => readDxf(b, { onProgress }));
+    return (bytes.url ? fetch(bytes.url).then(async (r) => { if (!r.ok) throw new Error('The converted drawing is no longer available; open the file again.'); return new Uint8Array(await r.arrayBuffer()); }) : Promise.resolve(bytes)).then((b) => readDxf(b, { onProgress }));
   }
   return new Promise((resolve, reject) => {
     const w = new Worker(new URL('./dxfWorker.js', import.meta.url), { type: 'module', name: 'dxf-reader' });
@@ -98,6 +98,7 @@ export async function loadDrawing(api, name, bytes, { onProgress = null, signal 
   }
   let doc;
   try { doc = await readDxfAsync(dxfBytes, { onProgress, signal }); } catch (err) {
+    if (dxfBytes?.url) api.dwgRelease?.(dxfBytes.url)?.catch?.(() => {}); // cancelled/failed before the fetch: free it in main
     if (err.code === 'BINARY_DXF') throw new Error('This is a binary DXF file, which is not supported. Save it as an ASCII DXF, or open the DWG instead.');
     if (err.code === 'BAD_DXF') throw new Error('This file is not a valid DXF drawing.');
     throw err;
