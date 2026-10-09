@@ -4,7 +4,10 @@ import { writeDxf } from '../src/core/dxfWrite.js';
 import { compareDocuments } from '../src/core/verify.js';
 import { exportSvg } from '../src/core/exportSvg.js';
 import { exportPdf } from '../src/core/exportPdf.js';
-import { buildScene, drawScene, fitView } from '../src/core/render.js';
+import { buildScene, buildSceneSteps, drawScene, fitView } from '../src/core/render.js';
+import { SpatialIndex } from '../src/core/pick.js';
+import { runSliced } from '../src/core/slice.js';
+import { docAssembler } from '../src/core/docBatches.js';
 
 export const OPEN_FILTERS = [
   { name: 'Drawings (DWG, DXF)', extensions: ['dwg', 'dxf'] },
@@ -36,17 +39,31 @@ export function readDxfAsync(bytes, { onProgress = null, signal = null } = {}) {
     const finish = () => { w.terminate(); signal?.removeEventListener('abort', abort); };
     const abort = () => { finish(); reject(cancelled()); };
     signal?.addEventListener('abort', abort);
+    // the reader's progress is shown as 0..90 %, the document arriving in batches (docBatches.js) as 90..100 %
+    const asm = docAssembler();
+    let shown = -1;
     w.onmessage = ({ data }) => {
-      if (data.progress !== undefined) { onProgress?.(data.progress / 100); return; }
+      if (data.progress !== undefined) { onProgress?.((0.9 * data.progress) / 100); return; }
+      if (asm.accept(data)) { const p = Math.floor(100 * asm.fraction); if (p !== shown) { shown = p; onProgress?.(0.9 + 0.1 * asm.fraction); } return; }
       finish();
       if (data.error) reject(Object.assign(new Error(data.error.message), data.error.code ? { code: data.error.code } : {}));
-      else resolve(data.doc);
+      else resolve(asm.doc);
     };
     w.onerror = (e) => { finish(); reject(new Error(`The DXF reader stopped: ${e.message || 'worker error'}`)); };
     const whole = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength && !(typeof SharedArrayBuffer !== 'undefined' && bytes.buffer instanceof SharedArrayBuffer);
     const view = whole ? bytes : bytes.slice();
     w.postMessage({ bytes: view }, [view.buffer]);
   });
+}
+
+/** Build the scene and the spatial index of a just-read drawing in time slices (the window keeps repainting).
+ *  onProgress(fraction): scene 0..1/3, index 1/3..1 (the index takes about twice as long); `signal` cancels
+ *  (rejects with Error{code:'CANCELLED'}). Returns {scene, index} for App.installDoc. */
+export async function prepareView(doc, { signal = null, onProgress = null } = {}) {
+  const scene = await runSliced(buildSceneSteps(doc), { signal, onProgress: onProgress && ((f) => onProgress(f / 3)) });
+  const index = new SpatialIndex(doc, { deferred: true });
+  await runSliced(index.rebuildSteps(), { signal, onProgress: onProgress && ((f) => onProgress((1 + 2 * f) / 3)) });
+  return { scene, index };
 }
 
 /** Load a DWG/DXF. Returns {doc, format, notes[]}; throws Error with a user-readable message.

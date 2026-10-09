@@ -21,6 +21,7 @@ import { mleaderParts } from './mleader.js';
 import { mlineParts } from './mline.js';
 import { patternLines, hasPattern } from './patterns.js';
 import { SceneGrid } from './sceneGrid.js';
+import { drain } from './slice.js';
 import { strokeLayout, shxSubstitute } from './shx.js';
 import { isGdtFont, gdtText, gdtModel } from './gdt.js';
 import { textFrame, textCorners, textAdvance } from './textMetrics.js';
@@ -439,12 +440,19 @@ class Builder {
   }
 }
 
-export function buildScene(doc) {
-  const b = new Builder(doc);
-  for (const e of doc.entities) b.emit(e, [1, 0, 0, 1, 0, 0], null, e.id, 0);
-  b.items.forEach((it, i) => { it.pos = i; });
+export function buildScene(doc) { return drain(buildSceneSteps(doc)); }
+
+/** buildScene as a step generator (src/core/slice.js): yields the fraction done after each top-level entity */
+export function* buildSceneSteps(doc) {
+  const b = new Builder(doc), items = b.items, ents = doc.entities, n = ents.length;
   const entIndex = new Map();
-  doc.entities.forEach((e, i) => entIndex.set(e.id, i));
+  for (let i = 0; i < n; i++) {
+    const e = ents[i], k = items.length;
+    b.emit(e, [1, 0, 0, 1, 0, 0], null, e.id, 0);
+    for (let j = k; j < items.length; j++) items[j].pos = j;
+    entIndex.set(e.id, i);
+    yield (i + 1) / n;
+  }
   return {
     items: b.items, byId: b.byId, doc, version: 0, grid: null,
     entIndex, _entLen: doc.entities.length, _bbox: b.bbox, _bboxDirty: false,

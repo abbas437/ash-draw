@@ -21,7 +21,7 @@ import { iconSvg } from './icons.js';
 import { loadDrawingImages } from './images.js';
 import { el, message, modal, confirmDialog, textDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
 import {
-  OPEN_FILTERS, loadDrawing, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, baseName, extOf, UNIT_NAMES,
+  OPEN_FILTERS, loadDrawing, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, extOf, UNIT_NAMES,
 } from './files.js';
 
 const api = window.api;
@@ -168,8 +168,10 @@ class App {
     return r === 'no';
   }
   /** show a drawing in a new tab; a blank, untouched Untitled tab is replaced instead */
-  installDoc(doc, file, { replaceBlank = false } = {}) {
+  /** prepared: {scene, index} built ahead (prepareView) so showing the tab does no long synchronous work */
+  installDoc(doc, file, { replaceBlank = false, prepared = null } = {}) {
     const tab = createDocState(doc, file);
+    if (prepared) { tab.scene = prepared.scene; tab.index = prepared.index; }
     const blank = replaceBlank && isBlankTab(this.active) ? this.active : null;
     if (blank) this.tabs.splice(this.tabs.indexOf(blank), 1, tab); else this.tabs.push(tab);
     this.switchTo(tab, { fit: true });
@@ -234,7 +236,7 @@ class App {
     const open = findTabByPath(this.tabs, f.path);
     if (open) { this.switchTo(open); return; } // already open: show its tab
     const ac = new AbortController();
-    const pt = progressToast(`Opening ${f.name} …`, () => ac.abort());
+    const pt = progressToast('Reading…', () => ac.abort());
     this.vp.setBusy(true); // the system wait cursor over the canvas until the drawing is shown (no hidden pointer)
     try {
       const { doc, format, notes, warnings } = await loadDrawing(api, f.name, f.bytes, { onProgress: (x) => pt.set(x), signal: ac.signal });
@@ -242,7 +244,9 @@ class App {
       await loadDrawingXrefs(api, doc, f.path ?? null); // before the scene is built: it is built once, with the xrefs
       const missing = await loadDrawingImages(api, doc, f.path ?? null);
       if (missing.length) notes.push(`Raster images not found (shown as a red frame with the file name): ${missing.join(', ')}.`);
-      this.installDoc(doc, { path: f.path ?? null, name: f.name, format }, { replaceBlank: true });
+      const pp = progressToast('Preparing drawing…', () => ac.abort());
+      const prepared = await prepareView(doc, { signal: ac.signal, onProgress: (x) => pp.set(x) });
+      this.installDoc(doc, { path: f.path ?? null, name: f.name, format }, { replaceBlank: true, prepared });
       toast(`${f.name}: ${doc.entities.length.toLocaleString()} objects`, 2500);
       if (notes.length) await message('Opened with limitations', `${f.name} was opened, but:`, el('div', {}, [el('ul', {}, notes.map((n) => el('li', { text: n }))), ...(warnings?.length ? [el('details', {}, [el('summary', { text: 'Converter messages' }), el('pre', { text: warnings.join('\n') })])] : [])]));
     } catch (err) {

@@ -1,6 +1,7 @@
 // Picking, box selection, object snaps and ortho/polar helpers.
 // Pure module: world coordinates (Y up); every tolerance is in WORLD units (caller: pixels / zoom).
 import { bboxOf, distanceToEntity, nearestPoint, snapPoints, intersections, explode, tessellate, ccwSweep, DEG } from './geom.js';
+import { drain } from './slice.js';
 
 const TAU = Math.PI * 2;
 const MAX_CELLS_AXIS = 1024;
@@ -41,11 +42,12 @@ function isLocked(doc, e) {
 /** Uniform-grid spatial index over the visible entities of `doc`.
  *  Visibility is evaluated when an entity is (re)indexed: after a layer visibility change call rebuild(). */
 export class SpatialIndex {
-  constructor(doc, { isVisible } = {}) {
+  /** deferred: leave the index empty; the caller runs rebuildSteps() (time-sliced, src/core/slice.js runSliced) */
+  constructor(doc, { isVisible, deferred = false } = {}) {
     this.doc = doc;
     this.isVisible = isVisible || defaultVisible(doc);
     this._boxCache = new WeakMap(); // entity object -> bbox|null
-    this.rebuild();
+    if (!deferred) this.rebuild();
   }
 
   /** Cached bbox of an entity object (null when empty / not finite). Replaced objects get a fresh entry. */
@@ -57,22 +59,28 @@ export class SpatialIndex {
     return r;
   }
 
-  rebuild() {
+  rebuild() { drain(this.rebuildSteps()); }
+
+  /** rebuild as a step generator: yields the fraction done after each entity (bounds: 0..0.9, grid: 0.9..1) */
+  *rebuildSteps() {
     this._entries = new Map(); // id -> {e, box, reach, order, cells:[c0,r0,c1,r1]|null, mark}
     this._oversize = [];
     this._stamp = 0;
-    const entries = [];
+    const entries = [], ents = this.doc.entities, n = ents.length;
     let ext = null;
-    this.doc.entities.forEach((e, i) => {
-      if (!safe(() => this.isVisible(e), false)) return;
+    for (let i = 0; i < n; i++) {
+      if (!(i in ents)) continue; // a hole (forEach skipped them too)
+      const e = ents[i];
+      yield (0.9 * i) / n;
+      if (!safe(() => this.isVisible(e), false)) continue;
       const box = this.bboxOf(e);
-      if (!box) return;
+      if (!box) continue;
       const reach = reachOf(e, box);
       entries.push({ e, box, reach, order: i, cells: null, mark: 0 });
       ext = ext ? { minx: Math.min(ext.minx, reach.minx), miny: Math.min(ext.miny, reach.miny), maxx: Math.max(ext.maxx, reach.maxx), maxy: Math.max(ext.maxy, reach.maxy) } : { ...reach };
-    });
+    }
     this._setupGrid(ext, entries.length);
-    for (const en of entries) this._insert(en);
+    for (let i = 0; i < entries.length; i++) { this._insert(entries[i]); yield 0.9 + (0.1 * (i + 1)) / entries.length; }
   }
 
   _setupGrid(ext, n) {
