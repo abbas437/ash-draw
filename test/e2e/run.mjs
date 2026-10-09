@@ -1549,8 +1549,14 @@ try {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ash-big-'));
     const big = path.join(dir, 'big_synthetic.dxf');
     const pad = `999\r\n${'c'.repeat(2400)}\r\n`;
-    const parts = ['  0\r\nSECTION\r\n  2\r\nHEADER\r\n  9\r\n$ACADVER\r\n  1\r\nAC1032\r\n  0\r\nENDSEC\r\n  0\r\nSECTION\r\n  2\r\nENTITIES\r\n'];
+    // + a block of 200 LINEs inserted 2,000 times and 100,000 plain LINEs: 520,000 scene items, so building the scene
+    // and the spatial index in one go would hold the window for well over 250 ms (they are time-sliced)
+    const parts = ['  0\r\nSECTION\r\n  2\r\nHEADER\r\n  9\r\n$ACADVER\r\n  1\r\nAC1032\r\n  0\r\nENDSEC\r\n  0\r\nSECTION\r\n  2\r\nBLOCKS\r\n  0\r\nBLOCK\r\n  8\r\n0\r\n  2\r\nB200\r\n 70\r\n0\r\n 10\r\n0\r\n 20\r\n0\r\n'];
+    for (let i = 0; i < 200; i++) parts.push(`  0\r\nLINE\r\n  8\r\n0\r\n 10\r\n${i % 20}\r\n 20\r\n${i}\r\n 11\r\n${(i % 20) + 3}\r\n 21\r\n${i + 1}\r\n`);
+    parts.push('  0\r\nENDBLK\r\n  8\r\n0\r\n  0\r\nENDSEC\r\n  0\r\nSECTION\r\n  2\r\nENTITIES\r\n');
     for (let i = 0; i < 20000; i++) parts.push(`  0\r\nLINE\r\n  8\r\n0\r\n 10\r\n${i}\r\n 20\r\n0\r\n 11\r\n${i}\r\n 21\r\n50\r\n${pad}`);
+    for (let i = 0; i < 2000; i++) parts.push(`  0\r\nINSERT\r\n  8\r\n0\r\n  2\r\nB200\r\n 10\r\n${(i % 50) * 30}\r\n 20\r\n${300 + Math.floor(i / 50) * 210}\r\n`);
+    for (let i = 0; i < 100000; i++) parts.push(`  0\r\nLINE\r\n  8\r\n0\r\n 10\r\n${i % 1000}\r\n 20\r\n${-10 - Math.floor(i / 1000)}\r\n 11\r\n${(i % 1000) + 0.8}\r\n 21\r\n${-10.5 - Math.floor(i / 1000)}\r\n`);
     parts.push('  0\r\nENDSEC\r\n  0\r\nEOF\r\n');
     await fs.writeFile(big, parts.join(''));
     assert.ok((await fs.stat(big)).size > 45e6);
@@ -1560,8 +1566,9 @@ try {
       const t = document.getElementById('toast');
       const tick = () => {
         const now = performance.now(), m = /(\d+)%/.exec(t.textContent);
-        if (w.wasPct) w.maxGap = Math.max(w.maxGap, now - w.last);
-        if (w.started) w.maxAll = Math.max(w.maxAll, now - w.last); // the whole open, after 100% too (until the drawing is shown)
+        if (w.wasPct && now - w.last > w.maxGap) { w.maxGap = now - w.last; w.gapAt = `${w.lastText} -> ${t.textContent}`; }
+        if (w.started && now - w.last > w.maxAll) { w.maxAll = now - w.last; w.allAt = `${w.lastText} -> ${t.textContent}`; } // the whole open, after 100% too (until the drawing is shown)
+        w.lastText = t.textContent;
         if (m) w.started = true;
         w.wasPct = !!m; if (m) w.pcts.add(+m[1]);
         w.last = now; if (!w.stop) setTimeout(tick, 10);
@@ -1586,11 +1593,12 @@ try {
     await pickPath(big);
     await page.waitForFunction(() => window.app.file.name === 'big_synthetic.dxf', null, { timeout: 60000 });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))); // the first frame too
-    const r = await page.evaluate(() => { window.__tick.stop = true; return { maxGap: window.__tick.maxGap, maxAll: window.__tick.maxAll, pcts: [...window.__tick.pcts], n: window.app.doc.entities.length }; });
-    assert.equal(r.n, 20000);
+    const r = await page.evaluate(() => { window.__tick.stop = true; return { maxGap: window.__tick.maxGap, maxAll: window.__tick.maxAll, gapAt: window.__tick.gapAt, allAt: window.__tick.allAt, pcts: [...window.__tick.pcts], n: window.app.doc.entities.length }; });
+    assert.equal(r.n, 122000);
+    assert.equal(await page.evaluate(() => window.app.vp.scene.items.length), 520000);
     assert.ok(r.pcts.length >= 3, `progress percentages shown: ${r.pcts}`);
-    assert.ok(r.maxGap < 250, `UI froze for ${Math.round(r.maxGap)} ms while reading`);
-    assert.ok(r.maxAll < 250, `UI froze for ${Math.round(r.maxAll)} ms during the open (after the read reached 100%)`);
+    assert.ok(r.maxGap < 250, `UI froze for ${Math.round(r.maxGap)} ms while reading (toast: ${r.gapAt})`);
+    assert.ok(r.maxAll < 250, `UI froze for ${Math.round(r.maxAll)} ms during the open (after the read reached 100%; toast: ${r.allAt})`);
     console.log(`  large DXF: ${r.pcts.length} percentages shown, max timer gap ${Math.round(r.maxGap)} ms reading, ${Math.round(r.maxAll)} ms whole open`);
     await fs.rm(dir, { recursive: true, force: true });
   }
