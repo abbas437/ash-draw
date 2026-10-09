@@ -13,7 +13,7 @@ import {
   makeLine, makeCircle, makeArc, makeEllipse, makePolyline, makePoint, makeText, makeMText,
   makeSpline, makeSolid, makeInsert, makeHatch, makeDimension, makeLeader,
 } from './model.js';
-import { transformEntity } from './geom.js';
+import { transformEntity, applyVec, apply, det, matScale } from './geom.js';
 import { dimStyleFromTags } from './dimsStyle.js';
 import { dimDefFromTags } from './dims.js';
 import { mtextPlain } from './mtext.js';
@@ -192,12 +192,85 @@ function common(rec) {
 
 function pt(rec, c = 10) { return { x: rec.num(c), y: rec.num(c + 10) }; }
 
-function isFlipped(rec) {
-  const nz = rec.num(230, 1);
-  return nz < 0 && Math.abs(rec.num(210)) < 1e-6 && Math.abs(rec.num(220)) < 1e-6;
+// -- OCS (object coordinate system) ---------------------------------------------------------------
+// 2D entities store their geometry in the OCS of their extrusion vector (210/220/230). The DXF spec's Arbitrary Axis
+// Algorithm gives the OCS axes Ax, Ay; WCS = Ax*x + Ay*y + N*elevation. The model is a plan view, so the OCS -> WCS
+// map is projected onto the XY plane (Z dropped): a 2D affine matrix [Ax.x, Ax.y, Ay.x, Ay.y, N.x*elev, N.y*elev].
+// For (0,0,-1) that is the mirror x -> -x; for a tilted normal it is a general (possibly sheared) affine map.
+function ocsAxes(rec) {
+  let nx = rec.num(210), ny = rec.num(220), nz = rec.num(230, 1);
+  const l = Math.hypot(nx, ny, nz);
+  if (!(l > 1e-12)) return null;
+  nx /= l; ny /= l; nz /= l;
+  if (Math.abs(nx) < 1e-12 && Math.abs(ny) < 1e-12 && nz > 0) return null; // default OCS == WCS
+  let ax = Math.abs(nx) < 1 / 64 && Math.abs(ny) < 1 / 64 ? [nz, 0, -nx] : [-ny, nx, 0]; // Wy x N : Wz x N
+  const la = Math.hypot(ax[0], ax[1], ax[2]);
+  ax = ax.map((v) => v / la);
+  const n = [nx, ny, nz];
+  const ay = [n[1] * ax[2] - n[2] * ax[1], n[2] * ax[0] - n[0] * ax[2], n[0] * ax[1] - n[1] * ax[0]];
+  return { ax, ay, n };
 }
-const FLIP = [-1, 0, 0, 1, 0, 0];
-
+/** OCS -> projected WCS matrix of a record (null for the default OCS). */
+function ocsMatrix(rec, elev) {
+  const o = ocsAxes(rec);
+  return o && [o.ax[0], o.ax[1], o.ay[0], o.ay[1], o.n[0] * elev, o.n[1] * elev];
+}
+const OCS_ELEVATION = {
+  LWPOLYLINE: 38, POLYLINE: 30, CIRCLE: 30, ARC: 30, TEXT: 30, ATTRIB: 30, ATTDEF: 30, INSERT: 30, SOLID: 30, TRACE: 30, HATCH: 30, DIMENSION: 31,
+};
+const HALIGN_MIRROR = { 0: 2, 2: 0 };
+/** TEXT seen through a mirroring map m (det < 0) is drawn backwards in AutoCAD. Glyphs are not mirrored here: the
+ *  text is kept readable with the same footprint (baseline reversed, left/right justification swapped). */
+function mirroredText(e, m) {
+  const a = (e.rot || 0) * DEG;
+  const b = applyVec(m, { x: Math.cos(a), y: Math.sin(a) });
+  const c = structuredClone(e);
+  c.p = apply(m, e.p); c.height = e.height * matScale(m);
+  c.rot = ((((Math.atan2(-b.y, -b.x) / DEG) % 360) + 360) % 360);
+  if (e.p2) { c.p = apply(m, e.p2); c.p2 = apply(m, e.p); }
+  else if (e.hAlign in HALIGN_MIRROR) c.hAlign = HALIGN_MIRROR[e.hAlign];
+  return c;
+}
+/** INSERT under a projected tilted OCS: the shear part of the map cannot be represented; keep rotation and scale. */
+function insertNoShear(e, m) {
+  try { return transformEntity(e, m); } catch (err) {
+    if (err.code !== 'SHEAR') throw err;
+    const lin = [m[0], m[1], m[2], m[3], 0, 0];
+    const a = (e.rot || 0) * DEG;
+    const ux = applyVec(lin, { x: Math.cos(a) * (e.sx ?? 1), y: Math.sin(a) * (e.sx ?? 1) });
+    const sx = Math.hypot(ux.x, ux.y);
+    const d = det(lin) * (e.sx ?? 1) * (e.sy ?? 1);
+    return { ...structuredClone(e), p: apply(m, e.p), rot: Math.atan2(ux.y, ux.x) / DEG, sx, sy: sx > 0 ? d / sx : 0 };
+  }
+}
+/** ELLIPSE: centre and major axis are WCS; the minor axis is N x major, so a -Z or tilted normal changes the
+ *  direction the parameters run (and, tilted, the projected shape). */
+function ellipseToPlan(rec, e) {
+  const o = ocsAxes(rec);
+  if (!o) return e;
+  const M = [rec.num(11), rec.num(21), rec.num(31)];
+  const L = Math.hypot(M[0], M[1], M[2]);
+  if (!(L > 0)) return e;
+  const n = o.n;
+  const v = [(n[1] * M[2] - n[2] * M[1]) / L, (n[2] * M[0] - n[0] * M[2]) / L, (n[0] * M[1] - n[1] * M[0]) / L];
+  // local ellipse with major (L,0) and minor (0,L*ratio), mapped by [M/L | N x M/L] and moved to the centre
+  const local = { ...e, c: { x: 0, y: 0 }, major: { x: L, y: 0 } };
+  const t = transformEntity(local, [M[0] / L, M[1] / L, v[0], v[1], e.c.x, e.c.y]);
+  return t;
+}
+/** Bring an entity read in its OCS into the (plan) WCS model. */
+function ocsToPlan(rec, e) {
+  const m = ocsMatrix(rec, rec.num(OCS_ELEVATION[rec.type] ?? 30));
+  if (!m) return e;
+  const id = e.id;
+  let t;
+  if (e.type === 'TEXT' && det(m) < 0) t = mirroredText(e, m);
+  else if (e.type === 'INSERT') t = insertNoShear(e, m);
+  else t = transformEntity(e, m);
+  t.id = id;
+  if (e.type === 'HATCH' && e.pattern !== 'SOLID') { const a = (e.angle || 0) * DEG, d = applyVec(m, { x: Math.cos(a), y: Math.sin(a) }); t.angle = Math.atan2(d.y, d.x) / DEG; }
+  return t;
+}
 
 // -- entity builders --------------------------------------------------------------------------
 function buildLwpolyline(rec, o) {
@@ -265,11 +338,18 @@ function buildText(rec, o) {
 function buildMText(rec, o) {
   const chunks = rec.all(3);
   const text = chunks.join('') + rec.str(1);
-  let rot = rec.num(50);
-  if (rec.has(11)) rot = Math.atan2(rec.num(21), rec.num(11)) / DEG;
+  // insertion point and direction (11) are WCS; rotation 50 (no 11) is in the OCS
+  const ocs = ocsMatrix(rec, 0);
+  const a = rec.num(50) * DEG;
+  let dir = rec.has(11) ? { x: rec.num(11), y: rec.num(21) } : { x: Math.cos(a), y: Math.sin(a) };
+  if (ocs && !rec.has(11)) dir = applyVec(ocs, dir);
+  let attach = rec.int(71, 1);
+  // a mirrored OCS (normal pointing down) shows the text backwards: keep it readable over the same footprint
+  if (ocs && det(ocs) < 0) { dir = { x: -dir.x, y: -dir.y }; const col = (attach - 1) % 3; attach += col === 0 ? 2 : col === 2 ? -2 : 0; }
+  let rot = Math.atan2(dir.y, dir.x) / DEG;
   rot = ((rot % 360) + 360) % 360;
   return makeMText(pt(rec, 10), rec.num(40, 1), text, {
-    ...o, width: rec.num(41), rot, attach: rec.int(71, 1), style: rec.str(7, 'STANDARD').toUpperCase(),
+    ...o, width: rec.num(41), rot, attach, style: rec.str(7, 'STANDARD').toUpperCase(),
     lineSpacing: rec.num(44, 1) > 0 ? rec.num(44, 1) : 1,
   });
 }
@@ -436,13 +516,12 @@ let mlStyles = new Map(); // MLEADERSTYLE handle -> defaults (set per parse)
 let imageDefs = new Map(); // IMAGEDEF handle -> image definition (set per parse)
 function buildEntity(rec, doc, extra) {
   const o = common(rec);
-  const flipped = isFlipped(rec);
   let e = null;
   switch (rec.type) {
     case 'LINE': e = makeLine(pt(rec, 10), pt(rec, 11), o); break;
     case 'CIRCLE': e = makeCircle(pt(rec, 10), rec.num(40), o); break;
     case 'ARC': e = makeArc(pt(rec, 10), rec.num(40), rec.num(50), rec.num(51), o); break;
-    case 'ELLIPSE': e = makeEllipse(pt(rec, 10), pt(rec, 11), rec.num(40, 1), rec.num(41), rec.has(42) ? rec.num(42) : Math.PI * 2, o); break;
+    case 'ELLIPSE': e = ellipseToPlan(rec, makeEllipse(pt(rec, 10), pt(rec, 11), rec.num(40, 1), rec.num(41), rec.has(42) ? rec.num(42) : Math.PI * 2, o)); break;
     case 'LWPOLYLINE': e = buildLwpolyline(rec, o); break;
     case 'POLYLINE': e = buildPolyline(rec, extra.verts, o); break;
     case 'SPLINE': e = buildSpline(rec, o); break;
@@ -473,15 +552,8 @@ function buildEntity(rec, doc, extra) {
   if (rec.int(60) === 1) e.invisible = true;
   const xd = readXData(rec);
   if (xd) e.xdata = xd;
-  if (flipped) {
-    if (e.type === 'TEXT') { e.p = { x: -e.p.x, y: e.p.y }; e.rot = 180 - e.rot; if (e.p2) e.p2 = { x: -e.p2.x, y: e.p2.y }; }
-    else if (['CIRCLE', 'ARC', 'LWPOLYLINE', 'SOLID', 'INSERT', 'HATCH'].includes(e.type)) {
-      const id = e.id;
-      const t = transformEntity(e, FLIP);
-      t.id = id;
-      e = t;
-    }
-  }
+  // OCS entities (3D POLYLINEs, flag 8, are WCS); LINE, SPLINE, POINT, LEADER, MLEADER, IMAGE, MTEXT and ELLIPSE are WCS
+  if (rec.type in OCS_ELEVATION && !(rec.type === 'POLYLINE' && (rec.int(70) & 8))) e = ocsToPlan(rec, e);
   return e;
 }
 
