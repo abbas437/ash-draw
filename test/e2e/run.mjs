@@ -60,16 +60,27 @@ try {
 
   step = 'ui present';
   assert.ok(await page.locator('#menubar .menu').count() >= 4);
-  step = 'first run uses the light theme';
+  step = 'first run uses the light theme with a near-black model space (beta.10)';
   assert.equal(await page.evaluate(() => document.documentElement.dataset.theme ?? 'light'), 'light');
   assert.ok(lum(rgbOf(await page.evaluate(() => getComputedStyle(document.body).backgroundColor))) > 0.7, 'body background is not light');
-  assert.equal(await page.evaluate(() => window.app.vp.settings.dark), false);
+  {
+    const bg = await page.evaluate(() => { const vp = window.app.vp; vp.render(); return [...vp.ctx.getImageData(3, 3, 1, 1).data.slice(0, 3)]; });
+    assert.ok(lum(bg) < 0.03, `first-run model canvas is near-black: ${bg}`);
+  }
   assert.ok(await page.locator('#tools button').count() >= 20);
+  step = 'Quick Access row under the menu, compact side panel by default';
+  {
+    const qa = await page.evaluate(() => { const q = document.getElementById('qat'), m = document.getElementById('menubar'); return { n: q?.querySelectorAll('button').length ?? 0, under: q && Math.abs(q.getBoundingClientRect().top - m.getBoundingClientRect().bottom) < 2, w: document.getElementById('tools').getBoundingClientRect().width }; });
+    assert.ok(qa.n >= 18 && qa.under, `Quick Access row: ${JSON.stringify(qa)}`);
+    assert.ok(qa.w <= 90, `compact side panel by default (${qa.w} px)`);
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'layout_default_compact.png') });
+  }
 
   step = 'draw a line with the mouse';
   await page.evaluate(() => window.app.vp.zoomBy(0.0001)); // tiny zoom so clicks map to large world units
   await page.evaluate(() => { window.app.vp.view = { ...window.app.vp.view, cx: 50, cy: 25, zoom: 8 }; window.app.vp.render(); });
-  await page.click('#tools button[data-tool=line]');
+  await page.click('#qat button[data-cmd=line]'); // Line from the Quick Access row
+  assert.equal(await page.evaluate(() => window.app.toolId), 'line');
   await clickWorld(0, 0); await clickWorld(40, 0); await clickWorld(40, 30);
   await page.keyboard.press('Escape');
   assert.deepEqual(await types(), ['LINE', 'LINE']);
@@ -240,7 +251,8 @@ try {
     const menu = async (top, item) => { await page.locator('#menubar .menu > button', { hasText: top }).click(); await page.locator('#menubar .drop button', { hasText: item }).click(); };
     // the ACI-7 line drawn by drawAci7Line() (cy offset by half a pixel so the 1px line is crisp): returns the line pixel (most different from the background) and the background
     const aci7Line = async () => {
-      await page.evaluate(() => { const vp = window.app.vp; vp.view = { ...vp.view, cx: 50, cy: 0.125, zoom: 4 }; vp.selection.clear(); vp.render(); });
+      // the Quick Access row changed the canvas height: pick the cy (0.125 or 0, half a pixel apart) that puts y=0 on a pixel centre
+      await page.evaluate(() => { const vp = window.app.vp; vp.view = { ...vp.view, cx: 50, cy: 0.125, zoom: 4 }; const f = vp.toScreen({ x: 50, y: 0 }).y * vp.dpr % 1; if (Math.abs(f - 0.5) > 0.01) vp.view = { ...vp.view, cy: 0 }; vp.selection.clear(); vp.render(); });
       await page.mouse.move(2, 2);
       return page.evaluate(() => {
         const vp = window.app.vp; vp.showCross = false; vp.render();
@@ -288,11 +300,16 @@ try {
     // the PDF export may leave its warnings message open
     await page.waitForTimeout(300);
     if (await page.locator('#dlg[open]').count()) await page.locator('#dlg button.primary').click();
-    // light (default): ACI 7 is dark on the white canvas
+    // light theme (default) with the beta.10 default dark model space: ACI 7 is light on it; the View choice gives a white canvas
     await page.evaluate(() => window.app.newDrawing(true));
     await drawAci7Line();
     let px = await aci7Line();
+    assert.ok(lum(px.bg) < 0.05 && lum(px.line) > 0.2, `light theme, dark model space: ACI 7 ${px.line} on ${px.bg}`);
+    await menu('View', 'Model space background');
+    px = await aci7Line();
     assert.ok(lum(px.bg) > 0.9 && lum(px.line) < 0.2, `light canvas: ACI 7 ${px.line} on ${px.bg}`);
+    assert.equal(await page.evaluate(() => window.api.settingsGet('canvas.background')), 'light');
+    await menu('View', 'Model space background');
     await checkContrast('light');
 
     // View > Dark theme: whole UI dark, canvas dark, ACI 7 light, remembered after a reload
@@ -310,11 +327,11 @@ try {
     await checkContrast('dark');
 
     // the canvas-only override still works inside a theme
-    await menu('View', 'Light / dark background');
+    await menu('View', 'Model space background');
     px = await aci7Line();
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'dark');
     assert.ok(lum(px.bg) > 0.9 && lum(px.line) < 0.2, `dark theme, light canvas: ACI 7 ${px.line} on ${px.bg}`);
-    await menu('View', 'Light / dark background');
+    await menu('View', 'Model space background');
 
     // back to light from the status bar toggle; that choice is saved too
     await page.click('#theme-btn');
@@ -1353,7 +1370,12 @@ try {
     let btns = await panel();
     assert.ok(btns.length >= 45, `${btns.length} panel buttons`);
     assert.deepEqual(btns.filter((b) => b.svg !== 1 || b.fallback).map((b) => b.tool ?? 'other'), [], 'every panel button has its own <svg> icon');
-    assert.ok(btns.every((b) => b.label === 1), 'labels shown by default');
+    // beta.10: labels are off by default (compact panel); View > Tool labels shows them
+    assert.ok(btns.every((b) => b.label === 0), 'labels hidden by default');
+    await menuItem('Tool labels');
+    btns = await panel();
+    assert.ok(btns.every((b) => b.label === 1), 'labels shown after View > Tool labels');
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'layout_labels_on.png') });
     assert.equal(await page.locator('#tools button[data-tool=line]').getAttribute('title'), 'Line (L)');
     const lineColour = btns.find((b) => b.tool === 'line').color, moveColour = btns.find((b) => b.tool === 'move').color, textColour = await page.evaluate(() => getComputedStyle(document.body).color);
     assert.notEqual(lineColour, moveColour, 'Draw and Modify icons are coloured differently');

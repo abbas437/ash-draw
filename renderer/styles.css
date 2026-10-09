@@ -23,7 +23,7 @@
 * { scrollbar-color:var(--scroll-thumb) transparent; }
 * { box-sizing: border-box; }
 html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font:13px "Segoe UI", system-ui, sans-serif; overflow:hidden; }
-#app { display:grid; grid-template-rows: 30px 1fr 30px 24px; height:100%; }
+#app { display:grid; grid-template-rows: 30px auto 1fr 30px 24px; height:100%; }
 button { font:inherit; color:var(--text); background:var(--panel2); border:1px solid var(--line); border-radius:3px; padding:3px 8px; cursor:pointer; }
 button:hover { background:var(--hover); }
 button.primary { background:var(--accent2); border-color:var(--accent); color:var(--on-accent); }
@@ -42,8 +42,22 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 #menubar .drop hr { border:none; border-top:1px solid var(--line); margin:4px 0; }
 #menubar .drop kbd { color:var(--dim); font:inherit; }
 #menubar .title { margin-left:auto; color:var(--dim); padding-right:8px; }
-#main { display:grid; grid-template-columns: 138px 1fr 260px; min-height:0; }
-#app.no-tool-labels #main { grid-template-columns: 46px 1fr 260px; }
+#main { display:grid; grid-template-columns: var(--tools-w, 138px) 1fr var(--side-w, 260px); min-height:0; }
+#app.no-tool-labels { --tools-w:76px; }
+#app.no-side { --side-w:0px; } #app.no-side #side { display:none; }
+/* Quick Access row under the menu bar */
+#qat { display:flex; align-items:center; gap:2px; height:28px; padding:0 6px; /* even height keeps the canvas pixel grid as before */ background:var(--panel); border-bottom:1px solid var(--line); overflow-x:auto; }
+#qat button { display:flex; padding:3px; border-color:transparent; background:none; }
+#qat button:hover { background:var(--hover); border-color:var(--line); }
+#qat .ti { color:var(--gc, currentColor); }
+#qat .sep { width:1px; align-self:stretch; margin:2px 4px; background:var(--line); }
+#tools .gbody { display:flex; flex-direction:column; gap:2px; }
+#tools .gbody[hidden] { display:none; }
+#tools .group { cursor:pointer; user-select:none; }
+#tools .group::before { content:'\25BE'; display:inline-block; width:1em; }
+#tools .group[aria-expanded="false"]::before { content:'\25B8'; }
+#tools .lbl-toggle { align-self:flex-end; cursor:pointer; font-size:11px; font-weight:600; padding:0 5px; border:1px solid var(--line); border-radius:3px; color:var(--dim); user-select:none; }
+#app:not(.no-tool-labels) #tools .lbl-toggle { background:var(--accent2); color:var(--on-accent); }
 #tools { background:var(--panel); border-right:1px solid var(--line); overflow:auto; padding:4px; display:flex; flex-direction:column; gap:2px; }
 #tools > * { flex-shrink:0; }
 #tools .group { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.06em; margin:8px 2px 2px; padding-left:5px; border-left:3px solid var(--gc, transparent); line-height:1.2; }
@@ -51,17 +65,21 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 #tools button .lbl { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
 .ti { flex:none; display:block; }
 #tools .ti { color:var(--gc, currentColor); }
+#qat .g-file { --gc:#4b5b66; } [data-theme="dark"] #qat .g-file { --gc:#b4c0c7; }
 /* tool group colours (View > Tool group colours); the dark theme uses lighter tints of the same hues */
-#tools .g-select { --gc:#4b5b66; } #tools .g-draw { --gc:#1f62c9; } #tools .g-modify { --gc:#b65300; } #tools .g-block { --gc:#24773a; }
-#tools .g-annotate { --gc:#7a3fc4; } #tools .g-inquiry { --gc:#0a7a81; } #tools .g-markup { --gc:#c0262d; }
-[data-theme="dark"] #tools .g-select { --gc:#b4c0c7; } [data-theme="dark"] #tools .g-draw { --gc:#7fb0ff; } [data-theme="dark"] #tools .g-modify { --gc:#ffa45c; } [data-theme="dark"] #tools .g-block { --gc:#6fd18a; }
-[data-theme="dark"] #tools .g-annotate { --gc:#c09cff; } [data-theme="dark"] #tools .g-inquiry { --gc:#4fd1d9; } [data-theme="dark"] #tools .g-markup { --gc:#ff8a8f; }
-#app #tools.no-colours > * { --gc:initial; }
+#tools .g-select, #qat .g-select { --gc:#4b5b66; } #tools .g-draw, #qat .g-draw { --gc:#1f62c9; } #tools .g-modify, #qat .g-modify { --gc:#b65300; } #tools .g-block, #qat .g-block { --gc:#24773a; }
+#tools .g-annotate, #qat .g-annotate { --gc:#7a3fc4; } #tools .g-inquiry, #qat .g-inquiry { --gc:#0a7a81; } #tools .g-markup, #qat .g-markup { --gc:#c0262d; }
+[data-theme="dark"] #tools .g-select, #qat .g-select { --gc:#b4c0c7; } [data-theme="dark"] #tools .g-draw, #qat .g-draw { --gc:#7fb0ff; } [data-theme="dark"] #tools .g-modify, #qat .g-modify { --gc:#ffa45c; } [data-theme="dark"] #tools .g-block, #qat .g-block { --gc:#6fd18a; }
+[data-theme="dark"] #tools .g-annotate, #qat .g-annotate { --gc:#c09cff; } [data-theme="dark"] #tools .g-inquiry, #qat .g-inquiry { --gc:#4fd1d9; } [data-theme="dark"] #tools .g-markup, #qat .g-markup { --gc:#ff8a8f; }
+#app #tools.no-colours * { --gc:initial; }
 #tools button.active .ti { color:var(--on-accent); }
 /* View > Tool labels off: icon-only buttons, group names become separators (the name stays in the tooltip) */
 #app.no-tool-labels #tools button { justify-content:center; padding:4px 0; }
 #app.no-tool-labels #tools button .lbl { display:none; }
-#app.no-tool-labels #tools .group { font-size:0; margin:5px 0 2px; padding:0; border-left:none; border-top:2px solid var(--gc, var(--line)); }
+#app.no-tool-labels #tools .group { font-size:0; margin:5px 0 2px; padding:0; border-left:none; border-top:2px solid var(--gc, var(--line)); min-height:8px; }
+#app.no-tool-labels #tools .group::before { font-size:9px; line-height:8px; color:var(--dim); }
+#app.no-tool-labels #tools .gbody:not([hidden]) { display:grid; grid-template-columns:1fr 1fr; }
+#app.no-tool-labels #tools .gbody > select { grid-column:1 / -1; min-width:0; }
 #tools button.active { background:var(--accent2); border-color:var(--accent); color:var(--on-accent); }
 #docs { display:grid; grid-template-rows:auto 1fr auto; min-width:0; min-height:0; }
 #tabbar { display:flex; overflow-x:auto; background:var(--bg); border-bottom:1px solid var(--line); min-height:28px; }
@@ -138,7 +156,7 @@ dialog label { display:block; margin:6px 0 2px; color:var(--dim); }
 .dlg-btns { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
 .popmenu { position:fixed; z-index:50; background:var(--panel2); border:1px solid var(--line); padding:4px 0; box-shadow:0 6px 18px var(--shadow); }
 .popmenu button { display:block; width:100%; border:none; background:none; text-align:left; padding:3px 12px; }
-@media print { #menubar, #tabbar, #tools, #side, #cmdbar, #status, #zoombar { display:none !important; } #main { display:block; } }
+@media print { #qat, #menubar, #tabbar, #tools, #side, #cmdbar, #status, #zoombar { display:none !important; } #main { display:block; } }
 
 /* ASH brand logo: light-background SVG by default, reversed SVG in the dark theme. Trademark: see assets/brand/README.md. */
 .brand-logo { display: block; height: 40px; width: auto; }
