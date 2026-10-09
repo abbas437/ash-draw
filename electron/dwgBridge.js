@@ -30,6 +30,26 @@ function trimStderr(s) {
   return t.length > STDERR_LIMIT ? `${t.slice(0, STDERR_LIMIT)}\n...[truncated]` : t;
 }
 
+/** Non-empty trimmed stderr lines, without the converter's progress chatter. */
+function warningLines(stderr) {
+  const lines = trimStderr(stderr).split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !/^(Reading DWG file|Writing DXF file)\b/.test(l));
+  return lines.length ? lines : ['the converter reported errors'];
+}
+
+/** The output of a failed run, if it is a complete-looking, size-capped ASCII DXF (SECTION near the start, EOF at the end); else null. */
+async function readRecoverable(outPath, maxBytes) {
+  let buf;
+  try {
+    const st = await fs.stat(outPath);
+    if (!st.isFile() || st.size === 0 || st.size > maxBytes) return null;
+    buf = await fs.readFile(outPath);
+  } catch { return null; }
+  const head = buf.subarray(0, 512).toString('latin1');
+  const tail = buf.subarray(Math.max(0, buf.length - 64)).toString('latin1').trimEnd();
+  if (!/^(?:\s*999\r?\n[^\r\n]*\r?\n)?\s*0\r?\nSECTION\r?\n/.test(head) || !/(^|\n)EOF$/.test(tail)) return null;
+  return new Uint8Array(buf);
+}
+
 function toBuffer(bytes, what, maxBytes) {
   let buf;
   if (Buffer.isBuffer(bytes)) buf = bytes;
@@ -103,17 +123,28 @@ export function createDwgBridge(dir, platform = process.platform, opts = {}) {
     }
   }
 
-  async function convert(name, exe, input, inExt, outExt, extraArgs) {
+  // LibreDWG's dwg2dxf exits non-zero on recoverable problems (CRC mismatch, unknown objects) yet usually
+  // still writes a usable DXF. `recover` (DWG->DXF only) accepts such an output; it returns {bytes, warnings}.
+  async function convert(name, exe, input, inExt, outExt, extraArgs, recover = null) {
     const tmp = await fs.mkdtemp(path.join(tmpRoot, 'ash-dwg-'));
     try {
       const inPath = path.join(tmp, `input.${inExt}`);
       const outPath = path.join(tmp, `output.${outExt}`);
       await fs.writeFile(inPath, input);
       let stderr = '';
+      let failed = null;
       try {
         ({ stderr } = await run(exe, [...extraArgs, '-y', '-o', outPath, inPath], execOpts(tmp, timeoutMs)));
       } catch (err) {
-        throw describeFailure(name, err, timeoutMs);
+        // only a plain non-zero exit is recoverable: never timeout / ENOENT / maxBuffer / signal
+        if (!recover || typeof err.code !== 'number' || err.killed || err.signal) throw describeFailure(name, err, timeoutMs);
+        failed = err;
+        stderr = err.stderr;
+      }
+      if (failed) {
+        const bytes = await readRecoverable(outPath, maxBytes);
+        if (!bytes) throw describeFailure(name, failed, timeoutMs);
+        return { bytes, warnings: recover(stderr) };
       }
       let st;
       try { st = await fs.stat(outPath); } catch {
@@ -122,7 +153,8 @@ export function createDwgBridge(dir, platform = process.platform, opts = {}) {
       }
       if (st.size === 0) throw new Error(`${name} produced an empty file`);
       if (st.size > maxBytes) throw new RangeError(`${name} output exceeds ${maxBytes} bytes`);
-      return new Uint8Array(await fs.readFile(outPath));
+      const bytes = new Uint8Array(await fs.readFile(outPath));
+      return recover ? { bytes, warnings: [] } : bytes;
     } finally {
       await fs.rm(tmp, { recursive: true, force: true });
     }
@@ -138,7 +170,8 @@ export function createDwgBridge(dir, platform = process.platform, opts = {}) {
     /** DWG bytes -> {dxfBytes} */
     async toDxf(dwgBytes) {
       const input = toBuffer(dwgBytes, 'DWG data', maxBytes);
-      return { dxfBytes: await convert('dwg2dxf', dwg2dxf, input, 'dwg', 'dxf', []) };
+      const { bytes, warnings } = await convert('dwg2dxf', dwg2dxf, input, 'dwg', 'dxf', [], warningLines);
+      return warnings.length ? { dxfBytes: bytes, warnings } : { dxfBytes: bytes };
     },
     /** DXF bytes -> {dwgBytes}; version one of DWG_OUT_VERSIONS (default r2000) */
     async fromDxf(dxfBytes, version = DEFAULT_DWG_OUT_VERSION) {

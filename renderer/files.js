@@ -27,12 +27,17 @@ export async function loadDrawing(api, name, bytes) {
   const ext = extOf(name);
   let dxfBytes = bytes, format = 'dxf';
   const notes = [];
+  let warnings = [];
   if (ext === 'dwg' || looksLikeDwg(bytes)) {
     format = 'dwg';
     if (!api.isElectron) throw new Error('Opening DWG files needs the desktop app (it includes the free LibreDWG converter). In this browser preview, please open a DXF file.');
     const av = await api.dwgAvailable();
     if (!av.available) throw new Error(`The DWG converter is not available: ${av.reason ?? 'unknown reason'}. DXF files can still be opened.`);
-    try { dxfBytes = (await api.dwgToDxf(bytes)).dxfBytes; } catch (err) {
+    try {
+      const res = await api.dwgToDxf(bytes);
+      dxfBytes = res.dxfBytes;
+      warnings = Array.isArray(res.warnings) ? res.warnings : [];
+    } catch (err) {
       throw new Error(`This DWG file could not be converted (${String(err.message || err).split('\n')[0]}). Try opening it in your CAD program and saving it as DXF.`);
     }
   } else if (ext !== 'dxf' && ext !== '') {
@@ -44,9 +49,10 @@ export async function loadDrawing(api, name, bytes) {
     if (err.code === 'BAD_DXF') throw new Error('This file is not a valid DXF drawing.');
     throw err;
   }
+  if (warnings.length) notes.push('The DWG file has checksum/format errors (reported by the converter); the drawing was recovered — check it before relying on it.');
   const sk = Object.entries(doc.skipped || {});
   if (sk.length) notes.push(`Not displayed (unsupported object types): ${sk.map(([k, v]) => `${v} ${k}`).join(', ')}.`);
-  return { doc, format, notes };
+  return { doc, format, notes, warnings };
 }
 function looksLikeDwg(b) { return b.length > 6 && b[0] === 0x41 && b[1] === 0x43 && b[2] === 0x31 && b[3] >= 0x30 && b[3] <= 0x39; } // "AC10.."
 

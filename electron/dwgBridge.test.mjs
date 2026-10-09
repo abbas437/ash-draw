@@ -117,3 +117,43 @@ test('size cap and input type are enforced before spawning', async () => {
     assert.deepEqual(await fs.readdir(tmpRoot), []);
   } finally { await fs.rm(tmpRoot, { recursive: true, force: true }); }
 });
+
+const GOOD_DXF = `printf '999\\r\\nLibreDWG 0.13.3\\r\\n  0\\r\\nSECTION\\r\\n  2\\r\\nENTITIES\\r\\n  0\\r\\nENDSEC\\r\\n  0\\r\\nEOF\\r\\n' > "$out"`;
+const FIND_OUT = `[ "$1" = "--version" ] && { echo "$NAME 0.13.3"; exit 0; }
+out=""; prev=""; for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done`;
+
+test('toDxf accepts a valid DXF from a non-zero exit and returns the stderr warnings', { skip }, async () => {
+  const f = await fakeDir(`${FIND_OUT}\n${GOOD_DXF}\necho "Warning: checksum: 0xffdd581c (calculated) CRC mismatch 0x4cabbd4-0x4cb5b48" >&2\necho "Reading DWG file x" >&2\nexit 1`);
+  try {
+    const b = createDwgBridge(f.dir, 'linux', { tmpRoot: f.tmpRoot });
+    const r = await b.toDxf(new Uint8Array([1, 2, 3]));
+    assert.match(Buffer.from(r.dxfBytes).toString(), /SECTION[\s\S]*EOF/);
+    assert.equal(r.warnings.length, 1);
+    assert.match(r.warnings[0], /CRC mismatch/);
+    assert.deepEqual(await fs.readdir(f.tmpRoot), []);
+  } finally { await f.cleanup(); }
+});
+
+test('toDxf still rejects a non-zero exit with no output, garbage output or truncated DXF', { skip }, async () => {
+  const bodies = {
+    nothing: 'echo "Warning: CRC mismatch" >&2; exit 1',
+    garbage: `${FIND_OUT}\nprintf 'this is not a dxf at all' > "$out"; echo "Warning: CRC mismatch" >&2; exit 1`,
+    truncated: `${FIND_OUT}\nprintf '  0\\nSECTION\\n  2\\nENTITIES\\n  0\\nLINE\\n' > "$out"; echo "Warning: CRC mismatch" >&2; exit 1`,
+  };
+  for (const [what, body] of Object.entries(bodies)) {
+    const f = await fakeDir(body);
+    try {
+      const b = createDwgBridge(f.dir, 'linux', { tmpRoot: f.tmpRoot });
+      await assert.rejects(b.toDxf(new Uint8Array([1])), /^Error: dwg2dxf failed \(exit code 1\): Warning: CRC mismatch/, what);
+      assert.deepEqual(await fs.readdir(f.tmpRoot), [], what);
+    } finally { await f.cleanup(); }
+  }
+});
+
+test('dxf2dwg never accepts output from a failed run', { skip }, async () => {
+  const f = await fakeDir(`${FIND_OUT}\n${GOOD_DXF}\nexit 1`);
+  try {
+    const b = createDwgBridge(f.dir, 'linux', { tmpRoot: f.tmpRoot });
+    await assert.rejects(b.fromDxf(new Uint8Array([1])), /dxf2dwg failed \(exit code 1\)/);
+  } finally { await f.cleanup(); }
+});
