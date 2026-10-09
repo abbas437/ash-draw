@@ -41,7 +41,7 @@ export class Viewport {
     this.rawCursor = { x: 0, y: 0 };
     this.snapMarker = null;
     this.lastPoint = null;             // last point entered (for relative input and ortho)
-    this.settings = { snap: true, ortho: false, polar: false, polarStep: 45, lineweights: false, dark: false, kinds: new Set(DEFAULT_KINDS) };
+    this.settings = { snap: true, ortho: false, polar: false, polarStep: 45, lineweights: false, transparency: true, dark: false, kinds: new Set(DEFAULT_KINDS) };
     this.preview = null;               // (ctx, view, vp) => void drawn above the scene
     this.rubber = null;                // selection rectangle {a,b,crossing} in world coordinates
     this.layout = null;                // the layout shown (paper space; see layouts-ui.js), null = model space
@@ -198,6 +198,7 @@ export class Viewport {
     return {
       background: this.settings.dark ? CANVAS_BG.dark : CANVAS_BG.light,
       showLineweight: this.settings.lineweights,
+      transparency: this.settings.transparency,
       highlight: this.selection,
       highlightColor: this.settings.dark ? '#4dd2ff' : '#0a6fd1',
       dpr: this.dpr,
@@ -259,7 +260,7 @@ export class Viewport {
   /** model space: draw the scene through the cached bitmap (see framePlan in src/core/frameCache.js) */
   _sceneFrame(opts) {
     const { ctx, view, canvas } = this;
-    const key = frameKey({ scene: this.scene, dark: this.settings.dark, lineweights: this.settings.lineweights, selection: this.selection, dpr: this.dpr, pxWidth: canvas.width, pxHeight: canvas.height });
+    const key = frameKey({ scene: this.scene, dark: this.settings.dark, lineweights: this.settings.lineweights, transparency: this.settings.transparency, selection: this.selection, dpr: this.dpr, pxWidth: canvas.width, pxHeight: canvas.height });
     const plan = framePlan(this._frame, key, view, this._gesture);
     let buf = this._buf;
     const p = this._prog;

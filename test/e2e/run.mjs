@@ -1624,6 +1624,66 @@ try {
   assert.notEqual(wpx.outside, '255,255,255', `line outside the wipeout is drawn: ${JSON.stringify(wpx)}`);
   assert.notEqual(wpx.after, '255,255,255', `line after the wipeout is on top: ${JSON.stringify(wpx)}`);
 
+  step = 'transparency: Properties field, TPY toggle, undo, layer transparency, Defaults transparency';
+  {
+    await page.evaluate(async () => {
+      const M = await import('/src/core/model.js');
+      const doc = M.newDocument();
+      M.addLayer(doc, { name: 'TL', color: 1 });
+      const sq = (x0) => [{ closed: true, pts: [{ x: x0, y: 0, bulge: 0 }, { x: x0 + 40, y: 0, bulge: 0 }, { x: x0 + 40, y: 40, bulge: 0 }, { x: x0, y: 40, bulge: 0 }] }];
+      M.addEntity(doc, M.makeHatch(sq(0), { color: 1 }));
+      M.addEntity(doc, M.makeHatch(sq(60), { layer: 'TL', color: 256 }));
+      window.app.installDoc(doc, { path: null, name: 'transp.dxf', format: 'dxf' });
+      window.app.vp.view = { ...window.app.vp.view, cx: 50, cy: 20, zoom: 5 };
+      window.app.vp.setSelection([]);
+      window.app.vp.render();
+    });
+    const px = (x, y) => page.evaluate(([a, b]) => { const vp = window.app.vp; vp.render(); const s = vp.toScreen({ x: a, y: b }); return [...vp.ctx.getImageData(Math.round(s.x * vp.dpr), Math.round(s.y * vp.dpr), 1, 1).data.slice(0, 3)]; }, [x, y]);
+    const alphaOf = (i) => page.evaluate((k) => window.app.doc.entities[k].alpha, i);
+    assert.deepEqual(await px(20, 20), [255, 0, 0], 'opaque red hatch');
+    const hatchId = await page.evaluate(() => window.app.doc.entities[0].id);
+    await page.evaluate((id) => window.app.vp.setSelection([id]), hatchId);
+    const tf = page.locator('#props input[data-prop="Transparency"]');
+    assert.equal(await tf.inputValue(), 'ByLayer');
+    await tf.fill('70'); await tf.press('Enter');
+    assert.equal(await alphaOf(0), 76, 'Transparency 70 sets alpha 76');
+    const blended = await px(20, 20);
+    assert.ok(blended[1] > 20 && blended[0] < 200, `70 % hatch is blended with the background: ${blended}`);
+    await page.click('#status button[data-key=transparency]');
+    assert.deepEqual(await px(20, 20), [255, 0, 0], 'TPY off: full colour');
+    await page.click('#status button[data-key=transparency]');
+    assert.deepEqual(await px(20, 20), blended, 'TPY on: blended again');
+    await page.locator('#cv').focus();
+    await page.keyboard.press('Control+z');
+    assert.equal(await alphaOf(0), undefined, 'Ctrl+Z restores the previous value (ByLayer)');
+    assert.deepEqual(await px(20, 20), [255, 0, 0]);
+    // mixed selection
+    await page.evaluate(() => { const d = window.app.doc.entities; window.app.vp.setSelection(d.map((e) => e.id)); });
+    await tf.fill('50'); await tf.press('Enter');
+    await page.evaluate(() => window.app.vp.setSelection([window.app.doc.entities[0].id]));
+    await tf.fill('ByBlock'); await tf.press('Enter');
+    await page.evaluate(() => window.app.vp.setSelection(window.app.doc.entities.map((e) => e.id)));
+    assert.equal(await tf.inputValue(), '*varies*', 'mixed selection');
+    await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z');
+    assert.equal(await alphaOf(0), undefined);
+    // layer transparency
+    const hatch2 = await px(80, 20);
+    assert.deepEqual(hatch2, [255, 0, 0], 'ByLayer hatch on an opaque layer');
+    await page.locator('#layers .layer', { has: page.locator('.lname', { hasText: /^TL$/ }) }).locator('.lay-tr').click();
+    await page.locator('#dlg input').fill('50'); await page.locator('#dlg input').press('Enter');
+    assert.equal(await page.evaluate(() => window.app.doc.layers.get('TL').alpha), 127, 'layer TL alpha 127');
+    const lb = await px(80, 20);
+    assert.ok(lb[0] < 200 && lb[1] > 0, `ByLayer entity blends with the layer transparency: ${lb}`);
+    // Defaults for new objects
+    await page.evaluate(() => window.app.vp.setSelection([]));
+    await tf.fill('30'); await tf.press('Enter');
+    const before = await count();
+    await typeCmd('line'); await typeCmd('0,50'); await typeCmd('10,50'); await page.keyboard.press('Escape');
+    assert.equal(await count(), before + 1, 'a line was drawn');
+    const al = await page.evaluate(() => window.app.doc.entities.at(-1).alpha);
+    assert.ok(Math.abs(al - 178) <= 1, `new line alpha ${al} ~ 178`);
+  }
+
   step = 'csp';
   assert.deepEqual(await page.evaluate(() => window.__csp), []);
   assert.deepEqual(problems, []);

@@ -108,6 +108,17 @@ function base(type, o) {
 /** transparency percent (0..90 in AutoCAD) <-> alpha byte */
 export const alphaFromPercent = (t) => Math.floor((100 - t) * 255 / 100);
 export const percentFromAlpha = (a) => Math.round((255 - a) * 100 / 255);
+/** UI text of an entity's alpha: 'ByLayer' (absent), 'ByBlock' (-2) or the transparency percent */
+export const transparencyText = (a) => (a == null ? 'ByLayer' : a === -2 ? 'ByBlock' : String(percentFromAlpha(a)));
+/** text typed in a Transparency field -> { alpha } (undefined = ByLayer, -2 = ByBlock, else 0..255), or null when invalid. Percent is 0..90. */
+export function parseTransparency(text) {
+  const t = String(text).trim().toLowerCase().replace(',', '.').replace(/%$/, '');
+  if (t === 'bylayer') return { alpha: undefined };
+  if (t === 'byblock') return { alpha: -2 };
+  const p = Number(t);
+  if (t === '' || !Number.isFinite(p) || p < 0 || p > 90) return null;
+  return { alpha: alphaFromPercent(p) };
+}
 const pt = (p) => ({ x: p.x, y: p.y });
 
 export const makeLine = (p1, p2, o = {}) => ({ ...base('LINE', o), p1: pt(p1), p2: pt(p2) });

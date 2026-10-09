@@ -105,3 +105,39 @@ test('a red solid hatch at 70 % over white draws light red; transparency off dra
   assert.deepEqual(px(), [255, 0, 0]);
   assert.match(exportSvg(doc, { scene: sc }), /opacity="0\.298/);
 });
+
+// ---- UI helpers and edit paths (no ezdxf needed) ----
+import * as M from '../src/core/model.js';
+import { Session, setEntityProps, setLayerProps } from '../src/core/edit.js';
+
+test('Transparency field text <-> alpha', () => {
+  assert.deepEqual(M.parseTransparency('ByLayer'), { alpha: undefined });
+  assert.deepEqual(M.parseTransparency(' byblock '), { alpha: -2 });
+  assert.equal(M.parseTransparency('70').alpha, 76);
+  assert.equal(M.parseTransparency('30%').alpha, 178);
+  assert.equal(M.parseTransparency('0').alpha, 255);
+  for (const bad of ['', 'abc', '91', '-1', '100']) assert.equal(M.parseTransparency(bad), null, bad);
+  assert.equal(M.transparencyText(undefined), 'ByLayer');
+  assert.equal(M.transparencyText(-2), 'ByBlock');
+  assert.equal(M.transparencyText(76), '70');
+  assert.equal(M.transparencyText(255), '0');
+});
+
+test('setEntityProps sets, clears (ByLayer) and undoes alpha in one step; setLayerProps sets layer alpha', () => {
+  const doc = M.newDocument();
+  const a = M.addEntity(doc, M.makeLine({ x: 0, y: 0 }, { x: 1, y: 0 })), b = M.addEntity(doc, M.makeLine({ x: 0, y: 1 }, { x: 1, y: 1 }, { alpha: 100 }));
+  const s = new Session(doc);
+  const get = (id) => s.doc.entities.find((e) => e.id === id);
+  setEntityProps(s, [a.id, b.id], { alpha: 76 });
+  assert.deepEqual([get(a.id).alpha, get(b.id).alpha], [76, 76]);
+  setEntityProps(s, [a.id, b.id], { alpha: -2 });
+  assert.deepEqual([get(a.id).alpha, get(b.id).alpha], [-2, -2]);
+  setEntityProps(s, [a.id, b.id], { alpha: undefined });
+  assert.ok(!('alpha' in get(a.id)) && !('alpha' in get(b.id)), 'ByLayer = no alpha key');
+  s.undo();
+  assert.deepEqual([get(a.id).alpha, get(b.id).alpha], [-2, -2], 'one undo step restores both');
+  setLayerProps(s, '0', { alpha: M.alphaFromPercent(50) });
+  assert.equal(s.doc.layers.get('0').alpha, 127);
+  s.undo();
+  assert.equal(s.doc.layers.get('0').alpha, undefined);
+});
