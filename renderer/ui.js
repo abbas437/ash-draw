@@ -2,6 +2,7 @@
 import { setLayerProps, setEntityProps, setText, deleteLayer } from '../src/core/edit.js';
 import { tessellate, dist, DEG } from '../src/core/geom.js';
 import { aciToRgb } from '../src/core/aci.js';
+import { transparencyText, parseTransparency, percentFromAlpha } from '../src/core/model.js';
 import { viewportFields } from './layouts-ui.js';
 import { editEntity } from './grips.js';
 
@@ -102,6 +103,13 @@ export function renderLayers(app) {
     el('button', { class: 'icon lay-frz', title: l.frozen ? 'Thaw layer' : 'Freeze layer', onclick: () => { setLayerProps(session, l.name, { frozen: !l.frozen }); } }, l.frozen ? '❄' : '☀'),
     el('button', { class: 'icon', title: l.locked ? 'Unlock layer' : 'Lock layer', onclick: () => { setLayerProps(session, l.name, { locked: !l.locked }); } }, l.locked ? '🔒' : '🔓'),
     el('span', { class: 'swatch', style: `background:${cssOfAci(Math.abs(l.color))}`, title: 'Layer colour (click to change)', onclick: (e) => colorMenu(e, (c) => setLayerProps(session, l.name, { color: c })) }),
+    el('span', { class: 'lay-tr', title: 'Layer transparency 0-90 % (click to change)', onclick: async () => {
+      const r = await promptDialog('Layer transparency (0-90 %)', String(l.alpha >= 0 ? percentFromAlpha(l.alpha) : 0));
+      if (r == null) return;
+      const t = parseTransparency(r);
+      if (!t || t.alpha === -2) { toast('Enter a transparency from 0 to 90.'); return; }
+      setLayerProps(session, l.name, { alpha: t.alpha ?? 255 });
+    }, text: String(l.alpha >= 0 ? percentFromAlpha(l.alpha) : 0) }),
     el('span', { class: 'lname', title: `${used.get(l.name) ?? 0} object(s)`, ondblclick: () => { app.state.layer = l.name; app.refreshPanels(); }, text: l.name }),
     app.state.layer === l.name ? el('span', { class: 'cur', text: '●', title: 'Current layer' }) : el('button', { class: 'icon', title: 'Make current', onclick: () => { app.state.layer = l.name; app.refreshPanels(); } }, '○'),
   )));
@@ -160,6 +168,13 @@ function describe(e, doc) {
   }
 }
 
+/** Transparency: ByLayer / ByBlock / 0-90 (%); '*varies*' for a mixed selection; invalid input restores the shown value */
+function transparencyField(shown, set) {
+  const inp = el('input', { type: 'text', 'data-prop': 'Transparency', value: shown, title: 'ByLayer, ByBlock or 0-90 (%)' });
+  inp.onchange = () => { const t = parseTransparency(inp.value); if (t) set(t.alpha); else inp.value = shown; };
+  return el('label', {}, 'Transparency', inp);
+}
+
 export function renderProperties(app) {
   const box = document.getElementById('props');
   const { doc, session, vp } = app;
@@ -178,6 +193,8 @@ export function renderProperties(app) {
     el('label', {}, 'Colour', mixed(common('color', 256) === null ? null : colorKey(common('color', 256)), (v) => select(ACI_CHOICES, v, (x) => x !== '__mixed__' && apply({ color: Number(x) })))),
     el('label', {}, 'Linetype', mixed(common('linetype', 'BYLAYER') === null ? null : String(common('linetype', 'BYLAYER')).toUpperCase(), (v) => select(lts, v, (x) => x !== '__mixed__' && apply({ linetype: x })))),
     el('label', {}, 'Lineweight', mixed(common('lineweight', -1), (v) => select(LW_CHOICES, v, (x) => x !== '__mixed__' && apply({ lineweight: Number(x) })))),
+    transparencyField(ents.length ? (ents.every((e) => e.alpha === ents[0].alpha) ? transparencyText(ents[0].alpha) : '*varies*') : transparencyText(app.state.alpha),
+      (alpha) => apply({ alpha })),
     ...rowsInfo.map(([k, v]) => el('div', { class: 'info' }, el('span', { text: k }), el('b', { text: v }))),
   ];
   if (ents.length === 1) kids.push(...geometryFields(app, ents[0]));

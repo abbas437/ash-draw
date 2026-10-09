@@ -73,6 +73,7 @@ class App {
     api.settingsGet?.('tools.labels').then((v) => this.setToolPanel('labels', labelsFrom(v), false)).catch(() => {});
     api.settingsGet?.('tools.placement').then((v) => this.setToolPlacement(placementFrom(v), false)).catch(() => {});
     api.settingsGet?.('tools.colours').then((v) => { if (v === false) this.setToolPanel('colours', false, false); }).catch(() => {});
+    api.settingsGet?.('canvas.transparency').then((v) => { if (v === false) { this.vp.settings.transparency = false; this.refreshToggles(); this.vp.requestRender(); } }).catch(() => {});
     api.settingsGet?.('canvas.background').then((v) => this.setCanvasDark(canvasDarkFrom(v))).catch(() => {});
     api.settingsGet?.('tools.collapsed').then((v) => { this.collapsed = collapsedFrom(v); applyCollapsed(document.getElementById('tools'), this.collapsed); }).catch(() => {});
     api.settingsGet?.('theme').then((t) => { if (t === 'dark') this.setTheme('dark', false); }).catch(() => {});
@@ -92,7 +93,7 @@ class App {
   /** the whole drawing (model space and layouts) whichever space is shown - for save and export */
   get fileDoc() { return this.active.doc; }
   get tool() { return this.tools[this.toolId]; }
-  newProps() { return { layer: this.state.layer, color: this.state.color, linetype: this.state.linetype, lineweight: this.state.lineweight }; }
+  newProps() { return { layer: this.state.layer, color: this.state.color, linetype: this.state.linetype, lineweight: this.state.lineweight, alpha: this.state.alpha }; }
   toast(t, ms) { toast(t, ms); }
   askText(o) { return textDialog(o); }
   refreshPrompt() { document.getElementById('prompt').textContent = this.tool?.prompt ?? ''; }
@@ -478,7 +479,7 @@ class App {
   buildStatus() {
     const s = document.getElementById('status');
     const tog = (label, key, title) => { const b = el('button', { title, onclick: () => this.toggle(key) }, label); b.dataset.key = key; return b; };
-    s.append(el('span', { class: 'coord', id: 'coord' }), tog('SNAP', 'snap', 'Object snap (F3)'), tog('ORTHO', 'ortho', 'Ortho (F8)'), tog('POLAR', 'polar', 'Polar tracking 45° (F10)'), tog('LWT', 'lineweights', 'Show lineweights (F9)'),
+    s.append(el('span', { class: 'coord', id: 'coord' }), tog('SNAP', 'snap', 'Object snap (F3)'), tog('ORTHO', 'ortho', 'Ortho (F8)'), tog('POLAR', 'polar', 'Polar tracking 45° (F10)'), tog('LWT', 'lineweights', 'Show lineweights (F9)'), tog('TPY', 'transparency', 'Show transparency'),
       el('span', { class: 'spacer' }), el('span', { id: 'sel' }), el('span', { id: 'units', style: 'margin-left:12px' }),
       el('button', { id: 'theme-btn', title: 'Dark theme (View menu)', onclick: () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark') }, 'DARK'));
     this.refreshToggles();
@@ -487,6 +488,7 @@ class App {
     const st = this.vp.settings;
     if (key === 'dark') { this.setCanvasDark(!st.dark); api.settingsSet?.('canvas.background', st.dark ? 'dark' : 'light')?.catch?.(() => {}); return; }
     st[key] = !st[key];
+    if (key === 'transparency') api.settingsSet?.('canvas.transparency', st[key])?.catch?.(() => {});
     if (key === 'ortho' && st.ortho) st.polar = false;
     if (key === 'polar' && st.polar) st.ortho = false;
     this.refreshToggles(); this.vp.requestRender();

@@ -2,8 +2,8 @@
 // Pure: decides how the next frame is produced from the last full frame, its content key and the active gesture.
 
 /** what the scene picture depends on besides the view; any difference forces a full render */
-export function frameKey({ scene, dark, lineweights, selection, dpr, pxWidth, pxHeight }) {
-  return { scene, version: scene?.version, dark: !!dark, lineweights: !!lineweights, selection, selSize: selection?.size ?? 0, dpr, pxWidth, pxHeight };
+export function frameKey({ scene, dark, lineweights, transparency, selection, dpr, pxWidth, pxHeight }) {
+  return { scene, version: scene?.version, dark: !!dark, lineweights: !!lineweights, transparency: transparency !== false, selection, selSize: selection?.size ?? 0, dpr, pxWidth, pxHeight };
 }
 
 export function sameKey(a, b) {

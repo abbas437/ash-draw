@@ -298,9 +298,9 @@ export function extendCommand(s, id, boundaryIds, pick) {
   return { done: 1, failed: [] };
 }
 
-/** Change layer / colour / linetype / lineweight / ltscale of entities. */
+/** Change layer / colour / linetype / lineweight / ltscale / transparency (alpha) of entities. */
 export function setEntityProps(s, ids, props) {
-  const allowed = ['layer', 'color', 'linetype', 'lineweight', 'ltscale'];
+  const allowed = ['layer', 'color', 'linetype', 'lineweight', 'ltscale', 'alpha']; // alpha: undefined = ByLayer
   const clean = {};
   for (const k of allowed) if (k in props) clean[k] = props[k];
   return s.transact('Properties', (tx) => {
@@ -309,7 +309,9 @@ export function setEntityProps(s, ids, props) {
     for (const id of ids) {
       const e = getEntity(s.doc, id);
       if (!e) continue;
-      tx.replace({ ...structuredClone(e), ...clean });
+      const c = { ...structuredClone(e), ...clean };
+      if (c.alpha === undefined) delete c.alpha;
+      tx.replace(c);
       n++;
     }
     return n;

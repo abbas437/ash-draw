@@ -145,6 +145,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 #mk-filter { max-width:6em; }
 .layer { display:flex; align-items:center; gap:4px; padding:2px 0; }
 .layer.current { background:var(--current-bg); }
+.layer .lay-tr { width:2.2em; text-align:right; cursor:pointer; opacity:.75; font-size:11px; }
 .layer .lname { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:default; }
 .layer .cur { color:var(--accent); width:22px; text-align:center; }
 button.icon { border:none; background:none; padding:0 3px; width:22px; }
