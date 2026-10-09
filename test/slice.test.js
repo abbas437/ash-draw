@@ -102,6 +102,20 @@ test('one INSERT of a 10k-entity block: its expansion yields many times, the sce
   assert.deepEqual(buildScene(doc).items, ref.items);
 });
 
+test('SpatialIndex rebuild: an INSERT of a small block of big nested blocks is bounded in steps too, equal to bboxOf', () => {
+  const doc = bigInsertDoc();
+  const outer = [0, 1, 2].map((k) => Object.assign(makeInsert('BIG', { x: k * 300, y: -k * 50 }, { sx: 1 + k, sy: 1 + k, rot: 15 * k }), { id: 0 }));
+  doc.blocks.set('OUTER', { name: 'OUTER', base: { x: 0, y: 0 }, entities: outer });
+  const ins = addEntity(doc, makeInsert('OUTER', { x: -200, y: 40 }, { sx: 0.5, sy: 0.5, rot: 10 }));
+  const a = new SpatialIndex(doc), b = new SpatialIndex(doc, { deferred: true });
+  let steps = 0;
+  const g = b.rebuildSteps();
+  while (!g.next().done) steps++;
+  assert.ok(steps >= 4 + 3 * 5, `the nested INSERT's box takes several steps (${steps})`);
+  assert.deepEqual(indexShape(b), indexShape(a));
+  assert.deepEqual(b.bboxOf(ins), bboxOf(ins, doc));
+});
+
 test('SpatialIndex rebuild: the box of an INSERT of a big block is bounded in chunks (yields), equal to bboxOf', async () => {
   const doc = bigInsertDoc(), ins = doc.entities[1];
   const a = new SpatialIndex(doc), b = new SpatialIndex(doc, { deferred: true });

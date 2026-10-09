@@ -63,20 +63,53 @@ export class SpatialIndex {
 
   rebuild() { drain(this.rebuildSteps()); }
 
-  /** bboxOf(e) of an INSERT of a big block, computed BOX_CHUNK block entities at a time (yielding `frac` in between)
-   *  and cached: explode() over each chunk of the block, the same pieces bboxOf would tessellate in one go */
+  /** leaf entities an INSERT of block `name` expands to (nested INSERTs and arrays counted through), memoised */
+  _leafCount(name, seen = new Set()) {
+    const memo = (this._leaves ??= new Map());
+    if (memo.has(name)) return memo.get(name);
+    const ents = this.doc.blocks.get(name)?.entities;
+    if (!ents || seen.has(name)) return 0;
+    seen.add(name);
+    let n = 0;
+    for (const s of ents) n += s.type === 'INSERT' ? Math.max(1, s.cols || 1) * Math.max(1, s.rows || 1) * this._leafCount(s.block, seen) : 1;
+    seen.delete(name);
+    memo.set(name, n);
+    return n;
+  }
+
+  /** bboxOf(e) of an INSERT of a big block (counting nested blocks through), computed about BOX_CHUNK leaf entities
+   *  per step (yielding `frac` in between) and cached: the same pieces bboxOf would tessellate in one go */
   *_insertBoxSteps(e, frac) {
+    if (this._leafCount(e.block) <= BOX_CHUNK) return;
+    const st = { work: 0 };
+    const b = yield* this._boxSteps(e, frac, st, new Set());
+    this._boxCache.set(e, finiteBox(b) ? b : null);
+  }
+
+  /** box of the leaves of INSERT e (already placed in world space by explode): its block BOX_CHUNK entities at a
+   *  time, a nested INSERT of a big block walked the same way; st.work counts leaves since the last yield */
+  *_boxSteps(e, frac, st, seen) {
     const blk = this.doc.blocks.get(e.block), ents = blk?.entities;
-    if (!ents || ents.length <= BOX_CHUNK) return;
+    if (!ents || seen.has(e.block)) return null;
+    seen.add(e.block);
     let b = null;
     for (let i = 0; i < ents.length; i += BOX_CHUNK) {
-      const part = { ...blk, entities: ents.slice(i, i + BOX_CHUNK) };
-      const doc = { ...this.doc, blocks: { get: (name) => (name === e.block ? part : this.doc.blocks.get(name)) } };
-      const pb = safe(() => { let q = null; for (const sub of explode(e, doc)) for (const pl of tessellate(sub, this.doc, 0)) for (const p of pl) q = growBox(q, p); return q; }, null);
-      if (pb) b = b ? unionBox(b, pb) : pb;
-      yield frac;
+      const part = ents.length <= BOX_CHUNK ? blk : { ...blk, entities: ents.slice(i, i + BOX_CHUNK) };
+      const doc = part === blk ? this.doc : { ...this.doc, blocks: { get: (name) => (name === e.block ? part : this.doc.blocks.get(name)) } };
+      const subs = safe(() => explode(e, doc), []);
+      for (const sub of subs) {
+        let q = null;
+        if (sub.type === 'INSERT' && this._leafCount(sub.block) > BOX_CHUNK / 4) q = yield* this._boxSteps(sub, frac, st, seen);
+        else {
+          q = safe(() => { let r = null; for (const pl of tessellate(sub, this.doc, 0)) for (const p of pl) r = growBox(r, p); return r; }, null);
+          st.work += sub.type === 'INSERT' ? this._leafCount(sub.block) : 1;
+        }
+        if (q) b = b ? unionBox(b, q) : q;
+        if (st.work >= BOX_CHUNK) { st.work = 0; yield frac; }
+      }
     }
-    this._boxCache.set(e, finiteBox(b) ? b : null);
+    seen.delete(e.block);
+    return b;
   }
 
   /** rebuild as a step generator: yields the fraction done after each entity (bounds: 0..0.9, grid: 0.9..1) */
