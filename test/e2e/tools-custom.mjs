@@ -52,8 +52,7 @@ try {
     assert.equal(await page.locator('.tcz-menu [data-act=hide]').isDisabled(), true, 'Select cannot be hidden');
     await page.setViewportSize({ width: 1390, height: 850 });
     await page.waitForFunction(() => !document.querySelector('.tcz-menu'), null, { timeout: 3000 });
-    await page.setViewportSize({ width: 1400, height: 850 });
-    await page.locator('#tools button[data-tool=trim]').focus();
+    await page.locator('#tools button[data-tool=trim]').focus(); // (no resize back: a late resize event would close the next menu)
     await page.keyboard.press('Shift+F10'); // keyboard context menu
     await page.waitForFunction(() => document.querySelector('.tcz-menu') && document.activeElement?.dataset.act === 'hide', null, { timeout: 3000 });
     assert.equal(await page.evaluate(() => window.app.vp.settings.polar), false, 'Shift+F10 opens the menu, does not toggle Polar');
