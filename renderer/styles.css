@@ -42,10 +42,26 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 #menubar .drop hr { border:none; border-top:1px solid var(--line); margin:4px 0; }
 #menubar .drop kbd { color:var(--dim); font:inherit; }
 #menubar .title { margin-left:auto; color:var(--dim); padding-right:8px; }
-#main { display:grid; grid-template-columns: 92px 1fr 260px; min-height:0; }
+#main { display:grid; grid-template-columns: 138px 1fr 260px; min-height:0; }
+#app.no-tool-labels #main { grid-template-columns: 46px 1fr 260px; }
 #tools { background:var(--panel); border-right:1px solid var(--line); overflow:auto; padding:4px; display:flex; flex-direction:column; gap:2px; }
-#tools .group { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.06em; margin:8px 2px 2px; }
-#tools button { width:100%; padding:5px 2px; text-align:center; font-size:12px; }
+#tools > * { flex-shrink:0; }
+#tools .group { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.06em; margin:8px 2px 2px; padding-left:5px; border-left:3px solid var(--gc, transparent); line-height:1.2; }
+#tools button { width:100%; display:flex; align-items:center; gap:6px; padding:3px 5px; text-align:left; font-size:12px; }
+#tools button .lbl { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.ti { flex:none; display:block; }
+#tools .ti { color:var(--gc, currentColor); }
+/* tool group colours (View > Tool group colours); the dark theme uses lighter tints of the same hues */
+#tools .g-select { --gc:#4b5b66; } #tools .g-draw { --gc:#1f62c9; } #tools .g-modify { --gc:#b65300; } #tools .g-block { --gc:#24773a; }
+#tools .g-annotate { --gc:#7a3fc4; } #tools .g-inquiry { --gc:#0a7a81; } #tools .g-markup { --gc:#c0262d; }
+[data-theme="dark"] #tools .g-select { --gc:#b4c0c7; } [data-theme="dark"] #tools .g-draw { --gc:#7fb0ff; } [data-theme="dark"] #tools .g-modify { --gc:#ffa45c; } [data-theme="dark"] #tools .g-block { --gc:#6fd18a; }
+[data-theme="dark"] #tools .g-annotate { --gc:#c09cff; } [data-theme="dark"] #tools .g-inquiry { --gc:#4fd1d9; } [data-theme="dark"] #tools .g-markup { --gc:#ff8a8f; }
+#app #tools.no-colours > * { --gc:initial; }
+#tools button.active .ti { color:var(--on-accent); }
+/* View > Tool labels off: icon-only buttons, group names become separators (the name stays in the tooltip) */
+#app.no-tool-labels #tools button { justify-content:center; padding:4px 0; }
+#app.no-tool-labels #tools button .lbl { display:none; }
+#app.no-tool-labels #tools .group { font-size:0; margin:5px 0 2px; padding:0; border-left:none; border-top:2px solid var(--gc, var(--line)); }
 #tools button.active { background:var(--accent2); border-color:var(--accent); color:var(--on-accent); }
 #docs { display:grid; grid-template-rows:auto 1fr auto; min-width:0; min-height:0; }
 #tabbar { display:flex; overflow-x:auto; background:var(--bg); border-bottom:1px solid var(--line); min-height:28px; }
@@ -59,6 +75,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 #stage { position:relative; min-width:0; min-height:0; background:var(--canvas); }
 #cv { width:100%; height:100%; display:block; cursor:none; touch-action:none; outline:none; }
 #zoombar { position:absolute; right:10px; bottom:10px; display:flex; gap:4px; }
+#zoombar button { display:flex; padding:3px 5px; }
 #find-panel { position:absolute; right:10px; top:10px; width:340px; max-height:calc(100% - 60px); display:flex; flex-direction:column; gap:4px; padding:0 8px 8px; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:4px; box-shadow:0 2px 8px var(--shadow); z-index:4; }
 #find-panel[hidden] { display:none; }
 #find-panel > label { display:flex; flex-direction:column; gap:2px; }

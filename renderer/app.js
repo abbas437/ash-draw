@@ -16,42 +16,14 @@ import { initLayouts, restoreSpace, renderSpaceBar, layoutDoubleClick, exitMspac
 import { ComparePanel, runCompare } from './compare.js';
 import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
 import { loadDrawingXrefs, xrefPanel } from './xref-panel.js';
+import { TOOL_BUTTONS, buildToolPanel, iconButton } from './tool-panel.js';
+import { iconSvg } from './icons.js';
 import { el, message, modal, confirmDialog, textDialog, toast, renderLayers, renderProperties } from './ui.js';
 import {
   OPEN_FILTERS, loadDrawing, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, baseName, extOf, UNIT_NAMES,
 } from './files.js';
 
 const api = window.api;
-
-const TOOL_BUTTONS = [
-  ['Select', [['select', 'Select']]],
-  ['Draw', [['line', 'Line', 'L'], ['pline', 'Polyline', 'PL'], ['rect', 'Rectangle', 'REC'], ['circle', 'Circle', 'C'], ['arc', 'Arc', 'A'], ['ellipse', 'Ellipse', 'EL'], ['point', 'Point', 'PO'], ['text', 'Text', 'T'], ['hatch', 'Hatch', 'H']]],
-  ['Modify', [['move', 'Move', 'M'], ['copy', 'Copy', 'CO'], ['rotate', 'Rotate', 'RO'], ['scale', 'Scale', 'SC'], ['mirror', 'Mirror', 'MI'], ['offset', 'Offset', 'O'], ['trim', 'Trim', 'TR'], ['extend', 'Extend', 'EX'], ['explode', 'Explode', 'X'], ['erase', 'Erase', 'E'],
-    ['fillet', 'Fillet', 'F', 'M2 14V8a5 5 0 0 1 5-5h7'], ['chamfer', 'Chamfer', 'CHA', 'M2 14V7l4-4h8'],
-    ['break', 'Break', 'BR', 'M1 8h5M10 8h5M6 5v6M10 5v6'], ['join', 'Join', 'J', 'M1 8h5M10 8h5M5 5l3 3-3 3M11 5 8 8l3 3'],
-    ['lengthen', 'Lengthen', 'LEN', 'M1 8h10M11 5l4 3-4 3'], ['stretch', 'Stretch', 'STR', 'M1 4h7v8H1M8 8h7M12 5l3 3-3 3'],
-    ['arrayrect', 'Array rect', 'AR', 'M2 2h4v4H2zM10 2h4v4h-4zM2 10h4v4H2zM10 10h4v4h-4z'],
-    ['arraypolar', 'Array polar', 'ARRAYPOLAR', 'M7 1h2v2H7zM13 7h2v2h-2zM7 13h2v2H7zM1 7h2v2H1zM7.5 7.5h1v1h-1z'],
-    ['arraypath', 'Array path', 'ARRAYPATH', 'M1 14C6 14 6 3 15 3M2 11h2v2H2zM7 6h2v2H7zM12 1h2v2h-2z']]],
-  ['Block', [['block', 'Create block', 'B', 'M2 2h12v12H2zM5 5h6v6H5z'], ['insert', 'Insert', 'I', 'M8 1v9M5 7l3 3 3-3M2 12h12v3H2z'],
-    ['attdef', 'Attribute', 'ATT', 'M2 4h12M8 4v9M5 13h6'], ['eattedit', 'Edit attributes', 'ATE', 'M2 13l3-1 8-8-2-2-8 8zM10 3l2 2']]],
-  ['Dimension', [['dimlinear', 'Linear', 'DLI', 'M2 4v8M14 4v8M2 8h12M4 6 2 8l2 2M12 6l2 2-2 2'], ['dimaligned', 'Aligned', 'DAL', 'M2 12 12 2M4 14 14 4M5 11l6-6'],
-    ['dimangular', 'Angular', 'DAN', 'M2 14 14 14M2 14 11 3M8 14a6 6 0 0 0-2-4.6'],
-    ['dimradius', 'Radius', 'DRA', 'M8 8l5-5M1 8a7 7 0 1 0 14 0A7 7 0 1 0 1 8'], ['dimdiameter', 'Diameter', 'DDI', 'M3 13 13 3M1 8a7 7 0 1 0 14 0A7 7 0 1 0 1 8'],
-    ['mleader', 'Multileader', 'MLD', 'M2 14 7 6h6M2 14l2-.5M2 14l.5-2M9 4h5M9 8h5'],
-    ['dimcontinue', 'Continue', 'DCO', 'M1 4v8M8 4v8M15 4v8M1 8h14'], ['dimbaseline', 'Baseline', 'DBA', 'M1 3v11M8 7v7M15 3v11M1 9h7M1 5h14']]],
-  ['Inquiry', [['measure', 'Measure', 'MEA'], ['area', 'Area', 'AREA']]],
-  ['Markup', [['mkc', 'Markup circle', 'MKC', 'M1 8a7 7 0 1 0 14 0A7 7 0 1 0 1 8'], ['mkr', 'Markup rectangle', 'MKR', 'M2 3h12v10H2z'], ['mkt', 'Markup note', 'MKT', 'M2 3h12v8H7l-3 3v-3H2z']]],
-];
-
-/** 16 px line icon for a toolbar button (one SVG path, drawn in the button's text colour). */
-function toolIcon(d) {
-  const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg'), path = document.createElementNS(ns, 'path');
-  for (const [k, v] of Object.entries({ width: 14, height: 14, viewBox: '0 0 16 16', 'aria-hidden': 'true', style: 'vertical-align:-2px;margin-right:4px' })) svg.setAttribute(k, v);
-  for (const [k, v] of Object.entries({ d, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })) path.setAttribute(k, v);
-  svg.append(path);
-  return svg;
-}
 
 class App {
   constructor() {
@@ -94,6 +66,8 @@ class App {
     this.newDrawing();
     this.setTool('select');
     this.setTheme('light', false);
+    this.panelOpts = { labels: true, colours: true };
+    for (const opt of ['labels', 'colours']) api.settingsGet?.(`tools.${opt}`).then((v) => { if (v === false) this.setToolPanel(opt, false, false); }).catch(() => {});
     api.settingsGet?.('theme').then((t) => { if (t === 'dark') this.setTheme('dark', false); }).catch(() => {});
     api.onOpenFile?.((f) => this.openFromFile(f));
     // files given at start-up open first; then the previous session is offered (or reopened, per startup.mode)
@@ -374,10 +348,12 @@ class App {
       ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Paste', 'Ctrl+V', () => this.paste()], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()], ['Find and replace…', 'Ctrl+F', () => this.find.open()]]],
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-',
         ['Show lineweights', 'F9', () => this.toggle('lineweights')], ['Light / dark background', '', () => this.toggle('dark')], '-',
-        ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark'], '-',
+        ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark'],
+        ['Tool labels', '', () => this.setToolPanel('labels', !this.panelOpts.labels), () => this.panelOpts.labels],
+        ['Tool group colours', '', () => this.setToolPanel('colours', !this.panelOpts.colours), () => this.panelOpts.colours], '-',
         ['Show markups', '', () => toggleMarkups(this), () => markupsShown(this.doc)], '-',
         ['External references…', 'XREF', () => xrefPanel(this)]]],
-      ['Dimension', [...TOOL_BUTTONS.find(([g]) => g === 'Dimension')[1].map(([id, label, alias]) => [label, alias, () => this.setTool(id)]), '-', ['Dimension style…', 'D', () => this.dimStyles()]]],
+      ['Dimension', [...TOOL_BUTTONS.find(([g]) => g === 'Dimension')[2].map(([id, label, alias]) => [label, alias, () => this.setTool(id)]), '-', ['Dimension style…', 'D', () => this.dimStyles()]]],
       ['Help', [['What this program can and cannot do', '', () => this.limitations()], ['About', '', () => this.about()]]],
     ];
     const bar = document.getElementById('menubar');
@@ -410,19 +386,24 @@ class App {
 
   buildToolbar() {
     const box = document.getElementById('tools');
-    for (const [group, items] of TOOL_BUTTONS) {
-      box.append(el('div', { class: 'group', text: group }));
-      for (const [id, label, alias, icon] of items) box.append(el('button', { 'data-tool': id, title: alias ? `${label} (${alias})` : label, onclick: () => this.setTool(id) }, icon ? toolIcon(icon) : null, label));
-      if (group === 'Dimension') {
-        this.dimStyleSel = el('select', { id: 'dimstyle', title: 'Current dimension style (DIMSTYLE)', onchange: (e) => setCurrentDimStyle(this.doc, e.target.value) });
-        box.append(this.dimStyleSel, el('button', { title: 'Dimension Style Manager (D)', onclick: () => this.dimStyles() }, 'Dim styles…'));
-      }
-    }
-    box.append(el('div', { class: 'group', text: 'Hatch' }));
+    buildToolPanel(box, el, (id) => this.setTool(id), (group) => {
+      if (group !== 'Dimension') return;
+      this.dimStyleSel = el('select', { id: 'dimstyle', title: 'Current dimension style (DIMSTYLE)', onchange: (e) => setCurrentDimStyle(this.doc, e.target.value) });
+      box.append(this.dimStyleSel, iconButton(el, 'dimstyle', 'Dim styles…', { class: 'g-annotate', title: 'Dimension Style Manager (D)', onclick: () => this.dimStyles() }));
+    });
+    box.append(el('div', { class: 'group g-draw', text: 'Hatch' }));
     const pat = el('select', { title: 'Hatch pattern', onchange: (e) => { this.defaults.hatchPattern = e.target.value; } }, PATTERN_NAMES.map((n) => el('option', { value: n, text: n })));
     pat.value = this.defaults.hatchPattern;
     const sc = el('input', { type: 'number', step: 'any', min: '0', value: '1', title: 'Hatch scale', style: 'width:100%', onchange: (e) => { const v = Number(e.target.value); if (v > 0) this.defaults.hatchScale = v; } });
     box.append(pat, sc);
+    for (const [id, icon] of [['z-in', 'zoomin'], ['z-out', 'zoomout'], ['z-fit', 'zoomfit']]) { const b = document.getElementById(id); b.setAttribute('aria-label', b.title); b.replaceChildren(iconSvg(icon, 18)); }
+  }
+  /** View > Tool labels / Tool group colours: classes on the panel, saved as settings 'tools.labels' and 'tools.colours' */
+  setToolPanel(opt, on, save = true) {
+    this.panelOpts = { labels: true, colours: true, ...this.panelOpts, [opt]: !!on };
+    document.getElementById('app').classList.toggle('no-tool-labels', !this.panelOpts.labels);
+    document.getElementById('tools').classList.toggle('no-colours', !this.panelOpts.colours);
+    if (save) api.settingsSet?.(`tools.${opt}`, !!on)?.catch?.(() => {});
   }
 
   buildStatus() {
