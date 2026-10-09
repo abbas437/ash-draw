@@ -16,7 +16,7 @@ import { initLayouts, restoreSpace, renderSpaceBar, layoutDoubleClick, exitMspac
 import { ComparePanel, runCompare } from './compare.js';
 import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
 import { loadDrawingXrefs, xrefPanel } from './xref-panel.js';
-import { TOOL_BUTTONS, buildToolPanel, iconButton } from './tool-panel.js';
+import { TOOL_BUTTONS, buildToolPanel, iconButton, QUICK_ACCESS, quickCommand, canvasDarkFrom, labelsFrom, placementFrom, PLACEMENTS, collapsedFrom, applyCollapsed, toolTitle } from './tool-panel.js';
 import { iconSvg } from './icons.js';
 import { loadDrawingImages } from './images.js';
 import { el, message, modal, confirmDialog, textDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
@@ -34,7 +34,6 @@ class App {
     this.clip = [];
     this.lastTool = 'line';
     this.theme = 'light';        // UI theme; light by default, the choice is saved as setting 'theme'
-    this.canvasOverride = false; // true once View > Light / dark background makes the canvas differ from the theme
     this.vp = new Viewport(document.getElementById('cv'));
     this.tools = createTools(this);
     this.toolId = null;
@@ -67,8 +66,15 @@ class App {
     this.newDrawing();
     this.setTool('select');
     this.setTheme('light', false);
-    this.panelOpts = { labels: true, colours: true };
-    for (const opt of ['labels', 'colours']) api.settingsGet?.(`tools.${opt}`).then((v) => { if (v === false) this.setToolPanel(opt, false, false); }).catch(() => {});
+    this.setCanvasDark(true); // model space is dark whatever the UI theme (View > Model space background)
+    this.panelOpts = { labels: false, colours: true };
+    this.setToolPlacement('left', false);
+    this.setToolPanel('labels', false, false); // compact icon grid by default
+    api.settingsGet?.('tools.labels').then((v) => this.setToolPanel('labels', labelsFrom(v), false)).catch(() => {});
+    api.settingsGet?.('tools.placement').then((v) => this.setToolPlacement(placementFrom(v), false)).catch(() => {});
+    api.settingsGet?.('tools.colours').then((v) => { if (v === false) this.setToolPanel('colours', false, false); }).catch(() => {});
+    api.settingsGet?.('canvas.background').then((v) => this.setCanvasDark(canvasDarkFrom(v))).catch(() => {});
+    api.settingsGet?.('tools.collapsed').then((v) => { this.collapsed = collapsedFrom(v); applyCollapsed(document.getElementById('tools'), this.collapsed); }).catch(() => {});
     api.settingsGet?.('theme').then((t) => { if (t === 'dark') this.setTheme('dark', false); }).catch(() => {});
     api.onOpenFile?.((f) => this.openFromFile(f));
     // files given at start-up open first; then the previous session is offered (or reopened, per startup.mode)
@@ -376,8 +382,9 @@ class App {
         ['Print…', 'Ctrl+P', () => this.print()], ['Plot to PDF…', '', () => this.exportPdf()], ['Export SVG…', '', () => this.exportSvg()], ['Export PNG image…', '', () => this.exportPng()]]],
       ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Paste', 'Ctrl+V', () => this.paste()], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()], ['Find and replace…', 'Ctrl+F', () => this.find.open()], '-', ['Preferences…', '', () => this.preferences()]]],
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-',
-        ['Show lineweights', 'F9', () => this.toggle('lineweights')], ['Light / dark background', '', () => this.toggle('dark')], '-',
+        ['Show lineweights', 'F9', () => this.toggle('lineweights')], ['Model space background: dark', '', () => this.toggle('dark'), () => this.vp.settings.dark], '-',
         ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark'],
+        ...PLACEMENTS.map((p) => [`Tool panel: ${p[0].toUpperCase()}${p.slice(1)}`, '', () => this.setToolPlacement(p), () => this.toolPlacement === p]),
         ['Tool labels', '', () => this.setToolPanel('labels', !this.panelOpts.labels), () => this.panelOpts.labels],
         ['Tool group colours', '', () => this.setToolPanel('colours', !this.panelOpts.colours), () => this.panelOpts.colours], '-',
         ['Show markups', '', () => toggleMarkups(this), () => markupsShown(this.doc)], '-',
@@ -415,17 +422,35 @@ class App {
 
   buildToolbar() {
     const box = document.getElementById('tools');
-    buildToolPanel(box, el, (id) => this.setTool(id), (group) => {
+    this.collapsed = [];
+    box.append(el('div', { class: 'lbl-toggle', role: 'button', tabindex: '0', id: 'tool-labels-btn', title: 'Show or hide tool labels (View > Tool labels)', text: 'Aa', onclick: () => this.setToolPanel('labels', !this.panelOpts.labels) }));
+    buildToolPanel(box, el, (id) => this.setTool(id), (group, body) => {
       if (group !== 'Dimension') return;
       this.dimStyleSel = el('select', { id: 'dimstyle', title: 'Current dimension style (DIMSTYLE)', onchange: (e) => setCurrentDimStyle(this.doc, e.target.value) });
-      box.append(this.dimStyleSel, iconButton(el, 'dimstyle', 'Dim styles…', { class: 'g-annotate', title: 'Dimension Style Manager (D)', onclick: () => this.dimStyles() }));
+      body.append(this.dimStyleSel, iconButton(el, 'dimstyle', 'Dim styles…', { class: 'g-annotate', title: 'Dimension Style Manager (D)', onclick: () => this.dimStyles() }));
+    }, (key, folded) => {
+      this.collapsed = folded ? [...new Set([...this.collapsed, key])] : this.collapsed.filter((k) => k !== key);
+      api.settingsSet?.('tools.collapsed', this.collapsed)?.catch?.(() => {});
     });
-    box.append(el('div', { class: 'group g-draw', text: 'Hatch' }));
+    this.buildQuickAccess();
     const pat = el('select', { title: 'Hatch pattern', onchange: (e) => { this.defaults.hatchPattern = e.target.value; } }, PATTERN_NAMES.map((n) => el('option', { value: n, text: n })));
     pat.value = this.defaults.hatchPattern;
     const sc = el('input', { type: 'number', step: 'any', min: '0', value: '1', title: 'Hatch scale', style: 'width:100%', onchange: (e) => { const v = Number(e.target.value); if (v > 0) this.defaults.hatchScale = v; } });
-    box.append(pat, sc);
+    box.append(el('div', { class: 'tgroup' }, el('div', { class: 'group g-draw', text: 'Hatch' }), pat, sc));
     for (const [id, icon] of [['z-in', 'zoomin'], ['z-out', 'zoomout'], ['z-fit', 'zoomfit']]) { const b = document.getElementById(id); b.setAttribute('aria-label', b.title); b.replaceChildren(iconSvg(icon, 18)); }
+  }
+  /** the Quick Access row under the menu bar: the most used commands as icon buttons, coloured by group */
+  buildQuickAccess() {
+    const run = { new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), undo: () => this.undo(), redo: () => this.redo(), zoomfit: () => this.vp.zoomExtents(), layers: () => document.getElementById('app').classList.toggle('no-side') };
+    const row = el('div', { id: 'qat', role: 'toolbar', 'aria-label': 'Quick Access' });
+    QUICK_ACCESS.forEach(([key, ids], i) => {
+      if (i) row.append(el('span', { class: 'sep' }));
+      for (const id of ids) {
+        const [label, alias] = quickCommand(id);
+        row.append(el('button', { class: `g-${key}`, 'data-cmd': id, title: toolTitle(label, alias), 'aria-label': label, onclick: () => (run[id] ? run[id]() : this.setTool(id)) }, iconSvg(id, 18)));
+      }
+    });
+    document.getElementById('menubar').after(row);
   }
   /** View > Tool labels / Tool group colours: classes on the panel, saved as settings 'tools.labels' and 'tools.colours' */
   setToolPanel(opt, on, save = true) {
@@ -433,6 +458,14 @@ class App {
     document.getElementById('app').classList.toggle('no-tool-labels', !this.panelOpts.labels);
     document.getElementById('tools').classList.toggle('no-colours', !this.panelOpts.colours);
     if (save) api.settingsSet?.(`tools.${opt}`, !!on)?.catch?.(() => {});
+  }
+
+  /** View > Tool panel: 'left' (column), 'top' (band above the canvas) or 'hidden'; a class on #app, saved as 'tools.placement' */
+  setToolPlacement(place, save = true) {
+    this.toolPlacement = place = placementFrom(place);
+    const app = document.getElementById('app');
+    for (const p of PLACEMENTS) app.classList.toggle(`tools-${p}`, p === place);
+    if (save) api.settingsSet?.('tools.placement', place)?.catch?.(() => {});
   }
 
   buildStatus() {
@@ -445,7 +478,7 @@ class App {
   }
   toggle(key) {
     const st = this.vp.settings;
-    if (key === 'dark') { this.setCanvasDark(!st.dark); this.canvasOverride = st.dark !== (this.theme === 'dark'); return; }
+    if (key === 'dark') { this.setCanvasDark(!st.dark); api.settingsSet?.('canvas.background', st.dark ? 'dark' : 'light')?.catch?.(() => {}); return; }
     st[key] = !st[key];
     if (key === 'ortho' && st.ortho) st.polar = false;
     if (key === 'polar' && st.polar) st.ortho = false;
@@ -455,12 +488,10 @@ class App {
     for (const b of document.querySelectorAll('#status button[data-key]')) b.classList.toggle('on', !!this.vp.settings[b.dataset.key]);
     document.getElementById('theme-btn')?.classList.toggle('on', this.theme === 'dark');
   }
-  /** switch the UI theme; the drawing canvas follows it unless the user has overridden the canvas background */
+  /** switch the UI theme; the model space background is a separate setting (dark by default) */
   setTheme(theme, save = true) {
     this.theme = theme === 'dark' ? 'dark' : 'light';
     if (this.theme === 'dark') document.documentElement.dataset.theme = 'dark'; else delete document.documentElement.dataset.theme;
-    if (this.canvasOverride && this.vp.settings.dark === (this.theme === 'dark')) this.canvasOverride = false;
-    if (!this.canvasOverride) this.setCanvasDark(this.theme === 'dark');
     this.refreshToggles();
     if (save) api.settingsSet?.('theme', this.theme)?.catch?.(() => {});
   }

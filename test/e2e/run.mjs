@@ -60,16 +60,27 @@ try {
 
   step = 'ui present';
   assert.ok(await page.locator('#menubar .menu').count() >= 4);
-  step = 'first run uses the light theme';
+  step = 'first run uses the light theme with a near-black model space (beta.10)';
   assert.equal(await page.evaluate(() => document.documentElement.dataset.theme ?? 'light'), 'light');
   assert.ok(lum(rgbOf(await page.evaluate(() => getComputedStyle(document.body).backgroundColor))) > 0.7, 'body background is not light');
-  assert.equal(await page.evaluate(() => window.app.vp.settings.dark), false);
+  {
+    const bg = await page.evaluate(() => { const vp = window.app.vp; vp.render(); return [...vp.ctx.getImageData(3, 3, 1, 1).data.slice(0, 3)]; });
+    assert.ok(lum(bg) < 0.03, `first-run model canvas is near-black: ${bg}`);
+  }
   assert.ok(await page.locator('#tools button').count() >= 20);
+  step = 'Quick Access row under the menu, compact side panel by default';
+  {
+    const qa = await page.evaluate(() => { const q = document.getElementById('qat'), m = document.getElementById('menubar'); return { n: q?.querySelectorAll('button').length ?? 0, under: q && Math.abs(q.getBoundingClientRect().top - m.getBoundingClientRect().bottom) < 2, w: document.getElementById('tools').getBoundingClientRect().width }; });
+    assert.ok(qa.n >= 18 && qa.under, `Quick Access row: ${JSON.stringify(qa)}`);
+    assert.ok(qa.w <= 90, `compact side panel by default (${qa.w} px)`);
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'layout_default_compact.png') });
+  }
 
   step = 'draw a line with the mouse';
   await page.evaluate(() => window.app.vp.zoomBy(0.0001)); // tiny zoom so clicks map to large world units
   await page.evaluate(() => { window.app.vp.view = { ...window.app.vp.view, cx: 50, cy: 25, zoom: 8 }; window.app.vp.render(); });
-  await page.click('#tools button[data-tool=line]');
+  await page.click('#qat button[data-cmd=line]'); // Line from the Quick Access row
+  assert.equal(await page.evaluate(() => window.app.toolId), 'line');
   await clickWorld(0, 0); await clickWorld(40, 0); await clickWorld(40, 30);
   await page.keyboard.press('Escape');
   assert.deepEqual(await types(), ['LINE', 'LINE']);
@@ -240,7 +251,8 @@ try {
     const menu = async (top, item) => { await page.locator('#menubar .menu > button', { hasText: top }).click(); await page.locator('#menubar .drop button', { hasText: item }).click(); };
     // the ACI-7 line drawn by drawAci7Line() (cy offset by half a pixel so the 1px line is crisp): returns the line pixel (most different from the background) and the background
     const aci7Line = async () => {
-      await page.evaluate(() => { const vp = window.app.vp; vp.view = { ...vp.view, cx: 50, cy: 0.125, zoom: 4 }; vp.selection.clear(); vp.render(); });
+      // the Quick Access row changed the canvas height: pick the cy (0.125 or 0, half a pixel apart) that puts y=0 on a pixel centre
+      await page.evaluate(() => { const vp = window.app.vp; vp.view = { ...vp.view, cx: 50, cy: 0.125, zoom: 4 }; const f = vp.toScreen({ x: 50, y: 0 }).y * vp.dpr % 1; if (Math.abs(f - 0.5) > 0.01) vp.view = { ...vp.view, cy: 0 }; vp.selection.clear(); vp.render(); });
       await page.mouse.move(2, 2);
       return page.evaluate(() => {
         const vp = window.app.vp; vp.showCross = false; vp.render();
@@ -288,11 +300,16 @@ try {
     // the PDF export may leave its warnings message open
     await page.waitForTimeout(300);
     if (await page.locator('#dlg[open]').count()) await page.locator('#dlg button.primary').click();
-    // light (default): ACI 7 is dark on the white canvas
+    // light theme (default) with the beta.10 default dark model space: ACI 7 is light on it; the View choice gives a white canvas
     await page.evaluate(() => window.app.newDrawing(true));
     await drawAci7Line();
     let px = await aci7Line();
+    assert.ok(lum(px.bg) < 0.05 && lum(px.line) > 0.2, `light theme, dark model space: ACI 7 ${px.line} on ${px.bg}`);
+    await menu('View', 'Model space background');
+    px = await aci7Line();
     assert.ok(lum(px.bg) > 0.9 && lum(px.line) < 0.2, `light canvas: ACI 7 ${px.line} on ${px.bg}`);
+    assert.equal(await page.evaluate(() => window.api.settingsGet('canvas.background')), 'light');
+    await menu('View', 'Model space background');
     await checkContrast('light');
 
     // View > Dark theme: whole UI dark, canvas dark, ACI 7 light, remembered after a reload
@@ -310,11 +327,11 @@ try {
     await checkContrast('dark');
 
     // the canvas-only override still works inside a theme
-    await menu('View', 'Light / dark background');
+    await menu('View', 'Model space background');
     px = await aci7Line();
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'dark');
     assert.ok(lum(px.bg) > 0.9 && lum(px.line) < 0.2, `dark theme, light canvas: ACI 7 ${px.line} on ${px.bg}`);
-    await menu('View', 'Light / dark background');
+    await menu('View', 'Model space background');
 
     // back to light from the status bar toggle; that choice is saved too
     await page.click('#theme-btn');
@@ -916,6 +933,28 @@ try {
     return { n: xs.length, span: xs.length ? Math.max(...xs) - Math.min(...xs) : 0 };
   }, [x0, y0, x1, y1]);
   assert.ok((await ink(299, 19, 340, 26)).n > 20, 'paper-space title text drawn on the sheet');
+  step = 'layout tab: white paper on a grey surround whatever the model background; ACI 7 on paper draws black';
+  {
+    const paperPx = (x, y, r = 0) => page.evaluate(([x, y, r]) => {
+      const vp = window.app.vp; vp.view = { ...vp.view, cx: 200, cy: 150, zoom: 2 }; vp.render();
+      const k = vp.canvas.width / vp.view.width, a = vp.toScreen({ x, y }), d = vp.ctx.getImageData(Math.round(a.x * k) - r, Math.round(a.y * k) - r, 2 * r + 1, 2 * r + 1).data;
+      let best = [d[0], d[1], d[2]];
+      for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] < best[0] + best[1] + best[2]) best = [d[i], d[i + 1], d[i + 2]];
+      return best;
+    }, [x, y, r]);
+    for (const dark of [true, false]) {
+      await page.evaluate((d) => window.app.setCanvasDark(d), dark);
+      const paper = await paperPx(200, 60), around = await paperPx(-20, 150);
+      assert.deepEqual(paper, [255, 255, 255], `paper is white with model background ${dark ? 'dark' : 'light'}`);
+      assert.ok(Math.abs(around[0] - 0x8a) < 8 && Math.abs(around[1] - 0x8f) < 8 && Math.abs(around[2] - 0x96) < 8, `surround is mid-grey (${around}) with model background ${dark ? 'dark' : 'light'}`);
+      if (SHOTS && !dark) await page.screenshot({ path: path.join(SHOTS, 'layout_tab_paper.png') });
+    }
+    await page.evaluate(() => window.app.setCanvasDark(true));
+    await typeCmd('l'); await typeCmd('20,60'); await typeCmd('60,60'); await page.keyboard.press('Escape');
+    const ln = await paperPx(40, 60, 2);
+    assert.ok(Math.max(...ln) < 160, `ACI 7 line on the paper (dark model background) is drawn dark, not white (a 1 px line may straddle two pixel rows): ${ln}`);
+    await page.keyboard.press('Control+z');
+  }
   // model line (0,0)-(1000,0) through a 1:50 viewport centred on (500,0): 20 mm of paper = 40 px, on y=150
   const line = await ink(170, 149.5, 230, 150.5);
   assert.ok(Math.abs(line.span - 40) <= 3, `model line 1:50 length ${line.span}px, expected 40`);
@@ -1353,7 +1392,12 @@ try {
     let btns = await panel();
     assert.ok(btns.length >= 45, `${btns.length} panel buttons`);
     assert.deepEqual(btns.filter((b) => b.svg !== 1 || b.fallback).map((b) => b.tool ?? 'other'), [], 'every panel button has its own <svg> icon');
-    assert.ok(btns.every((b) => b.label === 1), 'labels shown by default');
+    // beta.10: labels are off by default (compact panel); View > Tool labels shows them
+    assert.ok(btns.every((b) => b.label === 0), 'labels hidden by default');
+    await menuItem('Tool labels');
+    btns = await panel();
+    assert.ok(btns.every((b) => b.label === 1), 'labels shown after View > Tool labels');
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'layout_labels_on.png') });
     assert.equal(await page.locator('#tools button[data-tool=line]').getAttribute('title'), 'Line (L)');
     const lineColour = btns.find((b) => b.tool === 'line').color, moveColour = btns.find((b) => b.tool === 'move').color, textColour = await page.evaluate(() => getComputedStyle(document.body).color);
     assert.notEqual(lineColour, moveColour, 'Draw and Modify icons are coloured differently');
@@ -1390,6 +1434,57 @@ try {
     await page.reload(); await page.waitForFunction(() => window.app && window.app.doc && document.getElementById('app').classList.contains('no-tool-labels') && document.getElementById('tools').classList.contains('no-colours'), null, { timeout: 10000 });
     await menuItem('Tool labels'); await menuItem('Tool group colours');
     assert.ok((await panel()).every((b) => b.label === 1), 'labels back on');
+  }
+
+  step = 'tool panel: a folded group stays hidden after a reload; Top places it as a band above the canvas, Left restores; Markup visible at 1366x768';
+  {
+    const menuItem = async (item) => { await page.locator('#menubar .menu > button', { hasText: 'View' }).click(); await page.locator('#menubar .drop button', { hasText: item }).click(); };
+    const rect = (sel) => page.evaluate((q) => { const r = document.querySelector(q).getBoundingClientRect(); return { x: r.left, y: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height }; }, sel);
+    const bodyHidden = (key) => page.evaluate((k) => document.querySelector(`.gbody[data-body=${k}]`).hidden, key);
+    await page.evaluate(() => window.api.settingsSet('tools.collapsed', []));
+    await page.reload(); await page.waitForFunction(() => window.app && window.app.doc, null, { timeout: 10000 });
+    assert.equal(await bodyHidden('modify'), false, 'Modify group open at first');
+    if (await page.evaluate(() => !document.getElementById('app').classList.contains('no-tool-labels'))) await menuItem('Tool labels'); // labels off (the default)
+    await page.click('#tools [data-head=modify]');
+    assert.equal(await bodyHidden('modify'), true, 'click on the group header hides its buttons');
+    assert.equal(await page.locator('#tools button[data-tool=move]').isVisible(), false);
+    await page.reload(); await page.waitForFunction(() => window.app && window.app.doc && document.querySelector('.gbody[data-body=modify]')?.hidden, null, { timeout: 10000 });
+    assert.equal(await bodyHidden('modify'), true, 'folded group survives a reload');
+    assert.equal(await bodyHidden('draw'), false);
+    await page.click('#tools [data-head=modify]');
+    assert.equal(await bodyHidden('modify'), false);
+    assert.deepEqual(await page.evaluate(() => window.api.settingsGet('tools.collapsed')), [], 'unfolded state saved');
+
+    const cv0 = await rect('#cv'), side0 = await rect('#tools');
+    assert.ok(side0.r <= cv0.x + 1 && side0.w < 200, 'Left: panel is a column left of the canvas');
+    await menuItem('Tool panel: Top');
+    const band = await rect('#tools'), cv1 = await rect('#cv');
+    assert.ok(band.w > 600 && band.h < 200 && cv1.y >= band.b - 1, `Top: canvas top ${cv1.y} is below the band (${band.y}..${band.b}, ${band.w} px wide)`);
+    assert.ok(cv1.h < cv0.h - 20, `the canvas shrinks (${cv0.h} -> ${cv1.h})`);
+    assert.equal(await page.evaluate(() => window.api.settingsGet('tools.placement')), 'top');
+    const groupsAside = await page.evaluate(() => { const xs = [...document.querySelectorAll('#tools .tgroup')].map((g) => g.getBoundingClientRect().left); return xs.every((x, i) => !i || x > xs[i - 1]); });
+    assert.ok(groupsAside, 'Top: groups sit side by side');
+    assert.equal(await page.evaluate(() => [...document.querySelectorAll('#tools button .lbl')].every((l) => l.getClientRects().length === 0)), true, 'Top with labels off: icons only');
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'layout_top_placement.png') });
+    await menuItem('Tool labels');
+    assert.equal(await page.evaluate(() => [...document.querySelectorAll('#tools button')].every((b) => b.querySelector('.lbl').getClientRects().length === 1)), true, 'Top with labels on: label under each icon');
+    assert.ok(await page.evaluate(() => { const b = document.querySelector('#tools button[data-tool=line]'); return b.querySelector('.lbl').getBoundingClientRect().top >= b.querySelector('svg').getBoundingClientRect().bottom - 1; }), 'label sits under the icon');
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'layout_top_labels_on.png') });
+    await menuItem('Tool labels');
+    await page.reload(); await page.waitForFunction(() => window.app && window.app.doc && document.getElementById('app').classList.contains('tools-top'), null, { timeout: 10000 });
+    await menuItem('Tool panel: Left');
+    const cv2 = await rect('#cv'), side2 = await rect('#tools');
+    assert.ok(Math.abs(cv2.h - cv0.h) < 2 && side2.r <= cv2.x + 1, 'Left restores the column and the canvas height');
+
+    // 1366 x 768, labels off: the Markup group is visible without scrolling
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.waitForTimeout(150);
+    const mk = await page.evaluate(() => { const t = document.getElementById('tools').getBoundingClientRect(), b = [...document.querySelectorAll('#tools button.g-markup')].map((x) => x.getBoundingClientRect()), h = document.querySelector('#tools [data-head=markup]').getBoundingClientRect(); return { n: b.length, top: t.top, bottom: t.bottom, head: h.top, last: Math.max(...b.map((r) => r.bottom)), labels: document.getElementById('app').classList.contains('no-tool-labels') }; });
+    assert.ok(mk.labels && mk.n === 3 && mk.head >= mk.top && mk.last <= mk.bottom, `Markup group visible at 1366x768 without scrolling: ${JSON.stringify(mk)}`);
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'layout_1366x768.png') });
+    await page.setViewportSize({ width: 1400, height: 850 });
+    await page.waitForTimeout(150);
+    await menuItem('Tool labels'); // back on, as the next steps found it
   }
 
   step = 'large DXF opens in a worker: percentage in the toast, Cancel, UI keeps ticking';
