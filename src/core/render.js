@@ -1207,6 +1207,9 @@ function wrapLines(ctx, lines, maxW) {
   return out;
 }
 
+/** most dashes one pattern-hatch line family may make on screen before it is drawn with continuous lines */
+export const MAX_HATCH_DASHES = 200_000;
+
 /** Pattern hatch: clip to the boundary, then draw each pattern line family across the bounding box. */
 function drawPatternHatch(ctx, it, view, color, tracePath, sx, sy, fallbackAlpha) {
   const z = view.zoom;
@@ -1242,8 +1245,11 @@ function drawPatternHatch(ctx, it, view, color, tracePath, sx, sy, fallbackAlpha
       ctx.lineTo(sx(ox + dx * (t0 + R)), sy(oy + dy * (t0 + R)));
     }
     if (L.dashes && L.dashes.length) {
-      // dashes apply along each line; draw per family
-      ctx.setLineDash(L.dashes.map((d) => Math.max(Math.abs(d) * z, 0.5)));
+      // dashes apply along each line; draw per family. Canvas dashing costs per dash, so a family that would make more
+      // than MAX_HATCH_DASHES dashes on screen (tiny pattern, big view) is drawn with continuous lines instead.
+      const dash = L.dashes.map((d) => Math.max(Math.abs(d) * z, 0.5));
+      const period = dash.reduce((a, b) => a + b, 0) * (dash.length % 2 ? 2 : 1);
+      if ((hi - lo + 1) * (2 * R * z) / period <= MAX_HATCH_DASHES) ctx.setLineDash(dash);
     }
     ctx.stroke(); ctx.beginPath();
     ctx.setLineDash([]);
