@@ -1,6 +1,8 @@
 // ASH Draw Studio - application controller: wires the viewport, tools, panels, menus and files together.
 import { newDocument } from '../src/core/model.js';
-import { eraseEntities, copyToClipboard, pasteEntities } from '../src/core/edit.js';
+import { eraseEntities, copyToClipboard, pasteEntities, setDrawingUnits } from '../src/core/edit.js';
+import { INSUNITS, unitLabel, lengthPrecision, looksLikeMapMetres } from '../src/core/measure.js';
+import { setShowLegs, refreshMeasureResults } from './tools-measure.js';
 import { parseCoordinate } from '../src/core/coords.js';
 import { PATTERN_NAMES } from '../src/core/patterns.js';
 import { layIsolate, layUnisolate, layFreeze, layOn, layThaw } from '../src/core/layers.js';
@@ -80,6 +82,7 @@ class App {
     api.settingsGet?.('tools.collapsed').then((v) => { this.collapsed = collapsedFrom(v); applyCollapsed(document.getElementById('tools'), this.collapsed); }).catch(() => {});
     api.settingsGet?.('tools.layout').then((v) => { if (v != null) this.setToolLayout(cleanLayout(v), false); }).catch(() => {});
     api.settingsGet?.('theme').then((t) => { if (t === 'dark') this.setTheme('dark', false); }).catch(() => {});
+    api.settingsGet?.('measure.showLegs').then((v) => setShowLegs(v)).catch(() => {});
     api.onOpenFile?.((f) => this.openFromFile(f));
     // files given at start-up open first; then the previous session is offered (or reopened, per startup.mode)
     api.getLaunchFiles?.().then(async (files) => { for (const f of files ?? []) await this.openFromFile(f); }).catch(() => {})
@@ -131,7 +134,7 @@ class App {
     if (t.text?.(s)) { this.refreshPrompt(); return; }
     const low = s.toLowerCase();
     if (TOOL_ALIASES[low]) { this.setTool(TOOL_ALIASES[low]); return; }
-    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => this.vp.zoomExtents(), z: () => this.vp.zoomExtents(), 'zoom': () => this.vp.zoomExtents(), all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), find: () => this.find.open(), compare: () => this.compare(), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), ...this.layerCommands(), ...this.layoutCommands };
+    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => this.vp.zoomExtents(), z: () => this.vp.zoomExtents(), 'zoom': () => this.vp.zoomExtents(), all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), find: () => this.find.open(), compare: () => this.compare(), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), units: () => this.unitsDialog(), un: () => this.unitsDialog(), ddunits: () => this.unitsDialog(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), ...this.layerCommands(), ...this.layoutCommands };
     if (sys[low]) { sys[low](); return; }
     const last = this.vp.lastPoint ?? { x: 0, y: 0 };
     const dir = this.vp.lastPoint ? { x: this.vp.cursor.x - last.x, y: this.vp.cursor.y - last.y } : null;
@@ -253,6 +256,7 @@ class App {
       const prepared = await prepareView(doc, { signal: ac.signal, onProgress: (x) => pp.set(x) });
       this.installDoc(doc, { path: f.path ?? null, name: f.name, format }, { replaceBlank: true, prepared });
       toast(`${f.name}: ${doc.entities.length.toLocaleString()} objects`, 2500);
+      this.unitsHint(doc);
       if (notes.length) await message('Opened with limitations', `${f.name} was opened, but:`, el('div', {}, [el('ul', {}, notes.map((n) => el('li', { text: n }))), ...(warnings?.length ? [el('details', {}, [el('summary', { text: 'Converter messages' }), el('pre', { text: warnings.join('\n') })])] : [])]));
     } catch (err) {
       toast('', 1);
@@ -264,6 +268,41 @@ class App {
         if (r === 'dl') api.openOdaDownload?.().catch(() => {});
       } else await message('Cannot open this file', err.message || String(err));
     } finally { this.vp.setBusy(false); }
+  }
+  /** Format > Units… (UNITS): how lengths are labelled - drawing units ($INSUNITS) and precision ($LUPREC) - as one
+   *  undoable change of the whole drawing. `preset` preselects a unit (the map-grid hint offers Metres). */
+  async unitsDialog(preset = null) {
+    const doc = this.fileDoc;
+    const units = el('select', { id: 'units-select' }, INSUNITS.map(([c, name, l]) => el('option', { value: String(c), text: l ? `${name} (${l})` : name })));
+    units.value = String(preset ?? doc.units ?? 0);
+    const prec = el('select', { id: 'units-precision' }, Array.from({ length: 9 }, (_, n) => el('option', { value: String(n), text: n ? (0).toFixed(n) : '0' })));
+    prec.value = String(lengthPrecision(doc.header?.luprec));
+    const row = (label, input) => el('label', { style: 'display:flex;justify-content:space-between;align-items:center;gap:12px;margin:6px 0' }, label, input);
+    const r = await modal('Drawing units', el('div', {},
+      row('Drawing units', units), row('Precision', prec),
+      el('p', { style: 'color:var(--dim);margin:8px 0 0', text: 'Changes how lengths are labelled; it does not scale the drawing.' })),
+    [{ label: 'OK', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
+    if (r !== 'ok') return false;
+    document.getElementById('units-hint')?.remove();
+    const changed = setDrawingUnits(this.session, { units: Number(units.value), luprec: Number(prec.value) }, doc);
+    this.refreshStatus();
+    return changed;
+  }
+  /** a drawing that says millimetres but sits at map / survey grid coordinates in metres: offer the Units dialog
+   *  (non-blocking, nothing is changed without the user) */
+  unitsHint(doc) {
+    document.getElementById('units-hint')?.remove();
+    const h = doc.header ?? {};
+    const ext = h.extmin && h.extmax && Math.abs(h.extmin.x) < 1e19 && h.extmax.x >= h.extmin.x
+      ? { minx: h.extmin.x, miny: h.extmin.y, maxx: h.extmax.x, maxy: h.extmax.y } : this.vp.layout ? null : this.vp.scene?.bbox; // no extra pass over the objects
+    if (!looksLikeMapMetres(doc.units, ext)) return false;
+    const tab = this.active;
+    const box = el('div', { id: 'units-hint', role: 'status' },
+      el('span', { text: 'This drawing says millimetres, but its coordinates look like metres (map/survey grid).' }),
+      el('button', { id: 'units-hint-open', onclick: () => { box.remove(); if (this.active === tab) this.unitsDialog(6); } }, 'Units…'),
+      el('button', { title: 'Dismiss', 'aria-label': 'Dismiss', onclick: () => box.remove() }, '×'));
+    document.getElementById('stage').append(box);
+    return true;
   }
   /** objects that were read but cannot be written back (they would vanish from an overwritten file) */
   droppedContent() {
@@ -405,6 +444,7 @@ class App {
         ['Quick Access row', '', () => this.setToolLayout(setQuickRow(this.toolLayout, !this.toolLayout.quickRow)), () => this.toolLayout.quickRow], '-',
         ['Show markups', '', () => toggleMarkups(this), () => markupsShown(this.doc)], '-',
         ['External references…', 'XREF', () => xrefPanel(this)]]],
+      ['Format', [['Units…', 'UNITS', () => this.unitsDialog()]]],
       ['Dimension', [...TOOL_BUTTONS.find(([g]) => g === 'Dimension')[2].map(([id, label, alias]) => [label, alias, () => this.setTool(id)]), '-', ['Dimension style…', 'D', () => this.dimStyles()]]],
       ['Help', [['What this program can and cannot do', '', () => this.limitations()], ['About', '', () => this.about()]]],
     ];
@@ -534,7 +574,7 @@ class App {
     const s = document.getElementById('status');
     const tog = (label, key, title) => { const b = el('button', { title, onclick: () => this.toggle(key) }, label); b.dataset.key = key; return b; };
     s.append(el('span', { class: 'coord', id: 'coord' }), tog('SNAP', 'snap', 'Object snap (F3)'), tog('ORTHO', 'ortho', 'Ortho (F8)'), tog('POLAR', 'polar', 'Polar tracking 45° (F10)'), tog('LWT', 'lineweights', 'Show lineweights (F9)'), tog('TPY', 'transparency', 'Show transparency'),
-      el('span', { class: 'spacer' }), el('span', { id: 'sel' }), el('span', { id: 'units', style: 'margin-left:12px' }),
+      el('span', { class: 'spacer' }), el('span', { id: 'sel' }), el('span', { id: 'units', style: 'margin-left:12px', role: 'button', tabindex: '0', title: 'Drawing units (Format > Units…)', onclick: () => this.unitsDialog(), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.unitsDialog(); } } }),
       el('button', { id: 'theme-btn', title: 'Dark theme (View menu)', onclick: () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark') }, 'DARK'));
     this.refreshToggles();
   }
@@ -567,7 +607,9 @@ class App {
   refreshStatus() {
     document.getElementById('sel').textContent = this.vp.selection.size ? `${this.vp.selection.size} selected` : `${this.doc.entities.length.toLocaleString()} objects`;
     document.getElementById('stage').classList.toggle('empty', this.doc.entities.length === 0);
-    document.getElementById('units').textContent = `Units: ${UNIT_NAMES[this.doc.units] ?? this.doc.units}`;
+    const u = (this.active?.doc ?? this.doc).units;
+    document.getElementById('units').textContent = `Units: ${UNIT_NAMES[u] ?? (unitLabel(u) || u)}`;
+    refreshMeasureResults();
     renderVpScale(this);
   }
   updateTitle() {

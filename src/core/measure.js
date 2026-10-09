@@ -53,6 +53,43 @@ export function angleAt(vertex, p1, p2) {
   return d > 180 ? 360 - d : d;
 }
 
-/** $INSUNITS -> short unit label for results ('' when unitless) */
-const UNIT_LABEL = { 1: 'in', 2: 'ft', 3: 'mi', 4: 'mm', 5: 'cm', 6: 'm', 7: 'km', 8: 'µin', 9: 'mil', 10: 'yd', 13: 'µm', 14: 'dm' };
+/** $INSUNITS codes with their names (Units dialog) and short labels (results, status bar) */
+export const INSUNITS = [
+  [0, 'Unitless', ''], [1, 'Inches', 'in'], [2, 'Feet', 'ft'], [3, 'Miles', 'mi'], [4, 'Millimetres', 'mm'],
+  [5, 'Centimetres', 'cm'], [6, 'Metres', 'm'], [7, 'Kilometres', 'km'], [8, 'Microinches', 'µin'], [9, 'Mils', 'mil'],
+  [10, 'Yards', 'yd'], [11, 'Angstroms', 'Å'], [12, 'Nanometres', 'nm'], [13, 'Microns', 'µm'], [14, 'Decimetres', 'dm'],
+  [15, 'Decametres', 'dam'], [16, 'Hectometres', 'hm'], [17, 'Gigametres', 'Gm'], [18, 'Astronomical units', 'AU'],
+  [19, 'Light years', 'ly'], [20, 'Parsecs', 'pc'],
+];
+const UNIT_LABEL = Object.fromEntries(INSUNITS.map(([c, , l]) => [c, l]));
+/** $INSUNITS -> short unit label for results ('' when unitless or unknown) */
 export const unitLabel = (insunits) => UNIT_LABEL[insunits] ?? '';
+
+/** $LUPREC (0..8, default 4 when absent or out of range) */
+export const lengthPrecision = (luprec) => (Number.isInteger(luprec) && luprec >= 0 && luprec <= 8 ? luprec : 4);
+/** a measured number to `prec` decimals with trailing zeros dropped (-0 shown as 0) */
+export function formatNumber(v, prec = 4) {
+  const p = lengthPrecision(prec), t = v.toFixed(p);
+  const r = p ? t.replace(/\.?0+$/, '') : t;
+  return r === '-0' ? '0' : r;
+}
+/** a length with its unit label: formatLength(6.98364, 2, 6) = '6.98 m'; `power` 2 labels an area (m²) */
+export function formatLength(v, prec, insunits, power = 1) {
+  const u = unitLabel(insunits);
+  return `${formatNumber(v, prec)}${u ? ` ${u}${power === 2 ? '²' : ''}` : ''}`;
+}
+
+/** true when a drawing that says millimetres ($INSUNITS 4) has extents that look like map / survey grid coordinates
+ *  in metres (UTM: eastings 100 000-900 000, northings up to 10 000 000): far from the origin (beyond 100 000)
+ *  compared with its own size (at least 10 times its span), and not beyond 10 000 000 (a millimetre drawing placed
+ *  at grid coordinates in millimetres lies 1000 times further out). ext = {minx, miny, maxx, maxy} or null. */
+export function looksLikeMapMetres(insunits, ext) {
+  if (insunits !== 4 || !ext || ![ext.minx, ext.miny, ext.maxx, ext.maxy].every(Number.isFinite)) return false;
+  const far = Math.max(Math.abs(ext.minx), Math.abs(ext.maxx), Math.abs(ext.miny), Math.abs(ext.maxy));
+  const near = Math.max(Math.min(Math.abs(ext.minx), Math.abs(ext.maxx)), Math.min(Math.abs(ext.miny), Math.abs(ext.maxy)));
+  const span = Math.max(ext.maxx - ext.minx, ext.maxy - ext.miny);
+  return near > 1e5 && far <= 1e7 && span > 0 && near >= 10 * span;
+}
+
+/** Measure overlay option "Show ΔX / ΔY" (setting 'measure.showLegs'): off unless saved as true */
+export const showLegsFrom = (v) => v === true;

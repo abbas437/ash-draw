@@ -62,6 +62,12 @@ class Tx {
     this.ops.push({ k: 'dimstyle', name, before, after: style });
     this.structure = true;
   }
+  /** set drawing header values on `target` (the whole drawing; default the session's): units ($INSUNITS), luprec ($LUPREC) */
+  header(vals, target = this.doc) {
+    const before = readHeader(target);
+    writeHeader(target, vals);
+    this.ops.push({ k: 'header', target, before, after: readHeader(target) }); // labels only: the scene is unchanged
+  }
   /** create or change a layer: props merged into the existing layer; null deletes it */
   layer(name, props) {
     const before = getLayer(this.doc, name);
@@ -75,6 +81,12 @@ class Tx {
   }
 }
 
+const readHeader = (d) => ({ units: d.units ?? 0, luprec: d.header?.luprec ?? 4 });
+function writeHeader(d, v) {
+  if (v.units !== undefined) d.units = v.units;
+  if (v.luprec !== undefined) (d.header ??= {}).luprec = v.luprec;
+}
+
 function applyInverse(doc, op) {
   switch (op.k) {
     case 'add': removeEntities(doc, [op.e.id]); break;
@@ -83,6 +95,7 @@ function applyInverse(doc, op) {
     case 'layer': if (op.before) doc.layers.set(op.name, { ...op.before }); else doc.layers.delete(op.name); break;
     case 'dimstyle': if (op.before) doc.dimStyles.set(op.name, op.before); else doc.dimStyles.delete(op.name); break;
     case 'block': if (op.before) doc.blocks.set(op.name, op.before); else doc.blocks.delete(op.name); break;
+    case 'header': writeHeader(op.target, op.before); break;
     default: break;
   }
 }
@@ -94,6 +107,7 @@ function applyForward(doc, op) {
     case 'layer': if (op.after) doc.layers.set(op.name, { ...op.after }); else doc.layers.delete(op.name); break;
     case 'dimstyle': if (op.after) (doc.dimStyles ??= new Map()).set(op.name, op.after); else doc.dimStyles.delete(op.name); break;
     case 'block': if (op.after) doc.blocks.set(op.name, op.after); else doc.blocks.delete(op.name); break;
+    case 'header': writeHeader(op.target, op.after); break;
     default: break;
   }
 }
@@ -350,6 +364,15 @@ export function setDimStyle(s, name, style) {
     const key = name.toLowerCase();
     for (const e of [...s.doc.entities]) if (e.type === 'DIMENSION' && e.def && String(e.style).toLowerCase() === key) tx.replace(rebuildDimension(s.doc, e));
   });
+}
+
+/** UNITS dialog: drawing units ($INSUNITS) and length precision ($LUPREC) of `target` (the whole drawing) as one
+ *  undoable step. Labels only: no geometry is scaled. No step when nothing changes. */
+export function setDrawingUnits(s, { units, luprec }, target = s.doc) {
+  const cur = readHeader(target);
+  if (cur.units === units && cur.luprec === luprec) return false;
+  s.transact('Units', (tx) => tx.header({ units, luprec }, target));
+  return true;
 }
 
 /** Copy of entities (for clipboard); ids stripped. */

@@ -1,6 +1,6 @@
 // ASH Draw Studio - MEASUREGEOM (MEA) and AREA, after AutoCAD LT: distance, radius, angle and area
 // (points or object, with Add / Subtract running totals). Results go to a docked panel that stays until closed.
-import { entityMeasure, loopMeasure, AreaTotal, angleAt, unitLabel } from '../src/core/measure.js';
+import { entityMeasure, loopMeasure, AreaTotal, angleAt, unitLabel, formatLength, showLegsFrom } from '../src/core/measure.js';
 import { tessellate, ccwSweep, dist, DEG } from '../src/core/geom.js';
 import { findHatchBoundary } from './tools.js';
 import { el, toast } from './ui.js';
@@ -48,6 +48,12 @@ function angleBetween(A, B) {
 // Kept while the results panel is open, even after the command ends; a new measurement or closing the panel clears them.
 let marks = null, marksVp = null;
 const MARK = '#00d0ff';
+// "Show ΔX / ΔY" (results panel check box, setting 'measure.showLegs'): the dotted legs of a distance; off by default
+let showLegs = false;
+/** apply the saved setting (app start-up) */
+export function setShowLegs(v) { showLegs = showLegsFrom(v); syncLegsBox(); marksVp?.requestRender(); }
+export const legsShown = () => showLegs;
+function syncLegsBox() { const b = panel?.querySelector('.mp-legs input'); if (b) b.checked = showLegs; }
 function setMarks(vp, m) { marks = m; marksVp = vp; vp.requestRender(); }
 /** accent stroke over a wider contrasting outline, so it reads on the dark and the light model background */
 function strokeMark(c, vp, dash) {
@@ -64,9 +70,14 @@ function drawMarks(c, vp) {
   const cross = (q) => { const s = S(q), k = 6; c.beginPath(); c.moveTo(s.x - k, s.y); c.lineTo(s.x + k, s.y); c.moveTo(s.x, s.y - k); c.lineTo(s.x, s.y + k); strokeMark(c, vp, []); };
   c.save();
   if (m.a && m.b) {
-    line([m.a, { x: m.b.x, y: m.a.y }, m.b], [2, 3]); // dotted DeltaX / DeltaY legs
+    if (showLegs) line([m.a, { x: m.b.x, y: m.a.y }, m.b], [2, 3]); // dotted DeltaX / DeltaY legs (option)
     line([m.a, m.b], [6, 4]);
     cross(m.a); cross(m.b);
+    if (m.label) { // the value beside the middle of the measured line
+      const s = S({ x: (m.a.x + m.b.x) / 2, y: (m.a.y + m.b.y) / 2 });
+      c.font = '12px "Segoe UI", sans-serif'; c.lineWidth = 3; c.strokeStyle = vp.settings.dark ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)';
+      c.strokeText(m.label, s.x + 8, s.y - 8); c.fillStyle = MARK; c.fillText(m.label, s.x + 8, s.y - 8);
+    }
   }
   if (m.shape) {
     c.beginPath(); for (const pl of m.shape) pl.forEach((q, i) => { const s = S(q); if (i) c.lineTo(s.x, s.y); else c.moveTo(s.x, s.y); });
@@ -85,8 +96,16 @@ function drawMarks(c, vp) {
 }
 
 // ---- docked results panel -----------------------------------------------------------------------
-let panel = null;
-function showResults(title, lines, units) {
+let panel = null, last = null;
+/** the open results panel follows a change of drawing units / precision (UNITS): its last result is formatted again */
+export function refreshMeasureResults() {
+  if (!panel?.isConnected || !last) return;
+  showResults(last.title, last.make);
+  if (marks?.a && last.label) { marks.label = last.label(); marksVp?.requestRender(); }
+}
+function showResults(title, make, label = null) {
+  last = { title, make, label };
+  const { lines, units } = make();
   if (!panel?.isConnected) {
     const body = el('pre', { class: 'mp-body' });
     const copy = () => {
@@ -98,12 +117,15 @@ function showResults(title, lines, units) {
       el('div', { class: 'phead' }, el('span', { class: 'mp-title' }), el('span', { class: 'spacer' }),
         el('button', { class: 'mp-copy', title: 'Copy the results', onclick: copy }, 'Copy'),
         el('button', { class: 'mp-close', title: 'Close', 'aria-label': 'Close', onclick: () => { panel.remove(); if (marks) setMarks(marksVp, null); } }, '×')),
-      body, el('div', { class: 'mp-units' }));
+      body, el('div', { class: 'mp-foot' }, el('span', { class: 'mp-units' }), el('span', { class: 'spacer' }),
+        el('label', { class: 'mp-legs', title: 'Draw the horizontal and vertical legs of a measured distance' },
+          el('input', { type: 'checkbox', onchange: (e) => { showLegs = e.target.checked; window.api?.settingsSet?.('measure.showLegs', showLegs)?.catch?.(() => {}); marksVp?.requestRender(); } }), ' Show ΔX / ΔY')));
     document.getElementById('stage').append(panel);
   }
   panel.querySelector('.mp-title').textContent = title;
   panel.querySelector('.mp-body').textContent = lines.join('\n');
   panel.querySelector('.mp-units').textContent = `Units: ${units || 'unitless'}`;
+  syncLegsBox();
 }
 
 // ---- the tool -----------------------------------------------------------------------------------
@@ -124,10 +146,13 @@ export class MeasureGeomTool {
   setMode(m) { if (marks) setMarks(this.vp, null); this.mode = m; this.total = null; this.sub = m === 'area' ? 'points' : 'pick'; this.reset(); this.shape = null; }
   reset() { this.pts = []; this.picked = null; this.vp.lastPoint = null; }
 
-  get units() { return unitLabel(this.vp.doc.units); }
-  len(v) { return `${f4(v)}${this.units ? ` ${this.units}` : ''}`; }
-  area(v) { return `${f4(v)}${this.units ? ` ${this.units}²` : ''}`; }
-  result(title, lines) { showResults(title, lines, this.units); }
+  /** units and precision belong to the whole drawing (UNITS), also while a layout is shown */
+  get file() { return this.h.fileDoc ?? this.vp.doc; }
+  get units() { return unitLabel(this.file.units); }
+  len(v) { return formatLength(v, this.file.header?.luprec, this.file.units); }
+  area(v) { return formatLength(v, this.file.header?.luprec, this.file.units, 2); }
+  /** lines() is called again when the units change while the panel is open */
+  result(title, lines, label = null) { showResults(title, () => ({ lines: lines(), units: this.units }), label); }
 
   get prompt() {
     const head = this.command === 'AREA' ? 'AREA' : 'MEASUREGEOM';
@@ -174,13 +199,14 @@ export class MeasureGeomTool {
     if (this.mode === 'distance') {
       if (!this.pts.length) { setMarks(this.vp, null); this.pts = [p]; this.vp.lastPoint = p; return; }
       const a = this.pts[0], ang = ((Math.atan2(p.y - a.y, p.x - a.x) / DEG) + 360) % 360;
-      this.reset(); setMarks(this.vp, { a, b: p });
-      this.result('Distance', [`Distance = ${this.len(dist(a, p))}`, `Delta X = ${this.len(p.x - a.x)}, Delta Y = ${this.len(p.y - a.y)}`, `Angle in XY plane = ${f4(ang)}°`]);
+      const label = () => this.len(dist(a, p));
+      this.reset(); setMarks(this.vp, { a, b: p, label: label() });
+      this.result('Distance', () => [`Distance = ${this.len(dist(a, p))}`, `Delta X = ${this.len(p.x - a.x)}, Delta Y = ${this.len(p.y - a.y)}`, `Angle in XY plane = ${f4(ang)}°`], label);
     } else if (this.mode === 'radius') {
       const e = this.vp.pick(raw);
       if (!e || !['CIRCLE', 'ARC'].includes(e.type)) { toast('Select an arc or a circle.'); return; }
       setMarks(this.vp, { arc: { c: e.c, r: e.r, a0: e.type === 'ARC' ? e.a0 : null, a1: e.a1 } });
-      this.result('Radius', [`Radius = ${this.len(e.r)}`, `Diameter = ${this.len(2 * e.r)}`]);
+      this.result('Radius', () => [`Radius = ${this.len(e.r)}`, `Diameter = ${this.len(2 * e.r)}`]);
     } else if (this.mode === 'angle') this.clickAngle(p, raw);
     else if (this.sub === 'object') this.pickArea(raw);
     else { if (!this.pts.length) setMarks(this.vp, null); this.pts.push(p); this.vp.lastPoint = p; }
@@ -192,7 +218,7 @@ export class MeasureGeomTool {
       if (this.pts.length < 3) return;
       const [v, a, b] = this.pts;
       this.reset(); this.sub = 'pick'; setMarks(this.vp, { angle: { v, a, b } });
-      this.result('Angle', [`Angle = ${f4(angleAt(v, a, b))}°`]);
+      this.result('Angle', () => [`Angle = ${f4(angleAt(v, a, b))}°`]);
       return;
     }
     const e = this.vp.pick(raw);
@@ -200,14 +226,14 @@ export class MeasureGeomTool {
     if (!this.picked && e.type === 'ARC') {
       const pe = (a) => ({ x: e.c.x + e.r * Math.cos(a * DEG), y: e.c.y + e.r * Math.sin(a * DEG) });
       setMarks(this.vp, { arc: { c: e.c, r: e.r, a0: e.a0, a1: e.a1 }, angle: { a: pe(e.a0), v: e.c, b: pe(e.a1) } });
-      this.result('Angle', [`Angle = ${f4(ccwSweep(e.a0 * DEG, e.a1 * DEG) / DEG)}°`]); return; }
+      this.result('Angle', () => [`Angle = ${f4(ccwSweep(e.a0 * DEG, e.a1 * DEG) / DEG)}°`]); return; }
     const seg = segmentAt(e, raw);
     if (!seg) { toast('Select a line, a straight polyline segment or an arc.'); return; }
     if (!this.picked) { this.picked = { seg, at: raw }; return; }
     const a = this.picked; this.picked = null;
     const B = { seg, at: raw }, g = angleGeom(a, B);
     if (g) setMarks(this.vp, { angle: g });
-    this.result('Angle', [`Angle = ${f4(angleBetween(a, B))}°`]);
+    this.result('Angle', () => [`Angle = ${f4(angleBetween(a, B))}°`]);
   }
 
   pickArea(raw) {
@@ -234,9 +260,9 @@ export class MeasureGeomTool {
 
   addArea(m, shape) {
     this.shape = shape; setMarks(this.vp, { shape });
-    const lines = [`Area = ${this.area(m.area)}, Perimeter = ${this.len(m.perimeter)}`];
-    if (this.total) lines.push(`Total area = ${this.area(this.total.push(m.area))}`);
-    this.result(this.total ? `Area (${this.total.mode})` : 'Area', lines);
+    const total = this.total ? this.total.push(m.area) : null;
+    this.result(this.total ? `Area (${this.total.mode})` : 'Area', () => [`Area = ${this.area(m.area)}, Perimeter = ${this.len(m.perimeter)}`,
+      ...(total === null ? [] : [`Total area = ${this.area(total)}`])]);
   }
 
   key(e) {

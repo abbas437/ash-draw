@@ -732,6 +732,7 @@ function parseTokens(tk, onProgress = null) {
       const first = codes[j];
       if (name === '$ACADVER') doc.header.version = val(j);
       else if (name === '$INSUNITS') doc.units = parseInt(val(j), 10) || 0;
+      else if (name === '$LUPREC') { const v = parseInt(val(j), 10); if (v >= 0 && v <= 8) doc.header.luprec = v; }
       else if (name === '$DWGCODEPAGE') doc.header.codepage = val(j);
       else if (name === '$DIMSTYLE') doc.header.currentDimStyle = val(j);
       else if (name === '$LTSCALE') doc.header.ltscale = parseFloat(val(j)) || 1;

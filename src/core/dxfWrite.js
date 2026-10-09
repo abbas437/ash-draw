@@ -438,7 +438,7 @@ export function writeDxf(doc, opts = {}) {
   out.p(9, '$CECOLOR'); out.p(62, 256);
   out.p(9, '$DIMSTYLE'); out.s(2, doc.header.currentDimStyle || 'Standard');
   out.p(9, '$LUNITS'); out.p(70, 2);
-  out.p(9, '$LUPREC'); out.p(70, 4);
+  out.p(9, '$LUPREC'); out.p(70, doc.header?.luprec ?? 4);
   out.p(9, '$AUNITS'); out.p(70, 0);
   out.p(9, '$AUPREC'); out.p(70, 2);
   out.p(9, '$INSUNITS'); out.p(70, doc.units || 0);

@@ -124,7 +124,12 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 #toast .toast-cancel { margin-left:10px; font:inherit; padding:1px 8px; cursor:pointer; }
 #measure-panel { position:absolute; left:10px; bottom:10px; min-width:240px; max-width:420px; background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:4px; padding:6px 8px; box-shadow:0 2px 8px var(--shadow); font-size:12px; }
 #measure-panel .mp-body { margin:0; font:12px Consolas, "Cascadia Mono", monospace; white-space:pre-wrap; user-select:text; cursor:text; }
-#measure-panel .mp-units { color:var(--dim); margin-top:4px; }
+#measure-panel .mp-foot { display:flex; align-items:center; gap:8px; margin-top:4px; }
+#measure-panel .mp-units { color:var(--dim); }
+#measure-panel .mp-legs { display:flex; align-items:center; gap:4px; cursor:pointer; }
+#units { cursor:pointer; }
+#units:hover { text-decoration:underline; }
+#units-hint { position:absolute; right:10px; top:10px; max-width:420px; display:flex; align-items:flex-start; gap:8px; background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:4px; padding:8px 10px; box-shadow:0 2px 8px var(--shadow); font-size:12px; z-index:5; }
 #drop { display:none; position:absolute; inset:10px; border:3px dashed var(--accent); background:var(--drop-bg); align-items:center; justify-content:center; font-size:20px; z-index:5; }
 #stage.dragover #drop { display:flex; }
 #side { background:var(--panel); border-left:1px solid var(--line); overflow:auto; display:flex; flex-direction:column; }

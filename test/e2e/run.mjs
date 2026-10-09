@@ -495,6 +495,56 @@ try {
   assert.equal(await page.locator('#measure-panel').count(), 0, 'Close removes the panel');
   assert.equal(await markAt(0, 0), 0, 'Close removes the angle markers');
 
+  step = 'measure: no ΔX / ΔY legs by default; "Show ΔX / ΔY" draws them';
+  await typeCmd('mea'); await clickWorld(0.6, 0.4); await clickWorld(99.5, 49.6);
+  await page.keyboard.press('Escape'); await page.mouse.move(2, 2);
+  assert.ok(await markAt(0, 0) > 0 && await markAt(100, 50) > 0, 'the measured line is marked');
+  assert.equal(await markAt(100, 0) + await markAt(50, 0), 0, 'no dotted legs by default');
+  assert.equal(await page.locator('#measure-panel .mp-legs input').isChecked(), false);
+  await page.locator('#measure-panel .mp-legs input').check();
+  assert.ok(await markAt(100, 0) > 0 && await markAt(50, 0) > 0, 'legs drawn with Show ΔX / ΔY');
+  assert.equal(await page.evaluate(() => window.api.settingsGet('measure.showLegs')), true, 'the option is saved');
+  await page.locator('#measure-panel .mp-legs input').uncheck();
+  assert.equal(await markAt(100, 0), 0, 'unticked: legs gone');
+
+  step = 'units: Format > Units… Metres, precision 2 relabels the measure panel and status bar; undo; saved as $INSUNITS';
+  await page.evaluate(() => { window.app.fileDoc.units = 4; });
+  await typeCmd('mea'); await clickWorld(0.6, 0.4); await clickWorld(99.5, 49.6); await page.keyboard.press('Escape');
+  assert.match(await panel(), /^Distance = 111\.8034 mm$/m);
+  await page.locator('#units').click();
+  await page.locator('#dlg[open] #units-select').selectOption('6');
+  await page.locator('#dlg #units-precision').selectOption('2');
+  assert.match(await page.locator('#dlg').textContent(), /does not scale the drawing/);
+  await page.locator('#dlg button.primary').click();
+  assert.match(await panel(), /^Distance = 111\.8 m$/m, '2 decimals, metres');
+  assert.match(await panel(), /^Delta X = 100 m, Delta Y = 50 m$/m);
+  assert.match(await page.locator('#measure-panel .mp-units').textContent(), /Units: m$/);
+  assert.equal(await page.locator('#units').textContent(), 'Units: m');
+  assert.equal(await page.evaluate(() => window.app.session.dirty), true, 'marks the drawing modified');
+  const savedUnits = () => page.evaluate(async () => {
+    const { writeDxf } = await import('/src/core/dxfWrite.js'); const { readDxf } = await import('/src/core/dxfRead.js');
+    const d = readDxf(new TextEncoder().encode(writeDxf(window.app.fileDoc))); return [d.units, d.header.luprec];
+  });
+  assert.deepEqual(await savedUnits(), [6, 2], 'written as $INSUNITS 6 / $LUPREC 2');
+  await page.keyboard.press('Control+z');
+  assert.equal(await page.locator('#units').textContent(), 'Units: mm', 'undo restores millimetres');
+  assert.match(await panel(), /^Distance = 111\.8034 mm$/m);
+  assert.deepEqual(await savedUnits(), [4, 4]);
+  await page.locator('#measure-panel .mp-close').click();
+
+  step = 'units: a millimetre DXF at UTM metre coordinates shows the Units hint; its button opens Units preset to Metres';
+  await pickFile('utm_metres_insunits_mm.dxf');
+  await page.waitForFunction(() => window.app.active.file.name === 'utm_metres_insunits_mm.dxf', null, { timeout: 5000 });
+  await page.locator('#units-hint').waitFor({ timeout: 3000 });
+  assert.match(await page.locator('#units-hint').textContent(), /says millimetres, but its coordinates look like metres/);
+  assert.equal(await page.evaluate(() => window.app.fileDoc.units), 4, 'nothing changed without the user');
+  await page.locator('#units-hint-open').click();
+  assert.equal(await page.locator('#dlg[open] #units-select').inputValue(), '6', 'preset to Metres');
+  await page.locator('#dlg button', { hasText: 'Cancel' }).click();
+  assert.equal(await page.evaluate(() => window.app.fileDoc.units), 4, 'Cancel changes nothing');
+  assert.equal(await page.locator('#units-hint').count(), 0);
+  await page.keyboard.press('Control+w');
+
   step = 'dimensions: DIMSTYLE CmColor colours stay dark on a light model background';
   await pickFile('cmcolor_dimstyle.dxf');
   await page.waitForFunction(() => window.app.active.file.name === 'cmcolor_dimstyle.dxf', null, { timeout: 5000 });
