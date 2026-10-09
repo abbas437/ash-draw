@@ -19,6 +19,7 @@ import { dimStyleFromTags } from './dimsStyle.js';
 import { dimDefFromTags } from './dims.js';
 import { mtextPlain } from './mtext.js';
 import { mleaderFromTags, mleaderStyleFromTags } from './mleader.js';
+import { mlineFromTags, mlineStyleFromTags } from './mline.js';
 import { parseLayoutObject, readViewport } from './layouts.js';
 import { imageDefFromTags, imageFromTags } from './image.js';
 
@@ -625,6 +626,7 @@ function buildEntity(rec, doc, extra) {
       delete e.def; delete e.path;
       break;
     }
+    case 'MLINE': { const ml = mlineFromTags(rec.tags()); e = ml && { ...o, id: 0, type: 'MLINE', ...ml }; break; }
     case 'ATTDEF': case 'ATTRIB': e = buildAttribute(rec, buildText(rec, o)); break;
     default: return undefined;
   }
@@ -755,6 +757,7 @@ function parseTokens(tk, onProgress = null) {
     for (const rec of records(tk, secs.OBJECTS.from, secs.OBJECTS.to)) {
       if (rec.type === 'IMAGEDEF') imageDefs.set(rec.str(5), imageDefFromTags(rec.tags()));
       if (rec.type === 'WIPEOUTVARIABLES') doc.header.wipeoutFrame = rec.int(70); // WIPEOUTFRAME: 0 hidden, 1 shown + plotted, 2 shown only
+      if (rec.type === 'MLINESTYLE') (doc.mlineStyles ??= new Map()).set(rec.str(5), mlineStyleFromTags(rec.tags()));
       if (rec.type !== 'MLEADERSTYLE') continue;
       const st = mleaderStyleFromTags(rec.tags());
       mlStyles.set(rec.str(5), st);

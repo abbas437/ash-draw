@@ -18,6 +18,7 @@ import {
 } from './geom.js';
 import { plainText } from './dxfRead.js';
 import { mleaderParts } from './mleader.js';
+import { mlineParts } from './mline.js';
 import { patternLines, hasPattern } from './patterns.js';
 import { SceneGrid } from './sceneGrid.js';
 import { strokeLayout, shxSubstitute } from './shx.js';
@@ -66,6 +67,11 @@ class Builder {
     if (e.type === 'DIMENSION') {
       const blk = this.doc.blocks.get(e.block);
       if (blk) this.emitBlockContent(blk, m, this.styleFor(e, layer, inherit, name), rootId, depth);
+      return;
+    }
+    if (e.type === 'MLINE') {
+      const st = this.styleFor(e, layer, inherit, name);
+      for (const sub of mlineParts(e, this.doc.mlineStyles?.get(e.styleH))) this.emit(sub, m, st, rootId, depth + 1);
       return;
     }
     if (e.type === 'MLEADER') {

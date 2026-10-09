@@ -2,6 +2,7 @@
 // Pure ES module. Matrices are canvas-style [a,b,c,d,e,f]:  x' = a*x + c*y + e ; y' = b*x + d*y + f.
 
 import { mleaderParts, transformMLeader } from './mleader.js';
+import { mlineParts, transformMline } from './mline.js';
 import { imageCorners, transformImage, wipeoutRing } from './image.js';
 import { textFrame, textCorners } from './textMetrics.js';
 import { nurbsOf, curveOfNurbs, curveCurveHits, nearestParam, slice as nurbsSlice, splineEntity, offsetNurbs, isClosed, derivsAt, domain, lineNurbs, joinCurves, subCurve } from './nurbs.js';
@@ -218,6 +219,7 @@ export function tessellate(e, doc = null, tol = 0) {
     case 'IMAGE': { const q = imageCorners(e); return [[...q.map((a) => ({ ...a })), { ...q[0] }]]; }
     case 'WIPEOUT': { const q = wipeoutRing(e); return [[...q.map((a) => ({ ...a })), { ...q[0] }]]; }
     case 'LEADER': return e.pts && e.pts.length > 1 ? [e.pts.map((a) => ({ ...a }))] : [];
+    case 'MLINE': return mlineParts(e, doc?.mlineStyles?.get(e.styleH)).flatMap((sub) => tessellate(sub, doc, tol));
     case 'MLEADER': return mleaderParts(e).flatMap((sub) => (sub.type === 'MTEXT' ? [[{ ...sub.p }]] : tessellate(sub, doc, tol)));
     case 'HATCH': return (e.loops || []).map((l) => hatchLoopPoints(l, tol)).filter((l) => l.length > 1);
     case 'INSERT':
@@ -363,6 +365,12 @@ export function explode(e, doc) {
     }
     return out;
   }
+  if (e.type === 'MLINE') {
+    // one LINE per element segment (and per end cap), with the MLINE's own properties
+    const own = { layer: e.layer, color: e.color, linetype: e.linetype, lineweight: e.lineweight, ltscale: e.ltscale };
+    return mlineParts(e, doc?.mlineStyles?.get(e.styleH)).flatMap((sub) => (sub.type === 'LINE' ? [sub] : explode(sub, doc)))
+      .map((l) => ({ ...l, ...own, id: 0 }));
+  }
   if (e.type !== 'INSERT' && e.type !== 'DIMENSION') return [];
   const blk = doc && doc.blocks.get(e.block);
   if (!blk) return [];
@@ -423,6 +431,7 @@ export function transformEntity(e, m) {
     case 'SOLID': c.pts = e.pts.map((p) => apply(m, p)); break;
     case 'LEADER': c.pts = e.pts.map((p) => apply(m, p)); break;
     case 'MLEADER': return transformMLeader(e, (p) => apply(m, p));
+    case 'MLINE': return transformMline(e, (p) => apply(m, p));
     case 'SPLINE':
       c.ctrl = e.ctrl.map((p) => apply(m, p)); c.fit = (e.fit || []).map((p) => apply(m, p)); break;
     case 'CIRCLE':

@@ -1,6 +1,7 @@
 // ASH Draw Studio - DXF writer: ASCII DXF R2000 (AC1015), model space only.
 // Output is plain ASCII (non-ASCII text is written as \U+XXXX), CRLF line ends.
 // doc.lastWriteReport = { version, entities, blocks, skipped:{TYPE:n}, notes:[...] } is set on every call.
+import { mlineTags } from './mline.js';
 import { docExtents, ccwSweep, DEG } from './geom.js';
 import { textFrame } from './textMetrics.js';
 import { patternLines, hasPattern } from './patterns.js';
@@ -56,7 +57,13 @@ export function writeDxf(doc, opts = {}) {
   let reportedDim = false, reportedMleader = false;
   const report = { version: 'AC1015', entities: 0, blocks: 0, skipped: {}, notes: [] };
   let nextHandle = 0x30;
-  const H = () => (nextHandle++).toString(16).toUpperCase();
+  // MLINESTYLE objects keep their handles (MLINE 340 names them); fixed low handles are never reused for them
+  const FIXED_H = new Set(['1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'C', 'D', '10', '12', '13', '17', '1A', '1B', '1E', '22']);
+  const mlStylesIn = [...(doc.mlineStyles ?? new Map())].map(([h, st]) => ({ inH: String(h).toUpperCase(), st }));
+  const keptH = new Set(mlStylesIn.map((s) => s.inH).filter((h) => /^[0-9A-F]+$/.test(h) && !FIXED_H.has(h)));
+  const H = () => { let h; do h = (nextHandle++).toString(16).toUpperCase(); while (keptH.has(h)); return h; };
+  const mlStyleOut = new Map(); // input handle -> { h, st }
+  for (const s of mlStylesIn) if (!mlStyleOut.has(s.inH)) mlStyleOut.set(s.inH, { h: keptH.has(s.inH) ? s.inH : null, st: s.st });
 
   // fixed objects (low handles mirror the layout other CAD tools expect)
   const hRootDict = 'A', hGroupDict = 'C', hLayoutDict = 'D', hMlineDict = '10', hPlotDict = '12', hPlotPlaceholder = '13', hMlineStyle = '22';
@@ -344,6 +351,14 @@ export function writeDxf(doc, opts = {}) {
         for (const [c, v] of imageTags({ ...e, flags: e.flags ?? 7 }, '0')) o.p(c, c === 100 ? 'AcDbWipeout' : v);
         return true;
       }
+      case 'MLINE': {
+        if (!e.verts?.length) return false;
+        head(o, e, 'MLINE', owner);
+        const ms = mlStyleOut.get(String(e.styleH ?? '').toUpperCase());
+        if (ms && !ms.h) ms.h = H();
+        for (const [c, v] of mlineTags(e, ms ? ms.h : hMlineStyle, ms ? ms.st.name : 'Standard')) if (c === 2) o.s(c, v); else o.p(c, v);
+        return true;
+      }
       case 'VIEWPORT': {
         head(o, e, 'VIEWPORT', owner);
         for (const [c, v] of viewportTags(e, (n) => layerH.get(n))) o.p(c, v);
@@ -548,7 +563,9 @@ export function writeDxf(doc, opts = {}) {
   const dict = (h, entries) => { out.p(0, 'DICTIONARY'); out.p(5, h); out.p(330, hRootDict); out.p(100, 'AcDbDictionary'); out.p(281, 1); for (const [k, v] of entries) { out.p(3, k); out.p(350, v); } };
   dict(hGroupDict, []);
   dict(hLayoutDict, [['Model', hModelLayout], ...paperLayouts.map((pl) => [pl.lo.name, pl.layoutH])]);
-  dict(hMlineDict, [['Standard', hMlineStyle]]);
+  for (const ms of mlStyleOut.values()) ms.h ??= H();
+  const keptStd = [...mlStyleOut.values()].some((ms) => /^standard$/i.test(ms.st.name));
+  dict(hMlineDict, [...(keptStd ? [] : [['Standard', hMlineStyle]]), ...[...mlStyleOut.values()].map((ms) => [ms.st.name, ms.h])]);
   if (writeMlStyle) dict(hMleaderDict, [['Standard', hMleaderStyle]]);
   if (imageDefsOut.size) {
     const stem = (p) => String(p).split(/[\\/]/).pop().replace(/\.[^.]*$/, '') || 'IMAGE';
@@ -579,9 +596,15 @@ export function writeDxf(doc, opts = {}) {
   };
   layout(hModelLayout, 'Model', true, 0, hModelRec);
   paperLayouts.forEach((pl, i) => layout(pl.layoutH, pl.lo.name, false, i + 1, pl.rec, pl.lo.plot ? pl.lo : null));
-  out.p(0, 'MLINESTYLE'); out.p(5, hMlineStyle); out.p(102, '{ACAD_REACTORS'); out.p(330, hMlineDict); out.p(102, '}'); out.p(330, hMlineDict);
-  out.p(100, 'AcDbMlineStyle'); out.p(2, 'Standard'); out.p(70, 0); out.p(3, ''); out.p(62, 256); out.p(51, 90); out.p(52, 90); out.p(71, 2);
-  out.p(49, 0.5); out.p(62, 256); out.p(6, 'BYLAYER'); out.p(49, -0.5); out.p(62, 256); out.p(6, 'BYLAYER');
+  if (!keptStd) {
+    out.p(0, 'MLINESTYLE'); out.p(5, hMlineStyle); out.p(102, '{ACAD_REACTORS'); out.p(330, hMlineDict); out.p(102, '}'); out.p(330, hMlineDict);
+    out.p(100, 'AcDbMlineStyle'); out.p(2, 'Standard'); out.p(70, 0); out.p(3, ''); out.p(62, 256); out.p(51, 90); out.p(52, 90); out.p(71, 2);
+    out.p(49, 0.5); out.p(62, 256); out.p(6, 'BYLAYER'); out.p(49, -0.5); out.p(62, 256); out.p(6, 'BYLAYER');
+  }
+  for (const ms of mlStyleOut.values()) {
+    out.p(0, 'MLINESTYLE'); out.p(5, ms.h); out.p(102, '{ACAD_REACTORS'); out.p(330, hMlineDict); out.p(102, '}'); out.p(330, hMlineDict);
+    for (const [c, v] of ms.st.tags) out.p(c, v);
+  }
   if (writeMlStyle) {
     out.p(0, 'MLEADERSTYLE'); out.p(5, hMleaderStyle); out.p(102, '{ACAD_REACTORS'); out.p(330, hMleaderDict); out.p(102, '}'); out.p(330, hMleaderDict);
     for (const [c, v] of mleaderStyleTags('__STDSTYLE__')) out.p(c, v);
@@ -589,7 +612,8 @@ export function writeDxf(doc, opts = {}) {
   out.p(0, 'ENDSEC');
   out.p(0, 'EOF');
 
-  const text = out.text().replace('__HANDSEED__', nextHandle.toString(16).toUpperCase()).replaceAll('\r\n__STDSTYLE__\r\n', `\r\n${styleHandle.get('STANDARD')}\r\n`);
+  const seed = Math.max(nextHandle, ...[...keptH].map((h) => parseInt(h, 16) + 1));
+  const text = out.text().replace('__HANDSEED__', seed.toString(16).toUpperCase()).replaceAll('\r\n__STDSTYLE__\r\n', `\r\n${styleHandle.get('STANDARD')}\r\n`);
 
   for (const [t, n] of Object.entries(doc.skipped)) report.skipped[`${t} (not read)`] = n;
   doc.lastWriteReport = report;
