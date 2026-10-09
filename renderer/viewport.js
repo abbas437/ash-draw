@@ -1,6 +1,6 @@
 // ASH Draw Studio - canvas viewport: view state, pan/zoom, snapping, selection, overlays.
 // The active tool receives world-space events through vp.tool (see tools.js).
-import { buildScene, updateScene, drawScene, drawLayout, fitView, screenToWorld, worldToScreen, zoomAt, zoomLimits } from '../src/core/render.js';
+import { buildScene, updateScene, drawScene, drawSceneSteps, drawLayout, fitView, screenToWorld, worldToScreen, zoomAt, zoomLimits } from '../src/core/render.js';
 import { SpatialIndex, findSnap, orthoPoint, polarPoint, pickEntity, selectInBox } from '../src/core/pick.js';
 import { bboxOf, growBox } from '../src/core/geom.js';
 import { gripsOf } from './grips.js';
@@ -13,13 +13,18 @@ import { setTextMeasure } from '../src/core/textMetrics.js';
   setTextMeasure((t, font, b, i) => { mctx.font = `${i ? 'italic ' : ''}${b ? 'bold ' : ''}100px "${font}", Arial, "Segoe UI", sans-serif`; return mctx.measureText(t).width / 100; });
 }
 import { paperRects } from '../src/core/layouts.js';
-import { frameKey, framePlan, exposedStrips } from '../src/core/frameCache.js';
+import { frameKey, framePlan, exposedStrips, sameKey } from '../src/core/frameCache.js';
+import { nextTask } from '../src/core/slice.js';
 
 const DEFAULT_KINDS = new Set(['end', 'int', 'mid', 'cen', 'quad', 'node', 'ins', 'per']);
 const SNAP_PX = 12;
 const PICK_PX = 6;
 /** a pan / wheel-zoom gesture shows the cached bitmap; the full render follows this long after it ends */
 const SETTLE_MS = 120;
+/** a full scene frame of a scene with at least this many items is drawn progressively (drawSceneSteps in slices of
+ *  about PROGRESSIVE_SLICE_MS, shown as it goes), so a huge drawing never holds the window for the whole frame */
+export const PROGRESSIVE_ITEMS = 50000;
+const PROGRESSIVE_SLICE_MS = 25;
 /** drawing-area background per theme; settings.dark picks one (it follows the app theme unless overridden) */
 export const CANVAS_BG = { light: '#ffffff', dark: '#1b1f23' };
 
@@ -52,6 +57,8 @@ export class Viewport {
     this._frame = null;                // last scene frame: { key, view, exact } with its bitmap in this._buf
     this._buf = document.createElement('canvas');
     this._buf2 = document.createElement('canvas');
+    this._prog = null;                 // progressive full frame in the making: { key, view, gen, buf } (see _sceneFrame)
+    this._pbuf = document.createElement('canvas');
     document.fonts?.addEventListener?.('loadingdone', () => this.invalidate());
     this._bind();
   }
@@ -175,7 +182,7 @@ export class Viewport {
 
   // ---- rendering -----------------------------------------------------------------------------
   /** drop the cached scene bitmap (scene edits, layer and theme changes are detected through frameKey) */
-  invalidate() { this._frame = null; this.requestRender(); }
+  invalidate() { this._frame = null; this._stopProgressive(); this.requestRender(); }
   /** pan / wheel-zoom gesture: frames reuse the cached bitmap until SETTLE_MS after endGesture() */
   beginGesture(kind) { clearTimeout(this._settleT); this._settleT = 0; this._gesture = kind; }
   endGesture(ms = SETTLE_MS) {
@@ -203,7 +210,7 @@ export class Viewport {
     const opts = this.sceneOpts();
     const ms = this.mspace;
     if (this.layout) {
-      this._frame = null;
+      this._frame = null; this._stopProgressive();
       drawLayout(ctx, ms ? ms.paperScene : this.scene, ms ? { ...ms.paperView, width: view.width, height: view.height } : view, this.layout, paperRects, this.modelScene,
         { ...opts, highlightColor: '#0a6fd1', ...(ms && { highlight: null, modelHighlight: this.selection, activeVp: ms.vp }) });
     }
@@ -216,12 +223,54 @@ export class Viewport {
     this._drawCrosshair();
   }
 
+  /** a progressive frame is being drawn (it replaces the cached frame when done) */
+  get drawing() { return !!this._prog; }
+  _stopProgressive() { if (this._prog) { this._prog.gen.return(); this._prog = null; } }
+  /** start drawing the full frame for (key, view) in time slices into the spare canvas _pbuf; each slice is shown
+   *  (render blits _pbuf while the job is current) and the finished bitmap becomes the cached frame. A new view,
+   *  content key or gesture stops it (_sceneFrame). */
+  _startProgressive(key, view, opts) {
+    this._stopProgressive();
+    const pb = this._pbuf;
+    pb.width = this.canvas.width; pb.height = this.canvas.height; // also resets the context state a stopped job left
+    const job = this._prog = { key, view, buf: pb, gen: drawSceneSteps(pb.getContext('2d'), this.scene, view, opts) };
+    const slice = () => {
+      const t = performance.now();
+      let r;
+      while (!(r = job.gen.next()).done && performance.now() - t < PROGRESSIVE_SLICE_MS);
+      return r.done;
+    };
+    if (slice()) { this._finishProgressive(job); return; }
+    (async () => {
+      for (;;) {
+        await nextTask();
+        if (this._prog !== job) return;
+        if (slice()) { this._finishProgressive(job); this.requestRender(); return; }
+        this.requestRender();
+      }
+    })();
+  }
+  _finishProgressive(job) {
+    this._prog = null;
+    this._pbuf = this._buf; this._buf = job.buf;
+    this._frame = { key: job.key, view: job.view, exact: true };
+  }
+
   /** model space: draw the scene through the cached bitmap (see framePlan in src/core/frameCache.js) */
   _sceneFrame(opts) {
     const { ctx, view, canvas } = this;
     const key = frameKey({ scene: this.scene, dark: this.settings.dark, lineweights: this.settings.lineweights, selection: this.selection, dpr: this.dpr, pxWidth: canvas.width, pxHeight: canvas.height });
     const plan = framePlan(this._frame, key, view, this._gesture);
     let buf = this._buf;
+    const p = this._prog;
+    if (p && !(plan.mode === 'full' && sameKey(p.key, key) && p.view.cx === view.cx && p.view.cy === view.cy && p.view.zoom === view.zoom && p.view.width === view.width && p.view.height === view.height)) this._stopProgressive();
+    if (plan.mode === 'full' && (this._prog || this.scene.items.length >= PROGRESSIVE_ITEMS)) {
+      if (!this._prog) this._startProgressive(key, view, opts);
+      // in the making: show what is drawn so far; finished at once: the cached frame
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(this._prog ? this._prog.buf : this._buf, 0, 0);
+      return;
+    }
     if (plan.mode === 'full') {
       if (buf.width !== canvas.width || buf.height !== canvas.height) { buf.width = canvas.width; buf.height = canvas.height; }
       drawScene(buf.getContext('2d'), this.scene, view, opts);

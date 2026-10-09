@@ -1592,7 +1592,9 @@ try {
     await watch();
     await pickPath(big);
     await page.waitForFunction(() => window.app.file.name === 'big_synthetic.dxf', null, { timeout: 60000 });
-    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))); // the first frame too
+    // the first frame too: a huge scene is drawn progressively (viewport.js), so until it is finished
+    await page.waitForFunction(() => !window.app.vp.drawing && window.app.vp._frame?.exact, null, { timeout: 60000 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     const r = await page.evaluate(() => { window.__tick.stop = true; return { maxGap: window.__tick.maxGap, maxAll: window.__tick.maxAll, gapAt: window.__tick.gapAt, allAt: window.__tick.allAt, pcts: [...window.__tick.pcts], n: window.app.doc.entities.length }; });
     assert.equal(r.n, 122000);
     assert.equal(await page.evaluate(() => window.app.vp.scene.items.length), 520000);

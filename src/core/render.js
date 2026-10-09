@@ -632,7 +632,19 @@ function arcWindow(cx, cy, view, pad) {
   return [ref + lo, ref + hi];
 }
 
-export function drawScene(ctx, scene, view, opts = {}) {
+/** draw the scene for `view` in one go (drawSceneSteps run straight through) */
+export function drawScene(ctx, scene, view, opts = {}) { drain(drawSceneSteps(ctx, scene, view, opts)); }
+
+/** items handled between two yields of drawSceneSteps, and the most path items one stroke() takes (a progressive
+ *  frame rasterises a bounded batch per slice; the synchronous drawScene strokes the same chunks, so both give the
+ *  same pixels) */
+const DRAW_TICK = 1024, STROKE_CHUNK = 16384;
+
+/** drawScene as a step generator (src/core/slice.js): yields every DRAW_TICK items. Run in time slices it draws a
+ *  frame progressively into an offscreen canvas nothing else draws on meanwhile (renderer/viewport.js); the canvas
+ *  state between yields belongs to the generator. */
+export function* drawSceneSteps(ctx, scene, view, opts = {}) {
+  let work = 0;
   const { width: W, height: H, zoom: z } = view;
   const bg = opts.background ?? '#1b1f23';
   const dark = luminance(bg) < 0.5;
@@ -785,7 +797,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
   // wipeouts mask what comes before them: the items are drawn in levels (see wipeoutLevels), each level's wipeout
   // fills (background colour) first, then its items batched as usual
   const levels = wipeoutLevels(scene);
-  const drawItems = (vis) => {
+  const drawItems = function* (vis) {
     const fills = [], marks = [], texts = [], images = [], batches = new Map(), dots = new Map(), tints = new Map(), bars = new Map();
     const lwSig = opts.showLineweight ? (opts.pixelsPerMm ?? 3.78) : 0;
     // per colour and opacity: list.col, list.a
@@ -794,6 +806,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
       let l = map.get(key); if (!l) { map.set(key, (l = [])); l.col = col; l.a = a; } return l;
     };
     for (const it of vis) {
+      if (++work >= DRAW_TICK) { work = 0; yield; }
       const k = it.kind;
       if (k === 'wipeout') continue;
       if (it.arrow || k === 'point') marks.push(it);
@@ -825,7 +838,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
     }
 
     // 0. raster images, in draw order, under the vector work
-    for (const it of images) drawImageItem(ctx, it, doc.images?.get(it.image.path)?.bitmap, sx, sy, z);
+    for (const it of images) { drawImageItem(ctx, it, doc.images?.get(it.image.path)?.bitmap, sx, sy, z); if (++work >= DRAW_TICK) { work = 0; yield; } }
     prof?.('images');
 
     // 1. hatches and solid fills; LOD tints first (one fill per colour), then the per-item fills and patterns
@@ -836,14 +849,15 @@ export function drawScene(ctx, scene, view, opts = {}) {
         ctx.globalAlpha = fillAlphaPattern * list.a; ctx.fillStyle = list.col;
         ctx.beginPath();
         // single-loop boundaries share one non-zero path, all wound the same way so overlaps do not cancel
-        for (const it of list) if (loopCount(it) === 1) traceLoopCcw(ctx, it, sx, sy);
+        for (const it of list) { if (loopCount(it) === 1) traceLoopCcw(ctx, it, sx, sy); if (++work >= DRAW_TICK) { work = 0; yield; } }
         ctx.fill();
-        for (const it of list) if (loopCount(it) !== 1) { ctx.beginPath(); fillPath(it.ops); ctx.fill('evenodd'); }
+        for (const it of list) if (loopCount(it) !== 1) { ctx.beginPath(); fillPath(it.ops); ctx.fill('evenodd'); if (++work >= DRAW_TICK) { work = 0; yield; } }
       }
       ctx.restore();
     }
     prof?.('tints');
     for (const it of fills) {
+      if (++work >= DRAW_TICK) { work = 0; yield; }
       const col = colorOf(it.style), a = aOf(it.style);
       ctx.globalAlpha = a;
       if (it.kind === 'fill' || it.solid) {
@@ -860,14 +874,15 @@ export function drawScene(ctx, scene, view, opts = {}) {
 
     // LOD dots: one 1-px rect per covered pixel and colour, one fill per colour
     if (dots.size) {
-      const Wi = Math.ceil(W), Hi = Math.ceil(H), stamp = dotStamp(Wi * Hi);
+      const Wi = Math.ceil(W), Hi = Math.ceil(H), stamp = dotStamp(Wi * Hi), frameNo = dotFrame;
       let ci = 0;
       for (const list of dots.values()) {
         const col = list.col;
         ctx.globalAlpha = list.a;
-        const mark = dotFrame * 256 + (ci++ & 255);
+        const mark = frameNo * 256 + (ci++ & 255);
         ctx.beginPath();
         for (const it of list) {
+          if (++work >= DRAW_TICK) { work = 0; yield; }
           const b = it.bbox;
           const x = Math.floor(sx((b.minx + b.maxx) / 2)), y = Math.floor(sy((b.miny + b.maxy) / 2));
           if (x < 0 || y < 0 || x >= Wi || y >= Hi) continue;
@@ -885,18 +900,24 @@ export function drawScene(ctx, scene, view, opts = {}) {
     // 2. line work, batched by style
     for (const { st, items } of batches.values()) {
       const dash = dashFor(doc, st, z), period = dash ? dash.reduce((a, b) => a + b, 0) : 0;
-      ctx.beginPath();
-      for (const it of items) strokePath(it.ops, period);
-      ctx.strokeStyle = colorOf(st); ctx.globalAlpha = aOf(st);
-      ctx.lineWidth = lwPx(st);
-      ctx.setLineDash(dash ?? []);
-      ctx.stroke();
+      for (let i0 = 0; i0 < items.length; i0 += STROKE_CHUNK) {
+        ctx.beginPath();
+        for (let i = i0, i1 = Math.min(items.length, i0 + STROKE_CHUNK); i < i1; i++) {
+          strokePath(items[i].ops, period);
+          if (++work >= DRAW_TICK) { work = 0; yield; }
+        }
+        ctx.strokeStyle = colorOf(st); ctx.globalAlpha = aOf(st);
+        ctx.lineWidth = lwPx(st);
+        ctx.setLineDash(dash ?? []);
+        ctx.stroke();
+      }
     }
     ctx.setLineDash([]); ctx.globalAlpha = 1;
     prof?.('lines');
 
     // leader arrow heads and points
     for (const it of marks) {
+      if (++work >= DRAW_TICK) { work = 0; yield; }
       ctx.globalAlpha = aOf(it.style);
       if (it.arrow) {
         ctx.fillStyle = colorOf(it.style);
@@ -924,6 +945,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
         const col = list.col; ctx.globalAlpha = 0.5 * list.a;
         ctx.beginPath();
         for (const it of list) {
+          if (++work >= DRAW_TICK) { work = 0; yield; }
           const x = sx(it.p.x), y = sy(it.p.y);
           const w = it.lines ? (it._maxLen ??= Math.max(...it.lines.map((l) => l.length))) * it.h * z * 0.6 * it.wf : it.w * z;
           ctx.moveTo(x, y); ctx.lineTo(x + w * Math.cos(it.rot), y - w * Math.sin(it.rot));
@@ -934,6 +956,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
     }
     prof?.('bars');
     for (const it of texts) {
+      if (++work >= DRAW_TICK) { work = 0; yield; }
       ctx.globalAlpha = aOf(it.style);
       if (it.mt) drawMText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style), dark);
       else drawText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style));
@@ -941,13 +964,13 @@ export function drawScene(ctx, scene, view, opts = {}) {
     ctx.globalAlpha = 1;
     prof?.('text');
   };
-  if (!levels) drawItems(vis);
+  if (!levels) yield* drawItems(vis);
   else {
     const per = Array.from({ length: levels + 1 }, () => ({ wipe: [], items: [] }));
     for (const it of vis) (it.kind === 'wipeout' ? per[it.wl].wipe : per[it.wl].items).push(it);
     for (const { wipe, items } of per) {
       if (wipe.length) { ctx.beginPath(); for (const it of wipe) fillPath(it.ops); ctx.fillStyle = bg; ctx.fill(); }
-      if (items.length) drawItems(items);
+      if (items.length) yield* drawItems(items);
     }
   }
 
