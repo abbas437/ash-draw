@@ -5,6 +5,7 @@ import { promises as fs, mkdirSync, readFileSync, renameSync, statSync, writeFil
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createDwgBridge, DWG_OUT_VERSIONS } from './dwgBridge.js';
+import { createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isOdaExeName, ODA_DOWNLOAD_URL } from './odaConverter.js';
 import { cleanSession, isPathString, pushRecent, startupModeOf } from './sessionLists.js';
 import { xrefCandidates } from '../src/core/xref.js';
 
@@ -365,6 +366,27 @@ function registerIpc() {
     return { path: grant(p), name: path.basename(p) };
   });
   handle('app:recentClear', () => { recent = []; writeJsonSync('recent.json', recent); return true; });
+  // DWG converter preference: settings 'dwg.converter' (auto | oda | libredwg) and 'dwg.odaPath' (validated at use).
+  handle('dwg:config', async () => { settings ??= await loadJson('settings.json'); return { mode: settings['dwg.converter'] ?? 'auto', odaPath: settings['dwg.odaPath'] ?? '' }; });
+  handle('dwg:setConfig', async (opts) => {
+    const o = plainObject(opts);
+    if (!DWG_MODES.includes(o.mode)) throw new RangeError(`mode must be one of ${DWG_MODES.join(', ')}`);
+    if (o.odaPath !== '' && (!isPathString(o.odaPath) || !path.isAbsolute(o.odaPath) || !isOdaExeName(o.odaPath))) throw new TypeError('the ODA path must be the full path of ODAFileConverter.exe');
+    settings ??= await loadJson('settings.json');
+    settings['dwg.converter'] = o.mode; settings['dwg.odaPath'] = o.odaPath;
+    await saveJson('settings.json', settings);
+    return true;
+  });
+  handle('dwg:browseOda', async () => {
+    const r = await dialog.showOpenDialog(win, { title: 'Locate ODAFileConverter.exe', filters: [{ name: 'ODA File Converter', extensions: process.platform === 'win32' ? ['exe'] : ['*'] }], properties: ['openFile'] });
+    return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
+  });
+  // Only this fixed https address is ever opened (allow-list of one); the renderer passes nothing.
+  handle('shell:openOdaDownload', () => {
+    const u = new URL(ODA_DOWNLOAD_URL);
+    if (u.protocol !== 'https:' || u.hostname !== 'www.opendesign.com') throw new Error('download address not allowed');
+    return shell.openExternal(u.href).then(() => true);
+  });
   handle('dwg:available', () => dwg.available());
   handle('dwg:toDxf', (bytes) => dwg.toDxf(asBytes(bytes, 'DWG data')));
   handle('dwg:fromDxf', (opts) => {
@@ -380,7 +402,14 @@ app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   protocol.handle(SCHEME, serveAppFile);
-  dwg = createDwgBridge(libredwgDir, process.platform, { tmpRoot: app.getPath('temp') });
+  const tmpRoot = app.getPath('temp');
+  const programFiles = [...new Set([process.env.ProgramW6432, process.env.ProgramFiles, 'C:\\Program Files'].filter(Boolean))];
+  dwg = createDwgService({
+    libre: createDwgBridge(libredwgDir, process.platform, { tmpRoot }),
+    getConfig: () => ({ mode: settings?.['dwg.converter'], odaPath: settings?.['dwg.odaPath'] || '' }),
+    detectOda: () => (process.platform === 'win32' ? findOdaConverter(programFiles) : Promise.resolve(null)),
+    makeOda: (exe) => createOdaBridge(exe, { tmpRoot }),
+  });
   registerIpc();
   // Files given at start-up take priority: the previous session is then only offered, never reopened automatically.
   settings ??= await loadJson('settings.json');

@@ -13,6 +13,8 @@ export const OPEN_FILTERS = [
 ];
 
 const enc = new TextEncoder();
+/** part of the main process's "install the ODA File Converter" message (electron/odaConverter.js ODA_HINT) */
+export const ODA_HINT_MARK = 'Install the free ODA File Converter';
 export const extOf = (name) => (/\.([^.\\/]+)$/.exec(name || '') || [, ''])[1].toLowerCase();
 export const baseName = (name) => String(name || 'drawing').replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '');
 
@@ -38,7 +40,9 @@ export async function loadDrawing(api, name, bytes) {
       dxfBytes = res.dxfBytes;
       warnings = Array.isArray(res.warnings) ? res.warnings : [];
     } catch (err) {
-      throw new Error(`This DWG file could not be converted (${String(err.message || err).split('\n')[0]}). Try opening it in your CAD program and saving it as DXF.`);
+      const m = String(err.message || err).replace(/^Error invoking remote method '[^']*': (Error: )?/, '');
+      if (m.includes(ODA_HINT_MARK)) throw Object.assign(new Error(m), { odaHint: true });
+      throw new Error(`${/^This DWG file could not be converted/.test(m) ? m.split('\n')[0] : `This DWG file could not be converted (${m.split('\n')[0]}).`} Try opening it in your CAD program and saving it as DXF.`);
     }
   } else if (ext !== 'dxf' && ext !== '') {
     throw new Error(`Unsupported file type ".${ext}". Open a DWG or DXF file.`);

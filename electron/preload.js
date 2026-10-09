@@ -41,6 +41,10 @@ contextBridge.exposeInMainWorld('api', {
   recentOpen: (p) => invoke('app:recentOpen', p),
   recentClear: () => invoke('app:recentClear'),
   dwgAvailable: () => invoke('dwg:available'),
+  dwgConfig: () => invoke('dwg:config'),
+  dwgSetConfig: (c) => invoke('dwg:setConfig', c),
+  dwgBrowseOda: () => invoke('dwg:browseOda'),
+  openOdaDownload: () => invoke('shell:openOdaDownload'),
   dwgToDxf: (bytes) => invoke('dwg:toDxf', bytes),
   dxfToDwg: (dxfBytes, version) => invoke('dwg:fromDxf', { dxfBytes, version }),
 });
