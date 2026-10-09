@@ -45,7 +45,7 @@ test('ODA converter: argument array order, fixed input name, output picked up, t
     assert.deepEqual(input, ['drawing.dwg']);
     assert.deepEqual(await fs.readdir(s.tmpRoot), []);
     assert.equal(b.version, '25.12.0');
-    assert.equal(ODA_TIMEOUT_MS, 300_000);
+    assert.equal(ODA_TIMEOUT_MS, 600_000);
   } finally { await s.cleanup(); }
 });
 
