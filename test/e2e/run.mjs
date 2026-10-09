@@ -1276,6 +1276,18 @@ try {
   await typeCmd('br'); await clickWorld(b1.x, b1.y); await clickWorld(b2.x, b2.y);
   assert.deepEqual(await types(), ['SPLINE', 'SPLINE'], 'BREAK gives two SPLINEs');
 
+  step = 'IMAGE whose file is missing: Opened with limitations names it; the scene has a red frame and the file name';
+  await pickFile('image_missing.dxf');
+  await page.waitForSelector('#dlg[open] h2');
+  assert.equal(await page.locator('#dlg h2').innerText(), 'Opened with limitations');
+  assert.match(await page.locator('#dlg').innerText(), /Raster images not found[^\n]*\.\/img\/logo\.png/);
+  await page.locator('#dlg button.primary').click();
+  await page.waitForFunction(() => window.app.file.name === 'image_missing.dxf');
+  const imgScene = await page.evaluate(() => window.app.scene().items.filter((it) => it.style?.color?.rgb?.join() === '255,0,0')
+    .map((it) => ({ kind: it.kind, missing: it.missingImage ?? null, text: (it.lines ?? []).map((l) => l.text ?? l).join('') })));
+  assert.ok(imgScene.some((it) => it.kind === 'path' && it.missing === './img/logo.png'), JSON.stringify(imgScene));
+  assert.ok(imgScene.some((it) => it.text === 'logo.png'), JSON.stringify(imgScene));
+
   step = 'SHX text: a romans.shx TEXT renders as stroke paths (no fillText), Arial text still uses fillText';
   const shx = await page.evaluate(async () => {
     const M = await import('/src/core/model.js');

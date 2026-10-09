@@ -6,6 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { _electron as electron } from 'playwright-core';
 import { PDFDocument } from 'pdf-lib';
@@ -223,6 +224,62 @@ try {
   const size = (await PDFDocument.load(await fs.readFile(pdfOut))).getPage(0).getSize();
   assert.ok(Math.abs(size.width - 1190.55) < 0.1 && Math.abs(size.height - 841.89) < 0.1, `page ${size.width} x ${size.height}`);
   if (await win.locator('#dlg[open]').count()) await win.locator('#dlg button.primary').click(); // warnings, if any
+
+  setStep('IMAGE: a host with ./img/logo.png (solid colour) draws the PNG inside the frame');
+  const idir = path.join(tmp, 'ihost'), imgHost = path.join(idir, 'host.dxf'), RGB = [20, 180, 60];
+  await fs.mkdir(path.join(idir, 'img'), { recursive: true });
+  const chunk = (type, data) => {
+    const td = Buffer.concat([Buffer.from(type, 'latin1'), data]), len = Buffer.alloc(4), crc = Buffer.alloc(4);
+    len.writeUInt32BE(data.length); crc.writeUInt32BE(zlib.crc32(td));
+    return Buffer.concat([len, td, crc]);
+  };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(8, 0); ihdr.writeUInt32BE(8, 4); ihdr[8] = 8; ihdr[9] = 2; // 8 x 8 RGB
+  const rows = Buffer.concat(Array.from({ length: 8 }, () => Buffer.from([0, ...Array(8).fill(RGB).flat()])));
+  await fs.writeFile(path.join(idir, 'img', 'logo.png'), Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(rows)), chunk('IEND', Buffer.alloc(0))]));
+  await fs.writeFile(path.join(idir, 'img', 'logo.exe'), 'MZ');
+  await fs.writeFile(path.join(idir, 'img', 'notes.txt'), 'x');
+  const idoc = newDocument();
+  addEntity(idoc, { type: 'LINE', p1: { x: -5, y: -5 }, p2: { x: 25, y: -5 } });
+  addEntity(idoc, { type: 'CIRCLE', c: { x: 30, y: 30 }, r: 3 });
+  addEntity(idoc, { type: 'IMAGE', p: { x: 0, y: 0 }, u: { x: 2.5, y: 0 }, v: { x: 0, y: 2.5 }, size: { x: 8, y: 8 }, flags: 7, clip: { on: false, type: 1, pts: [] }, brightness: 50, contrast: 50, fade: 0, path: './img/logo.png', def: { path: './img/logo.png', size: { x: 8, y: 8 }, pixel: { x: 1, y: 1 }, units: 0, loaded: 1 } });
+  await fs.writeFile(imgHost, writeDxf(idoc));
+  await app.evaluate(({ dialog }, p) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [p] }); }, imgHost);
+  await bounded(win.evaluate(() => window.app.open()), 15000, 'open()');
+  await win.waitForFunction(() => window.app.file.path?.endsWith('ihost/host.dxf'), null, { timeout: 15000 });
+  assert.equal(await win.locator('#dlg[open]').count(), 0, 'no limitations dialog: the image was found');
+  const px = await win.evaluate(() => {
+    const vp = window.app.vp;
+    vp.zoomExtents(); vp.render();
+    const cv = document.getElementById('cv'), s = vp.toScreen({ x: 10, y: 10 }), d = vp.dpr;
+    return [...cv.getContext('2d').getImageData(Math.round(s.x * d), Math.round(s.y * d), 1, 1).data].slice(0, 3);
+  });
+  assert.deepEqual(px, RGB, `pixel inside the image frame is ${px}`);
+
+  setStep('image:read: only raster files of a granted host, only from the app window');
+  const viaImg = (ref) => win.evaluate((r) => window.api.imageRead(r[0], r[1]).then((x) => (x ? { name: x.name, mime: x.mime, n: x.bytes.length } : null), (e) => ({ error: e.message })), [imgHost, ref]);
+  assert.equal((await viaImg('./img/logo.png'))?.mime, 'image/png');
+  assert.equal(await viaImg('./img/logo.exe'), null);
+  assert.equal(await viaImg('./img/notes.txt'), null);
+  const foreign = await app.evaluate(async ({ BrowserWindow }, [preload, h]) => {
+    const w = new BrowserWindow({ show: false, webPreferences: { preload, sandbox: true, contextIsolation: true } });
+    try {
+      await w.loadURL('data:text/html,<p>x</p>');
+      return await w.webContents.executeJavaScript(`window.api.imageRead(${JSON.stringify(h)}, './img/logo.png').then(() => 'read', (e) => e.message)`);
+    } finally { w.destroy(); }
+  }, [path.join(ROOT, 'electron', 'preload.js'), imgHost]);
+  assert.match(foreign, /unauthorised sender/);
+
+  setStep('IMAGE: a DWG save keeps the other entities (and the image)');
+  const imgDwg = path.join(idir, 'host.dwg');
+  await app.evaluate(({ dialog }, p) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: p }); }, imgDwg);
+  const savingImg = win.evaluate(() => window.app.saveAs('dwg'));
+  await win.locator('#dlg button', { hasText: 'Save as DWG' }).click();
+  await win.waitForSelector('#dlg[open] h2', { timeout: 60000 });
+  assert.equal(await win.locator('#dlg h2').innerText(), 'DWG saved', await win.locator('#dlg').innerText());
+  await win.locator('#dlg button.primary').click();
+  await bounded(savingImg, 10000, "saveAs('dwg')");
+  const backTypes = await win.evaluate(async (b) => { const r = await window.api.dwgToDxf(new Uint8Array(b)); return new TextDecoder().decode(r.dxfBytes); }, [...await fs.readFile(imgDwg)]);
+  assert.deepEqual(readDxf(new TextEncoder().encode(backTypes)).entities.map((e) => e.type).sort(), ['CIRCLE', 'IMAGE', 'LINE']);
 
   setStep('no renderer errors');
   assert.deepEqual(errors, []);

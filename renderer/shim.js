@@ -48,6 +48,7 @@
     openFiles,
     readFile: () => Promise.reject(new Error('readFile ' + NO_DESKTOP)),
     xrefRead: () => Promise.resolve(null), // no folder access in the browser: xrefs stay "Not found"
+    imageRead: () => Promise.resolve(null), // likewise raster images
 
     saveFile,
     writeFile: () => Promise.reject(new Error('writeFile ' + NO_DESKTOP)),

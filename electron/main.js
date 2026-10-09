@@ -16,6 +16,8 @@ const SERVED_DIRS = ['renderer', 'src'].map((d) => path.join(APP_ROOT, d) + path
 const IS_DEV = process.argv.includes('--dev');
 const DRAWING_EXT = /\.(dxf|dwg)$/i;
 const MAX_FILE_BYTES = 512 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 64 * 1024 * 1024;
+const IMAGE_MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.bmp': 'image/bmp', '.gif': 'image/gif' };
 
 // Portable build: keep all state next to the .exe instead of %APPDATA%.
 if (process.env.PORTABLE_EXECUTABLE_DIR) {
@@ -260,6 +262,19 @@ function registerIpc() {
       if ((ext !== '.dxf' && ext !== '.dwg') || !(await isFile(p))) continue;
       const bytes = await readGranted(p);
       return { path: p, name: path.basename(p), format: ext.slice(1), bytes: ext === '.dwg' ? (await dwg.toDxf(bytes)).dxfBytes : bytes };
+    }
+    return null;
+  });
+  // A raster image of an open drawing (IMAGE entity): same search order and host check as xref:read; only
+  // png/jpg/jpeg/bmp/gif files up to MAX_IMAGE_BYTES are read.
+  handle('image:read', async (hostPath, refPath) => {
+    const host = grantedPath(hostPath);
+    if (typeof refPath !== 'string' || !refPath || refPath.length > 1024 || refPath.includes('\0')) throw new TypeError('invalid image path');
+    for (const p of xrefCandidates(host, refPath, path)) {
+      const ext = path.extname(p).toLowerCase();
+      if (!IMAGE_MIME[ext] || !(await isFile(p))) continue;
+      if ((await fs.stat(p)).size > MAX_IMAGE_BYTES) throw new RangeError('image file too large');
+      return { path: p, name: path.basename(p), mime: IMAGE_MIME[ext], bytes: new Uint8Array(await fs.readFile(p)) };
     }
     return null;
   });

@@ -7,7 +7,8 @@ import path from 'node:path';
 import { readDxf } from '../src/core/dxfRead.js';
 import { writeDxf } from '../src/core/dxfWrite.js';
 import { bboxOf, docExtents, rotation, transformEntity } from '../src/core/geom.js';
-import { imageCorners } from '../src/core/image.js';
+import { imageCorners, imageClipWorld } from '../src/core/image.js';
+import { buildScene, drawScene } from '../src/core/render.js';
 import { ezdxfAvailable } from './helpers.js';
 
 const near = (a, b, tol = 1e-9) => assert.ok(Math.abs(a - b) <= tol, `${a} !~ ${b}`);
@@ -113,4 +114,36 @@ else:
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stdout.trim(), 'img/site.jpg 0.0 0.2 200');
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('render: a missing image file is a red frame plus its file name; a loaded one is drawn through U/V, clipped and faded', () => {
+  const doc = readDxf(enc.encode(HAND));
+  const miss = buildScene(doc).items;
+  const frame = miss.find((it) => it.missingImage);
+  assert.equal(frame?.kind, 'path');
+  assert.deepEqual(frame.style.color.rgb, [255, 0, 0]);
+  const label = miss.find((it) => it.kind === 'text' || it.strokeText);
+  assert.ok(label, 'file name item');
+  assert.deepEqual(label.style.color.rgb, [255, 0, 0]);
+  if (label.lines) assert.equal(label.lines.map((l) => l.text ?? l).join(''), 'logo.png');
+
+  const bmp = { tag: 'bitmap' };
+  doc.images = new Map([['.\\img\\logo.png', { status: 'loaded', bitmap: bmp }]]);
+  const scene = buildScene(doc);
+  assert.deepEqual(scene.items.map((it) => it.kind), ['image']);
+  const calls = [];
+  const ctx = new Proxy({}, { get: (t, k) => (k in t ? t[k] : (...a) => { calls.push([k, ...a]); }), set: (t, k, v) => { t[k] = v; calls.push(['set ' + String(k), v]); return true; } });
+  const view = { cx: 100, cy: 50, zoom: 2, width: 400, height: 300 };
+  drawScene(ctx, scene, view, { background: '#ffffff' });
+  const draw = calls.find((c) => c[0] === 'drawImage');
+  assert.deepEqual(draw, ['drawImage', bmp, 0, 0, 64, 32]);
+  const tr = calls.find((c) => c[0] === 'transform');
+  const e = imageOf(doc), z = 2, sx = (x) => (x - 100) * z + 200, sy = (y) => 150 - (y - 50) * z;
+  const top = imageCorners(e)[3];
+  [e.u.x * z, -e.u.y * z, -e.v.x * z, e.v.y * z, sx(top.x), sy(top.y)].forEach((v, i) => near(tr[i + 1], v));
+  assert.ok(calls.some((c) => c[0] === 'clip'), 'clipped');
+  assert.ok(calls.some((c) => c[0] === 'set globalAlpha' && Math.abs(c[1] - 0.75) < 1e-12), 'fade 25 -> 75 % opacity');
+  // the polygon clip starts at the image's top-left corner (pixel (-0.5, -0.5))
+  const cw = imageClipWorld(e);
+  near(cw[0].x, top.x); near(cw[0].y, top.y);
 });

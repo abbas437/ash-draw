@@ -79,3 +79,15 @@ export function transformImage(img, m) {
   c.v = lin(img.v);
   return c;
 }
+
+/** the clip boundary of an image in drawing units (pixel coordinates: origin at the top-left pixel's centre, y down);
+ *  a two-point (rectangular) boundary gives its four corners; null when there is none */
+export function imageClipWorld(e) {
+  const pts = e.clip?.pts ?? [];
+  if (pts.length < 2) return null;
+  const ring = pts.length === 2 ? [pts[0], { x: pts[1].x, y: pts[0].y }, pts[1], { x: pts[0].x, y: pts[1].y }] : pts;
+  return ring.map((q) => {
+    const a = q.x + 0.5, b = e.size.y - q.y - 0.5;
+    return { x: e.p.x + e.u.x * a + e.v.x * b, y: e.p.y + e.u.y * a + e.v.y * b };
+  });
+}
