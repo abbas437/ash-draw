@@ -24,18 +24,64 @@ function segmentAt(e, p) {
   return best;
 }
 
-/** angle (degrees) between two picked segments, measured at their intersection on the sides that were picked */
-function angleBetween(A, B) {
+/** vertex and the two picked-side points of two picked segments, or null when they are parallel */
+function angleGeom(A, B) {
   const [a1, a2] = A.seg, [b1, b2] = B.seg;
   const r = { x: a2.x - a1.x, y: a2.y - a1.y }, s = { x: b2.x - b1.x, y: b2.y - b1.y }, den = r.x * s.y - r.y * s.x;
-  if (Math.abs(den) < 1e-12 * Math.hypot(r.x, r.y) * Math.hypot(s.x, s.y)) return 0;
+  if (Math.abs(den) < 1e-12 * Math.hypot(r.x, r.y) * Math.hypot(s.x, s.y)) return null;
   const t = ((b1.x - a1.x) * s.y - (b1.y - a1.y) * s.x) / den, I = { x: a1.x + t * r.x, y: a1.y + t * r.y };
   const side = ({ seg: [p, q], at }) => {
     const d = { x: q.x - p.x, y: q.y - p.y }, L = Math.hypot(d.x, d.y), k = ((at.x - I.x) * d.x + (at.y - I.y) * d.y) / L;
     if (Math.abs(k) > 1e-9 * L) return { x: I.x + (d.x / L) * k, y: I.y + (d.y / L) * k };
     return dist(I, p) > dist(I, q) ? p : q;
   };
-  return angleAt(I, side(A), side(B));
+  return { v: I, a: side(A), b: side(B) };
+}
+
+/** angle (degrees) between two picked segments, measured at their intersection on the sides that were picked */
+function angleBetween(A, B) {
+  const g = angleGeom(A, B);
+  return g ? angleAt(g.v, g.a, g.b) : 0;
+}
+
+// ---- measurement markers: drawn on the view only (not entities: never saved, never undoable) ----------
+// Kept while the results panel is open, even after the command ends; a new measurement or closing the panel clears them.
+let marks = null, marksVp = null;
+const MARK = '#00d0ff';
+function setMarks(vp, m) { marks = m; marksVp = vp; vp.requestRender(); }
+/** accent stroke over a wider contrasting outline, so it reads on the dark and the light model background */
+function strokeMark(c, vp, dash) {
+  c.setLineDash([]); c.lineWidth = 3.5; c.strokeStyle = vp.settings.dark ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)'; c.stroke();
+  c.setLineDash(dash); c.lineWidth = 1.5; c.strokeStyle = MARK; c.stroke(); c.setLineDash([]);
+}
+function drawMarks(c, vp) {
+  if (!marks) return;
+  const S = (q) => vp.toScreen(q), m = marks;
+  const line = (pts, dash, closed) => {
+    c.beginPath(); pts.forEach((q, i) => { const s = S(q); if (i) c.lineTo(s.x, s.y); else c.moveTo(s.x, s.y); });
+    if (closed) c.closePath(); strokeMark(c, vp, dash);
+  };
+  const cross = (q) => { const s = S(q), k = 6; c.beginPath(); c.moveTo(s.x - k, s.y); c.lineTo(s.x + k, s.y); c.moveTo(s.x, s.y - k); c.lineTo(s.x, s.y + k); strokeMark(c, vp, []); };
+  c.save();
+  if (m.a && m.b) {
+    line([m.a, { x: m.b.x, y: m.a.y }, m.b], [2, 3]); // dotted DeltaX / DeltaY legs
+    line([m.a, m.b], [6, 4]);
+    cross(m.a); cross(m.b);
+  }
+  if (m.shape) {
+    c.beginPath(); for (const pl of m.shape) pl.forEach((q, i) => { const s = S(q); if (i) c.lineTo(s.x, s.y); else c.moveTo(s.x, s.y); });
+    c.fillStyle = FILL; c.fill('evenodd');
+    for (const pl of m.shape) if (pl.length > 1) line(pl, [6, 4], true);
+  }
+  if (m.arc) { // circle / arc (a0..a1 in degrees, counter-clockwise) with its centre
+    const s = S(m.arc.c);
+    c.beginPath();
+    if (m.arc.a0 == null) c.arc(s.x, s.y, m.arc.r * vp.view.zoom, 0, Math.PI * 2);
+    else c.arc(s.x, s.y, m.arc.r * vp.view.zoom, -m.arc.a0 * DEG, -m.arc.a1 * DEG, true);
+    strokeMark(c, vp, [6, 4]); cross(m.arc.c);
+  }
+  if (m.angle) { line([m.angle.a, m.angle.v, m.angle.b], [6, 4]); cross(m.angle.v); }
+  c.restore();
 }
 
 // ---- docked results panel -----------------------------------------------------------------------
@@ -51,7 +97,7 @@ function showResults(title, lines, units) {
     panel = el('div', { id: 'measure-panel', role: 'region', 'aria-label': 'Measure results' },
       el('div', { class: 'phead' }, el('span', { class: 'mp-title' }), el('span', { class: 'spacer' }),
         el('button', { class: 'mp-copy', title: 'Copy the results', onclick: copy }, 'Copy'),
-        el('button', { class: 'mp-close', title: 'Close', 'aria-label': 'Close', onclick: () => panel.remove() }, '×')),
+        el('button', { class: 'mp-close', title: 'Close', 'aria-label': 'Close', onclick: () => { panel.remove(); if (marks) setMarks(marksVp, null); } }, '×')),
       body, el('div', { class: 'mp-units' }));
     document.getElementById('stage').append(panel);
   }
@@ -67,11 +113,15 @@ export class MeasureGeomTool {
   /** command = 'MEASUREGEOM' (MEA, DI, DIST: starts in Distance) or 'AREA' (area only) */
   constructor(host, command = 'MEASUREGEOM') { this.h = host; this.vp = host.vp; this.command = command; }
   activate() { this.vp.preview = (c) => this.draw(c); this.setMode(this.command === 'AREA' ? 'area' : 'distance'); }
-  deactivate() { this.vp.preview = null; this.vp.rubber = null; this.reset(); this.shape = null; }
+  deactivate() {
+    // the markers outlive the command while the results panel is open: leave a marks-only painter behind
+    this.vp.preview = marks && panel?.isConnected ? (c, v, vp) => drawMarks(c, vp ?? this.vp) : null;
+    this.vp.rubber = null; this.reset(); this.shape = null;
+  }
   cancel() { this.h.setTool('select'); }
   rightClick() { this.key({ key: 'Enter' }); }
   up(p, ev) { if (!ev.dragged) this.click(p, ev); }
-  setMode(m) { this.mode = m; this.total = null; this.sub = m === 'area' ? 'points' : 'pick'; this.reset(); this.shape = null; }
+  setMode(m) { if (marks) setMarks(this.vp, null); this.mode = m; this.total = null; this.sub = m === 'area' ? 'points' : 'pick'; this.reset(); this.shape = null; }
   reset() { this.pts = []; this.picked = null; this.vp.lastPoint = null; }
 
   get units() { return unitLabel(this.vp.doc.units); }
@@ -122,17 +172,18 @@ export class MeasureGeomTool {
   click(p, ev) {
     const raw = ev?.raw ?? p;
     if (this.mode === 'distance') {
-      if (!this.pts.length) { this.pts = [p]; this.vp.lastPoint = p; return; }
+      if (!this.pts.length) { setMarks(this.vp, null); this.pts = [p]; this.vp.lastPoint = p; return; }
       const a = this.pts[0], ang = ((Math.atan2(p.y - a.y, p.x - a.x) / DEG) + 360) % 360;
-      this.reset();
+      this.reset(); setMarks(this.vp, { a, b: p });
       this.result('Distance', [`Distance = ${this.len(dist(a, p))}`, `Delta X = ${this.len(p.x - a.x)}, Delta Y = ${this.len(p.y - a.y)}`, `Angle in XY plane = ${f4(ang)}°`]);
     } else if (this.mode === 'radius') {
       const e = this.vp.pick(raw);
       if (!e || !['CIRCLE', 'ARC'].includes(e.type)) { toast('Select an arc or a circle.'); return; }
+      setMarks(this.vp, { arc: { c: e.c, r: e.r, a0: e.type === 'ARC' ? e.a0 : null, a1: e.a1 } });
       this.result('Radius', [`Radius = ${this.len(e.r)}`, `Diameter = ${this.len(2 * e.r)}`]);
     } else if (this.mode === 'angle') this.clickAngle(p, raw);
     else if (this.sub === 'object') this.pickArea(raw);
-    else { this.pts.push(p); this.vp.lastPoint = p; }
+    else { if (!this.pts.length) setMarks(this.vp, null); this.pts.push(p); this.vp.lastPoint = p; }
   }
 
   clickAngle(p, raw) {
@@ -140,18 +191,23 @@ export class MeasureGeomTool {
       this.pts.push(p); this.vp.lastPoint = p;
       if (this.pts.length < 3) return;
       const [v, a, b] = this.pts;
-      this.reset(); this.sub = 'pick';
+      this.reset(); this.sub = 'pick'; setMarks(this.vp, { angle: { v, a, b } });
       this.result('Angle', [`Angle = ${f4(angleAt(v, a, b))}°`]);
       return;
     }
     const e = this.vp.pick(raw);
     if (!e) return;
-    if (!this.picked && e.type === 'ARC') { this.result('Angle', [`Angle = ${f4(ccwSweep(e.a0 * DEG, e.a1 * DEG) / DEG)}°`]); return; }
+    if (!this.picked && e.type === 'ARC') {
+      const pe = (a) => ({ x: e.c.x + e.r * Math.cos(a * DEG), y: e.c.y + e.r * Math.sin(a * DEG) });
+      setMarks(this.vp, { arc: { c: e.c, r: e.r, a0: e.a0, a1: e.a1 }, angle: { a: pe(e.a0), v: e.c, b: pe(e.a1) } });
+      this.result('Angle', [`Angle = ${f4(ccwSweep(e.a0 * DEG, e.a1 * DEG) / DEG)}°`]); return; }
     const seg = segmentAt(e, raw);
     if (!seg) { toast('Select a line, a straight polyline segment or an arc.'); return; }
     if (!this.picked) { this.picked = { seg, at: raw }; return; }
     const a = this.picked; this.picked = null;
-    this.result('Angle', [`Angle = ${f4(angleBetween(a, { seg, at: raw }))}°`]);
+    const B = { seg, at: raw }, g = angleGeom(a, B);
+    if (g) setMarks(this.vp, { angle: g });
+    this.result('Angle', [`Angle = ${f4(angleBetween(a, B))}°`]);
   }
 
   pickArea(raw) {
@@ -177,7 +233,7 @@ export class MeasureGeomTool {
   }
 
   addArea(m, shape) {
-    this.shape = shape;
+    this.shape = shape; setMarks(this.vp, { shape });
     const lines = [`Area = ${this.area(m.area)}, Perimeter = ${this.len(m.perimeter)}`];
     if (this.total) lines.push(`Total area = ${this.area(this.total.push(m.area))}`);
     this.result(this.total ? `Area (${this.total.mode})` : 'Area', lines);
@@ -199,9 +255,10 @@ export class MeasureGeomTool {
 
   draw(c) {
     const vp = this.vp, cur = vp.cursor, S = (q) => vp.toScreen(q);
+    drawMarks(c, vp);
     const path = (pts, closed) => { pts.forEach((q, i) => { const s = S(q); if (i) c.lineTo(s.x, s.y); else c.moveTo(s.x, s.y); }); if (closed) c.closePath(); };
     c.setLineDash([]); c.lineWidth = 1; c.strokeStyle = vp.inkColor; c.fillStyle = FILL;
-    const area = this.mode === 'area' && this.pts.length ? [[...this.pts, cur]] : this.shape;
+    const area = this.mode === 'area' && this.pts.length ? [[...this.pts, cur]] : null; // a finished shape is drawn by drawMarks
     if (area) {
       c.beginPath(); for (const pl of area) if (pl.length > 1) path(pl, true);
       c.fill('evenodd'); c.stroke();
