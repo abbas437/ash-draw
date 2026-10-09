@@ -1440,6 +1440,25 @@ try {
     await fs.rm(dir, { recursive: true, force: true });
   }
 
+  step = 'WIPEOUT: masks the line drawn before it (pixel under it = background); a line drawn after it stays visible';
+  const wpx = await page.evaluate(async () => {
+    const M = await import('/src/core/model.js');
+    const R = await import('/src/core/render.js');
+    const doc = M.newDocument();
+    M.addEntity(doc, M.makeLine({ x: 0, y: 50 }, { x: 100, y: 50 }, { color: 1 }));
+    M.addEntity(doc, { type: 'WIPEOUT', layer: '0', color: 256, p: { x: 30, y: 30 }, u: { x: 40, y: 0 }, v: { x: 0, y: 40 }, size: { x: 1, y: 1 }, flags: 7, clip: { on: true, type: 1, pts: [{ x: -0.5, y: -0.5 }, { x: 0.5, y: 0.5 }] } });
+    M.addEntity(doc, M.makeLine({ x: 50, y: 0 }, { x: 50, y: 100 }, { color: 5 }));
+    doc.header.wipeoutFrame = 0;
+    const cv = document.createElement('canvas'); cv.width = 200; cv.height = 200;
+    const ctx = cv.getContext('2d');
+    R.drawScene(ctx, R.buildScene(doc), { cx: 50, cy: 50, zoom: 2, width: 200, height: 200 }, { background: '#ffffff' });
+    const at = (x, y) => [...ctx.getImageData(x, y, 1, 1).data.slice(0, 3)].join(); // world (x/2+... ): screen = (w - 50) * 2 + 100
+    return { under: at(80, 100), outside: at(20, 100), after: at(100, 80) };
+  });
+  assert.equal(wpx.under, '255,255,255', `line before the wipeout is masked: ${JSON.stringify(wpx)}`);
+  assert.notEqual(wpx.outside, '255,255,255', `line outside the wipeout is drawn: ${JSON.stringify(wpx)}`);
+  assert.notEqual(wpx.after, '255,255,255', `line after the wipeout is on top: ${JSON.stringify(wpx)}`);
+
   step = 'csp';
   assert.deepEqual(await page.evaluate(() => window.__csp), []);
   assert.deepEqual(problems, []);

@@ -34,6 +34,7 @@ export function imageFromTags(tags, def) {
       case 70: e.flags = parseInt(val, 10) || 0; break;
       case 71: e.clip.type = parseInt(val, 10) || 1; break;
       case 280: e.clip.on = parseInt(val, 10) === 1; break;
+      case 290: e.clip.mode = parseInt(val, 10) || 0; break; // clip inside (1) / outside (0), R2010+
       case 281: e.brightness = parseInt(val, 10); break;
       case 282: e.contrast = parseInt(val, 10); break;
       case 283: e.fade = parseInt(val, 10) || 0; break;
@@ -55,6 +56,7 @@ export function imageTags(e, defH) {
     t.push([71, e.clip.type ?? 1], [91, pts.length]);
     for (const q of pts) t.push([14, q.x], [24, q.y]);
   }
+  if (e.clip?.mode !== undefined) t.push([290, e.clip.mode]);
   return t;
 }
 
@@ -91,3 +93,6 @@ export function imageClipWorld(e) {
     return { x: e.p.x + e.u.x * a + e.v.x * b, y: e.p.y + e.u.y * a + e.v.y * b };
   });
 }
+
+/** a WIPEOUT's boundary in drawing units: its clip polygon, or the frame corners when it has none */
+export const wipeoutRing = (e) => imageClipWorld(e) ?? imageCorners(e);

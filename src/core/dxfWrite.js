@@ -159,7 +159,8 @@ export function writeDxf(doc, opts = {}) {
   const XD_TYPES = new Set(['LINE', 'CIRCLE', 'ARC', 'ELLIPSE', 'LWPOLYLINE', 'SPLINE', 'TEXT', 'MTEXT', 'POINT', 'LEADER', 'HATCH']);
   const xdApps = new Set();
   const imageDefsOut = new Map(); // file path -> { h, def, reactors: IMAGE handles }
-  const hImageDict = H();
+  const hImageDict = H(), hWipeoutVars = H();
+  let hasWipeouts = false;
   function writeEntity(o, e, owner) {
     const ok = writeEntityBody(o, e, owner);
     if (ok && e.xdata && XD_TYPES.has(e.type)) {
@@ -337,6 +338,12 @@ export function writeDxf(doc, opts = {}) {
         for (const [c, v] of imageTags(e, d.h)) if (typeof v === 'string') o.s(c, v); else o.p(c, v);
         return true;
       }
+      case 'WIPEOUT': {
+        head(o, e, 'WIPEOUT', owner);
+        hasWipeouts = true;
+        for (const [c, v] of imageTags({ ...e, flags: e.flags ?? 7 }, '0')) o.p(c, c === 100 ? 'AcDbWipeout' : v);
+        return true;
+      }
       case 'VIEWPORT': {
         head(o, e, 'VIEWPORT', owner);
         for (const [c, v] of viewportTags(e, (n) => layerH.get(n))) o.p(c, v);
@@ -413,6 +420,10 @@ export function writeDxf(doc, opts = {}) {
   if (imageDefsOut.size) {
     cls('IMAGEDEF', 'AcDbRasterImageDef', 'ISM', 0);
     cls('IMAGE', 'AcDbRasterImage', 'ISM', 127);
+  }
+  if (hasWipeouts) {
+    cls('WIPEOUTVARIABLES', 'AcDbWipeoutVariables', 'WipeOut', 0);
+    cls('WIPEOUT', 'AcDbWipeout', 'WipeOut', 127);
   }
   out.p(0, 'ENDSEC');
 
@@ -531,6 +542,7 @@ export function writeDxf(doc, opts = {}) {
   out.p(0, 'DICTIONARY'); out.p(5, hRootDict); out.p(330, 0); out.p(100, 'AcDbDictionary'); out.p(281, 1);
   out.p(3, 'ACAD_GROUP'); out.p(350, hGroupDict); out.p(3, 'ACAD_LAYOUT'); out.p(350, hLayoutDict);
   if (imageDefsOut.size) { out.p(3, 'ACAD_IMAGE_DICT'); out.p(350, hImageDict); }
+  if (hasWipeouts) { out.p(3, 'ACAD_WIPEOUT_VARS'); out.p(350, hWipeoutVars); }
   if (writeMlStyle) { out.p(3, 'ACAD_MLEADERSTYLE'); out.p(350, hMleaderDict); }
   out.p(3, 'ACAD_MLINESTYLE'); out.p(350, hMlineDict); out.p(3, 'ACAD_PLOTSTYLENAME'); out.p(350, hPlotDict);
   const dict = (h, entries) => { out.p(0, 'DICTIONARY'); out.p(5, h); out.p(330, hRootDict); out.p(100, 'AcDbDictionary'); out.p(281, 1); for (const [k, v] of entries) { out.p(3, k); out.p(350, v); } };
@@ -546,6 +558,10 @@ export function writeDxf(doc, opts = {}) {
       out.p(0, 'IMAGEDEF'); out.p(5, d.h); out.p(102, '{ACAD_REACTORS'); out.p(330, hImageDict); out.p(102, '}'); out.p(330, hImageDict);
       for (const [c, v] of imageDefTags(d.def)) if (typeof v === 'string') out.s(c, v); else out.p(c, v);
     }
+  }
+  if (hasWipeouts) {
+    out.p(0, 'WIPEOUTVARIABLES'); out.p(5, hWipeoutVars); out.p(102, '{ACAD_REACTORS'); out.p(330, hRootDict); out.p(102, '}'); out.p(330, hRootDict);
+    out.p(100, 'AcDbWipeoutVariables'); out.p(70, doc.header.wipeoutFrame ?? 1);
   }
   out.p(0, 'ACDBDICTIONARYWDFLT'); out.p(5, hPlotDict); out.p(330, hRootDict); out.p(100, 'AcDbDictionary'); out.p(281, 1);
   out.p(3, 'Normal'); out.p(350, hPlotPlaceholder); out.p(100, 'AcDbDictionaryWithDefault'); out.p(340, hPlotPlaceholder);

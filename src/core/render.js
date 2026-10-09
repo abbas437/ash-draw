@@ -9,7 +9,7 @@
 // They are converted to screen space in JS doubles at draw time (Canvas paths are float32, so big
 // drawing coordinates would otherwise lose precision when zoomed in).
 import { blockContentView } from './blocks.js';
-import { imageCorners, imageClipWorld } from './image.js';
+import { imageCorners, imageClipWorld, wipeoutRing } from './image.js';
 import { resolveColor, aciToRgb } from './aci.js';
 import { parseMText, layoutMText } from './mtext.js';
 import {
@@ -234,6 +234,16 @@ class Builder {
         const h = Math.max(Math.min(W, H) / 12, 1e-9), ux = (q[1].x - q[0].x) / (W || 1), uy = (q[1].y - q[0].y) / (W || 1);
         const name = String(e.path || '').split(/[\\/]/).pop() || 'IMAGE';
         this.build({ type: 'TEXT', p: { x: q[0].x + (ux - uy) * h, y: q[0].y + (uy + ux) * h }, height: h, text: name, rot: Math.atan2(uy, ux) / DEG, ui: true }, null, red, rootId);
+        return;
+      }
+      case 'WIPEOUT': {
+        // a background-coloured mask over what was drawn before it; the frame (WIPEOUTFRAME, default shown) on top
+        const lin = (q) => (m ? { x: m[0] * q.x + m[2] * q.y, y: m[1] * q.x + m[3] * q.y } : q);
+        const ring = wipeoutRing({ p: P(e.p), u: lin(e.u), v: lin(e.v), size: e.size, clip: e.clip });
+        if (ring.length < 3) return;
+        M(ring[0]); for (let i = 1; i < ring.length; i++) L(ring[i]); ops.push(OP_Z);
+        this.push(mkItem('wipeout'), rootId);
+        if ((this.doc.header.wipeoutFrame ?? 1) !== 0) this.push(mkItem('path'), rootId);
         return;
       }
       case 'TEXT': case 'MTEXT': {
@@ -590,148 +600,163 @@ export function drawScene(ctx, scene, view, opts = {}) {
   // Level of detail: an item under 1 px on screen becomes a 1-px dot (one fill per colour); a pattern hatch whose
   // line spacing is under 2 px (or that is tiny) becomes a light tint (one fill per colour, no clip); text under
   // 2 px high becomes a bar (one stroke per colour).
-  const fills = [], marks = [], texts = [], images = [], batches = new Map(), dots = new Map(), tints = new Map(), bars = new Map();
-  const lwSig = opts.showLineweight ? (opts.pixelsPerMm ?? 3.78) : 0;
-  const bucket = (map, key) => { let l = map.get(key); if (!l) map.set(key, (l = [])); return l; };
   const prof = opts.profile; // optional (phase, info) callback after each phase (scripts/bench.mjs)
   const vis = visibleItems(scene, minx, miny, maxx, maxy);
   prof?.('query', vis.length);
-  for (const it of vis) {
-    const k = it.kind;
-    if (it.arrow || k === 'point') marks.push(it);
-    if (k === 'point') continue;
-    const b = it.bbox;
-    const tiny = b && (b.maxx - b.minx) * z < 1 && (b.maxy - b.miny) * z < 1;
-    if (k === 'hatch' && !it.solid && it.lines) {
-      it._sp ??= patternSpacing(it.lines);
-      if (tiny || it._sp * z < 2) { bucket(tints, colorOf(it.style)).push(it); continue; }
-    }
-    if (k === 'image') { images.push(it); continue; }
-    if (tiny) { bucket(dots, colorOf(it.style)).push(it); continue; }
-    if (it.strokeText && it.strokeText.h * z < 2) { bucket(bars, colorOf(it.style)).push(it.strokeText); continue; }
-    if (k === 'hatch' || k === 'fill') fills.push(it);
-    else if (k === 'path' || k === 'hatchOutline') {
-      const st = it.style;
-      if (st._ks !== lwSig) { st._ks = lwSig; st._key = `${st.color.auto ? 'a' : st.color.rgb.join(',')}|${lwPx(st)}|${st.lt}|${st.lts}`; }
-      let bt = batches.get(st._key);
-      if (!bt) batches.set(st._key, (bt = { st, items: [] }));
-      bt.items.push(it);
-    } else if (k === 'text') {
-      if (!it.mt && it.h * z < 2) bucket(bars, colorOf(it.style)).push(it);
-      else texts.push(it);
-    }
-  }
-  if (prof) {
-    const n = (m) => { let c = 0; for (const v of m.values()) c += (v.items ?? v).length; return c; };
-    prof('bucket', { fills: fills.length, tints: n(tints), dots: n(dots), lines: n(batches), batches: batches.size, marks: marks.length, bars: n(bars), texts: texts.length });
-  }
-
-  // 0. raster images, in draw order, under the vector work
-  for (const it of images) drawImageItem(ctx, it, doc.images?.get(it.image.path)?.bitmap, sx, sy, z);
-  prof?.('images');
-
-  // 1. hatches and solid fills; LOD tints first (one fill per colour), then the per-item fills and patterns
-  const fillAlphaPattern = opts.patternFallbackAlpha ?? 0.25;
-  if (tints.size) {
-    ctx.save(); ctx.globalAlpha = fillAlphaPattern;
-    for (const [col, list] of tints) {
-      ctx.fillStyle = col;
-      ctx.beginPath();
-      // single-loop boundaries share one non-zero path, all wound the same way so overlaps do not cancel
-      for (const it of list) if (loopCount(it) === 1) traceLoopCcw(ctx, it, sx, sy);
-      ctx.fill();
-      for (const it of list) if (loopCount(it) !== 1) { ctx.beginPath(); tracePath(it.ops); ctx.fill('evenodd'); }
-    }
-    ctx.restore();
-  }
-  prof?.('tints');
-  for (const it of fills) {
-    const col = colorOf(it.style);
-    if (it.kind === 'fill' || it.solid) {
-      ctx.beginPath(); tracePath(it.ops);
-      ctx.fillStyle = col; ctx.fill('evenodd');
-    } else if (it.lines) {
-      drawPatternHatch(ctx, it, view, col, tracePath, sx, sy, fillAlphaPattern);
-    } else {
-      ctx.beginPath(); tracePath(it.ops); ctx.save(); ctx.globalAlpha = fillAlphaPattern; ctx.fillStyle = col; ctx.fill('evenodd'); ctx.restore();
-    }
-  }
-  prof?.('fills');
-
-  // LOD dots: one 1-px rect per covered pixel and colour, one fill per colour
-  if (dots.size) {
-    const Wi = Math.ceil(W), Hi = Math.ceil(H), stamp = dotStamp(Wi * Hi);
-    let ci = 0;
-    for (const [col, list] of dots) {
-      const mark = dotFrame * 256 + (ci++ & 255);
-      ctx.beginPath();
-      for (const it of list) {
-        const b = it.bbox;
-        const x = Math.floor(sx((b.minx + b.maxx) / 2)), y = Math.floor(sy((b.miny + b.maxy) / 2));
-        if (x < 0 || y < 0 || x >= Wi || y >= Hi) continue;
-        const i = y * Wi + x;
-        if (stamp[i] === mark) continue;
-        stamp[i] = mark;
-        ctx.rect(x, y, 1, 1);
+  // wipeouts mask what comes before them: the items are drawn in levels (see wipeoutLevels), each level's wipeout
+  // fills (background colour) first, then its items batched as usual
+  const levels = wipeoutLevels(scene);
+  const drawItems = (vis) => {
+    const fills = [], marks = [], texts = [], images = [], batches = new Map(), dots = new Map(), tints = new Map(), bars = new Map();
+    const lwSig = opts.showLineweight ? (opts.pixelsPerMm ?? 3.78) : 0;
+    const bucket = (map, key) => { let l = map.get(key); if (!l) map.set(key, (l = [])); return l; };
+    for (const it of vis) {
+      const k = it.kind;
+      if (k === 'wipeout') continue;
+      if (it.arrow || k === 'point') marks.push(it);
+      if (k === 'point') continue;
+      const b = it.bbox;
+      const tiny = b && (b.maxx - b.minx) * z < 1 && (b.maxy - b.miny) * z < 1;
+      if (k === 'hatch' && !it.solid && it.lines) {
+        it._sp ??= patternSpacing(it.lines);
+        if (tiny || it._sp * z < 2) { bucket(tints, colorOf(it.style)).push(it); continue; }
       }
-      ctx.fillStyle = col; ctx.fill();
+      if (k === 'image') { images.push(it); continue; }
+      if (tiny) { bucket(dots, colorOf(it.style)).push(it); continue; }
+      if (it.strokeText && it.strokeText.h * z < 2) { bucket(bars, colorOf(it.style)).push(it.strokeText); continue; }
+      if (k === 'hatch' || k === 'fill') fills.push(it);
+      else if (k === 'path' || k === 'hatchOutline') {
+        const st = it.style;
+        if (st._ks !== lwSig) { st._ks = lwSig; st._key = `${st.color.auto ? 'a' : st.color.rgb.join(',')}|${lwPx(st)}|${st.lt}|${st.lts}`; }
+        let bt = batches.get(st._key);
+        if (!bt) batches.set(st._key, (bt = { st, items: [] }));
+        bt.items.push(it);
+      } else if (k === 'text') {
+        if (!it.mt && it.h * z < 2) bucket(bars, colorOf(it.style)).push(it);
+        else texts.push(it);
+      }
     }
-  }
-  prof?.('dots');
-
-  // 2. line work, batched by style
-  for (const { st, items } of batches.values()) {
-    ctx.beginPath();
-    for (const it of items) tracePath(it.ops);
-    ctx.strokeStyle = colorOf(st);
-    ctx.lineWidth = lwPx(st);
-    const dash = dashFor(doc, st, z);
-    ctx.setLineDash(dash ?? []);
-    ctx.stroke();
-  }
-  ctx.setLineDash([]);
-  prof?.('lines');
-
-  // leader arrow heads and points
-  for (const it of marks) {
-    if (it.arrow) {
-      ctx.fillStyle = colorOf(it.style);
-      const a = it.arrow[0], b = it.arrow[1];
-      const dx = sx(b.x) - sx(a.x), dy = sy(b.y) - sy(a.y), l = Math.hypot(dx, dy) || 1;
-      const ux = dx / l, uy = dy / l, size = 9;
-      ctx.beginPath(); ctx.moveTo(sx(b.x), sy(b.y));
-      ctx.lineTo(sx(b.x) - ux * size + uy * size * 0.2, sy(b.y) - uy * size - ux * size * 0.2);
-      ctx.lineTo(sx(b.x) - ux * size - uy * size * 0.2, sy(b.y) - uy * size + ux * size * 0.2);
-      ctx.closePath(); ctx.fill();
-    } else {
-      const x = sx(it.p.x), y = sy(it.p.y);
-      ctx.strokeStyle = colorOf(it.style); ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(x - 3, y); ctx.lineTo(x + 3, y); ctx.moveTo(x, y - 3); ctx.lineTo(x, y + 3); ctx.stroke();
+    if (prof) {
+      const n = (m) => { let c = 0; for (const v of m.values()) c += (v.items ?? v).length; return c; };
+      prof('bucket', { fills: fills.length, tints: n(tints), dots: n(dots), lines: n(batches), batches: batches.size, marks: marks.length, bars: n(bars), texts: texts.length });
     }
-  }
 
-  prof?.('marks');
+    // 0. raster images, in draw order, under the vector work
+    for (const it of images) drawImageItem(ctx, it, doc.images?.get(it.image.path)?.bitmap, sx, sy, z);
+    prof?.('images');
 
-  // 3. text; LOD bars (text under 2 px) as one stroke per colour
-  if (bars.size) {
-    ctx.save(); ctx.globalAlpha = 0.5; ctx.lineWidth = 1;
-    for (const [col, list] of bars) {
+    // 1. hatches and solid fills; LOD tints first (one fill per colour), then the per-item fills and patterns
+    const fillAlphaPattern = opts.patternFallbackAlpha ?? 0.25;
+    if (tints.size) {
+      ctx.save(); ctx.globalAlpha = fillAlphaPattern;
+      for (const [col, list] of tints) {
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        // single-loop boundaries share one non-zero path, all wound the same way so overlaps do not cancel
+        for (const it of list) if (loopCount(it) === 1) traceLoopCcw(ctx, it, sx, sy);
+        ctx.fill();
+        for (const it of list) if (loopCount(it) !== 1) { ctx.beginPath(); tracePath(it.ops); ctx.fill('evenodd'); }
+      }
+      ctx.restore();
+    }
+    prof?.('tints');
+    for (const it of fills) {
+      const col = colorOf(it.style);
+      if (it.kind === 'fill' || it.solid) {
+        ctx.beginPath(); tracePath(it.ops);
+        ctx.fillStyle = col; ctx.fill('evenodd');
+      } else if (it.lines) {
+        drawPatternHatch(ctx, it, view, col, tracePath, sx, sy, fillAlphaPattern);
+      } else {
+        ctx.beginPath(); tracePath(it.ops); ctx.save(); ctx.globalAlpha = fillAlphaPattern; ctx.fillStyle = col; ctx.fill('evenodd'); ctx.restore();
+      }
+    }
+    prof?.('fills');
+
+    // LOD dots: one 1-px rect per covered pixel and colour, one fill per colour
+    if (dots.size) {
+      const Wi = Math.ceil(W), Hi = Math.ceil(H), stamp = dotStamp(Wi * Hi);
+      let ci = 0;
+      for (const [col, list] of dots) {
+        const mark = dotFrame * 256 + (ci++ & 255);
+        ctx.beginPath();
+        for (const it of list) {
+          const b = it.bbox;
+          const x = Math.floor(sx((b.minx + b.maxx) / 2)), y = Math.floor(sy((b.miny + b.maxy) / 2));
+          if (x < 0 || y < 0 || x >= Wi || y >= Hi) continue;
+          const i = y * Wi + x;
+          if (stamp[i] === mark) continue;
+          stamp[i] = mark;
+          ctx.rect(x, y, 1, 1);
+        }
+        ctx.fillStyle = col; ctx.fill();
+      }
+    }
+    prof?.('dots');
+
+    // 2. line work, batched by style
+    for (const { st, items } of batches.values()) {
       ctx.beginPath();
-      for (const it of list) {
+      for (const it of items) tracePath(it.ops);
+      ctx.strokeStyle = colorOf(st);
+      ctx.lineWidth = lwPx(st);
+      const dash = dashFor(doc, st, z);
+      ctx.setLineDash(dash ?? []);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    prof?.('lines');
+
+    // leader arrow heads and points
+    for (const it of marks) {
+      if (it.arrow) {
+        ctx.fillStyle = colorOf(it.style);
+        const a = it.arrow[0], b = it.arrow[1];
+        const dx = sx(b.x) - sx(a.x), dy = sy(b.y) - sy(a.y), l = Math.hypot(dx, dy) || 1;
+        const ux = dx / l, uy = dy / l, size = 9;
+        ctx.beginPath(); ctx.moveTo(sx(b.x), sy(b.y));
+        ctx.lineTo(sx(b.x) - ux * size + uy * size * 0.2, sy(b.y) - uy * size - ux * size * 0.2);
+        ctx.lineTo(sx(b.x) - ux * size - uy * size * 0.2, sy(b.y) - uy * size + ux * size * 0.2);
+        ctx.closePath(); ctx.fill();
+      } else {
         const x = sx(it.p.x), y = sy(it.p.y);
-        const w = it.lines ? (it._maxLen ??= Math.max(...it.lines.map((l) => l.length))) * it.h * z * 0.6 * it.wf : it.w * z;
-        ctx.moveTo(x, y); ctx.lineTo(x + w * Math.cos(it.rot), y - w * Math.sin(it.rot));
+        ctx.strokeStyle = colorOf(it.style); ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x - 3, y); ctx.lineTo(x + 3, y); ctx.moveTo(x, y - 3); ctx.lineTo(x, y + 3); ctx.stroke();
       }
-      ctx.strokeStyle = col; ctx.stroke();
     }
-    ctx.restore();
+
+    prof?.('marks');
+
+    // 3. text; LOD bars (text under 2 px) as one stroke per colour
+    if (bars.size) {
+      ctx.save(); ctx.globalAlpha = 0.5; ctx.lineWidth = 1;
+      for (const [col, list] of bars) {
+        ctx.beginPath();
+        for (const it of list) {
+          const x = sx(it.p.x), y = sy(it.p.y);
+          const w = it.lines ? (it._maxLen ??= Math.max(...it.lines.map((l) => l.length))) * it.h * z * 0.6 * it.wf : it.w * z;
+          ctx.moveTo(x, y); ctx.lineTo(x + w * Math.cos(it.rot), y - w * Math.sin(it.rot));
+        }
+        ctx.strokeStyle = col; ctx.stroke();
+      }
+      ctx.restore();
+    }
+    prof?.('bars');
+    for (const it of texts) {
+      if (it.mt) drawMText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style), dark);
+      else drawText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style));
+    }
+    prof?.('text');
+  };
+  if (!levels) drawItems(vis);
+  else {
+    const per = Array.from({ length: levels + 1 }, () => ({ wipe: [], items: [] }));
+    for (const it of vis) (it.kind === 'wipeout' ? per[it.wl].wipe : per[it.wl].items).push(it);
+    for (const { wipe, items } of per) {
+      if (wipe.length) { ctx.beginPath(); for (const it of wipe) tracePath(it.ops); ctx.fillStyle = bg; ctx.fill(); }
+      if (items.length) drawItems(items);
+    }
   }
-  prof?.('bars');
-  for (const it of texts) {
-    if (it.mt) drawMText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style), dark);
-    else drawText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style));
-  }
-  prof?.('text');
 
   // 4. highlight / selection overlay
   if (hi && hi.size) {
@@ -744,7 +769,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
       const list = scene.byId.get(id);
       if (!list) continue;
       for (const it of list) {
-        if (it.kind === 'path' || it.kind === 'hatch' || it.kind === 'fill' || it.kind === 'image') { ctx.beginPath(); tracePath(it.ops); ctx.stroke(); }
+        if (it.kind === 'path' || it.kind === 'hatch' || it.kind === 'fill' || it.kind === 'image' || it.kind === 'wipeout') { ctx.beginPath(); tracePath(it.ops); ctx.stroke(); }
         else if (it.kind === 'text' || it.kind === 'point') {
           const b = it.bbox;
           if (b) ctx.strokeRect(sx(b.minx) - 2, sy(b.maxy) - 2, (b.maxx - b.minx) * z + 4, (b.maxy - b.miny) * z + 4);
@@ -753,6 +778,33 @@ export function drawScene(ctx, scene, view, opts = {}) {
     }
     ctx.restore();
   }
+}
+
+/** Draw levels for scenes with wipeouts (it.wl; returns the highest level, 0 when the scene has none). A wipeout must
+ *  be drawn after the earlier items it overlaps and before the later ones; batching may reorder everything else. So,
+ *  in scene order over a coarse grid of the scene bbox: an item's level is the highest level of the earlier wipeouts
+ *  touching its cells, a wipeout's is one more than the highest level of the earlier items touching its cells.
+ *  Cells over-approximate overlap, which only adds levels. Recomputed when the scene version changes. */
+function wipeoutLevels(scene) {
+  if (scene._wlVer === scene.version) return scene._wl;
+  scene._wlVer = scene.version;
+  const items = scene.items, sb = scene.bbox;
+  if (!sb || !items.some((it) => it.kind === 'wipeout')) return (scene._wl = 0);
+  const G = 64, kx = G / ((sb.maxx - sb.minx) || 1), ky = G / ((sb.maxy - sb.miny) || 1);
+  const nrm = new Int32Array(G * G).fill(-1), wip = new Int32Array(G * G);
+  const cell = (v, k, o) => Math.max(0, Math.min(G - 1, Math.floor((v - o) * k)));
+  let top = 0;
+  for (const it of items) {
+    const b = it.bbox ?? sb, wipe = it.kind === 'wipeout';
+    const x0 = cell(b.minx, kx, sb.minx), x1 = cell(b.maxx, kx, sb.minx), y0 = cell(b.miny, ky, sb.miny), y1 = cell(b.maxy, ky, sb.miny);
+    let l = 0;
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const v = wipe ? nrm[y * G + x] + 1 : wip[y * G + x]; if (v > l) l = v; }
+    const arr = wipe ? wip : nrm;
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (arr[y * G + x] < l) arr[y * G + x] = l;
+    it.wl = l;
+    if (l > top) top = l;
+  }
+  return (scene._wl = top);
 }
 
 /** one raster image: bitmap pixel (x, y) (y down from the top row) maps to p + u x + v (rows - y) in the drawing;
