@@ -1,6 +1,6 @@
 // Picking, box selection, object snaps and ortho/polar helpers.
 // Pure module: world coordinates (Y up); every tolerance is in WORLD units (caller: pixels / zoom).
-import { bboxOf, distanceToEntity, nearestPoint, snapPoints, intersections, explode, tessellate, ccwSweep, DEG } from './geom.js';
+import { bboxOf, growBox, unionBox, distanceToEntity, nearestPoint, snapPoints, intersections, explode, tessellate, ccwSweep, DEG } from './geom.js';
 import { drain } from './slice.js';
 
 const TAU = Math.PI * 2;
@@ -12,6 +12,8 @@ const INSERT_SNAP_LIMIT = 500; // explode INSERTs for snapping only when the blo
 export const SNAP_KINDS = ['end', 'int', 'mid', 'cen', 'quad', 'node', 'ins', 'per', 'near']; // priority order
 const RANK = new Map(SNAP_KINDS.map((k, i) => [k, i]));
 
+/** block entities _insertBoxSteps bounds per step */
+const BOX_CHUNK = 2000;
 const finiteBox = (b) => !!b && Number.isFinite(b.minx) && Number.isFinite(b.miny) && Number.isFinite(b.maxx) && Number.isFinite(b.maxy);
 const boxesTouch = (a, b) => a.minx <= b.maxx && a.maxx >= b.minx && a.miny <= b.maxy && a.maxy >= b.miny;
 const boxInside = (a, b) => a.minx >= b.minx && a.maxx <= b.maxx && a.miny >= b.miny && a.maxy <= b.maxy;
@@ -61,6 +63,22 @@ export class SpatialIndex {
 
   rebuild() { drain(this.rebuildSteps()); }
 
+  /** bboxOf(e) of an INSERT of a big block, computed BOX_CHUNK block entities at a time (yielding `frac` in between)
+   *  and cached: explode() over each chunk of the block, the same pieces bboxOf would tessellate in one go */
+  *_insertBoxSteps(e, frac) {
+    const blk = this.doc.blocks.get(e.block), ents = blk?.entities;
+    if (!ents || ents.length <= BOX_CHUNK) return;
+    let b = null;
+    for (let i = 0; i < ents.length; i += BOX_CHUNK) {
+      const part = { ...blk, entities: ents.slice(i, i + BOX_CHUNK) };
+      const doc = { ...this.doc, blocks: { get: (name) => (name === e.block ? part : this.doc.blocks.get(name)) } };
+      const pb = safe(() => { let q = null; for (const sub of explode(e, doc)) for (const pl of tessellate(sub, this.doc, 0)) for (const p of pl) q = growBox(q, p); return q; }, null);
+      if (pb) b = b ? unionBox(b, pb) : pb;
+      yield frac;
+    }
+    this._boxCache.set(e, finiteBox(b) ? b : null);
+  }
+
   /** rebuild as a step generator: yields the fraction done after each entity (bounds: 0..0.9, grid: 0.9..1) */
   *rebuildSteps() {
     this._entries = new Map(); // id -> {e, box, reach, order, cells:[c0,r0,c1,r1]|null, mark}
@@ -73,6 +91,7 @@ export class SpatialIndex {
       const e = ents[i];
       yield (0.9 * i) / n;
       if (!safe(() => this.isVisible(e), false)) continue;
+      if (e.type === 'INSERT' && !this._boxCache.has(e)) yield* this._insertBoxSteps(e, (0.9 * i) / n);
       const box = this.bboxOf(e);
       if (!box) continue;
       const reach = reachOf(e, box);

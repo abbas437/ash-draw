@@ -29,6 +29,8 @@ import { textFrame, textCorners, textAdvance } from './textMetrics.js';
 const TAU = Math.PI * 2;
 const OP_M = 0, OP_L = 1, OP_A = 2, OP_E = 3, OP_Z = 4;
 const MAX_DEPTH = 8;
+/** block entities Builder.insertSteps expands between two yields (a few ms of work) */
+const BUILD_TICK = 2000;
 
 // ---------------------------------------------------------------------------------------------
 // scene building
@@ -59,6 +61,7 @@ class Builder {
     this.byId = new Map();
     this.bbox = null;
     this.globalLt = doc.header.ltscale || 1;
+    this.work = 0; this.frac = 0; // insertSteps: block entities since its last yield; the progress it yields
   }
 
   layerOf(e, inherit) {
@@ -109,7 +112,20 @@ class Builder {
     return st;
   }
 
-  emitInsert(e, m, inherit, rootId, depth, layerName, layer) {
+  emitInsert(e, m, inherit, rootId, depth, layerName, layer) { drain(this.insertSteps(e, m, inherit, rootId, depth, layerName, layer)); }
+
+  /** emit() of a top-level entity as a step generator (buildSceneSteps): an INSERT's block content is walked by
+   *  insertSteps, which yields every BUILD_TICK block entities, so one INSERT of a huge block is no single long step */
+  *emitSteps(e, m, inherit, rootId, depth) {
+    if (e.type !== 'INSERT' || e.invisible) { this.emit(e, m, inherit, rootId, depth); return; }
+    const { name, layer } = this.layerOf(e, inherit);
+    if (layer && (layer.visible === false || layer.frozen)) return;
+    yield* this.insertSteps(e, m, inherit, rootId, depth, name, layer);
+  }
+
+  /** the INSERT expansion; yields this.frac (the caller's progress) every BUILD_TICK block entities, nested INSERTs
+   *  included. emitInsert runs it straight through. */
+  *insertSteps(e, m, inherit, rootId, depth, layerName, layer) {
     if (depth >= MAX_DEPTH) return;
     const blk = this.doc.blocks.get(e.block);
     if (!blk) return;
@@ -125,7 +141,12 @@ class Builder {
       for (let c = 0; c < cols; c++) {
         const local = compose(translation(e.p.x, e.p.y), compose(rotation(rot),
           compose(translation(c * (e.colSp || 0), r * (e.rowSp || 0)), compose(scaling(e.sx ?? 1, e.sy ?? 1), translation(-blk.base.x, -blk.base.y)))));
-        this.emitBlockContent(blk, compose(m, local), style, rootId, depth + 1);
+        const mm = compose(m, local);
+        for (const be of blk.entities) {
+          const v = blockContentView(be);
+          if (v) { if (v.type === 'INSERT') yield* this.emitSteps(v, mm, style, rootId, depth + 1); else this.emit(v, mm, style, rootId, depth + 1); }
+          if (++this.work >= BUILD_TICK) { this.work = 0; yield this.frac; }
+        }
       }
     }
     // ATTRIBs live in the INSERT's own space (not the block's); invisible ones (flag 1) are hidden
@@ -442,13 +463,16 @@ class Builder {
 
 export function buildScene(doc) { return drain(buildSceneSteps(doc)); }
 
-/** buildScene as a step generator (src/core/slice.js): yields the fraction done after each top-level entity */
+/** buildScene as a step generator (src/core/slice.js): yields the fraction done after each top-level entity, and inside
+ *  an INSERT every BUILD_TICK block entities (Builder.insertSteps) */
 export function* buildSceneSteps(doc) {
   const b = new Builder(doc), items = b.items, ents = doc.entities, n = ents.length;
   const entIndex = new Map();
   for (let i = 0; i < n; i++) {
     const e = ents[i], k = items.length;
-    b.emit(e, [1, 0, 0, 1, 0, 0], null, e.id, 0);
+    b.frac = i / n;
+    if (e.type === 'INSERT') yield* b.emitSteps(e, [1, 0, 0, 1, 0, 0], null, e.id, 0);
+    else b.emit(e, [1, 0, 0, 1, 0, 0], null, e.id, 0);
     for (let j = k; j < items.length; j++) items[j].pos = j;
     entIndex.set(e.id, i);
     yield (i + 1) / n;
