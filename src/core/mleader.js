@@ -4,6 +4,8 @@
 //     scale, base:{x,y}, style:'Standard', arrow, dogleg,
 //     leaders:[{ last:{x,y}, dir:{x,y}, doglegLen, lines:[ [{x,y} arrow tip first, ...] ] }] }
 // Display (render/extents) goes through mleaderParts(): leader polylines, SOLID arrowheads, MTEXT content.
+// textHeight / arrowSize / landingGap are final drawing units: the CONTEXT_DATA values (41 / 140 / 145) already hold
+// the overall (annotative) scale 40, as AutoCAD writes them; only the MLEADERSTYLE defaults are scaled when read.
 
 const decodeU = (s) => String(s).replace(/\\U\+([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
 const P = (x, y) => ({ x: +x || 0, y: +y || 0 });
@@ -23,6 +25,7 @@ export function mleaderFromTags(tags, style = null) {
     arrow: true, dogleg: true, leaders: [],
   };
   let ctx = false, leader = null, line = null, cur = null, hasText = false;
+  const own = new Set(); // context values present (already scaled)
   for (const [c, v] of tags) {
     if (c === 300 && v.startsWith('CONTEXT_DATA')) { ctx = true; continue; }
     if (c === 301) { ctx = false; continue; }
@@ -42,9 +45,9 @@ export function mleaderFromTags(tags, style = null) {
       switch (c) {
         case 40: e.scale = f || 1; break;
         case 10: e.base.x = f; break; case 20: e.base.y = f; break;
-        case 41: e.textHeight = f; break;
-        case 140: e.arrowSize = f; break;
-        case 145: e.landingGap = f; break;
+        case 41: e.textHeight = f; own.add(c); break;
+        case 140: e.arrowSize = f; own.add(c); break;
+        case 145: e.landingGap = f; own.add(c); break;
         case 290: hasText = f !== 0; break;
         case 304: e.text = decodeU(v); break;
         case 12: e.textP = P(f, 0); break; case 22: if (e.textP) e.textP.y = f; break;
@@ -59,6 +62,10 @@ export function mleaderFromTags(tags, style = null) {
     else if (c === 291) e.dogleg = f !== 0;
     else if (c === 42) { if (!e.arrowSize) e.arrowSize = f; }
   }
+  // style defaults (no context value) are unscaled sizes
+  if (!own.has(41)) e.textHeight *= e.scale;
+  if (!own.has(140)) e.arrowSize *= e.scale;
+  if (!own.has(145)) e.landingGap *= e.scale;
   if (e.textDir) { e.textRot = Math.atan2(e.textDir.y, e.textDir.x) * 180 / Math.PI; delete e.textDir; }
   if (!hasText) e.text = '';
   e.leaders = e.leaders.filter((l) => l.lines.some((ln) => ln.length));
@@ -71,7 +78,7 @@ export function mleaderFromTags(tags, style = null) {
 export function mleaderParts(e) {
   const o = { layer: '0', color: 0, linetype: 'BYBLOCK', lineweight: -2, ltscale: 1 };
   const out = [];
-  const sz = (e.arrowSize || 0) * (e.scale || 1);
+  const sz = e.arrowSize || 0;
   for (const l of e.leaders || []) {
     for (const ln of l.lines) {
       const pts = [...ln, l.last];
@@ -86,7 +93,7 @@ export function mleaderParts(e) {
     }
   }
   if (e.text) {
-    out.push({ id: 0, type: 'MTEXT', ...o, p: { ...e.textP }, height: e.textHeight * (e.scale || 1), text: e.text,
+    out.push({ id: 0, type: 'MTEXT', ...o, p: { ...e.textP }, height: e.textHeight, text: e.text,
       width: e.textWidth || 0, rot: e.textRot || 0, attach: e.textAttach || 1, style: 'STANDARD' });
   }
   return out;

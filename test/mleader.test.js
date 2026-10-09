@@ -112,3 +112,34 @@ test('DWG read-back check: a multileader is compared as the geometry the DWG sav
   back.entities = back.entities.filter((e) => e.type !== 'SOLID');
   assert.equal(compareDocuments(doc, back).ok, false);
 });
+
+// AutoCAD writes the CONTEXT_DATA text height / arrow size already multiplied by the overall (annotative) scale 40
+// (ezdxf: set_content(char_height=0.1) + set_overall_scaling(50) -> context 41 = 5); only style defaults are unscaled.
+const mlDxf = (ctx) => ['0', 'SECTION', '2', 'ENTITIES', '0', 'MULTILEADER', '5', '2A', '8', '0', '100', 'AcDbMLeader', '270', '2',
+  '300', 'CONTEXT_DATA{', ...ctx, '290', '1', '304', 'OUTSIDE FENCE', '12', '100', '22', '50', '32', '0', '13', '1', '23', '0', '33', '0',
+  '302', 'LEADER{', '10', '95', '20', '45', '30', '0', '11', '1', '21', '0', '31', '0', '40', '0.2',
+  '304', 'LEADER_LINE{', '10', '90', '20', '40', '30', '0', '305', '}', '303', '}', '301', '}',
+  '0', 'ENDSEC', '0', 'EOF', ''].join('\n');
+
+test('a scaled multileader draws its text at the context height, not height x overall scale', () => {
+  const doc = parseDxf(mlDxf(['40', '50', '10', '95', '20', '45', '30', '0', '41', '0.1', '140', '0.08', '145', '0.04']));
+  const ml = doc.entities[0];
+  assert.equal(ml.type, 'MLEADER');
+  assert.equal(ml.scale, 50);
+  const sc = buildScene(doc);
+  const txt = sc.items.filter((it) => it.kind === 'text' || it.strokeText);
+  assert.equal(txt.length, 1);
+  assert.ok(Math.abs((txt[0].strokeText?.h ?? txt[0].h) - 0.1) < 1e-9, `text height ${txt[0].h}`);
+  // arrowhead: 0.08 long at the tip (90,40), not 4
+  const arrow = sc.items.find((it) => it.kind === 'fill');
+  assert.ok(arrow && arrow.bbox.maxx - arrow.bbox.minx < 0.1, JSON.stringify(arrow?.bbox));
+  // the extents stay around the leader and its label (an unscaled 5-unit text would reach x > 130)
+  assert.ok(sc.bbox.maxx < 102, JSON.stringify(sc.bbox));
+});
+
+test('a multileader without context sizes takes the style defaults times the overall scale', () => {
+  const doc = parseDxf(mlDxf(['40', '10', '10', '95', '20', '45', '30', '0']));
+  const ml = doc.entities[0];
+  assert.equal(ml.textHeight, 25);   // Standard default 2.5 x 10
+  assert.equal(ml.arrowSize, 40);    // default 4 x 10
+});

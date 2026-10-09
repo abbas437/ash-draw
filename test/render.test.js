@@ -221,3 +221,13 @@ test('LOD at fit: dense pattern hatches become one tint fill per colour without 
   drawScene(ctx2, sc, { cx: 30, cy: 30, zoom: 2, width: 500, height: 400 }, {});
   assert.ok(ctx2.calls.clip.length >= 1);
 });
+
+test('a huge-radius arc with a small sweep adds only its own span to the scene extents (not its full circle)', () => {
+  // as in a PDF-imported plan: r = 140000, 1 degree of sweep starting at 89.5 deg (passes the 90 deg quadrant)
+  const doc = readDxf(new TextEncoder().encode(['0', 'SECTION', '2', 'ENTITIES', '0', 'ARC', '8', '0', '10', '0', '20', '-140000', '30', '0', '40', '140000',
+    '50', '89.5', '51', '90.5', '0', 'ENDSEC', '0', 'EOF', ''].join('\n')));
+  const b = buildScene(doc).bbox;
+  const r = 140000, x = r * Math.cos(89.5 * Math.PI / 180);
+  assert.ok(Math.abs(b.minx + x) < 1e-6 && Math.abs(b.maxx - x) < 1e-6, JSON.stringify(b));
+  assert.ok(Math.abs(b.maxy) < 1e-6 && b.miny > -10, JSON.stringify(b)); // top at the 90 deg quadrant, not -280000
+});

@@ -141,7 +141,12 @@ class Builder {
     const L = (p) => { ops.push(OP_L, p.x, p.y); grow(p.x, p.y); };
     const arcOp = (c, r, a0, sweep) => {
       ops.push(OP_A, c.x, c.y, r, a0, sweep);
-      grow(c.x - r, c.y - r); grow(c.x + r, c.y + r);
+      // the arc's own extents (ends + the quadrant points it passes), not its full circle: a huge-radius arc with
+      // a small sweep would otherwise push the scene extents far away
+      const lo = Math.min(a0, a0 + sweep), hi = Math.max(a0, a0 + sweep);
+      if (hi - lo >= TAU) { grow(c.x - r, c.y - r); grow(c.x + r, c.y + r); return; }
+      grow(c.x + r * Math.cos(lo), c.y + r * Math.sin(lo)); grow(c.x + r * Math.cos(hi), c.y + r * Math.sin(hi));
+      for (let k = Math.ceil(lo / (Math.PI / 2)), a = k * Math.PI / 2; a < hi; a = ++k * Math.PI / 2) grow(c.x + r * Math.cos(a), c.y + r * Math.sin(a));
     };
     const mapArc = (c, r, a0, sweep) => {
       const cc = P(c);
