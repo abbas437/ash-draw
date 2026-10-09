@@ -236,7 +236,12 @@ class App {
       if (notes.length) await message('Opened with limitations', `${f.name} was opened, but:`, el('div', {}, [el('ul', {}, notes.map((n) => el('li', { text: n }))), ...(warnings?.length ? [el('details', {}, [el('summary', { text: 'Converter messages' }), el('pre', { text: warnings.join('\n') })])] : [])]));
     } catch (err) {
       toast('', 1);
-      await message('Cannot open this file', err.message || String(err));
+      if (err.odaHint) {
+        const [text, detail] = String(err.message).split(/ \[(?=[^[]*\]$)/);
+        const r = await modal('Cannot open this file', [el('p', { text }), detail ? el('details', {}, [el('summary', { text: 'Converter messages' }), el('pre', { text: detail.replace(/\]$/, '') })]) : null],
+          [{ label: 'Open download page', value: 'dl', primary: true }, { label: 'OK', value: null }]);
+        if (r === 'dl') api.openOdaDownload?.().catch(() => {});
+      } else await message('Cannot open this file', err.message || String(err));
     }
   }
   /** objects that were read but cannot be written back (they would vanish from an overwritten file) */
@@ -322,15 +327,33 @@ class App {
   async about() {
     const v = await api.version().catch(() => '?');
     let dwg = 'not available in this browser preview';
-    try { const a = await api.dwgAvailable(); dwg = a.available ? `LibreDWG ${a.version}` : `not available (${a.reason})`; } catch { /* ignore */ }
+    try { const a = await api.dwgAvailable(); dwg = a.available ? `${a.version}${a.mode === 'auto' ? ' (automatic)' : ''}` : `not available (${a.reason})`; } catch { /* ignore */ }
     await message('About ASH Draw Studio', `Version ${v}. Free drawing viewer and editor for DXF and DWG files.`, el('div', {},
       el('img', { class: 'brand-logo lt about-logo', src: 'assets/brand/ash-logo-horizontal.svg', alt: 'ASH Technical & Project Management Services' }),
       el('img', { class: 'brand-logo rev about-logo', src: 'assets/brand/ash-logo-horizontal-reversed.svg', alt: '' }),
       el('p', { text: 'Copyright © 2026 ASH Technical & Project Management Services (ASH PMCS). Released under the MIT licence.' }),
-      el('p', { text: `DWG converter: ${dwg}. LibreDWG is free software under the GNU GPL v3 and runs as a separate program; its source is available from https://www.gnu.org/software/libredwg/ .` }),
+      el('p', { text: `DWG converter: ${dwg}. LibreDWG is free software under the GNU GPL v3 and runs as a separate program; its source is available from https://www.gnu.org/software/libredwg/ . The ODA File Converter, when installed by you, is a separate free program from the Open Design Alliance.` }),
       el('p', { text: 'Not affiliated with or endorsed by Autodesk. “AutoCAD”, “DWG” and “DXF” are trademarks of Autodesk, Inc. and are used only to describe file compatibility.' }),
       el('p', { class: 'about-tm', text: 'The ASH logo and icon are trademarks of ASH Technical & Project Management Services and are not covered by the MIT licence.' }),
       el('p', { text: 'Source code and licence notices: https://github.com/abbas437/ash-draw' })));
+  }
+  /** Edit > Preferences…: the DWG converter (Automatic / ODA File Converter / Built-in LibreDWG) and the ODA path */
+  async preferences() {
+    if (!api.dwgConfig) { await message('Preferences', 'The DWG converter settings need the desktop app.'); return; }
+    const cfg = await api.dwgConfig();
+    const av = await api.dwgAvailable().catch(() => null);
+    const mode = el('select', { id: 'pref-dwg-mode' }, [['auto', 'Automatic (ODA if installed, else built-in LibreDWG)'], ['oda', 'ODA File Converter'], ['libredwg', 'Built-in (LibreDWG)']].map(([v, t]) => el('option', { value: v, text: t })));
+    mode.value = cfg.mode;
+    const odaPath = el('input', { id: 'pref-oda-path', type: 'text', value: cfg.odaPath, placeholder: av?.oda?.source === 'auto' ? av.oda.path : 'Detected automatically in C:\\Program Files\\ODA', style: 'width:100%' });
+    const browse = el('button', { type: 'button', text: 'Browse…', onclick: async () => { const p = await api.dwgBrowseOda(); if (p) odaPath.value = p; } });
+    const status = av ? `In use: ${av.available ? av.version : `none (${av.reason})`}. ODA File Converter: ${av.oda?.available ? `${av.oda.version} at ${av.oda.path}` : av.oda?.reason ?? 'not installed'}.` : '';
+    const r = await modal('Preferences', el('div', {},
+      el('label', { text: 'DWG converter ' }, mode),
+      el('p', {}, el('label', { text: 'ODA File Converter (ODAFileConverter.exe), leave empty to detect it: ' }), odaPath, browse),
+      el('p', { id: 'pref-dwg-status', text: status })),
+    [{ label: 'Save', value: 'save', primary: true }, { label: 'Cancel', value: null }]);
+    if (r !== 'save') return;
+    try { await api.dwgSetConfig({ mode: mode.value, odaPath: odaPath.value.trim() }); toast('Preferences saved', 2000); } catch (err) { await message('Preferences not saved', String(err.message || err).replace(/^Error invoking remote method '[^']*': (\w*Error: )?/, '')); }
   }
   async limitations() {
     await message('What this program does and does not do', 'Please read before relying on it for important work:', el('ul', {},
@@ -348,7 +371,7 @@ class App {
     const M = [
       ['File', [['New', 'Ctrl+N', () => this.newDrawing()], ['Open…', 'Ctrl+O', () => this.open()], ['Recent files…', '', () => this.sessionStore.showRecent().catch((err) => message('Could not open the file', err.message || String(err)))], ['Close', 'Ctrl+W', () => this.closeTab()], '-', ['Compare…', 'COMPARE', () => this.compare()], '-', ['Save', 'Ctrl+S', () => this.save()], ['Save as DXF…', '', () => this.saveAs('dxf')], ['Save as DWG… (experimental)', '', () => this.saveAs('dwg')], '-',
         ['Print…', 'Ctrl+P', () => this.print()], ['Plot to PDF…', '', () => this.exportPdf()], ['Export SVG…', '', () => this.exportSvg()], ['Export PNG image…', '', () => this.exportPng()]]],
-      ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Paste', 'Ctrl+V', () => this.paste()], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()], ['Find and replace…', 'Ctrl+F', () => this.find.open()]]],
+      ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Paste', 'Ctrl+V', () => this.paste()], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()], ['Find and replace…', 'Ctrl+F', () => this.find.open()], '-', ['Preferences…', '', () => this.preferences()]]],
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-',
         ['Show lineweights', 'F9', () => this.toggle('lineweights')], ['Light / dark background', '', () => this.toggle('dark')], '-',
         ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark'],

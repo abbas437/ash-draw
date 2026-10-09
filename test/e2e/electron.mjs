@@ -281,6 +281,39 @@ try {
   const backTypes = await win.evaluate(async (b) => { const r = await window.api.dwgToDxf(new Uint8Array(b)); return new TextDecoder().decode(r.dxfBytes); }, [...await fs.readFile(imgDwg)]);
   assert.deepEqual(readDxf(new TextEncoder().encode(backTypes)).entities.map((e) => e.type).sort(), ['CIRCLE', 'IMAGE', 'LINE']);
 
+  setStep('DWG converter: Built-in fails on a truncated DWG with the ODA hint; Automatic with a (stub) ODA path opens it');
+  const odir = path.join(tmp, 'oda', 'ODAFileConverter 99.1.0');
+  await fs.mkdir(odir, { recursive: true });
+  const stubExe = path.join(odir, 'ODAFileConverter'); // argv: in out ACAD2018 DXF 0 1 drawing.dwg -> writes out/drawing.dxf
+  await fs.writeFile(stubExe, `#!${process.execPath}\nconst [i, o, v, t, , , f] = process.argv.slice(2);\nrequire('fs').writeFileSync(require('path').join(o, f.replace(/\\.dwg$/, '.dxf')), \`999\\n\${v} \${t}\\n  0\\nSECTION\\n  2\\nENTITIES\\n  0\\nLINE\\n  8\\nODA\\n 10\\n0\\n 20\\n0\\n 11\\n50\\n 21\\n25\\n  0\\nENDSEC\\n  0\\nEOF\\n\`);\n`);
+  await fs.chmod(stubExe, 0o755);
+  const truncated = path.join(tmp, 'truncated.dwg');
+  await fs.writeFile(truncated, (await fs.readFile(dwgIn)).subarray(0, 600));
+  const prefs = async (modeValue, browseTo) => {
+    if (browseTo) await app.evaluate(({ dialog }, p) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [p] }); }, browseTo);
+    const open = win.evaluate(() => window.app.preferences());
+    await win.locator('#pref-dwg-mode').waitFor({ timeout: 5000 });
+    await win.locator('#pref-dwg-mode').selectOption(modeValue);
+    if (browseTo) { await win.locator('#dlg button', { hasText: 'Browse…' }).click(); await win.waitForFunction((p) => document.getElementById('pref-oda-path').value === p, browseTo); }
+    await win.locator('#dlg button', { hasText: 'Save' }).click();
+    await bounded(open, 5000, 'preferences()');
+  };
+  await prefs('libredwg', stubExe);
+  await app.evaluate(({ dialog }, p) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [p] }); }, truncated);
+  const failing = win.evaluate(() => window.app.open());
+  await win.locator('#dlg button', { hasText: 'Open download page' }).waitFor({ timeout: 15000 });
+  assert.match(await win.locator('#dlg .dlg-body').innerText(), /built-in converter could not read this DWG[\s\S]*Install the free ODA File Converter/);
+  await win.locator('#dlg button', { hasText: 'OK' }).click();
+  await bounded(failing, 5000, 'open()');
+  await prefs('auto');
+  const av = await win.evaluate(() => window.api.dwgAvailable());
+  assert.equal(av.engine, 'oda', JSON.stringify(av));
+  assert.equal(av.version, 'ODA File Converter 99.1.0');
+  await bounded(win.evaluate(() => window.app.open()), 15000, 'open()');
+  await win.waitForFunction(() => window.app.file.name === 'truncated.dwg', null, { timeout: 15000 });
+  assert.deepEqual(await win.evaluate(() => window.app.doc.entities.map((e) => [e.type, e.layer])), [['LINE', 'ODA']]);
+  await win.evaluate(() => window.api.dwgSetConfig({ mode: 'auto', odaPath: '' })); // leave the user's settings as found
+
   setStep('no renderer errors');
   assert.deepEqual(errors, []);
   console.log('draw electron e2e: OK');
