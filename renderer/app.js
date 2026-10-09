@@ -18,6 +18,7 @@ import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
 import { loadDrawingXrefs, xrefPanel } from './xref-panel.js';
 import { TOOL_BUTTONS, buildToolPanel, iconButton } from './tool-panel.js';
 import { iconSvg } from './icons.js';
+import { loadDrawingImages } from './images.js';
 import { el, message, modal, confirmDialog, textDialog, toast, renderLayers, renderProperties } from './ui.js';
 import {
   OPEN_FILTERS, loadDrawing, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, baseName, extOf, UNIT_NAMES,
@@ -228,6 +229,8 @@ class App {
     try {
       const { doc, format, notes, warnings } = await loadDrawing(api, f.name, f.bytes);
       await loadDrawingXrefs(api, doc, f.path ?? null); // before the scene is built: it is built once, with the xrefs
+      const missing = await loadDrawingImages(api, doc, f.path ?? null);
+      if (missing.length) notes.push(`Raster images not found (shown as a red frame with the file name): ${missing.join(', ')}.`);
       this.installDoc(doc, { path: f.path ?? null, name: f.name, format }, { replaceBlank: true });
       toast(`${f.name}: ${doc.entities.length.toLocaleString()} objects`, 2500);
       if (notes.length) await message('Opened with limitations', `${f.name} was opened, but:`, el('div', {}, [el('ul', {}, notes.map((n) => el('li', { text: n }))), ...(warnings?.length ? [el('details', {}, [el('summary', { text: 'Converter messages' }), el('pre', { text: warnings.join('\n') })])] : [])]));

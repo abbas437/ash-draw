@@ -9,6 +9,7 @@
 // They are converted to screen space in JS doubles at draw time (Canvas paths are float32, so big
 // drawing coordinates would otherwise lose precision when zoomed in).
 import { blockContentView } from './blocks.js';
+import { imageCorners, imageClipWorld } from './image.js';
 import { resolveColor, aciToRgb } from './aci.js';
 import { parseMText, layoutMText } from './mtext.js';
 import {
@@ -215,6 +216,26 @@ class Builder {
       }
       case 'POINT': { const p = P(e.p); grow(p.x, p.y); this.push({ kind: 'point', p, style, bbox }, rootId); return; }
       case 'HATCH': { this.buildHatch(e, m, style, rootId); return; }
+      case 'IMAGE': {
+        // a loaded raster (doc.images: path -> { status, bitmap }) is an 'image' item; a missing file is its frame and
+        // file name in red (as AutoCAD shows an image it cannot find)
+        const img = this.doc.images?.get(e.path);
+        const lin = (q) => (m ? { x: m[0] * q.x + m[2] * q.y, y: m[1] * q.x + m[3] * q.y } : q);
+        const w = { p: P(e.p), u: lin(e.u), v: lin(e.v), size: e.size, clip: e.clip, fade: e.fade };
+        const q = imageCorners(w);
+        M(q[0]); L(q[1]); L(q[2]); L(q[3]); ops.push(OP_Z);
+        if (img?.status === 'loaded') {
+          this.push(mkItem('image', { image: { ...w, path: e.path, clipPts: e.clip?.on ? imageClipWorld(w) : null } }), rootId);
+          return;
+        }
+        const red = { color: { rgb: [255, 0, 0] }, lw: -3, lt: 'CONTINUOUS', lts: 1, layerName: style.layerName };
+        this.push({ kind: 'path', ops, style: red, bbox, missingImage: e.path }, rootId);
+        const W = Math.hypot(q[1].x - q[0].x, q[1].y - q[0].y), H = Math.hypot(q[3].x - q[0].x, q[3].y - q[0].y);
+        const h = Math.max(Math.min(W, H) / 12, 1e-9), ux = (q[1].x - q[0].x) / (W || 1), uy = (q[1].y - q[0].y) / (W || 1);
+        const name = String(e.path || '').split(/[\\/]/).pop() || 'IMAGE';
+        this.build({ type: 'TEXT', p: { x: q[0].x + (ux - uy) * h, y: q[0].y + (uy + ux) * h }, height: h, text: name, rot: Math.atan2(uy, ux) / DEG, ui: true }, null, red, rootId);
+        return;
+      }
       case 'TEXT': case 'MTEXT': {
         const p = P(e.p);
         const h = (e.height || 1) * s;
@@ -569,7 +590,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
   // Level of detail: an item under 1 px on screen becomes a 1-px dot (one fill per colour); a pattern hatch whose
   // line spacing is under 2 px (or that is tiny) becomes a light tint (one fill per colour, no clip); text under
   // 2 px high becomes a bar (one stroke per colour).
-  const fills = [], marks = [], texts = [], batches = new Map(), dots = new Map(), tints = new Map(), bars = new Map();
+  const fills = [], marks = [], texts = [], images = [], batches = new Map(), dots = new Map(), tints = new Map(), bars = new Map();
   const lwSig = opts.showLineweight ? (opts.pixelsPerMm ?? 3.78) : 0;
   const bucket = (map, key) => { let l = map.get(key); if (!l) map.set(key, (l = [])); return l; };
   const prof = opts.profile; // optional (phase, info) callback after each phase (scripts/bench.mjs)
@@ -585,6 +606,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
       it._sp ??= patternSpacing(it.lines);
       if (tiny || it._sp * z < 2) { bucket(tints, colorOf(it.style)).push(it); continue; }
     }
+    if (k === 'image') { images.push(it); continue; }
     if (tiny) { bucket(dots, colorOf(it.style)).push(it); continue; }
     if (it.strokeText && it.strokeText.h * z < 2) { bucket(bars, colorOf(it.style)).push(it.strokeText); continue; }
     if (k === 'hatch' || k === 'fill') fills.push(it);
@@ -603,6 +625,10 @@ export function drawScene(ctx, scene, view, opts = {}) {
     const n = (m) => { let c = 0; for (const v of m.values()) c += (v.items ?? v).length; return c; };
     prof('bucket', { fills: fills.length, tints: n(tints), dots: n(dots), lines: n(batches), batches: batches.size, marks: marks.length, bars: n(bars), texts: texts.length });
   }
+
+  // 0. raster images, in draw order, under the vector work
+  for (const it of images) drawImageItem(ctx, it, doc.images?.get(it.image.path)?.bitmap, sx, sy, z);
+  prof?.('images');
 
   // 1. hatches and solid fills; LOD tints first (one fill per colour), then the per-item fills and patterns
   const fillAlphaPattern = opts.patternFallbackAlpha ?? 0.25;
@@ -718,7 +744,7 @@ export function drawScene(ctx, scene, view, opts = {}) {
       const list = scene.byId.get(id);
       if (!list) continue;
       for (const it of list) {
-        if (it.kind === 'path' || it.kind === 'hatch' || it.kind === 'fill') { ctx.beginPath(); tracePath(it.ops); ctx.stroke(); }
+        if (it.kind === 'path' || it.kind === 'hatch' || it.kind === 'fill' || it.kind === 'image') { ctx.beginPath(); tracePath(it.ops); ctx.stroke(); }
         else if (it.kind === 'text' || it.kind === 'point') {
           const b = it.bbox;
           if (b) ctx.strokeRect(sx(b.minx) - 2, sy(b.maxy) - 2, (b.maxx - b.minx) * z + 4, (b.maxy - b.miny) * z + 4);
@@ -727,6 +753,24 @@ export function drawScene(ctx, scene, view, opts = {}) {
     }
     ctx.restore();
   }
+}
+
+/** one raster image: bitmap pixel (x, y) (y down from the top row) maps to p + u x + v (rows - y) in the drawing;
+ *  the clip boundary (world points) clips it, fade 0..100 lowers its opacity */
+function drawImageItem(ctx, it, bmp, sx, sy, z) {
+  const { p, u, v, size, clipPts, fade } = it.image;
+  if (!bmp) return;
+  ctx.save();
+  if (clipPts?.length >= 3) {
+    ctx.beginPath();
+    clipPts.forEach((q, i) => (i ? ctx.lineTo(sx(q.x), sy(q.y)) : ctx.moveTo(sx(q.x), sy(q.y))));
+    ctx.closePath(); ctx.clip();
+  }
+  ctx.globalAlpha = Math.max(0, Math.min(1, 1 - (fade || 0) / 100));
+  const top = { x: p.x + v.x * size.y, y: p.y + v.y * size.y };
+  ctx.transform(u.x * z, -u.y * z, -v.x * z, v.y * z, sx(top.x), sy(top.y));
+  ctx.drawImage(bmp, 0, 0, size.x, size.y);
+  ctx.restore();
 }
 
 // LOD helpers: shared 1-px dot de-duplication buffer (stamped per frame), hatch pattern spacing, CCW loop tracing
