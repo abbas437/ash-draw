@@ -354,7 +354,7 @@ export function writeDxf(doc, opts = {}) {
   for (const [name, blk] of allBlocks) {
     const rec = blockRec.get(name);
     blocksOut.p(0, 'BLOCK'); blocksOut.p(5, H()); blocksOut.p(330, rec); blocksOut.p(100, 'AcDbEntity'); blocksOut.p(8, '0');
-    blocksOut.p(100, 'AcDbBlockBegin'); blocksOut.s(2, name); blocksOut.p(70, blk.xref ? (blk.xref.flags ?? (blk.xref.overlay ? 12 : 4)) : name.startsWith('*') ? 1 : 0);
+    blocksOut.p(100, 'AcDbBlockBegin'); blocksOut.s(2, name); blocksOut.p(70, blk.xref ? (blk.xref.flags ?? (blk.xref.overlay ? 12 : 4)) | 4 : name.startsWith('*') ? 1 : 0);
     blocksOut.pt(10, blk.base.x, blk.base.y); blocksOut.s(3, name); blocksOut.s(1, blk.xref ? blk.xref.path : '');
     if (!blk.xref) for (const e of blk.entities) if (writeEntity(blocksOut, e, rec)) report.entities++;
     blocksOut.p(0, 'ENDBLK'); blocksOut.p(5, H()); blocksOut.p(330, rec); blocksOut.p(100, 'AcDbEntity'); blocksOut.p(8, '0'); blocksOut.p(100, 'AcDbBlockEnd');

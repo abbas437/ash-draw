@@ -334,3 +334,19 @@ test('compareDocuments: identical, moved and missing entities', async () => {
   c.entities.reverse();
   assert.equal(compareDocuments(a, c).ok, true, 'order does not matter');
 });
+
+test('a group-1 value split over two lines (LibreDWG) is rejoined and counted as repaired', () => {
+  const text = [
+    '0', 'SECTION', '2', 'ENTITIES',
+    '0', 'TEXT', '8', 'A', '10', '0', '20', '0', '40', '2.5',
+    '1', 'PARAMETER["False_East', 'ing",0.0],UNIT["Meter",1.0]]',
+    '0', 'LINE', '8', 'A', '10', '0', '20', '0', '11', '5', '21', '5',
+    '0', 'ENDSEC', '0', 'EOF',
+  ].join('\r\n');
+  const doc = parseDxf(text);
+  assert.equal(doc.entities.length, 2);
+  assert.equal(doc.entities[0].text, 'PARAMETER["False_Easting",0.0],UNIT["Meter",1.0]]');
+  assert.equal(doc.entities[1].type, 'LINE');
+  assert.equal(doc.header.repairedValues, 1);
+  assert.equal(parseDxf(text.replace('False_East\r\ning', 'False_Easting')).header.repairedValues, undefined);
+});

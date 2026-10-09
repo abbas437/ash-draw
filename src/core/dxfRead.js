@@ -66,10 +66,15 @@ export function plainText(raw) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// tokenizer: parallel arrays of group codes and raw values
+// tokenizer: parallel arrays of group codes and raw values. `repaired` counts string values that were split over
+// several lines (LibreDWG's dwg2dxf breaks long group-1 values such as GEODATA WKT strings mid-word): a line where a
+// group code is expected that is not an integer, right after a string-valued pair, is joined onto that value.
+const INT_LINE = /^\s*-?\d+\s*$/;
 function tokenize(text) {
   const codes = [];
   const vals = [];
+  let repaired = 0;
+  let lastJoined = -1;
   let pos = 0;
   const n = text.length;
   const nextLine = () => {
@@ -85,6 +90,12 @@ function tokenize(text) {
     const c = nextLine();
     if (c === null) break;
     if (c.trim() === '' && pos > n) break;
+    const last = codes.length - 1;
+    if (last >= 0 && !INT_LINE.test(c) && isStringCode(codes[last]) && codes[last] !== 0) {
+      vals[last] += c; // the break is mid-word, so no separator belongs in the value
+      if (lastJoined !== last) { repaired++; lastJoined = last; }
+      continue;
+    }
     const v = nextLine();
     if (v === null) break;
     const code = parseInt(c, 10);
@@ -96,7 +107,7 @@ function tokenize(text) {
     codes.push(code);
     vals.push(v);
   }
-  return { codes, vals };
+  return { codes, vals, repaired };
 }
 
 const isStringCode = (c) => c < 10 || (c >= 100 && c <= 102) || c === 105 || (c >= 300 && c <= 369) || (c >= 390 && c <= 399) || (c >= 410 && c <= 419) || (c >= 430 && c <= 439) || (c >= 470 && c <= 481) || c === 999 || (c >= 1000 && c <= 1009);
@@ -602,8 +613,9 @@ export function parseDxf(text) {
     const flush = () => {
       if (!cur) return;
       const isLayoutBlock = /^[*$](model_space|paper_space)/i.test(cur.name);
-      if (cur.flags & 4) {
-        addBlock(doc, cur.name, cur.base, []).xref = { path: cur.path, flags: cur.flags, overlay: (cur.flags & 8) === 8, status: 'pending' };
+      // xref: flag bit 4, or (LibreDWG writes the flags without bit 4) a drawing path in group 1
+      if ((cur.flags & 4) || (!(cur.flags & 16) && /\.(dwg|dxf)$/i.test(cur.path.trim()))) {
+        addBlock(doc, cur.name, cur.base, []).xref = { path: cur.path.trim(), flags: cur.flags | 4, overlay: (cur.flags & 8) === 8, status: 'pending' };
       } else if (cur.flags & 16) { /* xref-dependent block: recreated when the xref is loaded */
       } else if (!isLayoutBlock) {
         const blk = addBlock(doc, cur.name, cur.base, []);
@@ -647,6 +659,7 @@ export function parseDxf(text) {
   layouts.sort((a, b) => a.tab - b.tab);
   doc.layouts = layouts;
   if (stats.errors.length) doc.header.readErrors = stats.errors.slice(0, 20);
+  if (tk.repaired) doc.header.repairedValues = tk.repaired; // text values split over several lines, rejoined
   return doc;
 }
 

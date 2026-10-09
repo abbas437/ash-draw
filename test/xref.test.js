@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { readDxf } from '../src/core/dxfRead.js';
+import { parseDxf, readDxf } from '../src/core/dxfRead.js';
 import { writeDxf } from '../src/core/dxfWrite.js';
 import { buildScene } from '../src/core/render.js';
 import { listXrefs, loadXref, unloadXref, xrefCandidates } from '../src/core/xref.js';
@@ -19,6 +19,27 @@ test('xref path search order: relative to the host folder, the path itself, the 
   const W = path.win32;
   assert.deepEqual(xrefCandidates('C:\\w\\host.dwg', 'D:\\proj\\a.dwg', W), ['D:\\proj\\a.dwg', 'C:\\w\\a.dwg']);
   assert.deepEqual(xrefCandidates('C:\\w\\host.dwg', '.\\x\\a.dwg', W), ['C:\\w\\x\\a.dwg', 'C:\\w\\a.dwg']);
+});
+
+test('a BLOCK with flags 0 but a .dwg path in group 1 (LibreDWG) is an xref, written back with bit 4', () => {
+  const text = [
+    '0', 'SECTION', '2', 'BLOCKS',
+    '0', 'BLOCK', '8', '0', '2', 'X1', '70', '     0', '10', '0', '20', '0', '30', '0', '3', 'X1', '1', 'sub\\ref.DWG',
+    '0', 'ENDBLK', '8', '0',
+    '0', 'BLOCK', '8', '0', '2', 'PLAIN', '70', '0', '10', '0', '20', '0', '3', 'PLAIN', '1', '',
+    '0', 'LINE', '8', '0', '10', '0', '20', '0', '11', '1', '21', '1',
+    '0', 'ENDBLK', '8', '0',
+    '0', 'ENDSEC',
+    '0', 'SECTION', '2', 'ENTITIES', '0', 'INSERT', '8', '0', '2', 'X1', '10', '0', '20', '0', '0', 'ENDSEC', '0', 'EOF',
+  ].join('\n');
+  const doc = parseDxf(text);
+  const xs = listXrefs(doc);
+  assert.deepEqual(xs.map((x) => [x.name, x.path, x.inserts]), [['X1', 'sub\\ref.DWG', 1]]);
+  const out = writeDxf(doc);
+  assert.match(out, /AcDbBlockBegin\r?\n\s*2\r?\nX1\r?\n\s*70\r?\n\s*4\r?\n/);
+  const back = parseDxf(out);
+  assert.equal(back.blocks.get('X1').xref.flags & 4, 4);
+  assert.deepEqual(listXrefs(back).map((x) => [x.name, x.path]), [['X1', 'sub\\ref.DWG']]);
 });
 
 test('ezdxf host with an xref to a sibling DXF: read, load, render, write back', (t) => {

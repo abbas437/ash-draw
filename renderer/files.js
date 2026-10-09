@@ -50,6 +50,8 @@ export async function loadDrawing(api, name, bytes) {
     throw err;
   }
   if (warnings.length) notes.push('The DWG file has checksum/format errors (reported by the converter); the drawing was recovered — check it before relying on it.');
+  const rep = doc.header?.repairedValues;
+  if (rep) notes.push(`${rep} damaged text value${rep === 1 ? ' was' : 's were'} repaired (split over several lines in the file).`);
   const sk = Object.entries(doc.skipped || {});
   if (sk.length) notes.push(`Not displayed (unsupported object types): ${sk.map(([k, v]) => `${v} ${k}`).join(', ')}.`);
   return { doc, format, notes, warnings };
