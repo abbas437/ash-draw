@@ -16,8 +16,10 @@ import { initLayouts, restoreSpace, renderSpaceBar, layoutDoubleClick, exitMspac
 import { ComparePanel, runCompare } from './compare.js';
 import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
 import { loadDrawingXrefs, xrefPanel } from './xref-panel.js';
-import { TOOL_BUTTONS, buildToolPanel, iconButton, QUICK_ACCESS, quickCommand, canvasDarkFrom, labelsFrom, placementFrom, PLACEMENTS, collapsedFrom, applyCollapsed, toolTitle } from './tool-panel.js';
+import { TOOL_BUTTONS, buildToolPanel, iconButton, quickCommand, canvasDarkFrom, labelsFrom, placementFrom, PLACEMENTS, collapsedFrom, applyCollapsed, toolTitle } from './tool-panel.js';
 import { iconSvg } from './icons.js';
+import { defaultLayout, cleanLayout, panelGroups, quickRow, setQuickRow, compactKeys, foldMode, SEP } from './tool-layout.js';
+import { openCustomize, initToolContextMenu } from './tool-custom.js';
 import { loadDrawingImages } from './images.js';
 import { el, message, modal, confirmDialog, textDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
 import {
@@ -76,6 +78,7 @@ class App {
     api.settingsGet?.('canvas.transparency').then((v) => { if (v === false) { this.vp.settings.transparency = false; this.refreshToggles(); this.vp.requestRender(); } }).catch(() => {});
     api.settingsGet?.('canvas.background').then((v) => this.setCanvasDark(canvasDarkFrom(v))).catch(() => {});
     api.settingsGet?.('tools.collapsed').then((v) => { this.collapsed = collapsedFrom(v); applyCollapsed(document.getElementById('tools'), this.collapsed); }).catch(() => {});
+    api.settingsGet?.('tools.layout').then((v) => { if (v != null) this.setToolLayout(cleanLayout(v), false); }).catch(() => {});
     api.settingsGet?.('theme').then((t) => { if (t === 'dark') this.setTheme('dark', false); }).catch(() => {});
     api.onOpenFile?.((f) => this.openFromFile(f));
     // files given at start-up open first; then the previous session is offered (or reopened, per startup.mode)
@@ -395,7 +398,11 @@ class App {
         ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark'],
         ...PLACEMENTS.map((p) => [`Tool panel: ${p[0].toUpperCase()}${p.slice(1)}`, '', () => this.setToolPlacement(p), () => this.toolPlacement === p]),
         ['Tool labels', '', () => this.setToolPanel('labels', !this.panelOpts.labels), () => this.panelOpts.labels],
-        ['Tool group colours', '', () => this.setToolPanel('colours', !this.panelOpts.colours), () => this.panelOpts.colours], '-',
+        ['Tool group colours', '', () => this.setToolPanel('colours', !this.panelOpts.colours), () => this.panelOpts.colours],
+        ['Tools: Compact', '', () => this.setFolded(compactKeys()), () => foldMode(this.collapsed) === 'compact'],
+        ['Tools: Expanded', '', () => this.setFolded([]), () => foldMode(this.collapsed) === 'expanded'],
+        ['Customize tools…', '', () => openCustomize(this)],
+        ['Quick Access row', '', () => this.setToolLayout(setQuickRow(this.toolLayout, !this.toolLayout.quickRow)), () => this.toolLayout.quickRow], '-',
         ['Show markups', '', () => toggleMarkups(this), () => markupsShown(this.doc)], '-',
         ['External references…', 'XREF', () => xrefPanel(this)]]],
       ['Dimension', [...TOOL_BUTTONS.find(([g]) => g === 'Dimension')[2].map(([id, label, alias]) => [label, alias, () => this.setTool(id)]), '-', ['Dimension style…', 'D', () => this.dimStyles()]]],
@@ -432,34 +439,61 @@ class App {
   buildToolbar() {
     const box = document.getElementById('tools');
     this.collapsed = [];
+    this.toolLayout = defaultLayout();
     box.append(el('div', { class: 'lbl-toggle', role: 'button', tabindex: '0', id: 'tool-labels-btn', title: 'Show or hide tool labels (View > Tool labels)', text: 'Aa', onclick: () => this.setToolPanel('labels', !this.panelOpts.labels) }));
-    buildToolPanel(box, el, (id) => this.setTool(id), (group, body) => {
-      if (group !== 'Dimension') return;
-      this.dimStyleSel = el('select', { id: 'dimstyle', title: 'Current dimension style (DIMSTYLE)', onchange: (e) => setCurrentDimStyle(this.doc, e.target.value) });
-      body.append(this.dimStyleSel, iconButton(el, 'dimstyle', 'Dim styles…', { class: 'g-annotate', title: 'Dimension Style Manager (D)', onclick: () => this.dimStyles() }));
-    }, (key, folded) => {
-      this.collapsed = folded ? [...new Set([...this.collapsed, key])] : this.collapsed.filter((k) => k !== key);
-      api.settingsSet?.('tools.collapsed', this.collapsed)?.catch?.(() => {});
-    });
+    this.renderToolPanel();
     this.buildQuickAccess();
+    initToolContextMenu(this);
     const pat = el('select', { title: 'Hatch pattern', onchange: (e) => { this.defaults.hatchPattern = e.target.value; } }, PATTERN_NAMES.map((n) => el('option', { value: n, text: n })));
     pat.value = this.defaults.hatchPattern;
     const sc = el('input', { type: 'number', step: 'any', min: '0', value: '1', title: 'Hatch scale', style: 'width:100%', onchange: (e) => { const v = Number(e.target.value); if (v > 0) this.defaults.hatchScale = v; } });
     box.append(el('div', { class: 'tgroup' }, el('div', { class: 'group g-draw', text: 'Hatch' }), pat, sc));
     for (const [id, icon] of [['z-in', 'zoomin'], ['z-out', 'zoomout'], ['z-fit', 'zoomfit']]) { const b = document.getElementById(id); b.setAttribute('aria-label', b.title); b.replaceChildren(iconSvg(icon, 18)); }
   }
-  /** the Quick Access row under the menu bar: the most used commands as icon buttons, coloured by group */
+  /** (re)build the tool panel's groups from the customized layout (View > Customize tools…), before the Hatch group */
+  renderToolPanel() {
+    const box = document.getElementById('tools');
+    for (const g of box.querySelectorAll('.tgroup[data-group]')) g.remove();
+    const frag = document.createDocumentFragment();
+    buildToolPanel(frag, el, (id) => this.setTool(id), (group, body) => {
+      if (group !== 'Dimension') return;
+      this.dimStyleSel = el('select', { id: 'dimstyle', title: 'Current dimension style (DIMSTYLE)', onchange: (e) => setCurrentDimStyle(this.doc, e.target.value) });
+      body.append(this.dimStyleSel, iconButton(el, 'dimstyle', 'Dim styles…', { class: 'g-annotate', title: 'Dimension Style Manager (D)', onclick: () => this.dimStyles() }));
+    }, (key, folded) => {
+      this.collapsed = folded ? [...new Set([...this.collapsed, key])] : this.collapsed.filter((k) => k !== key);
+      api.settingsSet?.('tools.collapsed', this.collapsed)?.catch?.(() => {});
+    }, panelGroups(this.toolLayout));
+    box.querySelector('.lbl-toggle').after(frag);
+    applyCollapsed(box, this.collapsed);
+    for (const b of box.querySelectorAll('button[data-tool]')) b.classList.toggle('active', b.dataset.tool === this.toolId);
+    this.refreshDimStyles();
+  }
+  /** the Quick Access row under the menu bar: the chosen commands as icon buttons, coloured by group */
   buildQuickAccess() {
+    document.getElementById('menubar').after(el('div', { id: 'qat', role: 'toolbar', 'aria-label': 'Quick Access' }));
+    this.renderQuickAccess();
+  }
+  renderQuickAccess() {
     const run = { new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), undo: () => this.undo(), redo: () => this.redo(), zoomfit: () => this.vp.zoomExtents(), layers: () => document.getElementById('app').classList.toggle('no-side') };
-    const row = el('div', { id: 'qat', role: 'toolbar', 'aria-label': 'Quick Access' });
-    QUICK_ACCESS.forEach(([key, ids], i) => {
-      if (i) row.append(el('span', { class: 'sep' }));
-      for (const id of ids) {
-        const [label, alias] = quickCommand(id);
-        row.append(el('button', { class: `g-${key}`, 'data-cmd': id, title: toolTitle(label, alias), 'aria-label': label, onclick: () => (run[id] ? run[id]() : this.setTool(id)) }, iconSvg(id, 18)));
-      }
-    });
-    document.getElementById('menubar').after(row);
+    document.getElementById('qat').replaceChildren(...quickRow(this.toolLayout).map((it) => {
+      if (it === SEP) return el('span', { class: 'sep' });
+      const [key, id] = it, [label, alias] = quickCommand(id);
+      return el('button', { class: `g-${key}`, 'data-cmd': id, title: toolTitle(label, alias), 'aria-label': label, onclick: () => (run[id] ? run[id]() : this.setTool(id)) }, iconSvg(id, 18));
+    }));
+    document.getElementById('app').classList.toggle('no-qat', !this.toolLayout.quickRow);
+  }
+  /** apply a tool panel / Quick Access layout (tool-layout.js), saved as setting 'tools.layout' */
+  setToolLayout(layout, save = true) {
+    this.toolLayout = layout;
+    this.renderToolPanel();
+    this.renderQuickAccess();
+    if (save) api.settingsSet?.('tools.layout', layout)?.catch?.(() => {});
+  }
+  /** View > Tools: Compact / Expanded - the folded groups, saved as 'tools.collapsed' */
+  setFolded(keys) {
+    this.collapsed = [...keys];
+    applyCollapsed(document.getElementById('tools'), this.collapsed);
+    api.settingsSet?.('tools.collapsed', this.collapsed)?.catch?.(() => {});
   }
   /** View > Tool labels / Tool group colours: classes on the panel, saved as settings 'tools.labels' and 'tools.colours' */
   setToolPanel(opt, on, save = true) {

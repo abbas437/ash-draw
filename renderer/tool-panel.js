@@ -53,10 +53,10 @@ export function iconButton(el, icon, label, attrs) {
 
 /**
  * Fill the tool panel. `extras(group, box)` lets the caller append non-command controls after a group (dimension style list).
- * Returns nothing; buttons carry data-tool and data-group.
+ * `groups` is TOOL_BUTTONS or the customized panel (tool-layout.js panelGroups). Returns nothing; buttons carry data-tool and data-group.
  */
-export function buildToolPanel(box, el, setTool, extras = () => {}, onToggle = () => {}) {
-  for (const [group, key, items] of TOOL_BUTTONS) {
+export function buildToolPanel(box, el, setTool, extras = () => {}, onToggle = () => {}, groups = TOOL_BUTTONS) {
+  for (const [group, key, items] of groups) {
     const body = el('div', { class: 'gbody', 'data-body': key, style: `--cols:${Math.min(items.length, Math.max(2, Math.ceil(items.length / 2)))}` }); // --cols: icons per row in the Top band (two rows)
     // the group header folds its buttons away (click or Enter/Space); onToggle(key, collapsed) saves the state
     const toggle = () => { body.hidden = !body.hidden; head.setAttribute('aria-expanded', String(!body.hidden)); onToggle(key, body.hidden); };
@@ -65,7 +65,7 @@ export function buildToolPanel(box, el, setTool, extras = () => {}, onToggle = (
       body.append(iconButton(el, id, label, { 'data-tool': id, 'data-group': key, class: `g-${key}`, title: toolTitle(label, alias), onclick: () => setTool(id) }));
     }
     extras(group, body);
-    box.append(el('div', { class: 'tgroup' }, head, body)); // .tgroup is transparent in the Left panel, a column in the Top band
+    box.append(el('div', { class: 'tgroup', 'data-group': key }, head, body)); // .tgroup is transparent in the Left panel, a column in the Top band
   }
 }
 

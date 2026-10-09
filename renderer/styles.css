@@ -171,6 +171,27 @@ dialog label { display:block; margin:6px 0 2px; color:var(--dim); }
 .dlg-btns { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
 .popmenu { position:fixed; z-index:50; background:var(--panel2); border:1px solid var(--line); padding:4px 0; box-shadow:0 6px 18px var(--shadow); }
 .popmenu button { display:block; width:100%; border:none; background:none; text-align:left; padding:3px 12px; }
+.popmenu button:hover:not(:disabled), .popmenu button:focus-visible { background:var(--accent2); color:var(--on-accent); outline:none; }
+/* View > Quick Access row off: the row leaves the grid */
+#app.no-qat { grid-template-rows: 30px 1fr 30px 24px; } #app.no-qat #qat { display:none; }
+/* View > Customize tools… */
+.tcz-tabs { display:flex; gap:4px; align-items:center; border-bottom:1px solid var(--line); padding-bottom:6px; }
+.tcz-tabs [role=tab][aria-selected="true"] { background:var(--accent2); border-color:var(--accent); color:var(--on-accent); }
+.tcz-tabs .tcz-reset { margin-left:auto; }
+.tcz-hint { color:var(--dim); font-size:12px; }
+.tcz-pane { max-height:min(58vh, 520px); overflow:auto; padding-right:4px; }
+.tcz-head { display:flex; align-items:center; gap:4px; margin:10px 0 4px; }
+.tcz-head h3 { margin:0 auto 0 0; font-size:13px; }
+dialog .tcz-list { list-style:none; margin:0; padding:0; }
+.tcz-row { display:flex; align-items:center; gap:4px; padding:1px 0; }
+dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; flex:1; margin:0; color:var(--text); min-width:0; }
+.tcz-check kbd { color:var(--dim); font:inherit; font-size:11px; }
+.tcz-icon { display:inline-flex; }
+.tcz-sep { color:var(--dim); font-style:italic; }
+.tcz-mini { padding:1px 6px; min-width:26px; }
+.tcz-group { width:110px; }
+.tcz-empty { color:var(--dim); font-style:italic; }
+.tcz-add { display:flex; gap:6px; margin-top:10px; } .tcz-add select { flex:1; }
 @media print { #qat, #menubar, #tabbar, #tools, #side, #cmdbar, #status, #zoombar { display:none !important; } #main { display:block; } }
 
 /* ASH brand logo: light-background SVG by default, reversed SVG in the dark theme. Trademark: see assets/brand/README.md. */
