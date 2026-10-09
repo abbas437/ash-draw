@@ -22,6 +22,7 @@
 //   dimensionTags(e) -> DXF group pairs after the common entity head;  dimDefFromTags(tags) -> def | null
 //   arrowEntities(kind, tip, dir, size, o)  -> arrowhead entities (DIMBLK names: '' closed filled, _ARCHTICK, _OBLIQUE, _DOT, _OPEN)
 import { makeLine, makeArc, makeSolid, makeMText, makeHatch, addBlock, addEntity } from './model.js';
+import { decodeColor } from './aci.js';
 import { resolveDimStyle, ensureDimStyle } from './dimsStyle.js';
 
 const TAU = Math.PI * 2;
@@ -259,7 +260,7 @@ function angularGeom(def, st, text, out, o) {
 
 /** def + style -> measurement, text and the entities of the dimension block (block base 0,0 = WCS) */
 export function buildDimension(def, st) {
-  const colorOf = (c) => (c === undefined ? 0 : c);
+  const colorOf = (c) => decodeColor(c) ?? 0; // raw CmColor -> ACI / true colour; unresolvable -> ByBlock
   const o = { dim: { color: colorOf(st.DIMCLRD) }, ext: { color: colorOf(st.DIMCLRE) }, text: { color: colorOf(st.DIMCLRT) } };
   const entities = [];
   const lf = st.DIMLFAC || 1;

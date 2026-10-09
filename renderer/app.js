@@ -102,12 +102,14 @@ class App {
   }
 
   setTool(id) {
-    if (this.toolId && this.tool) this.tool.deactivate();
+    this.vp.preview = null;
+    if (this.toolId && this.tool) this.tool.deactivate(); // may leave a preview behind (Measure keeps its markers)
+    const kept = id === 'select' ? this.vp.preview : null; // back to Select: the markers stay beside its own preview
     if (id !== 'select') this.lastTool = id;
     this.toolId = id;
     this.vp.tool = this.tool;
-    this.vp.preview = null;
     this.tool.activate();
+    if (kept) { const own = this.vp.preview; this.vp.preview = (c, v, vp) => { kept(c, v, vp); own?.(c, v, vp); }; }
     for (const b of document.querySelectorAll('#tools button')) b.classList.toggle('active', b.dataset.tool === id);
     this.refreshPrompt();
     this.vp.requestRender();

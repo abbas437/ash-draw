@@ -432,6 +432,15 @@ try {
     window.app.installDoc(doc, { path: null, name: 'measure.dxf', format: 'dxf' });
     window.app.vp.zoomExtents();
   });
+  // cyan measurement-marker pixels (r<80, g>150, b>200) in a small window around a world point
+  const markAt = (x, y) => page.evaluate(([wx, wy]) => {
+    const vp = window.app.vp; vp.showCross = false; vp.selection.clear(); vp.render();
+    const s = vp.toScreen({ x: wx, y: wy }), k = vp.dpr;
+    const px = vp.ctx.getImageData(Math.round(s.x * k) - 8, Math.round(s.y * k) - 8, 17, 17).data;
+    let n = 0;
+    for (let i = 0; i < px.length; i += 4) if (px[i] < 80 && px[i + 1] > 150 && px[i + 2] > 200) n++;
+    return n;
+  }, [x, y]);
   const panel = () => page.locator('#measure-panel .mp-body').textContent();
   await typeCmd('area'); await typeCmd('o'); await clickWorld(50, 0);
   assert.match(await panel(), /^Area = 5000, Perimeter = 300$/m);
@@ -448,13 +457,40 @@ try {
   await typeCmd('mea'); await clickWorld(0.6, 0.4); await clickWorld(99.5, 49.6); // snapped to the corners
   assert.match(await panel(), /^Distance = 111\.8034$/m);
   assert.match(await panel(), /^Delta X = 100, Delta Y = 50$/m);
+  await page.mouse.move(2, 2);
+  assert.ok(await markAt(0, 0) > 0 && await markAt(100, 50) > 0, 'Distance: marker pixels at both measured points');
+  await page.keyboard.press('Escape');
+  assert.ok(await markAt(0, 0) > 0 && await markAt(100, 50) > 0, 'markers outlive the command while the panel is open');
+  await page.locator('#measure-panel .mp-close').click();
+  assert.equal(await markAt(0, 0) + await markAt(100, 50), 0, 'closing the panel removes the markers');
+  assert.equal(await count(), 3, 'markers are not entities');
+  await typeCmd('mea'); await clickWorld(0.6, 0.4); await clickWorld(99.5, 49.6);
   await typeCmd('r'); await clickWorld(270, 20);
   assert.match(await panel(), /^Radius = 10$/m);
   await typeCmd('n'); await clickWorld(50, 0); await clickWorld(0, 25);
   assert.match(await panel(), /^Angle = 90°$/m);
+  assert.ok(await markAt(0, 0) > 0, 'angle vertex marked');
   await page.keyboard.press('Escape');
   await page.locator('#measure-panel .mp-close').click();
   assert.equal(await page.locator('#measure-panel').count(), 0, 'Close removes the panel');
+  assert.equal(await markAt(0, 0), 0, 'Close removes the angle markers');
+
+  step = 'dimensions: DIMSTYLE CmColor colours stay dark on a light model background';
+  await pickFile('cmcolor_dimstyle.dxf');
+  await page.waitForFunction(() => window.app.active.file.name === 'cmcolor_dimstyle.dxf', null, { timeout: 5000 });
+  await page.evaluate(() => { window.app.setCanvasDark(false); const vp = window.app.vp; vp.view = { ...vp.view, cx: 50, cy: -15, zoom: 4 }; vp.selection.clear(); vp.render(); });
+  await typeCmd('dli'); await typeCmd('0,0'); await typeCmd('100,0'); await typeCmd('50,-15');
+  assert.equal(await page.evaluate(() => window.app.doc.entities.filter((e) => e.type === 'DIMENSION').length), 1);
+  await page.mouse.move(2, 2);
+  const dimPx = await page.evaluate(() => {
+    const vp = window.app.vp; vp.showCross = false; vp.render();
+    const s = vp.toScreen({ x: 25, y: -15 }), k = vp.dpr, bg = vp.ctx.getImageData(3, 3, 1, 1).data;
+    const px = vp.ctx.getImageData(Math.round(s.x * k) - 6, Math.round(s.y * k) - 6, 13, 13).data;
+    let best = null, bd = -1;
+    for (let i = 0; i < px.length; i += 4) { const d = Math.abs(px[i] - bg[0]) + Math.abs(px[i + 1] - bg[1]) + Math.abs(px[i + 2] - bg[2]); if (d > bd) { bd = d; best = [px[i], px[i + 1], px[i + 2]]; } }
+    return { dim: best, bg: [bg[0], bg[1], bg[2]] };
+  });
+  assert.ok(lum(dimPx.bg) > 0.9 && lum(dimPx.dim) < 0.3, `light background: dimension pixel ${dimPx.dim} is dark on ${dimPx.bg}`);
 
   step = 'modify tools: FILLET R 5 on two perpendicular lines';
   await typeCmd('new');

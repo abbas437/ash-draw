@@ -17,7 +17,7 @@ const ALIGN_CSS = ['left', 'center', 'right'];
 const FONTS = ['Arial', 'Arial Narrow', 'Calibri', 'Cambria', 'Consolas', 'Courier New', 'Georgia', 'Segoe UI', 'Tahoma', 'Times New Roman', 'Verdana'];
 const SYMBOLS = [['°', 'Degree'], ['±', 'Plus / minus'], ['Ø', 'Diameter'], ['≈', 'Almost equal'], ['∠', 'Angle'], ['℄', 'Centre line'], ['Δ', 'Delta'], ['≠', 'Not equal'], ['Ω', 'Ohm'], ['²', 'Squared'], ['³', 'Cubed'], ['\u00A0', 'Non-breaking space']];
 const ATTACH = ['Top left', 'Top centre', 'Top right', 'Middle left', 'Middle centre', 'Middle right', 'Bottom left', 'Bottom centre', 'Bottom right'];
-const cssColor = (c) => (!c || c.aci === 7 ? '' : `rgb(${(c.rgb ?? aciToRgb(c.aci)).join(',')})`);
+const cssColor = (c) => (!c || c.aci === 7 || c.aci === 256 ? '' : `rgb(${(c.rgb ?? aciToRgb(c.aci)).join(',')})`);
 const h = (tag, attrs = {}, ...kids) => { const n = document.createElement(tag); Object.assign(n, attrs); n.append(...kids); return n; };
 
 let current = null;   // the open editor
@@ -107,7 +107,7 @@ class MTextEditor {
       btn('italic', 'I', 'Italic (Ctrl+I)', () => this.toggle('italic')),
       btn('underline', 'U', 'Underline (Ctrl+U)', () => this.toggle('u')),
       btn('overline', 'O', 'Overline', () => this.toggle('o')),
-      pick('color', 'Colour of the selected text', [['', 'Colour'], ...ACI_CHOICES], (v, s) => { if (v) fmt({ color: +v === 256 ? null : { aci: +v } }); s.value = ''; }),
+      pick('color', 'Colour of the selected text', [['', 'Colour'], ...ACI_CHOICES], (v, s) => { if (v) fmt({ color: { aci: +v } }); s.value = ''; }),
       btn('stack', 'a/b', 'Stack the selected "a/b", "a#b" or "a^b"', () => this.act((m, a, b) => stackMText(m, a, b))),
       btn('unstack', 'a b', 'Unstack', () => this.act((m, a, b) => unstackMText(m, a, b))),
       btn('bullets', '•≡', 'Bulleted list (selected paragraphs, all when nothing is selected)', () => this.act((m, a, b) => listMText(m, a, b, 'bullet'))),
