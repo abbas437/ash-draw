@@ -19,6 +19,7 @@ import { dimDefFromTags } from './dims.js';
 import { mtextPlain } from './mtext.js';
 import { mleaderFromTags, mleaderStyleFromTags } from './mleader.js';
 import { parseLayoutObject, readViewport } from './layouts.js';
+import { imageDefFromTags, imageFromTags } from './image.js';
 
 const DEG = Math.PI / 180;
 
@@ -421,6 +422,7 @@ function readXData(rec) {
 
 // ---------------------------------------------------------------------------------------------
 let mlStyles = new Map(); // MLEADERSTYLE handle -> defaults (set per parse)
+let imageDefs = new Map(); // IMAGEDEF handle -> image definition (set per parse)
 function buildEntity(rec, doc, extra) {
   const o = common(rec);
   const flipped = isFlipped(rec);
@@ -445,6 +447,12 @@ function buildEntity(rec, doc, extra) {
       const tags = rec.tags();
       const ml = mleaderFromTags(tags, tags.map(([c, v]) => c === 340 && mlStyles.get(v)).find(Boolean) ?? mlStyles.get('*'));
       e = ml && { ...ml, ...o, type: 'MLEADER' };
+      break;
+    }
+    case 'IMAGE': {
+      const tags = rec.tags();
+      const h = tags.find(([c]) => c === 340)?.[1];
+      e = { ...o, id: 0, type: 'IMAGE', ...imageFromTags(tags, imageDefs.get(h) ?? null) };
       break;
     }
     case 'ATTDEF': case 'ATTRIB': e = buildAttribute(rec, buildText(rec, o)); break;
@@ -575,8 +583,10 @@ export function parseDxf(text) {
 
   // OBJECTS: MLEADERSTYLE defaults for MLEADER entities
   mlStyles = new Map();
+  imageDefs = new Map();
   if (secs.OBJECTS) {
     for (const rec of records(tk, secs.OBJECTS.from, secs.OBJECTS.to)) {
+      if (rec.type === 'IMAGEDEF') imageDefs.set(rec.str(5), imageDefFromTags(rec.tags()));
       if (rec.type !== 'MLEADERSTYLE') continue;
       const st = mleaderStyleFromTags(rec.tags());
       mlStyles.set(rec.str(5), st);

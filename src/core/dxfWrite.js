@@ -17,6 +17,7 @@ import { dimStyleTags } from './dimsStyle.js';
 import { dimensionTags, arrowEntities } from './dims.js';
 import { mleaderTags, mleaderStyleTags, mleaderParts } from './mleader.js';
 import { viewportTags } from './layouts.js';
+import { imageTags, imageDefTags } from './image.js';
 const encode = (s) => String(s ?? '').replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7e]/g, (c) => {
   const code = c.charCodeAt(0);
   return code < 32 ? ' ' : `\\U+${code.toString(16).toUpperCase().padStart(4, '0')}`;
@@ -157,6 +158,8 @@ export function writeDxf(doc, opts = {}) {
   // XDATA (kept applications only) goes after the entity's own data; INSERT / MLEADER / DIMENSION write sub-records
   const XD_TYPES = new Set(['LINE', 'CIRCLE', 'ARC', 'ELLIPSE', 'LWPOLYLINE', 'SPLINE', 'TEXT', 'MTEXT', 'POINT', 'LEADER', 'HATCH']);
   const xdApps = new Set();
+  const imageDefsOut = new Map(); // file path -> { h, def, reactors: IMAGE handles }
+  const hImageDict = H();
   function writeEntity(o, e, owner) {
     const ok = writeEntityBody(o, e, owner);
     if (ok && e.xdata && XD_TYPES.has(e.type)) {
@@ -325,6 +328,15 @@ export function writeDxf(doc, opts = {}) {
         o.p(47, 1); o.p(98, 0);
         return true;
       }
+      case 'IMAGE': {
+        const hImg = head(o, e, 'IMAGE', owner);
+        const key = e.def?.path ?? e.path ?? '';
+        let d = imageDefsOut.get(key);
+        if (!d) imageDefsOut.set(key, (d = { h: H(), def: { ...(e.def ?? {}), path: key, size: e.def?.size ?? e.size }, reactors: [] }));
+        d.reactors.push(hImg);
+        for (const [c, v] of imageTags(e, d.h)) if (typeof v === 'string') o.s(c, v); else o.p(c, v);
+        return true;
+      }
       case 'VIEWPORT': {
         head(o, e, 'VIEWPORT', owner);
         for (const [c, v] of viewportTags(e, (n) => layerH.get(n))) o.p(c, v);
@@ -397,6 +409,10 @@ export function writeDxf(doc, opts = {}) {
   if (writeMlStyle) {
     cls('MLEADERSTYLE', 'AcDbMLeaderStyle', 'ACDB_MLEADERSTYLE_CLASS', 4095);
     cls('MULTILEADER', 'AcDbMLeader', 'ACDB_MLEADER_CLASS', 1025);
+  }
+  if (imageDefsOut.size) {
+    cls('IMAGEDEF', 'AcDbRasterImageDef', 'ISM', 0);
+    cls('IMAGE', 'AcDbRasterImage', 'ISM', 127);
   }
   out.p(0, 'ENDSEC');
 
@@ -514,6 +530,7 @@ export function writeDxf(doc, opts = {}) {
   out.p(0, 'SECTION'); out.p(2, 'OBJECTS');
   out.p(0, 'DICTIONARY'); out.p(5, hRootDict); out.p(330, 0); out.p(100, 'AcDbDictionary'); out.p(281, 1);
   out.p(3, 'ACAD_GROUP'); out.p(350, hGroupDict); out.p(3, 'ACAD_LAYOUT'); out.p(350, hLayoutDict);
+  if (imageDefsOut.size) { out.p(3, 'ACAD_IMAGE_DICT'); out.p(350, hImageDict); }
   if (writeMlStyle) { out.p(3, 'ACAD_MLEADERSTYLE'); out.p(350, hMleaderDict); }
   out.p(3, 'ACAD_MLINESTYLE'); out.p(350, hMlineDict); out.p(3, 'ACAD_PLOTSTYLENAME'); out.p(350, hPlotDict);
   const dict = (h, entries) => { out.p(0, 'DICTIONARY'); out.p(5, h); out.p(330, hRootDict); out.p(100, 'AcDbDictionary'); out.p(281, 1); for (const [k, v] of entries) { out.p(3, k); out.p(350, v); } };
@@ -521,6 +538,15 @@ export function writeDxf(doc, opts = {}) {
   dict(hLayoutDict, [['Model', hModelLayout], ...paperLayouts.map((pl) => [pl.lo.name, pl.layoutH])]);
   dict(hMlineDict, [['Standard', hMlineStyle]]);
   if (writeMlStyle) dict(hMleaderDict, [['Standard', hMleaderStyle]]);
+  if (imageDefsOut.size) {
+    const stem = (p) => String(p).split(/[\\/]/).pop().replace(/\.[^.]*$/, '') || 'IMAGE';
+    const used = new Set();
+    dict(hImageDict, [...imageDefsOut.values()].map((d) => { let n = stem(d.def.path), k = 2; while (used.has(n.toUpperCase())) n = `${stem(d.def.path)}_${k++}`; used.add(n.toUpperCase()); return [n, d.h]; }));
+    for (const d of imageDefsOut.values()) {
+      out.p(0, 'IMAGEDEF'); out.p(5, d.h); out.p(102, '{ACAD_REACTORS'); out.p(330, hImageDict); out.p(102, '}'); out.p(330, hImageDict);
+      for (const [c, v] of imageDefTags(d.def)) if (typeof v === 'string') out.s(c, v); else out.p(c, v);
+    }
+  }
   out.p(0, 'ACDBDICTIONARYWDFLT'); out.p(5, hPlotDict); out.p(330, hRootDict); out.p(100, 'AcDbDictionary'); out.p(281, 1);
   out.p(3, 'Normal'); out.p(350, hPlotPlaceholder); out.p(100, 'AcDbDictionaryWithDefault'); out.p(340, hPlotPlaceholder);
   out.p(0, 'ACDBPLACEHOLDER'); out.p(5, hPlotPlaceholder); out.p(330, hPlotDict);
