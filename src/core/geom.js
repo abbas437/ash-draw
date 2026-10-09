@@ -642,7 +642,12 @@ export function intersections(e1, e2, doc = null) {
     }
     return out;
   }
-  for (const p of toPrims(e1, doc)) for (const q of toPrims(e2, doc)) for (const r of primIntersections(p, q)) {
+  return primsIntersections(toPrims(e1, doc), toPrims(e2, doc));
+}
+/** intersections() of two primitive lists (toPrims): every crossing once, in P x Q order */
+export function primsIntersections(P, Q) {
+  const out = [];
+  for (const p of P) for (const q of Q) for (const r of primIntersections(p, q)) {
     if (!out.some((o) => Math.hypot(o.x - r.x, o.y - r.y) < 1e-7)) out.push({ x: r.x, y: r.y });
   }
   return out;

@@ -215,3 +215,42 @@ test('performance: 20,000 lines, findSnap and pickEntity', () => {
   assert.ok(snapMs < 25, `findSnap ${snapMs} ms`);
   assert.ok(pickMs < 10, `pickEntity ${pickMs} ms`);
 });
+
+// a drawing of `n` INSERTs (a 20 x 20 grid, 100 apart) of a 40-line block; doc.blocks.get calls counted (block expansions)
+function insertGrid(n) {
+  const doc = M.newDocument();
+  const lines = [];
+  for (let i = 0; i < 40; i++) lines.push(M.makeLine(P(i, 0), P(i, 30)));
+  M.addBlock(doc, 'B', P(0, 0), lines);
+  const ins = [];
+  for (let i = 0; i < n; i++) ins.push(M.addEntity(doc, M.makeInsert('B', P((i % 20) * 100, Math.floor(i / 20) * 100))));
+  const index = new SpatialIndex(doc);
+  const get = doc.blocks.get.bind(doc.blocks), calls = { n: 0 };
+  doc.blocks.get = (k) => { calls.n++; return get(k); };
+  return { doc, ins, index, calls };
+}
+
+test('findSnap: a tolerance over the whole drawing looks at the nearest entities only, outline work within the budget', () => {
+  const { ins, index, calls } = insertGrid(400);
+  let t = 0;
+  const clock = () => t++; // 1 ms per reading: the 8 ms budget runs out after a few outline steps, deterministically
+  const p = P(1005, 930); // the top end of line 5 of the INSERT at (1000, 900)
+  const s = findSnap(index, p, 1e6, { now: clock });
+  assert.deepEqual(s, { x: 1005, y: 930, kind: 'end', id: ins[9 * 20 + 10].id });
+  assert.ok(t <= 12, `clock read ${t} times`);
+  // snap points of at most 150 INSERTs (one block lookup each, and one to explode it) and a few outlines
+  assert.ok(calls.n <= 2 * 150 + 12, `${calls.n} block expansions for 400 INSERTs`);
+  // a small tolerance at the same point: unchanged result with the real clock
+  assert.deepEqual(findSnap(index, P(1005.1, 930), 0.5), { x: 1005, y: 930, kind: 'end', id: ins[9 * 20 + 10].id });
+});
+
+test('findSnap: an INSERT outline (near / int / distance) is expanded once and reused on the next move', () => {
+  const { ins, index, calls } = insertGrid(1);
+  const kinds = new Set(['near', 'int']);
+  const a = findSnap(index, P(5.2, 10), 0.5, { kinds });
+  assert.equal(a.kind, 'near'); assert.equal(a.id, ins[0].id); nearPt(a, 5, 10);
+  const first = calls.n;
+  const b = findSnap(index, P(7.2, 12), 0.5, { kinds });
+  nearPt(b, 7, 12);
+  assert.equal(calls.n, first, 'no block expansion on the second move');
+});

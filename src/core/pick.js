@@ -1,6 +1,6 @@
 // Picking, box selection, object snaps and ortho/polar helpers.
 // Pure module: world coordinates (Y up); every tolerance is in WORLD units (caller: pixels / zoom).
-import { bboxOf, growBox, unionBox, distanceToEntity, nearestPoint, snapPoints, intersections, explode, tessellate, ccwSweep, DEG } from './geom.js';
+import { bboxOf, growBox, unionBox, distanceToEntity, nearestPoint, snapPoints, intersections, primsIntersections, toPrims, distToSegment, explode, tessellate, ccwSweep, DEG } from './geom.js';
 import { drain } from './slice.js';
 
 const TAU = Math.PI * 2;
@@ -8,6 +8,10 @@ const MAX_CELLS_AXIS = 1024;
 const OVERSIZE_CELLS = 256; // an entity spanning more grid cells than this goes to the oversize list
 const INT_CANDIDATES = 40;
 const INSERT_SNAP_LIMIT = 500; // explode INSERTs for snapping only when the block is at most this big
+// findSnap work bounds (one pointer move): the entities nearest p (by bbox) it looks at, and the time the outline steps
+// (distance, int, per, near) may take after the cheap snap points; zoomed out, tol spans the whole drawing
+const SNAP_CANDIDATES = 150;
+const SNAP_BUDGET_MS = 8;
 
 export const SNAP_KINDS = ['end', 'int', 'mid', 'cen', 'quad', 'node', 'ins', 'per', 'near']; // priority order
 const RANK = new Map(SNAP_KINDS.map((k, i) => [k, i]));
@@ -315,11 +319,54 @@ function entitySnapPoints(index, e) {
   return pts;
 }
 
-/** Best object snap near p: {x,y,kind,id} or null. Priority end > int > mid > cen > quad > node > ins > per > near. */
+/** an INSERT's outline for distance / near / int: its tessellated polylines and their segments, cached per entity
+ *  object (as its snap points); null for an INSERT of more than INSERT_SNAP_LIMIT leaf entities (no outline snaps) */
+function insertOutline(index, e) {
+  const cache = index._insertGeom || (index._insertGeom = new WeakMap());
+  if (cache.has(e)) return cache.get(e);
+  const n = index._leafCount(e.block) * Math.max(1, e.cols || 1) * Math.max(1, e.rows || 1);
+  let g = null;
+  if (n > 0 && n <= INSERT_SNAP_LIMIT) {
+    const pls = safe(() => tessellate(e, index.doc, 0), []), prims = [];
+    for (const pl of pls) for (let i = 0; i + 1 < pl.length; i++) prims.push({ k: 'seg', a: pl[i], b: pl[i + 1] });
+    g = { pls, prims };
+  }
+  cache.set(e, g);
+  return g;
+}
+// distanceToEntity / nearestPoint / toPrims of an INSERT, from its cached outline (the same tessellation they use)
+function outlineDistance(g, p) {
+  if (!g) return Infinity;
+  let best = Infinity;
+  for (const pl of g.pls) {
+    if (pl.length === 1) best = Math.min(best, Math.hypot(p.x - pl[0].x, p.y - pl[0].y));
+    for (let i = 0; i + 1 < pl.length; i++) best = Math.min(best, distToSegment(p, pl[i], pl[i + 1]));
+  }
+  return best;
+}
+function outlineNearest(g, p) {
+  let best = null, bd = Infinity;
+  for (const { a, b } of g ? g.prims : []) {
+    const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+    const t = l2 < 1e-12 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
+    const q = { x: a.x + t * dx, y: a.y + t * dy }, d = Math.hypot(p.x - q.x, p.y - q.y);
+    if (d < bd) { bd = d; best = q; }
+  }
+  return best;
+}
+const boxDist = (b, p) => Math.hypot(Math.max(b.minx - p.x, 0, p.x - b.maxx), Math.max(b.miny - p.y, 0, p.y - b.maxy));
+
+/** Best object snap near p: {x,y,kind,id} or null. Priority end > int > mid > cen > quad > node > ins > per > near.
+ *  Bounded work: only the opts.maxCandidates (150) entities nearest p by bbox are looked at; their snap points always,
+ *  the outline steps (distance, then int / per / near) nearest first while opts.budgetMs (8 ms by opts.now, default
+ *  performance.now) lasts; past it, the best snap found so far. */
 export function findSnap(index, p, tol, opts = {}) {
   const doc = index.doc;
   const kinds = opts.kinds || null;
   const want = (k) => !kinds || kinds.has(k);
+  const now = opts.now || (() => performance.now());
+  const t0 = now(), budget = opts.budgetMs ?? SNAP_BUDGET_MS, cap = opts.maxCandidates ?? SNAP_CANDIDATES;
+  const spent = () => now() - t0 > budget;
   let best = null;
   const offer = (q, kind, id) => {
     if (!want(kind) || !Number.isFinite(q.x) || !Number.isFinite(q.y)) return;
@@ -328,23 +375,38 @@ export function findSnap(index, p, tol, opts = {}) {
     const r = RANK.get(kind);
     if (!best || r < best.r || (r === best.r && d < best.d)) best = { x: q.x, y: q.y, kind, id, r, d };
   };
+  let cand = [];
+  for (const en of index._query(around(p, tol))) if (!(opts.exclude && opts.exclude.has(en.e.id))) cand.push({ e: en.e, k: cand.length, bd: boxDist(en.reach, p) });
+  // nearest first (ties: query order); snap points are offered in query order, so ties between entities go as before
+  const byDist = cand.slice().sort((a, b) => a.bd - b.bd || a.k - b.k);
+  if (byDist.length > cap) { byDist.length = cap; cand = byDist.slice().sort((a, b) => a.k - b.k); }
+  for (const c of cand) for (const q of entitySnapPoints(index, c.e)) offer(q, q.kind, c.e.id);
+  const geom = (e) => (e.type === 'INSERT' ? insertOutline(index, e) : null);
   const near = []; // entities whose outline is within tol (for int / per / near)
-  for (const en of index._query(around(p, tol))) {
-    const e = en.e;
-    if (opts.exclude && opts.exclude.has(e.id)) continue;
-    for (const q of entitySnapPoints(index, e)) offer(q, q.kind, e.id);
-    const d = safe(() => distanceToEntity(e, p, doc), Infinity);
-    if (d <= tol) near.push({ e, d });
+  let out = false;
+  for (const c of byDist) {
+    if ((out = spent())) break;
+    const e = c.e;
+    const d = e.type === 'INSERT' ? outlineDistance(geom(e), p) : safe(() => distanceToEntity(e, p, doc), Infinity);
+    if (d <= tol) near.push({ e, d, k: c.k });
   }
-  near.sort((a, b) => a.d - b.d);
-  if (want('int')) {
+  near.sort((a, b) => a.d - b.d || a.k - b.k); // as a stable sort of the query order
+  if (want('int') && !out) {
     const c = near.slice(0, INT_CANDIDATES);
-    for (let i = 0; i < c.length; i++) for (let j = i + 1; j < c.length; j++) {
-      for (const q of safe(() => intersections(c[i].e, c[j].e, doc), [])) offer(q, 'int', c[i].e.id);
+    const prims = (e) => (e.type === 'INSERT' ? geom(e)?.prims ?? [] : toPrims(e, doc));
+    pairs: for (let i = 0; i < c.length; i++) for (let j = i + 1; j < c.length; j++) {
+      if ((out = spent())) break pairs;
+      const a = c[i].e, b = c[j].e;
+      const hits = a.type === 'INSERT' || b.type === 'INSERT' ? safe(() => primsIntersections(prims(a), prims(b)), []) : safe(() => intersections(a, b, doc), []);
+      for (const q of hits) offer(q, 'int', a.id);
     }
   }
-  if (want('per') && opts.from) for (const { e } of near) for (const q of perpendicularFeet(e, opts.from)) offer(q, 'per', e.id);
-  if (want('near')) for (const { e } of near) { const q = safe(() => nearestPoint(e, p, doc), null); if (q) offer(q, 'near', e.id); }
+  if (want('per') && opts.from && !out) for (const { e } of near) for (const q of perpendicularFeet(e, opts.from)) offer(q, 'per', e.id);
+  if (want('near') && !out) for (const { e } of near) {
+    if ((out = spent())) break;
+    const q = e.type === 'INSERT' ? outlineNearest(geom(e), p) : safe(() => nearestPoint(e, p, doc), null);
+    if (q) offer(q, 'near', e.id);
+  }
   return best ? { x: best.x, y: best.y, kind: best.kind, id: best.id } : null;
 }
 

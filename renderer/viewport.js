@@ -361,9 +361,12 @@ export class Viewport {
       const r = cv.getBoundingClientRect();
       if (this._gesture !== 'pan') { this.beginGesture('zoom'); this.endGesture(); }
       this.zoomBy(e.deltaY < 0 ? 1.25 : 0.8, e.clientX - r.left, e.clientY - r.top);
-      this._moved(e.clientX - r.left, e.clientY - r.top, e);
+      // no object snap here: zoomed out its tolerance spans the drawing; the next pointer move snaps
+      this._dropMove();
+      this._moved(e.clientX - r.left, e.clientY - r.top, e, { snap: false });
     }, { passive: false });
     cv.addEventListener('pointerdown', (e) => {
+      this._flushMove();
       cv.focus();
       const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
       if (e.button === 1 || (e.button === 0 && (this._spaceDown || this.panTool))) {
@@ -389,9 +392,12 @@ export class Viewport {
         this._pan = { x: e.clientX, y: e.clientY };
         return;
       }
-      this._moved(sx, sy, e);
+      // snapping runs at most once per frame, for the latest position (a down / up / key first runs a pending one)
+      this._pendingMove = { sx, sy, e };
+      if (!this._moveRaf) this._moveRaf = requestAnimationFrame(() => { this._moveRaf = 0; this._flushMove(); });
     });
     cv.addEventListener('pointerup', (e) => {
+      this._flushMove();
       if (this._pan) { this._pan = null; this._syncCursor(); this.endGesture(); return; }
       if (e.button !== 0 || !this._down) return;
       const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
@@ -400,16 +406,21 @@ export class Viewport {
       this._down = null;
       this.requestRender();
     });
-    cv.addEventListener('pointerleave', () => { this.showCross = false; this.snapMarker = null; this.requestRender(); this.emit('cursor', null); });
+    cv.addEventListener('pointerleave', () => { this._dropMove(); this.showCross = false; this.snapMarker = null; this.requestRender(); this.emit('cursor', null); });
     cv.addEventListener('pointerenter', () => { this.showCross = true; });
+    window.addEventListener('keydown', () => this._flushMove(), true); // tools reading the cursor see the latest move
     window.addEventListener('keydown', (e) => { if (e.code === 'Space' && document.activeElement === cv) { this._spaceDown = true; this._syncCursor(); } });
     window.addEventListener('keyup', (e) => { if (e.code === 'Space') { this._spaceDown = false; this._syncCursor(); } });
     new ResizeObserver(() => this.resize()).observe(cv);
   }
 
-  _moved(sx, sy, e) {
+  /** run the pointer move waiting for its frame now / forget it */
+  _flushMove() { const m = this._pendingMove; this._dropMove(); if (m) this._moved(m.sx, m.sy, m.e); }
+  _dropMove() { this._pendingMove = null; if (this._moveRaf) { cancelAnimationFrame(this._moveRaf); this._moveRaf = 0; } }
+
+  _moved(sx, sy, e, resolveOpts) {
     this.showCross = true;
-    const res = this.resolve(sx, sy);
+    const res = this.resolve(sx, sy, resolveOpts);
     this.cursor = res.p; this.rawCursor = res.raw; this.snapMarker = res.marker;
     if (this._down && Math.hypot(sx - this._down.sx, sy - this._down.sy) > 4) this._down.moved = true;
     this.tool?.move?.(res.p, mk(e, res.raw, sx, sy, { dragging: !!this._down?.moved }));
