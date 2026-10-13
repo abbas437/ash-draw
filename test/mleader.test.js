@@ -143,3 +143,21 @@ test('a multileader without context sizes takes the style defaults times the ove
   assert.equal(ml.textHeight, 25);   // Standard default 2.5 x 10
   assert.equal(ml.arrowSize, 40);    // default 4 x 10
 });
+
+test('arrowhead size not overridden (override flags without bit 9): the style size is drawn, not the context value', async () => {
+  const { mleaderFromTags } = await import('../src/core/mleader.js');
+  const tags = (flags) => [[300, 'CONTEXT_DATA{'], [40, '1'], [10, '0'], [20, '0'], [41, '5'], [140, '400'], [304, 'JNV'], [12, '0'], [22, '0'],
+    [302, 'LEADER{'], [10, '0'], [20, '0'], [304, 'LEADER_LINE{'], [10, '-20'], [20, '10'], [305, '}'], [303, '}'], [301, '}'],
+    ...(flags === null ? [] : [[90, String(flags)]]), [42, '400']];
+  const style = { name: 'Standard', arrowSize: 0.18, textHeight: 0.18, landingGap: 0.09, doglegLen: 0.36 };
+  assert.equal(mleaderFromTags(tags(345088), style).arrowSize, 0.18);            // the client drawing's flags: style size
+  assert.equal(mleaderFromTags(tags(345088 | 0x200), style).arrowSize, 400);    // overridden: the entity's size
+  assert.equal(mleaderFromTags(tags(null), style).arrowSize, 400);              // no flags at all: as before
+});
+
+test('an arrowhead longer than its leader segment is left out; one that fits is drawn', async () => {
+  const { mleaderParts } = await import('../src/core/mleader.js');
+  const ml = (sz) => ({ arrowSize: sz, arrow: true, dogleg: false, text: '', leaders: [{ last: { x: 20, y: 0 }, dir: { x: 1, y: 0 }, doglegLen: 0, lines: [[{ x: 0, y: 0 }]] }] });
+  assert.equal(mleaderParts(ml(400)).filter((p) => p.arrowHead).length, 0);
+  assert.equal(mleaderParts(ml(2.5)).filter((p) => p.arrowHead).length, 1);
+});

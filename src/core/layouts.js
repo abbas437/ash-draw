@@ -50,11 +50,15 @@ export function parseLayoutObject(tags) {
 export function readViewport(rec, layerByHandle) {
   const t = rec.tags();
   const flags = rec.int(90);
+  // DXF: 12/22 view centre is in DCS (origin at the target 17/27, turned by the twist), 51 twist in degrees. The model
+  // keeps the centre in WCS and the twist in radians: WCS centre = target + R(-twist) . DCS centre
+  const tw = rec.num(51) * Math.PI / 180, tx = rec.num(17), ty = rec.num(27), dx = rec.num(12), dy = rec.num(22);
+  const ct = Math.cos(tw), st = Math.sin(tw);
   return {
     type: 'VIEWPORT', id: 0, layer: rec.str(8, '0'), color: rec.int(62, 256), linetype: 'BYLAYER', lineweight: -1, ltscale: 1,
     c: { x: rec.num(10), y: rec.num(20) }, width: rec.num(40), height: rec.num(41),
     status: rec.int(68), vpId: rec.int(69),
-    viewCenter: { x: rec.num(12), y: rec.num(22) }, target: { x: rec.num(17), y: rec.num(27) }, viewHeight: rec.num(45, 1), twist: rec.num(51),
+    viewCenter: { x: tx + ct * dx + st * dy, y: ty - st * dx + ct * dy }, target: { x: tx, y: ty }, viewHeight: rec.num(45, 1), twist: tw,
     frozen: t.filter(([c]) => c === 331).map(([, h]) => layerByHandle.get(h)).filter(Boolean),
     flags, on: rec.int(68) !== 0 && !(flags & VP_OFF), locked: !!(flags & VP_LOCKED),
     clipHandle: flags & VP_CLIP ? rec.str(340, '') || null : null,
@@ -67,11 +71,13 @@ export function viewportTags(vp, layerHandle) {
   flags = vp.locked ? flags | VP_LOCKED : flags & ~VP_LOCKED;
   flags = vp.on === false ? flags | VP_OFF : flags & ~VP_OFF;
   flags &= ~VP_CLIP; // clip boundary entities are not written back (rectangular clip is kept)
+  const tw = vp.twist || 0, ct = Math.cos(tw), st = Math.sin(tw), tg = vp.target ?? { x: 0, y: 0 };
+  const ox = vp.viewCenter.x - tg.x, oy = vp.viewCenter.y - tg.y; // back to DCS: R(twist) . (centre - target)
   const out = [[100, 'AcDbViewport'], [10, vp.c.x], [20, vp.c.y], [30, 0], [40, vp.width], [41, vp.height],
     [68, vp.on === false ? 0 : (vp.status || 1)], [69, vp.vpId || 2],
-    [12, vp.viewCenter.x], [22, vp.viewCenter.y], [13, 0], [23, 0], [14, 10], [24, 10], [15, 10], [25, 10],
-    [16, 0], [26, 0], [36, 1], [17, vp.target?.x ?? 0], [27, vp.target?.y ?? 0], [37, 0],
-    [42, 50], [43, 0], [44, 0], [45, vp.viewHeight], [50, 0], [51, vp.twist || 0], [72, 1000]];
+    [12, ct * ox - st * oy], [22, st * ox + ct * oy], [13, 0], [23, 0], [14, 10], [24, 10], [15, 10], [25, 10],
+    [16, 0], [26, 0], [36, 1], [17, tg.x], [27, tg.y], [37, 0],
+    [42, 50], [43, 0], [44, 0], [45, vp.viewHeight], [50, 0], [51, tw * 180 / Math.PI], [72, 1000]];
   for (const n of vp.frozen ?? []) { const h = layerHandle(n); if (h) out.push([331, h]); }
   out.push([90, flags], [1, ''], [281, 0], [71, 1], [74, 0], [110, 0], [120, 0], [130, 0], [111, 1], [121, 0], [131, 0],
     [112, 0], [122, 1], [132, 0], [79, 0], [146, 0]);
