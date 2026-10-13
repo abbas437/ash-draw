@@ -65,6 +65,22 @@ export function readViewport(rec, layerByHandle) {
   };
 }
 
+/** the layout's overall (paper-space) viewport: the one whose view is the paper itself (view centre = its centre, view
+ *  height = its height, no twist). Viewport ID 1 is only a fallback: LibreDWG can number a model viewport 1 and the
+ *  paper viewport 2. Sets `paper` true/false on every VIEWPORT of the list. */
+export function markPaperViewport(entities) {
+  const vps = entities.filter((e) => e.type === 'VIEWPORT');
+  const near = (a, b, s) => Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(s));
+  const self = vps.filter((v) => !v.twist && v.height > 0 && near(v.viewHeight, v.height, v.height)
+    && near(v.viewCenter.x, v.c.x, v.height) && near(v.viewCenter.y, v.c.y, v.height));
+  const paper = self.find((v) => v.vpId === 1) ?? self[0] ?? vps.find((v) => v.vpId === 1) ?? null;
+  for (const v of vps) v.paper = v === paper;
+  return paper;
+}
+
+/** true for a layout's overall paper viewport (see markPaperViewport; viewports never marked fall back to ID 1) */
+export const isPaperViewport = (v) => v.paper ?? v.vpId === 1;
+
 /** VIEWPORT body tags after AcDbEntity (R2000), frozen layer handles resolved through `layerHandle(name)` */
 export function viewportTags(vp, layerHandle) {
   let flags = vp.flags ?? 32768;
@@ -74,7 +90,7 @@ export function viewportTags(vp, layerHandle) {
   const tw = vp.twist || 0, ct = Math.cos(tw), st = Math.sin(tw), tg = vp.target ?? { x: 0, y: 0 };
   const ox = vp.viewCenter.x - tg.x, oy = vp.viewCenter.y - tg.y; // back to DCS: R(twist) . (centre - target)
   const out = [[100, 'AcDbViewport'], [10, vp.c.x], [20, vp.c.y], [30, 0], [40, vp.width], [41, vp.height],
-    [68, vp.on === false ? 0 : (vp.status || 1)], [69, vp.vpId || 2],
+    [68, vp.on === false ? 0 : (vp.status || 1)], [69, vp.paper ? 1 : vp.vpId > 1 ? vp.vpId : 2],
     [12, ct * ox - st * oy], [22, st * ox + ct * oy], [13, 0], [23, 0], [14, 10], [24, 10], [15, 10], [25, 10],
     [16, 0], [26, 0], [36, 1], [17, tg.x], [27, tg.y], [37, 0],
     [42, 50], [43, 0], [44, 0], [45, vp.viewHeight], [50, 0], [51, tw * 180 / Math.PI], [72, 1000]];
@@ -153,7 +169,7 @@ export const STANDARD_SCALES = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000];
 export function viewportAt(entities, p) {
   for (let i = entities.length - 1; i >= 0; i--) {
     const v = entities[i];
-    if (v.type !== 'VIEWPORT' || v.vpId === 1 || v.on === false || !(v.width > 0 && v.height > 0)) continue;
+    if (v.type !== 'VIEWPORT' || isPaperViewport(v) || v.on === false || !(v.width > 0 && v.height > 0)) continue;
     if (Math.abs(p.x - v.c.x) <= v.width / 2 && Math.abs(p.y - v.c.y) <= v.height / 2) return v;
   }
   return null;

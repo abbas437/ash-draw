@@ -2,7 +2,7 @@
 // A layout is shown by pointing the tab's Session (and so the Viewport, picking and editing) at a
 // "space doc": the drawing seen through the layout's entity list (layers, blocks, ids stay shared).
 import { buildScene, docWithFrozen, fitView, screenToWorld, viewportToPaper } from '../src/core/render.js';
-import { makeViewport, viewportScale, modelViewThrough, viewportFromModelView, viewportAt, STANDARD_SCALES } from '../src/core/layouts.js';
+import { makeViewport, viewportScale, modelViewThrough, viewportFromModelView, viewportAt, STANDARD_SCALES, isPaperViewport } from '../src/core/layouts.js';
 import { Tool, TOOL_ALIASES } from './tools.js';
 import { el, modal, toast } from './ui.js';
 
@@ -125,7 +125,7 @@ function viewportMenu(app, ev) {
   if (!vp.layout || vp.mspace) return;
   const r = vp.canvas.getBoundingClientRect(), p = screenToWorld(vp.view, ev.clientX - r.left, ev.clientY - r.top), tol = 6 / vp.view.zoom;
   const v = vp.doc.entities.find((e) => {
-    if (e.type !== 'VIEWPORT' || e.vpId === 1 || !(e.width > 0 && e.height > 0)) return false;
+    if (e.type !== 'VIEWPORT' || isPaperViewport(e) || !(e.width > 0 && e.height > 0)) return false;
     const dx = Math.abs(p.x - e.c.x) - e.width / 2, dy = Math.abs(p.y - e.c.y) - e.height / 2;
     return dx <= tol && dy <= tol && (Math.abs(dx) <= tol || Math.abs(dy) <= tol);
   });
@@ -237,7 +237,7 @@ export function initLayouts(app) {
   const ms = () => {
     if (!vp.layout) { toast('MSPACE works on a layout tab.'); return; }
     if (vp.mspace) return;
-    const v = vp.doc.entities.find((x) => x.type === 'VIEWPORT' && x.vpId !== 1 && x.on !== false && x.width > 0 && x.height > 0);
+    const v = vp.doc.entities.find((x) => x.type === 'VIEWPORT' && !isPaperViewport(x) && x.on !== false && x.width > 0 && x.height > 0);
     if (!v) toast('This layout has no viewport to enter.'); else enterMspace(app, v);
   };
   app.layoutCommands = { vplock: () => vplock(app), ms, mspace: ms, ps: () => exitMspace(app), pspace: () => exitMspace(app) };

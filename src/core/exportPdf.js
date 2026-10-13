@@ -8,7 +8,7 @@ import {
   clip, clipEvenOdd, endPath, concatTransformationMatrix, setGraphicsState,
 } from 'pdf-lib';
 import { buildScene, docWithFrozen, infiniteItem } from './render.js';
-import { layoutPage, viewportScale } from './layouts.js';
+import { layoutPage, viewportScale, isPaperViewport } from './layouts.js';
 import {
   walkOps, colorRgb, lineweightMm, dashUnits, hatchFamilies, layoutText, markerSize, arrowTriangle, runRgb, mtextItemLayout,
 } from './exportSvg.js';
@@ -246,7 +246,7 @@ export async function exportPdf(doc, opts = {}) {
     const modelScene = opts.modelScene ?? ((fr) => buildScene(docWithFrozen(doc, fr)));
     const paper = { ox, oy, k };
     for (const v of layout.entities) {
-      if (v.type !== 'VIEWPORT' || v.vpId === 1 || v.on === false || !(v.width > 0 && v.height > 0)) continue;
+      if (v.type !== 'VIEWPORT' || isPaperViewport(v) || v.on === false || !(v.width > 0 && v.height > 0)) continue;
       const s = viewportScale(v), cx = X(v.c.x), cy = Y(v.c.y), hw = (v.width / 2) * k, hh = (v.height / 2) * k;
       ops.push(pushGraphicsState(), moveTo(cx - hw, cy - hh), lineTo(cx + hw, cy - hh), lineTo(cx + hw, cy + hh), lineTo(cx - hw, cy + hh), closePath(), clip(), endPath());
       const t = v.twist || 0, c = Math.cos(t), sn = Math.sin(t);

@@ -25,6 +25,7 @@ import { drain } from './slice.js';
 import { strokeLayout, shxSubstitute } from './shx.js';
 import { isGdtFont, gdtText, gdtModel } from './gdt.js';
 import { textFrame, textCorners, textAdvance } from './textMetrics.js';
+import { isPaperViewport } from './layouts.js';
 
 const TAU = Math.PI * 2;
 const OP_M = 0, OP_L = 1, OP_A = 2, OP_E = 3, OP_Z = 4;
@@ -1400,7 +1401,7 @@ export function drawLayout(ctx, paperScene, view, layout, paperRectsOf, modelSce
   ctx.fillStyle = 'rgba(0,0,0,0.35)'; const sr = r(sheet); ctx.fillRect(sr[0] + 4, sr[1] + 4, sr[2], sr[3]);
   ctx.fillStyle = PAPER_COLOUR; ctx.fillRect(...sr);
   ctx.strokeStyle = '#888'; ctx.lineWidth = 1; ctx.setLineDash([4, 3]); ctx.strokeRect(...r(printable)); ctx.setLineDash([]);
-  const vports = paperScene.doc.entities.filter((e) => e.type === 'VIEWPORT' && e.vpId !== 1 && e.on !== false && e.width > 0 && e.height > 0);
+  const vports = paperScene.doc.entities.filter((e) => e.type === 'VIEWPORT' && !isPaperViewport(e) && e.on !== false && e.width > 0 && e.height > 0);
   for (const v of vports) {
     const k = (v.height / (v.viewHeight || 1)) * z, cx = sx(v.c.x), cy = sy(v.c.y), w = v.width * z, h = v.height * z;
     const D = Math.hypot(w, h) + 2;

@@ -21,7 +21,7 @@ import { dimDefFromTags } from './dims.js';
 import { mtextPlain } from './mtext.js';
 import { mleaderFromTags, mleaderStyleFromTags } from './mleader.js';
 import { mlineFromTags, mlineStyleFromTags } from './mline.js';
-import { parseLayoutObject, readViewport } from './layouts.js';
+import { parseLayoutObject, readViewport, markPaperViewport } from './layouts.js';
 import { imageDefFromTags, imageFromTags } from './image.js';
 
 const DEG = Math.PI / 180;
@@ -921,6 +921,7 @@ function parseTokens(tk, onProgress = null) {
     layouts.push(lo);
   }
   layouts.sort((a, b) => a.tab - b.tab);
+  for (const lo of layouts) markPaperViewport(lo.entities);
   doc.layouts = layouts;
   // draw order: each table's owner is the block record of a space or block definition
   for (const t of sortents) {
