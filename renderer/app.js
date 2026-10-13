@@ -651,6 +651,7 @@ class App {
   setCanvasDark(dark) {
     this.vp.settings.dark = dark;
     document.getElementById('stage').style.background = dark ? CANVAS_BG.dark : CANVAS_BG.light;
+    document.getElementById('stage').dataset.canvas = dark ? 'dark' : 'light'; // the command history strip reads it
     this.vp.requestRender();
   }
   showCursor(p) { document.getElementById('coord').textContent = p ? `X ${p.x.toFixed(3)}   Y ${p.y.toFixed(3)}` : ''; }
