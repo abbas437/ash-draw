@@ -59,7 +59,7 @@ export function createDraw2Tools(h, { Tool }) {
         else if (this.step === 'mode') this.step = 'radius';
         return true;
       }
-      if (e.key === 'Escape') { if (this.step !== 'sides') this.reset(); else this.cancel(); return true; }
+      if (e.key === 'Escape') { this.reset(); this.cancel(); return true; } // Esc cancels the command, as in AutoCAD
       return false;
     }
     draw(c) {
@@ -100,7 +100,7 @@ export function createDraw2Tools(h, { Tool }) {
     }
     key(e) {
       if (e.key === 'Enter') { this.commit(); return true; }
-      if (e.key === 'Escape') { if (this.pts.length) { this.pts = []; this.vp.lastPoint = null; } else this.cancel(); return true; }
+      if (e.key === 'Escape') { this.pts = []; this.vp.lastPoint = null; this.cancel(); return true; } // discards the points
       return false;
     }
     draw(c) {
@@ -113,10 +113,11 @@ export function createDraw2Tools(h, { Tool }) {
   }
 
   // ---- DONUT -----------------------------------------------------------------------------------
-  // inside diameter -> outside diameter -> centres (each one undo step) until Enter / Esc.
+  // inside diameter -> outside diameter -> centres until Enter / Esc. All donuts of one run are ONE undo step (as U after
+  // DONUT in AutoCAD): each new donut is folded into the step the first one opened.
   class DonutTool extends Tool {
     constructor(host) { super(host); this.inside = 0.5; this.outside = 1; }
-    activate() { super.activate(); this.step = 'inside'; }
+    activate() { super.activate(); this.step = 'inside'; this.run = null; }
     get prompt() {
       if (this.step === 'inside') return `DONUT  inside diameter <${fmt(this.inside)}>`;
       if (this.step === 'outside') return `DONUT  outside diameter <${fmt(this.outside)}>`;
@@ -127,7 +128,10 @@ export function createDraw2Tools(h, { Tool }) {
       if (this.step !== 'center') return;
       const d = this.shape(p), e = makePolyline(d.vertices, true, this.props());
       e.width = d.width;
+      const s = this.h.session, prev = s.undoStack.at(-1);
       this.add(e);
+      const last = s.undoStack.at(-1);
+      if (this.run != null && prev?.id === this.run && last !== prev) { s.undoStack.pop(); prev.ops.push(...last.ops); } else this.run = last?.id ?? null;
     }
     text(s) {
       if (this.step === 'center') return false;

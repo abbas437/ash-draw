@@ -27,7 +27,7 @@ test('aliases', () => {
 });
 
 test('POLYGON: sides, centre, I/C, typed or picked radius; defaults remembered; Edge', () => {
-  const { tools: { polygon: t }, ents, type, toasts } = rig();
+  const { h, tools: { polygon: t }, ents, type, toasts } = rig();
   t.activate();
   assert.match(t.prompt, /number of sides <4>/);
   type(t, '7'); type(t, '0,0');
@@ -52,6 +52,8 @@ test('POLYGON: sides, centre, I/C, typed or picked radius; defaults remembered; 
   e = ents().at(-1); assert.equal(e.vertices.length, 4);
   assert.deepEqual(e.vertices.map((v) => [Math.round(v.x), Math.round(v.y)]), [[0, 0], [2, 0], [2, 2], [0, 2]]);
   assert.equal(ents().length, 3);
+  type(t, '5'); type(t, '0,0'); t.key({ key: 'Escape' });
+  assert.equal(h.tool, 'select', 'one Esc mid-polygon ends the command'); assert.equal(ents().length, 3);
 });
 
 test('SPLINE: fit points, U removes, Enter finishes, C closes, Esc cancels', () => {
@@ -68,10 +70,10 @@ test('SPLINE: fit points, U removes, Enter finishes, C closes, Esc cancels', () 
   type(t, '2,3'); type(t, 'c');
   e = ents().at(-1); assert.equal(e.closed, true); assert.equal(e.fit.length, 3);
   type(t, '0,0'); type(t, '1,1'); t.key({ key: 'Escape' }); assert.equal(ents().length, 2);
-  t.key({ key: 'Escape' }); assert.equal(h.tool, 'select');
+  assert.equal(h.tool, 'select', 'one Esc mid-spline ends the command');
 });
 
-test('DONUT: diameters remembered, one undo step per centre, Enter exits', () => {
+test('DONUT: diameters remembered, all centres of one run are one undo step, Enter exits', () => {
   const { h, tools: { donut: t }, ents, type } = rig();
   t.activate();
   assert.match(t.prompt, /inside diameter <0.5>/);
@@ -83,7 +85,9 @@ test('DONUT: diameters remembered, one undo step per centre, Enter exits', () =>
   const e = ents()[1];
   assert.equal(e.type, 'LWPOLYLINE'); assert.ok(e.closed); assert.equal(e.width, 1);
   close(e.vertices[0].x, 8.5); close(e.vertices[1].x, 11.5);
-  h.session.undo(); assert.equal(ents().length, 1, 'each donut is its own undo step');
+  h.session.undo(); assert.equal(ents().length, 0, 'one undo removes every donut of the run');
+  type(t, '20,0'); assert.equal(ents().length, 1, 'a donut after the undo opens a new step');
+  h.session.undo(); assert.equal(ents().length, 0);
   type(t, ''); assert.equal(h.tool, 'select');
   t.activate(); assert.match(t.prompt, /<2>/); type(t, ''); assert.match(t.prompt, /<4>/);
 });
