@@ -26,7 +26,7 @@ export function createViewTools(h, { Tool }) {
       if (this.a || this.mode) return false; // corners are typed as coordinates
       const r = parseZoomInput(s);
       if (!r) return false;
-      if (r.paper) { h.toast(`${s.trim().toUpperCase()} is not supported yet.`); this.cancel(); return true; }
+      if (r.mode === 'xp') { this.cancel(); h.zoomPaperScale(r.k); return true; }
       if (r.scale) { this.done(() => this.vp.zoomBy(r.scale)); return true; }
       switch (r.opt) {
         case 'all': case 'extents': this.done(() => this.vp.zoomExtents()); break;

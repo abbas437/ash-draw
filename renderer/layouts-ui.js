@@ -241,6 +241,13 @@ export function initLayouts(app) {
     if (!v) toast('This layout has no viewport to enter.'); else enterMspace(app, v);
   };
   app.layoutCommands = { vplock: () => vplock(app), ms, mspace: ms, ps: () => exitMspace(app), pspace: () => exitMspace(app) };
+  /** ZOOM nXP: viewport scale n paper units per model unit, centre kept; a locked viewport keeps its scale */
+  app.zoomPaperScale = (k) => {
+    const m = vp.mspace;
+    if (!m) { toast('nXP works inside a layout viewport (MS).'); return; }
+    if (m.vp.locked) { toast('Viewport is locked.'); return; }
+    setViewportScale(app, 1 / k);
+  };
   vp.on('view', () => { if (vp.mspace) { if (syncViewport(vp)) touchDrawing(app); renderVpScale(app); } });
   vp.canvas.addEventListener('contextmenu', (e) => viewportMenu(app, e));
   vp.modelScene = (frozen) => {

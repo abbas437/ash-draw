@@ -44,10 +44,13 @@ export function parseZoomInput(str) {
   const s = String(str).trim().toLowerCase();
   const opts = { a: 'all', all: 'all', e: 'extents', extents: 'extents', w: 'window', window: 'window', p: 'previous', previous: 'previous', o: 'object', object: 'object' };
   if (opts[s]) return { opt: opts[s] };
-  const m = /^([+]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)\s*(xp|x)$/.exec(s.replace(',', '.'));
+  const t = s.replace(',', '.'), N = '[+]?(?:\\d+\\.?\\d*|\\.\\d+)(?:e[+-]?\\d+)?';
+  const xp = new RegExp(`^(${N})(?:/(${N}))?\\s*xp$`).exec(t); // nXP: paper units per model unit, n decimal or a/b
+  if (xp) { const k = Number(xp[1]) / (xp[2] === undefined ? 1 : Number(xp[2])); return k > 0 && Number.isFinite(k) ? { mode: 'xp', k } : null; }
+  const m = new RegExp(`^(${N})\\s*x$`).exec(t);
   if (!m) return null;
   const k = Number(m[1]);
-  return k > 0 && Number.isFinite(k) ? { scale: k, paper: m[2] === 'xp' } : null;
+  return k > 0 && Number.isFinite(k) ? { scale: k } : null;
 }
 
 /** union of the bounding boxes of entities -> {minx, miny, maxx, maxy} or null */

@@ -88,7 +88,7 @@ try {
   step = 'ZOOM nXP';
   await typeCmd('Z'); await typeCmd('2xp');
   assert.equal((await view()).zoom, two.zoom, 'nXP leaves the view alone');
-  assert.match(await page.locator('body').textContent(), /2XP is not supported yet/);
+  assert.match(await page.locator('#toast').textContent(), /works inside a layout viewport \(MS\)\./);
   assert.equal(await toolId(), 'select', 'back to Select after nXP');
 
   step = 'ID on a typed point';
@@ -133,6 +133,34 @@ try {
   step = 'RE';
   await typeCmd('RE');
   assert.match(await page.locator('#toast').textContent(), /Regenerating model\./);
+
+  step = 'ZOOM nXP: 1/50xp inside a layout viewport sets 1:50, keeps the centre; VPLOCK and paper space refuse';
+  await page.evaluate(async () => {
+    const { readDxf } = await import('/src/core/dxfRead.js');
+    const bytes = new Uint8Array(await (await fetch('/test/fixtures/layouts_r2000.dxf')).arrayBuffer());
+    window.app.installDoc(readDxf(bytes), { path: null, name: 'layouts.dxf', format: 'dxf' });
+  });
+  await page.click('#spacebar button[data-space="Layout1"]');
+  await typeCmd('z'); await typeCmd('1/50xp');
+  assert.match(await page.locator('#toast').textContent(), /works inside a layout viewport \(MS\)\./);
+  await typeCmd('ms');
+  assert.ok(await page.evaluate(() => !!window.app.vp.mspace), 'MS enters the viewport');
+  await page.locator('#vpscale').selectOption('100');
+  const vpEnt = () => page.evaluate(() => { const v = window.app.vp.mspace.vp; return { h: v.height, vh: v.viewHeight, cx: v.viewCenter.x, cy: v.viewCenter.y }; });
+  const a = await vpEnt();
+  assert.ok(Math.abs(a.vh - a.h * 100) < 1e-6 * a.vh, 'set up at 1:100');
+  await typeCmd('z'); await typeCmd('1/50xp');
+  const b = await vpEnt();
+  assert.ok(Math.abs(b.vh - b.h * 50) < 1e-6, `1/50xp -> viewHeight ${b.vh}, expected ${b.h * 50}`);
+  assert.ok(Math.abs(b.cx - a.cx) < 1e-6 && Math.abs(b.cy - a.cy) < 1e-6, 'view centre kept');
+  assert.equal(await page.evaluate(() => document.getElementById('vpscale').value), '50', 'scale box shows 1:50');
+  await typeCmd('vplock');
+  await typeCmd('z'); await typeCmd('2xp');
+  assert.match(await page.locator('#toast').textContent(), /Viewport is locked\./);
+  assert.equal((await vpEnt()).vh, b.vh, 'locked viewport keeps its scale');
+  await typeCmd('vplock'); await typeCmd('ps');
+  await typeCmd('z'); await typeCmd('2xp');
+  assert.match(await page.locator('#toast').textContent(), /works inside a layout viewport \(MS\)\./);
 
   assert.deepEqual(problems, []);
   console.log('cmdline e2e: OK');
