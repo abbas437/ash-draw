@@ -313,7 +313,7 @@ function ocsMatrix(rec, elev) {
   return o && [o.ax[0], o.ax[1], o.ay[0], o.ay[1], o.n[0] * elev, o.n[1] * elev];
 }
 const OCS_ELEVATION = {
-  LWPOLYLINE: 38, POLYLINE: 30, CIRCLE: 30, ARC: 30, TEXT: 30, ATTRIB: 30, ATTDEF: 30, INSERT: 30, SOLID: 30, TRACE: 30, HATCH: 30, DIMENSION: 31, ARC_DIMENSION: 31,
+  LWPOLYLINE: 38, POLYLINE: 30, CIRCLE: 30, ARC: 30, TEXT: 30, ATTRIB: 30, ATTDEF: 30, INSERT: 30, SOLID: 30, TRACE: 30, HATCH: 30, DIMENSION: 31, ARC_DIMENSION: 31, LARGE_RADIAL_DIMENSION: 31,
 };
 const HALIGN_MIRROR = { 0: 2, 2: 0 };
 /** TEXT seen through a mirroring map m (det < 0) is drawn backwards in AutoCAD. Glyphs are not mirrored here: the
@@ -643,7 +643,7 @@ function buildEntity(rec, doc, extra) {
     }
     case 'INSERT': e = buildInsert(rec, o); break;
     case 'HATCH': e = buildHatch(rec, o, doc); break;
-    case 'DIMENSION': case 'ARC_DIMENSION': e = buildDimension(rec, o); break; // ARC_DIMENSION: def.kind 'arc'
+    case 'DIMENSION': case 'ARC_DIMENSION': case 'LARGE_RADIAL_DIMENSION': e = buildDimension(rec, o); break; // def.kind 'arc' / 'jogged'
     case 'LEADER': e = buildLeader(rec, o); break;
     case 'MLEADER': case 'MULTILEADER': {
       const tags = rec.tags();

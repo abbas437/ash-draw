@@ -171,7 +171,7 @@ export function writeDxf(doc, opts = {}) {
   const xdApps = new Set();
   const imageDefsOut = new Map(); // file path -> { h, def, reactors: IMAGE handles }
   const hImageDict = H(), hWipeoutVars = H();
-  let hasWipeouts = false, hasArcDims = false;
+  let hasWipeouts = false, hasArcDims = false, hasJoggedDims = false;
   function writeEntity(o, e, owner) {
     const ok = writeEntityBody(o, e, owner);
     if (ok && e.xdata && XD_TYPES.has(e.type)) {
@@ -303,8 +303,9 @@ export function writeDxf(doc, opts = {}) {
       }
       case 'DIMENSION': {
         if (!doc.blocks.has(e.block)) { report.skipped['DIMENSION (block missing)'] = (report.skipped['DIMENSION (block missing)'] ?? 0) + 1; return false; }
-        const dimName = e.def?.kind === 'arc' ? 'ARC_DIMENSION' : 'DIMENSION';
-        if (dimName !== 'DIMENSION' && !asGeometry) hasArcDims = true;
+        const dimName = e.def?.kind === 'arc' ? 'ARC_DIMENSION' : e.def?.kind === 'jogged' ? 'LARGE_RADIAL_DIMENSION' : 'DIMENSION';
+        if (dimName === 'ARC_DIMENSION' && !asGeometry) hasArcDims = true;
+        if (dimName === 'LARGE_RADIAL_DIMENSION' && !asGeometry) hasJoggedDims = true;
         if (e.raw && e.raw.length && !asGeometry) {
           head(o, e, dimName, owner);
           for (const [c, v] of e.raw) o.p(c, v);
@@ -467,6 +468,7 @@ export function writeDxf(doc, opts = {}) {
     cls('WIPEOUT', 'AcDbWipeout', 'WipeOut', 127);
   }
   if (hasArcDims) cls('ARC_DIMENSION', 'AcDbArcDimension', 'ObjectDBX Classes', 1025);
+  if (hasJoggedDims) cls('LARGE_RADIAL_DIMENSION', 'AcDbRadialDimensionLarge', 'ObjectDBX Classes', 1025);
   out.p(0, 'ENDSEC');
 
   // ---- tables ------------------------------------------------------------------------------------
