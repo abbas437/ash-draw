@@ -28,6 +28,7 @@ Built with Electron by ASH Technical & Project Management Services (ASH PMCS).
 - **Layers and properties** panels, including layer on/off and lock, colour, linetype and lineweight; measure tool.
 - **Select and clean up**: QSELECT (Quick Select by object type, property, operator and value), SELECTSIMILAR (same type and layer), PURGE (unused blocks, layers, linetypes, text and dimension styles, with nested items and zero-length geometry; one undo step).
 - **Arc length dimension**: DIMARC (DAR) dimensions an arc or a polyline arc segment (`⌒` before the length; one undo step); ARC_DIMENSION entities are read, drawn, moved and saved.
+- **Jogged radius dimension**: DIMJOGGED (DJO) dimensions a large arc or circle from an override centre with a jogged leader (one undo step); LARGE_RADIAL_DIMENSION entities are read, drawn, moved and saved.
 - **Save and convert**: DXF (R2000, lossless for everything the program supports), DWG (experimental, verified after saving),
   and export to PDF (vector), SVG and PNG.
 
