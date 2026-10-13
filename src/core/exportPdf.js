@@ -7,7 +7,7 @@ import {
   setStrokingRgbColor, setFillingRgbColor, moveTo, lineTo, appendBezierCurve, closePath, stroke,
   clip, clipEvenOdd, endPath, concatTransformationMatrix, setGraphicsState,
 } from 'pdf-lib';
-import { buildScene, docWithFrozen } from './render.js';
+import { buildScene, docWithFrozen, infiniteItem } from './render.js';
 import { layoutPage, viewportScale } from './layouts.js';
 import {
   walkOps, colorRgb, lineweightMm, dashUnits, hatchFamilies, layoutText, markerSize, arrowTriangle, runRgb, mtextItemLayout,
@@ -165,9 +165,11 @@ export async function exportPdf(doc, opts = {}) {
     return { font: HELV[variant(p)], text: [...t].map((ch) => (helvChars.has(ch.codePointAt(0)) ? ch : (count && missing++, '?'))).join('') };
   };
 
-  const drawItems = async (scn) => {
+  // box: the world window plotted, to which XLINE / RAY items are clipped (AutoCAD plots their visible part)
+  const drawItems = async (scn, box) => {
   msize = markerSize(scn.bbox);
-  for (const it of scn.items) {
+  for (let it of scn.items) {
+    if (it.inf && !(it = infiniteItem(it, box))) continue;
     if (it.kind === 'path') {
       ops.push(pushGraphicsState()); strokeState(it.style, dashPt(dashUnits(doc, it.style)));
       pathOps(it.ops); ops.push(stroke(), popGraphicsState());
@@ -245,12 +247,13 @@ export async function exportPdf(doc, opts = {}) {
       const t = v.twist || 0, c = Math.cos(t), sn = Math.sin(t);
       if (t) ops.push(concatTransformationMatrix(c, sn, -sn, c, cx - c * cx + sn * cy, cy - sn * cx - c * cy)); // turn about the viewport centre
       k = paper.k / s; ox = cx - v.viewCenter.x * k; oy = cy - v.viewCenter.y * k;
-      await drawItems(modelScene(v.frozen ?? []));
+      const R = Math.hypot(v.width, v.height) / 2 / s; // the viewport's model window (any twist), clipped above
+      await drawItems(modelScene(v.frozen ?? []), { minx: v.viewCenter.x - R, miny: v.viewCenter.y - R, maxx: v.viewCenter.x + R, maxy: v.viewCenter.y + R });
       ({ ox, oy, k } = paper);
       ops.push(popGraphicsState());
     }
   }
-  await drawItems(scene);
+  await drawItems(scene, bb);
   if (ops.length) page.pushOperators(...ops.splice(0));
   if (region) page.pushOperators(popGraphicsState());
   if (missing) warnings.push(`${missing} text characters could not be drawn (no Unicode font)`);

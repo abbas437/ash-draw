@@ -1,6 +1,6 @@
 // Picking, box selection, object snaps and ortho/polar helpers.
 // Pure module: world coordinates (Y up); every tolerance is in WORLD units (caller: pixels / zoom).
-import { bboxOf, growBox, unionBox, distanceToEntity, nearestPoint, snapPoints, intersections, primsIntersections, toPrims, distToSegment, explode, tessellate, ccwSweep, DEG } from './geom.js';
+import { bboxOf, isInfinite, clipInfinite, growBox, unionBox, distanceToEntity, nearestPoint, snapPoints, intersections, primsIntersections, toPrims, distToSegment, explode, tessellate, ccwSweep, DEG } from './geom.js';
 import { drain } from './slice.js';
 
 const TAU = Math.PI * 2;
@@ -18,6 +18,7 @@ const RANK = new Map(SNAP_KINDS.map((k, i) => [k, i]));
 
 /** block entities _insertBoxSteps bounds per step */
 const BOX_CHUNK = 2000;
+const INF_BOX = Object.freeze({ minx: -Infinity, miny: -Infinity, maxx: Infinity, maxy: Infinity });
 const finiteBox = (b) => !!b && Number.isFinite(b.minx) && Number.isFinite(b.miny) && Number.isFinite(b.maxx) && Number.isFinite(b.maxy);
 const boxesTouch = (a, b) => a.minx <= b.maxx && a.maxx >= b.minx && a.miny <= b.maxy && a.maxy >= b.miny;
 const boxInside = (a, b) => a.minx >= b.minx && a.maxx <= b.maxx && a.miny >= b.miny && a.maxy <= b.maxy;
@@ -58,6 +59,7 @@ export class SpatialIndex {
 
   /** Cached bbox of an entity object (null when empty / not finite). Replaced objects get a fresh entry. */
   bboxOf(e) {
+    if (isInfinite(e)) return INF_BOX; // XLINE / RAY: indexed (oversize) for picking, though outside the extents
     if (this._boxCache.has(e)) return this._boxCache.get(e);
     const b = safe(() => bboxOf(e, this.doc), null);
     const r = finiteBox(b) ? b : null;
@@ -133,6 +135,7 @@ export class SpatialIndex {
       if (!box) continue;
       const reach = reachOf(e, box);
       entries.push({ e, box, reach, order: i, cells: null, mark: 0 });
+      if (box === INF_BOX) continue; // not part of the grid's extent
       ext = ext ? { minx: Math.min(ext.minx, reach.minx), miny: Math.min(ext.miny, reach.miny), maxx: Math.max(ext.maxx, reach.maxx), maxy: Math.max(ext.maxy, reach.maxy) } : { ...reach };
     }
     this._setupGrid(ext, entries.length);
@@ -163,7 +166,7 @@ export class SpatialIndex {
   _insert(en) {
     this._entries.set(en.e.id, en);
     const r = this._range(en.reach);
-    if ((r[2] - r[0] + 1) * (r[3] - r[1] + 1) > OVERSIZE_CELLS) { this._oversize.push(en); return; }
+    if (en.box === INF_BOX || (r[2] - r[0] + 1) * (r[3] - r[1] + 1) > OVERSIZE_CELLS) { this._oversize.push(en); return; }
     en.cells = r;
     for (let y = r[1]; y <= r[3]; y++) for (let x = r[0]; x <= r[2]; x++) {
       const k = y * this._cols + x;
@@ -248,6 +251,7 @@ function segmentHitsBox(a, b, box) {
 }
 function geometryTouchesBox(e, box, doc) {
   if (e.type === 'TEXT' || e.type === 'MTEXT') return true; // text: its bbox is its geometry
+  if (isInfinite(e)) return !!clipInfinite(e.p, e.dir, e.type === 'RAY', box);
   const pls = safe(() => tessellate(e, doc, 0), []);
   for (const pl of pls) {
     if (pl.length === 1 && pl[0].x >= box.minx && pl[0].x <= box.maxx && pl[0].y >= box.miny && pl[0].y <= box.maxy) return true;
@@ -271,6 +275,10 @@ export function selectInBox(index, box, crossing, opts = {}) {
 }
 
 function perpendicularFeet(e, from) {
+  if (isInfinite(e)) {
+    const t = (from.x - e.p.x) * e.dir.x + (from.y - e.p.y) * e.dir.y;
+    return e.type === 'RAY' && t < 0 ? [] : [{ x: e.p.x + t * e.dir.x, y: e.p.y + t * e.dir.y }];
+  }
   if (e.type === 'LINE') {
     const { p1: a, p2: b } = e;
     const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;

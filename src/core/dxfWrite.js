@@ -186,6 +186,8 @@ export function writeDxf(doc, opts = {}) {
     switch (e.type) {
       case 'LINE':
         head(o, e, 'LINE', owner); o.p(100, 'AcDbLine'); o.pt(10, e.p1.x, e.p1.y); o.pt(11, e.p2.x, e.p2.y); return true;
+      case 'XLINE': case 'RAY':
+        head(o, e, e.type, owner); o.p(100, e.type === 'RAY' ? 'AcDbRay' : 'AcDbXline'); o.pt(10, e.p.x, e.p.y); o.pt(11, e.dir.x, e.dir.y); return true;
       case 'CIRCLE':
         head(o, e, 'CIRCLE', owner); o.p(100, 'AcDbCircle'); o.pt(10, e.c.x, e.c.y); o.p(40, e.r); return true;
       case 'ARC':

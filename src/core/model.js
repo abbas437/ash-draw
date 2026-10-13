@@ -122,6 +122,12 @@ export function parseTransparency(text) {
 const pt = (p) => ({ x: p.x, y: p.y });
 
 export const makeLine = (p1, p2, o = {}) => ({ ...base('LINE', o), p1: pt(p1), p2: pt(p2) });
+/** XLINE (infinite both ways) or RAY (infinite forward from p); dir is normalised. null for a zero direction. */
+export function makeXline(type, p, dir, o = {}) {
+  const l = Math.hypot(dir.x, dir.y);
+  if (!(l > 0) || !Number.isFinite(l)) return null;
+  return { ...base(type, o), p: pt(p), dir: { x: dir.x / l, y: dir.y / l } };
+}
 export const makeCircle = (c, r, o = {}) => ({ ...base('CIRCLE', o), c: pt(c), r });
 export const makeArc = (c, r, a0, a1, o = {}) => ({ ...base('ARC', o), c: pt(c), r, a0, a1 });
 export const makeEllipse = (c, major, ratio, a0 = 0, a1 = Math.PI * 2, o = {}) =>

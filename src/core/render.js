@@ -14,7 +14,7 @@ import { resolveColor, runColor } from './aci.js';
 import { parseMText, layoutMText } from './mtext.js';
 import {
   DEG, compose, translation, rotation, scaling, apply, isSimilarity, matScale, transformEntity, bulgeToArc,
-  ccwSweep, tessellate, ellipsePoint, unionBox, growBox, dimensionContent,
+  ccwSweep, tessellate, ellipsePoint, unionBox, growBox, dimensionContent, applyVec, clipInfinite,
 } from './geom.js';
 import { plainText } from './dxfRead.js';
 import { mleaderParts } from './mleader.js';
@@ -230,6 +230,12 @@ class Builder {
 
     switch (e.type) {
       case 'LINE': M(P(e.p1)); L(P(e.p2)); this.push(mkItem('path'), rootId); return;
+      case 'XLINE': case 'RAY': {
+        // no bbox: out of the extents, always a grid candidate; its path is made per drawing (infiniteOps)
+        const d = m ? applyVec(m, e.dir) : e.dir, l = Math.hypot(d.x, d.y);
+        this.push({ kind: 'path', ops: [], style, bbox: null, inf: { p: P(e.p), dir: { x: d.x / l, y: d.y / l }, ray: e.type === 'RAY' } }, rootId);
+        return;
+      }
       case 'CIRCLE': {
         const [c, r] = mapArc(e.c, e.r, 0, TAU);
         M({ x: c.x + r, y: c.y }); arcOp(c, r, 0, TAU); this.push(mkItem('path'), rootId); return;
@@ -670,6 +676,12 @@ function dashFor(doc, style, zoom) {
   return arr.length % 2 ? [...arr, ...arr] : arr;
 }
 
+/** an XLINE / RAY scene item (it.inf) as drawn in a world box: a copy whose ops are its segment clipped to the box,
+ *  or null when it misses the box. The scene item itself is shared by every view, so it is not changed. */
+export function infiniteItem(it, box) {
+  const s = clipInfinite(it.inf.p, it.inf.dir, it.inf.ray, box);
+  return s ? { ...it, ops: [OP_M, s[0].x, s[0].y, OP_L, s[1].x, s[1].y] } : null;
+}
 /** CSS px around the view inside which path coordinates are handed to the canvas unchanged (see drawScene) */
 const GUARD_PX = 2048;
 /** arcs with a larger screen radius are drawn as chords of their visible part */
@@ -882,6 +894,7 @@ export function* drawSceneSteps(ctx, scene, view, opts = {}) {
   const prof = opts.profile; // optional (phase, info) callback after each phase (scripts/bench.mjs)
   const vis = visibleItems(scene, minx, miny, maxx, maxy);
   prof?.('query', vis.length);
+  const infPad = 16 / z, infBox = { minx: minx - infPad, miny: miny - infPad, maxx: maxx + infPad, maxy: maxy + infPad };
   // wipeouts mask what comes before them: the items are drawn in levels (see wipeoutLevels), each level's wipeout
   // fills (background colour) first, then its items batched as usual
   const levels = wipeoutLevels(scene);
@@ -893,8 +906,9 @@ export function* drawSceneSteps(ctx, scene, view, opts = {}) {
       const col = colorOf(st), a = aOf(st), key = a === 1 ? col : `${col}|${a}`;
       let l = map.get(key); if (!l) { map.set(key, (l = [])); l.col = col; l.a = a; } return l;
     };
-    for (const it of vis) {
+    for (let it of vis) {
       if (++work >= DRAW_TICK) { work = 0; yield; }
+      if (it.inf && !(it = infiniteItem(it, infBox))) continue;
       const k = it.kind;
       if (k === 'wipeout') continue;
       if (it.arrow || k === 'point') marks.push(it);
@@ -1070,8 +1084,9 @@ export function* drawSceneSteps(ctx, scene, view, opts = {}) {
     ctx.lineWidth = 2;
     ctx.setLineDash([6, 3]);
     for (const id of hi) {
-      const list = scene.byId.get(id);
+      let list = scene.byId.get(id);
       if (!list) continue;
+      if (list.some((it) => it.inf)) list = list.map((it) => (it.inf ? infiniteItem(it, infBox) : it)).filter(Boolean);
       for (const it of list) {
         if (it.kind === 'path' || it.kind === 'hatch' || it.kind === 'fill' || it.kind === 'image' || it.kind === 'wipeout') { ctx.beginPath(); strokePath(it.ops, 9); ctx.stroke(); }
         else if (it.kind === 'text' || it.kind === 'point') {
