@@ -23,6 +23,7 @@ import { iconSvg } from './icons.js';
 import { defaultLayout, cleanLayout, panelGroups, samePanel, quickRow, setQuickRow, compactKeys, foldMode, SEP } from './tool-layout.js';
 import { openCustomize, initToolContextMenu } from './tool-custom.js';
 import { loadDrawingImages } from './images.js';
+import { qselectDialog, selectSimilarCommand, purgeDialog } from './selclean.js';
 import { el, message, modal, confirmDialog, textDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
 import {
   OPEN_FILTERS, loadDrawing, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, extOf, UNIT_NAMES,
@@ -128,13 +129,14 @@ class App {
     const s = raw.trim();
     const t = this.tool;
     if (!s) { // Enter: finish the tool, or repeat the last command from idle
+      if (this.pendingEnter && this.toolId === 'select') { this.pendingEnter(); this.refreshPrompt(); return; } // select, then Enter (SELECTSIMILAR)
       if (this.toolId === 'select' && !t.hot) this.setTool(this.lastTool); else t.key({ key: 'Enter' });
       this.refreshPrompt(); return;
     }
     if (t.text?.(s)) { this.refreshPrompt(); return; }
     const low = s.toLowerCase();
     if (TOOL_ALIASES[low]) { this.setTool(TOOL_ALIASES[low]); return; }
-    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => this.vp.zoomExtents(), z: () => this.vp.zoomExtents(), 'zoom': () => this.vp.zoomExtents(), all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), find: () => this.find.open(), compare: () => this.compare(), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), units: () => this.unitsDialog(), un: () => this.unitsDialog(), ddunits: () => this.unitsDialog(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), ...this.layerCommands(), ...this.layoutCommands };
+    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => this.vp.zoomExtents(), z: () => this.vp.zoomExtents(), 'zoom': () => this.vp.zoomExtents(), all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), find: () => this.find.open(), compare: () => this.compare(), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), units: () => this.unitsDialog(), un: () => this.unitsDialog(), ddunits: () => this.unitsDialog(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), qselect: () => qselectDialog(this), selectsimilar: () => selectSimilarCommand(this), purge: () => purgeDialog(this), pu: () => purgeDialog(this), ...this.layerCommands(), ...this.layoutCommands };
     if (sys[low]) { sys[low](); return; }
     const last = this.vp.lastPoint ?? { x: 0, y: 0 };
     const dir = this.vp.lastPoint ? { x: this.vp.cursor.x - last.x, y: this.vp.cursor.y - last.y } : null;
@@ -431,7 +433,7 @@ class App {
     const M = [
       ['File', [['New', 'Ctrl+N', () => this.newDrawing()], ['Open…', 'Ctrl+O', () => this.open()], ['Recent files…', '', () => this.sessionStore.showRecent().catch((err) => message('Could not open the file', err.message || String(err)))], ['Close', 'Ctrl+W', () => this.closeTab()], '-', ['Compare…', 'COMPARE', () => this.compare()], '-', ['Save', 'Ctrl+S', () => this.save()], ['Save as DXF…', '', () => this.saveAs('dxf')], ['Save as DWG… (experimental)', '', () => this.saveAs('dwg')], '-',
         ['Print…', 'Ctrl+P', () => this.print()], ['Plot to PDF…', '', () => this.exportPdf()], ['Export SVG…', '', () => this.exportSvg()], ['Export PNG image…', '', () => this.exportPng()]]],
-      ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Paste', 'Ctrl+V', () => this.paste()], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()], ['Find and replace…', 'Ctrl+F', () => this.find.open()], '-', ['Preferences…', '', () => this.preferences()]]],
+      ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Paste', 'Ctrl+V', () => this.paste()], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()], ['Quick Select…', 'QSELECT', () => qselectDialog(this)], ['Select Similar', 'SELECTSIMILAR', () => selectSimilarCommand(this)], ['Find and replace…', 'Ctrl+F', () => this.find.open()], '-', ['Preferences…', '', () => this.preferences()]]],
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-',
         ['Show lineweights', 'F9', () => this.toggle('lineweights')], ['Model space background: dark', '', () => this.toggle('dark'), () => this.vp.settings.dark], '-',
         ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark'],
@@ -444,7 +446,7 @@ class App {
         ['Quick Access row', '', () => this.setToolLayout(setQuickRow(this.toolLayout, !this.toolLayout.quickRow)), () => this.toolLayout.quickRow], '-',
         ['Show markups', '', () => toggleMarkups(this), () => markupsShown(this.doc)], '-',
         ['External references…', 'XREF', () => xrefPanel(this)]]],
-      ['Format', [['Units…', 'UNITS', () => this.unitsDialog()]]],
+      ['Format', [['Units…', 'UNITS', () => this.unitsDialog()], ['Purge…', 'PURGE', () => purgeDialog(this)]]],
       ['Dimension', [...TOOL_BUTTONS.find(([g]) => g === 'Dimension')[2].map(([id, label, alias]) => [label, alias, () => this.setTool(id)]), '-', ['Dimension style…', 'D', () => this.dimStyles()]]],
       ['Help', [['What this program can and cannot do', '', () => this.limitations()], ['About', '', () => this.about()]]],
     ];
