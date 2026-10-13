@@ -48,11 +48,12 @@ test('Pan sits right next to Select in the side panel and in the Quick Access ro
 
 // ---- View > Customize tools (tool-layout.js) ------------------------------------------------------
 const TL = await import('../renderer/tool-layout.js');
+const own = (h) => h.filter((id) => !TL.DEFAULT_HIDDEN.includes(id)); // hidden ids besides the default-hidden tools
 const flatPanel = (l) => TL.panelGroups(l).map(([, key, items]) => [key, items.map(([id]) => id)]);
 
 test('customize: the default layout builds the panel and Quick Access row exactly as before', () => {
   const l = TL.defaultLayout();
-  assert.deepEqual(flatPanel(l), TOOL_BUTTONS.map(([, key, items]) => [key, items.map(([id]) => id)]));
+  assert.deepEqual(flatPanel(l), TOOL_BUTTONS.map(([, key, items]) => [key, items.map(([id]) => id).filter((id) => !TL.DEFAULT_HIDDEN.includes(id))]));
   assert.deepEqual(TL.panelGroups(l).map(([label]) => label), TOOL_BUTTONS.map(([label]) => label));
   const row = TL.quickRow(l);
   const want = QUICK_ACCESS.flatMap(([key, ids], i) => [...(i ? [TL.SEP] : []), ...ids.map((id) => [Object.hasOwn(APP_COMMANDS, id) ? 'file' : key, id])]);
@@ -84,7 +85,7 @@ test('customize: unknown ids are dropped, duplicates removed, Select cannot be h
   assert.ok(l.order.draw.includes('pline') && l.order.draw.indexOf('pline') === l.order.draw.indexOf('line') + 1, 'pline back after line');
   assert.deepEqual(l.order.markup, ['mkc', 'mkr', 'mkt']);
   assert.deepEqual(l.order.select, ['select', 'pan']);
-  assert.deepEqual(l.hidden, ['trim']);
+  assert.deepEqual(own(l.hidden), ['trim']);
   assert.deepEqual(l.quick, ['undo', '|', 'offset', 'layers']);
   assert.equal(l.quickRow, false);
   const all = Object.values(l.order).flat();
@@ -105,10 +106,10 @@ test('customize: prototype keys and huge arrays are harmless', () => {
   const l = TL.cleanLayout(raw);
   assert.equal({}.polluted, undefined);
   assert.deepEqual(Object.keys(l.order), TL.GROUP_KEYS);
-  assert.deepEqual(l.hidden, []);
+  assert.deepEqual(own(l.hidden), []);
   assert.deepEqual(l.quick, ['new']);
   const big = TL.cleanLayout({ hidden: Array(1e6).fill('trim'), quick: Array(1e6).fill('|'), groupOrder: Array(1e6).fill('draw'), order: { draw: Array(1e6).fill('line') } });
-  assert.deepEqual(big.hidden, ['trim']);
+  assert.deepEqual(own(big.hidden), ['trim']);
   assert.deepEqual(big.quick, ['|']);
   assert.deepEqual(TL.quickRow(big), []);
   assert.equal(big.groupOrder.length, TL.GROUP_KEYS.length);
@@ -117,8 +118,8 @@ test('customize: prototype keys and huge arrays are harmless', () => {
 test('customize: hide and show tools; a group with every tool hidden leaves the panel', () => {
   let l = TL.setHidden(TL.defaultLayout(), 'trim', true);
   assert.ok(!flatPanel(l).find(([k]) => k === 'modify')[1].includes('trim'));
-  assert.deepEqual(TL.setHidden(l, 'trim', false).hidden, []);
-  assert.deepEqual(TL.setHidden(l, 'select', true).hidden, ['trim'], 'Select stays');
+  assert.deepEqual(own(TL.setHidden(l, 'trim', false).hidden), []);
+  assert.deepEqual(own(TL.setHidden(l, 'select', true).hidden), ['trim'], 'Select stays');
   l = TL.setGroupShown(l, 'inquiry', false);
   assert.ok(!flatPanel(l).some(([k]) => k === 'inquiry'), 'empty group gone');
   l = TL.setGroupShown(l, 'select', false);
@@ -175,10 +176,10 @@ test('customize: View > Tools: Compact folds all but Select; the menu knows comp
 test('customize: a stored list longer than MAX_LIST is cut before it is read (an entry past the cap is ignored)', () => {
   const junk = Array.from({ length: TL.MAX_LIST }, (_, i) => `junk${i}`);
   const l = TL.cleanLayout({ hidden: [...junk, 'trim'], quick: [...junk, 'undo'] });
-  assert.deepEqual(l.hidden, [], 'hidden: Trim sits past the cap');
+  assert.deepEqual(own(l.hidden), [], 'hidden: Trim sits past the cap');
   assert.deepEqual(l.quick, [], 'quick: Undo sits past the cap');
   assert.ok(l.hidden.length <= TL.MAX_LIST && l.quick.length <= TL.MAX_LIST);
-  assert.deepEqual(TL.cleanLayout({ hidden: [...junk.slice(1), 'trim'] }).hidden, ['trim'], 'one entry inside the cap still counts');
+  assert.deepEqual(own(TL.cleanLayout({ hidden: [...junk.slice(1), 'trim'] }).hidden), ['trim'], 'one entry inside the cap still counts');
 });
 
 test('customize: the Dimension group stays in the panel (its style list lives there) with every dimension tool hidden or moved', () => {
@@ -194,4 +195,18 @@ test('customize: samePanel ignores Quick Access edits and sees panel edits', () 
   assert.equal(TL.samePanel(d, TL.quickRemove(d, 'undo')), true);
   assert.equal(TL.samePanel(d, TL.setQuickRow(d, false)), true);
   assert.equal(TL.samePanel(d, TL.setHidden(d, 'trim', true)), false);
+});
+
+test('customize: less common tools start hidden; a stored layout that already showed one keeps it shown', () => {
+  const d = TL.defaultLayout();
+  assert.deepEqual(d.hidden, [...TL.DEFAULT_HIDDEN]);
+  assert.ok(TL.DEFAULT_HIDDEN.every((id) => TL.isTool(id)), 'each default-hidden id is a panel tool');
+  assert.ok(!flatPanel(d).flatMap(([, ids]) => ids).includes('donut'));
+  // a layout saved before these tools existed: they arrive hidden
+  const old = TL.cleanLayout({ order: { draw: ['line', 'pline'] }, hidden: [] });
+  assert.ok(TL.DEFAULT_HIDDEN.every((id) => old.hidden.includes(id)));
+  // the user showed Donut and saved: the stored order lists it, so it stays shown
+  const shown = TL.cleanLayout(JSON.parse(JSON.stringify(TL.setHidden(d, 'donut', false))));
+  assert.ok(!shown.hidden.includes('donut'));
+  assert.ok(shown.hidden.includes('xline'));
 });

@@ -9,6 +9,9 @@ export const SEP = '|';
 export const ALWAYS_SHOWN = Object.freeze(['select']);
 /** the group View > Tools: Compact leaves open */
 export const COMPACT_KEEPS = 'select';
+/** less common tools that start hidden (View > Customize tools shows them; the command line always runs them), so the
+ *  Left panel still fits a 1366 x 768 screen; also hidden when they are new to a stored layout */
+export const DEFAULT_HIDDEN = Object.freeze(['donut', 'xline', 'ray', 'divide', 'align', 'breakatpoint']);
 export const MAX_LIST = 1000; // longer stored lists are cut before they are looked at
 
 export const GROUP_KEYS = Object.freeze(TOOL_BUTTONS.map(([, key]) => key));
@@ -26,7 +29,7 @@ export const isHidden = (layout, id) => layout.hidden.includes(id);
 export const inQuick = (layout, id) => layout.quick.includes(id);
 
 export function defaultLayout() {
-  return { groupOrder: [...GROUP_KEYS], order: Object.fromEntries([...DEFAULT_ORDER].map(([k, ids]) => [k, [...ids]])), hidden: [], quick: [...DEFAULT_QUICK], quickRow: true };
+  return { groupOrder: [...GROUP_KEYS], order: Object.fromEntries([...DEFAULT_ORDER].map(([k, ids]) => [k, [...ids]])), hidden: [...DEFAULT_HIDDEN], quick: [...DEFAULT_QUICK], quickRow: true };
 }
 
 const strings = (a) => (Array.isArray(a) ? a.slice(0, MAX_LIST).filter((x) => typeof x === 'string') : []);
@@ -50,6 +53,7 @@ export function cleanLayout(raw) {
   const src = isObj(v.order) ? v.order : {};
   const placed = new Set();
   const order = {};
+  const known = new Set(Object.values(src).flatMap((a) => strings(a))); // tools this layout has seen before
   for (const g of groupOrder) {
     order[g] = [];
     for (const id of strings(Object.hasOwn(src, g) ? src[g] : null)) if (TOOLS.has(id) && !placed.has(id)) { placed.add(id); order[g].push(id); }
@@ -69,7 +73,7 @@ export function cleanLayout(raw) {
     quick = strings(v.quick).filter((id) => (id === SEP ? true : isCommand(id) && !seen.has(id) && seen.add(id)))
       .filter((id, i, a) => id !== SEP || a[i - 1] !== SEP);
   }
-  return { groupOrder, order, hidden: uniq(strings(v.hidden).filter(canHide)), quick: [...quick], quickRow: v.quickRow !== false };
+  return { groupOrder, order, hidden: uniq([...strings(v.hidden), ...DEFAULT_HIDDEN.filter((id) => !known.has(id))].filter(canHide)), quick: [...quick], quickRow: v.quickRow !== false };
 }
 
 const copy = (l) => ({ groupOrder: [...l.groupOrder], order: Object.fromEntries(Object.entries(l.order).map(([g, a]) => [g, [...a]])), hidden: [...l.hidden], quick: [...l.quick], quickRow: l.quickRow });
