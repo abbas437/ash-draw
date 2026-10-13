@@ -238,16 +238,23 @@ function angularSector(def) {
   return { c, a0: rays[0][0], sweep: normAng(rays[1][0] - rays[0][0]), rays: [rays[0], rays[1]] };
 }
 
-/** arc length: dimension arc through `at`, concentric with the measured arc; radial extension lines (AutoCAD draws
- *  them parallel to the bisector for arcs under 90 degrees, which is not done here) */
+/** arc length: dimension arc through `at`, concentric with the measured arc. Extension lines are radial for an
+ *  included angle of 90 degrees or more; below that AutoCAD draws them parallel to the bisector (hence to each other) */
 function arcLengthGeom(def, st, out, o) {
   const z = sizes(st);
   const { c, a0, sweep } = angularSector({ kind: 'angular3', vertex: def.center, p1: def.p1, p2: def.p2, at: def.at });
   const R = len(sub(def.p1, c)), r = len(sub(def.at, c)), a1 = a0 + sweep;
   out.push(makeArc(c, r, a0 * DEG, a1 * DEG, o.dim));
+  const hs = sweep / 2, wb = { x: Math.cos(a0 + hs), y: Math.sin(a0 + hs) };
   for (const ang of [a0, a1]) {
     const w = { x: Math.cos(ang), y: Math.sin(ang) }, s = r >= R ? 1 : -1;
-    if (Math.abs(r - R) > 1e-9) out.push(makeLine(add(c, mul(w, R + s * z.exo)), add(c, mul(w, r + s * z.exe)), o.ext));
+    if (sweep < Math.PI / 2 - 1e-9) {
+      // orthogonal: from the arc end along the bisector direction to the dimension circle (outer root), DIMEXE past it
+      const q = r * r - R * R * Math.sin(hs) ** 2;
+      if (q < 0) continue;
+      const t = -R * Math.cos(hs) + Math.sqrt(q), sg = t >= 0 ? 1 : -1, e = add(c, mul(w, R));
+      if (Math.abs(t) > 1e-9) out.push(makeLine(add(e, mul(wb, sg * z.exo)), add(e, mul(wb, t + sg * z.exe)), o.ext));
+    } else if (Math.abs(r - R) > 1e-9) out.push(makeLine(add(c, mul(w, R + s * z.exo)), add(c, mul(w, r + s * z.exe)), o.ext));
   }
   out.push(...arrowEntities(st.DIMBLK, polar(c, r, a0), { x: Math.sin(a0), y: -Math.cos(a0) }, z.asz, o.dim));
   out.push(...arrowEntities(st.DIMBLK, polar(c, r, a1), { x: -Math.sin(a1), y: Math.cos(a1) }, z.asz, o.dim));

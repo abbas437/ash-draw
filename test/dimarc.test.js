@@ -68,3 +68,21 @@ test('ARC_DIMENSION survives write -> read, as read and when built by this progr
   assert.equal(again[0].def.kind, 'arc');
   assert.ok(near(again[0].def.p1, 10, 0) && near(again[0].def.p2, 0, 10) && near(again[0].def.center, 0, 0) && near(again[0].def.at, S, S));
 });
+
+test('arc length extension lines: parallel to the bisector under 90 degrees, radial from 90 degrees up', () => {
+  const st = defaultDimStyle('ISO-25');
+  const build = (deg) => {
+    const a = deg * Math.PI / 180;
+    const r = buildDimension({ kind: 'arc', center: { x: 0, y: 0 }, p1: { x: 10, y: 0 }, p2: { x: 10 * Math.cos(a), y: 10 * Math.sin(a) }, at: { x: 15 * Math.cos(a / 2), y: 15 * Math.sin(a / 2) } }, st);
+    return r.entities.filter((g) => g.type === 'LINE');
+  };
+  const dir = (l) => { const d = { x: l.p2.x - l.p1.x, y: l.p2.y - l.p1.y }, n = Math.hypot(d.x, d.y); return { x: d.x / n, y: d.y / n }; };
+  const l60 = build(60);
+  assert.equal(l60.length, 2);
+  const [d1, d2] = l60.map(dir), bis = { x: Math.cos(Math.PI / 6), y: Math.sin(Math.PI / 6) };
+  assert.ok(Math.abs(d1.x * d2.y - d1.y * d2.x) < 1e-9, 'parallel to each other');
+  assert.ok(l60.map(dir).every((d) => Math.abs(d.x * bis.y - d.y * bis.x) < 1e-9), 'parallel to the bisector');
+  const l120 = build(120);
+  assert.equal(l120.length, 2);
+  assert.ok(l120.every((l) => Math.abs(l.p1.x * l.p2.y - l.p1.y * l.p2.x) < 1e-9), 'radial: passes through the centre');
+});
