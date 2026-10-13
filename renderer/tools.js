@@ -19,6 +19,7 @@ import { MeasureGeomTool } from './tools-measure.js';
 import { gripsOf, applyGrip, gripEdit, gripsStretch, matchPropsEdit, nextGripMode, GRIP_MODES, gripMatrix, gripModeEdit, MATCH_SETTINGS, defaultMatchSettings } from './grips.js';
 import { el, modal, popMenu } from './ui.js';
 import { createModifyTools } from './tools-modify.js';
+import { createDraw2Tools } from './tools-draw2.js';
 import { createDimTools } from './tools-dims.js';
 import { createBlockTools } from './tools-blocks.js';
 import { createMTextTools } from './mtext-editor.js';
@@ -648,6 +649,7 @@ export function createTools(h) {
     measure: new MeasureGeomTool(h), area: new MeasureGeomTool(h, 'AREA'),
     move: new MoveTool(h), copy: new MoveTool(h, true), rotate: new RotateTool(h), scale: new ScaleTool(h), mirror: new MirrorTool(h),
     offset: new OffsetTool(h), trim: new TrimTool(h), extend: new TrimTool(h, true), erase: new EraseTool(h), explode: new ExplodeTool(h),
+    ...createDraw2Tools(h, { Tool }),
     ...createModifyTools(h, { Tool, ModifyTool }),
     ...createDimTools(h, { Tool }),
     ...createBlockTools(h, { Tool, ModifyTool }),
@@ -661,6 +663,7 @@ export function createTools(h) {
 export const TOOL_ALIASES = {
   mea: 'measure', measuregeom: 'measure', area: 'area', aa: 'area',
   l: 'line', line: 'line', pl: 'pline', pline: 'pline', polyline: 'pline', rec: 'rect', rect: 'rect', rectangle: 'rect',
+  pol: 'polygon', polygon: 'polygon', spl: 'spline', spline: 'spline', do: 'donut', donut: 'donut',
   c: 'circle', circle: 'circle', a: 'arc', arc: 'arc', el: 'ellipse', ellipse: 'ellipse', po: 'point', point: 'point',
   t: 'text', text: 'text', mt: 'mtext', mtext: 'mtext', h: 'hatch', hatch: 'hatch', di: 'measure', dist: 'measure', measure: 'measure',
   m: 'move', move: 'move', co: 'copy', cp: 'copy', copy: 'copy', ro: 'rotate', rotate: 'rotate', sc: 'scale', scale: 'scale',
