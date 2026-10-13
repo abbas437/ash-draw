@@ -4,7 +4,7 @@ import { iconSvg } from './icons.js';
 /** [group, colour key, [[command id, label, alias?], ...]]; the colour key picks the group's icon colour in styles.css */
 export const TOOL_BUTTONS = [
   ['Select', 'select', [['select', 'Select'], ['pan', 'Pan', 'P']]],
-  ['Draw', 'draw', [['line', 'Line', 'L'], ['pline', 'Polyline', 'PL'], ['rect', 'Rectangle', 'REC'], ['polygon', 'Polygon', 'POL'], ['circle', 'Circle', 'C'], ['arc', 'Arc', 'A'], ['ellipse', 'Ellipse', 'EL'], ['spline', 'Spline', 'SPL'], ['donut', 'Donut', 'DO'], ['point', 'Point', 'PO'], ['text', 'Text', 'T'], ['hatch', 'Hatch', 'H']]],
+  ['Draw', 'draw', [['line', 'Line', 'L'], ['pline', 'Polyline', 'PL'], ['rect', 'Rectangle', 'REC'], ['polygon', 'Polygon', 'POL'], ['circle', 'Circle', 'C'], ['arc', 'Arc', 'A'], ['ellipse', 'Ellipse', 'EL'], ['spline', 'Spline', 'SPL'], ['donut', 'Donut', 'DO'], ['xline', 'Construction line', 'XL'], ['ray', 'Ray', 'RAY'], ['point', 'Point', 'PO'], ['text', 'Text', 'T'], ['hatch', 'Hatch', 'H']]],
   ['Modify', 'modify', [['move', 'Move', 'M'], ['copy', 'Copy', 'CO'], ['rotate', 'Rotate', 'RO'], ['scale', 'Scale', 'SC'], ['mirror', 'Mirror', 'MI'], ['offset', 'Offset', 'O'], ['trim', 'Trim', 'TR'], ['extend', 'Extend', 'EX'], ['explode', 'Explode', 'X'], ['erase', 'Erase', 'E'],
     ['fillet', 'Fillet', 'F'], ['chamfer', 'Chamfer', 'CHA'], ['break', 'Break', 'BR'], ['breakatpoint', 'Break at point', 'BREAKATPOINT'], ['join', 'Join', 'J'], ['pedit', 'Edit polyline', 'PE'], ['lengthen', 'Lengthen', 'LEN'], ['stretch', 'Stretch', 'STR'],
     ['arrayrect', 'Array rect', 'AR'], ['arraypolar', 'Array polar', 'ARRAYPOLAR'], ['arraypath', 'Array path', 'ARRAYPATH']]],

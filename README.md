@@ -12,6 +12,7 @@ Built with Electron by ASH Technical & Project Management Services (ASH PMCS).
   multiline text, splines, ellipses, dimensions (as drawn) and leaders are displayed.
 - **Draw**: line, polyline, rectangle, circle, arc (3 points), ellipse, point, text, hatch (click inside a closed shape).
 - **More draw commands**: POLYGON (inscribed, circumscribed or by edge), SPLINE (through fit points, open or closed) and DONUT (filled ring).
+- **Construction lines**: XLINE (XL; through a point, Hor, Ver, Ang, Bisect, Offset) and RAY; each command run is one undo step.
 - **Modify**: move, copy, rotate, scale, mirror, offset, trim, extend, explode, erase; copy/paste; unlimited undo and redo.
 - **Polyline editing**: PEDIT (Close/Open, Join, Width, Decurve, Reverse, Multiple), REVERSE and BREAKATPOINT; PEDIT Fit, Spline and Edit vertex come later.
 - **Select**: as in AutoCAD, each pick or window adds to the selection and Shift+pick (or Shift+window) removes; Esc clears.
