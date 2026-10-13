@@ -29,6 +29,9 @@ const PROGRESSIVE_SLICE_MS = 25;
 export const CANVAS_BG = { light: '#ffffff', dark: '#1b1f23' };
 
 const boxesOverlap = (a, b) => a.minx <= b.maxx && a.maxx >= b.minx && a.miny <= b.maxy && a.maxy >= b.miny;
+/** the file's saved view is used when it shows part of the drawing and is not far larger than all of it: generators
+ *  write a default view (centre 0,0, height 1000) whatever the content, which would open on an empty screen */
+const savedViewUsable = (v, ext) => boxesOverlap(v, ext) && v.maxy - v.miny <= 4 * Math.max(ext.maxx - ext.minx, ext.maxy - ext.miny);
 
 export class Viewport {
   constructor(canvas) {
@@ -83,7 +86,7 @@ export class Viewport {
     this.lastPoint = lastPoint;
     session.onChange = (info) => this._changed(info);
     if (view) { this.view = { ...this.view, cx: view.cx, cy: view.cy, zoom: view.zoom }; this.requestRender(); this.emit('view'); }
-    else if (fit && initialView && !this.layout && !this.mspace && this.scene?.bbox && boxesOverlap(initialView, this.scene.bbox)) this.zoomBox(initialView, 0);
+    else if (fit && initialView && !this.layout && !this.mspace && this.scene?.bbox && savedViewUsable(initialView, this.scene.bbox)) this.zoomBox(initialView, 0);
     else if (fit) this.zoomExtents(); else this.requestRender();
     this.emit('selection', this.selection);
     this.emit('doc');
