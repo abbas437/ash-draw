@@ -19,6 +19,7 @@ import { MeasureGeomTool } from './tools-measure.js';
 import { gripsOf, applyGrip, gripEdit, gripsStretch, matchPropsEdit, nextGripMode, GRIP_MODES, gripMatrix, gripModeEdit, MATCH_SETTINGS, defaultMatchSettings } from './grips.js';
 import { el, modal, popMenu } from './ui.js';
 import { createModifyTools } from './tools-modify.js';
+import { createModify2Tools } from './tools-modify2.js';
 import { createDimTools } from './tools-dims.js';
 import { createBlockTools } from './tools-blocks.js';
 import { createMTextTools } from './mtext-editor.js';
@@ -649,6 +650,7 @@ export function createTools(h) {
     move: new MoveTool(h), copy: new MoveTool(h, true), rotate: new RotateTool(h), scale: new ScaleTool(h), mirror: new MirrorTool(h),
     offset: new OffsetTool(h), trim: new TrimTool(h), extend: new TrimTool(h, true), erase: new EraseTool(h), explode: new ExplodeTool(h),
     ...createModifyTools(h, { Tool, ModifyTool }),
+    ...createModify2Tools(h, { Tool, ModifyTool }),
     ...createDimTools(h, { Tool }),
     ...createBlockTools(h, { Tool, ModifyTool }),
     ...createMTextTools(h, { Tool }),
@@ -669,6 +671,7 @@ export const TOOL_ALIASES = {
   f: 'fillet', fillet: 'fillet', cha: 'chamfer', chamfer: 'chamfer', br: 'break', break: 'break', j: 'join', join: 'join',
   len: 'lengthen', lengthen: 'lengthen', str: 'stretch', stretch: 'stretch', ar: 'arrayrect', arrayrect: 'arrayrect',
   arraypolar: 'arraypolar', arraypath: 'arraypath',
+  pe: 'pedit', pedit: 'pedit', reverse: 'reverse', breakatpoint: 'breakatpoint',
   dli: 'dimlinear', dimlinear: 'dimlinear', dal: 'dimaligned', dimaligned: 'dimaligned', dan: 'dimangular', dimangular: 'dimangular', dra: 'dimradius', dimradius: 'dimradius',
   ddi: 'dimdiameter', dimdiameter: 'dimdiameter', dor: 'dimordinate', dimordinate: 'dimordinate', dco: 'dimcontinue', dimcontinue: 'dimcontinue', dba: 'dimbaseline', dimbaseline: 'dimbaseline',
   mld: 'mleader', mleader: 'mleader', ma: 'matchprop', matchprop: 'matchprop', painter: 'matchprop',

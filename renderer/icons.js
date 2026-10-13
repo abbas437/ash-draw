@@ -38,6 +38,8 @@ export const ICONS = {
   fillet: p('M3 17V10a6 6 0 0 1 6-6h8'),
   chamfer: p('M3 17V9l5-5h9'),
   break: p('M2 10h5.5M12.5 10H18', 'M7.5 6v8M12.5 6v8'),
+  breakatpoint: p('M2 10h7M11 10h7', 'M10 6.5v7'),
+  pedit: p('M2 16l5-8 5 5 6-9', 'M11 17l6-6'),
   join: p('M2 10h5M13 10h5', 'M6 7l3 3-3 3M14 7l-3 3 3 3'),
   lengthen: p('M2 7v6', 'M2 10h13', 'M13 6.5l3.5 3.5-3.5 3.5'),
   stretch: `<path d="M2 4h8v12H2"${DOTTED}/>` + p('M10 10h7', 'M14 7l3 3-3 3'),
