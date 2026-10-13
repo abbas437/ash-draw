@@ -23,6 +23,7 @@ import { createDraw2Tools } from './tools-draw2.js';
 import { createXlineTools } from './tools-xline.js';
 import { createModify2Tools } from './tools-modify2.js';
 import { createAlignTools } from './tools-align.js';
+import { createDrawOrderTools } from './tools-draworder.js';
 import { createDivideTools } from './tools-divide.js';
 import { createCenterTools } from './tools-center.js';
 import { createDimTools } from './tools-dims.js';
@@ -658,6 +659,7 @@ export function createTools(h) {
     ...createModifyTools(h, { Tool, ModifyTool }),
     ...createModify2Tools(h, { Tool, ModifyTool }),
     ...createAlignTools(h, { Tool, ModifyTool }),
+    ...createDrawOrderTools(h, { Tool, ModifyTool }),
     ...createDivideTools(h, { Tool }),
     ...createCenterTools(h, { Tool }),
     ...createDimTools(h, { Tool }),
@@ -671,6 +673,7 @@ export function createTools(h) {
 }
 
 export const TOOL_ALIASES = {
+  dr: 'draworder', draworder: 'draworder', texttofront: 'texttofront', hatchtoback: 'hatchtoback',
   mea: 'measure', measuregeom: 'measure', area: 'area', aa: 'area',
   l: 'line', line: 'line', pl: 'pline', pline: 'pline', polyline: 'pline', rec: 'rect', rect: 'rect', rectangle: 'rect',
   pol: 'polygon', polygon: 'polygon', spl: 'spline', spline: 'spline', do: 'donut', donut: 'donut',

@@ -17,6 +17,7 @@ Built with Electron by ASH Technical & Project Management Services (ASH PMCS).
 - **Modify**: move, copy, rotate, scale, mirror, offset, trim, extend, explode, erase; copy/paste; unlimited undo and redo.
 - **Align** (AL): move, rotate and optionally scale objects so source points land on destination points (2D AutoCAD LT ALIGN, one undo step).
 - **Center marks / centerlines**: DIMCENTER (DCE) marks the centre of arcs and circles per the dimension style's DIMCEN (negative adds extension lines); CENTERMARK (CM) always adds them; CENTERLINE draws the mid / bisecting axis of two lines (CENTER linetype when loaded). Plain lines (not associative), one undo step per command.
+- **Draw order** (DR / DRAWORDER, TEXTTOFRONT, HATCHTOBACK): bring objects to front, send to back, or above/under reference objects; read from the DWG/DXF draw-order table and saved as entity order (one undo step).
 - **Polyline editing**: PEDIT (Close/Open, Join, Width, Decurve, Reverse, Multiple), REVERSE and BREAKATPOINT; PEDIT Fit, Spline and Edit vertex come later.
 - **Select**: as in AutoCAD, each pick or window adds to the selection and Shift+pick (or Shift+window) removes; Esc clears.
 - **Precision**: object snaps (endpoint, intersection, midpoint, centre, quadrant, node, insertion, perpendicular),
