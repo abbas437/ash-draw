@@ -10,6 +10,9 @@
 //   { kind:'diameter', center, p }           p on the curve (the opposite point is mirrored through center)
 //   { kind:'arc',      center, p1, p2, at, partial? }   arc length: p1/p2 = ends of the measured arc, `at` on the
 //                                            dimension arc (also picks which of the two arcs p1-p2 is measured)
+//   { kind:'jogged',   center, chord, override, jog, at, jogAngle? }   jogged radius (LARGE_RADIAL_DIMENSION): chord on the
+//                                            curve, leader from `override` (the shown centre) with a zig-zag at `jog`; `at`
+//                                            = text location on the radial line; jogAngle in radians (DIMJOGANG, 45 deg)
 //   { kind:'ordinate', feature, end, xType, origin? }   feature = measured point, end = leader endpoint (text side),
 //                                            xType = X-datum (vertical leader, measures X); origin defaults to the WCS origin
 //   optional on every def: text (override; '' or '<>' = measured, '<>' inside is substituted, ' ' = no text)
@@ -39,7 +42,7 @@ const perp = (a) => ({ x: -a.y, y: a.x });
 const polar = (c, r, a) => ({ x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a) });
 const normAng = (a) => ((a % TAU) + TAU) % TAU;
 
-export const DIM_TYPE = { linear: 0, aligned: 1, angular: 2, diameter: 3, radius: 4, angular3: 5, ordinate: 6, arc: 5 }; // arc: ARC_DIMENSION, 5 up to DXF R2013 (8 from R2018)
+export const DIM_TYPE = { linear: 0, aligned: 1, angular: 2, diameter: 3, radius: 4, angular3: 5, ordinate: 6, arc: 5, jogged: 4 }; // arc: ARC_DIMENSION, 5 up to DXF R2013 (8 from R2018); jogged: LARGE_RADIAL_DIMENSION, radius type
 /** DXF group 70 type bits of a def (without the +32 'block is anonymous' flag): ordinate X-datum adds 64 */
 export const dimTypeBits = (def) => DIM_TYPE[def.kind] | (def.kind === 'ordinate' && def.xType ? 64 : 0);
 
@@ -262,6 +265,27 @@ function arcLengthGeom(def, st, out, o) {
   return { length: R * sweep, tp: placeText(polar(c, r, am), { x: -Math.sin(am), y: Math.cos(am) }, st, z, true) };
 }
 
+/** jogged radius: radial dimension line from the chord point (arrow) towards the true centre, a zig-zag at the jog
+ *  point (DIMJOGANG to the dimension line) over to the parallel through the override centre, and on to that point.
+ *  Text on the radial line at `at`; its offset is kept perpendicular to the line so the stored text point projects
+ *  back onto the same place (no drift when the dimension is read and regenerated). */
+function joggedGeom(def, st, out, o) {
+  const z = sizes(st);
+  const { center: c, chord: ch } = def;
+  const w = len(sub(ch, c)) > 1e-12 ? unit(sub(ch, c)) : { x: 1, y: 0 }, n = perp(w); // w: outward along the radius
+  const onLine = (p) => add(c, mul(w, dot(sub(p, c), w)));
+  const ang = def.jogAngle > 1e-6 && def.jogAngle < Math.PI - 1e-6 ? def.jogAngle : Math.PI / 4;
+  const d = dot(sub(def.override, c), n); // lateral offset of the override centre from the radial line
+  const a = Math.abs(d / Math.tan(ang)); // length of the jog along the line
+  const jm = onLine(def.jog), j1 = add(jm, mul(w, a / 2)), j2 = add(add(jm, mul(w, -a / 2)), mul(n, d));
+  const at = onLine(def.at), sAt = dot(sub(at, ch), w); // sAt > 0: text outside the curve, the line runs out to it
+  const outer = sAt > 0 ? at : ch;
+  for (const [p, q] of [[outer, j1], [j1, j2], [j2, def.override]]) if (len(sub(q, p)) > 1e-12) out.push(makeLine(p, q, o.dim));
+  out.push(...arrowEntities(st.DIMBLK, ch, w, z.asz, o.dim));
+  const tp = placeText(at, w, st, z, true), up = sub(tp.p, at);
+  return { R: len(sub(ch, c)), tp: { p: add(at, mul(n, dot(up, n))), rot: tp.rot } };
+}
+
 function angularGeom(def, st, text, out, o) {
   const z = sizes(st);
   const { c, a0, sweep, rays } = angularSector(def);
@@ -316,6 +340,13 @@ export function buildDimension(def, st) {
       // DIMARCSYM (not in the style model yet, so 0): 0 symbol before the value, 1 above (drawn before here), 2 none
       text = composeText((st.DIMARCSYM === 2 ? '' : '\u2312') + formatLinear(measurement, st), st, def.text);
       tp = g.tp; P10 = def.at;
+      break;
+    }
+    case 'jogged': {
+      const g = joggedGeom(def, st, entities, o);
+      measurement = g.R * lf;
+      text = composeText('R' + formatLinear(measurement, st), st, def.text);
+      tp = g.tp; P10 = def.center;
       break;
     }
     case 'radius': case 'diameter': {
@@ -442,7 +473,7 @@ export function rebuildDimension(doc, e, def = e.def, st = resolveDimStyle(doc, 
 export function transformDimension(doc, e, m) {
   const P = (p) => ({ x: m[0] * p.x + m[2] * p.y + m[4], y: m[1] * p.x + m[3] * p.y + m[5] });
   const d = e.def, nd = { ...d };
-  for (const k of ['p1', 'p2', 'at', 'vertex', 'center', 'p', 'feature', 'end', 'origin']) if (d[k]) nd[k] = P(d[k]);
+  for (const k of ['p1', 'p2', 'at', 'vertex', 'center', 'p', 'feature', 'end', 'origin', 'chord', 'override', 'jog']) if (d[k]) nd[k] = P(d[k]);
   if (d.l1) nd.l1 = d.l1.map(P);
   if (d.l2) nd.l2 = d.l2.map(P);
   if (d.kind === 'linear') {
@@ -474,6 +505,9 @@ export function dimensionTags(e) {
         [70, d.partial ? 1 : 0], [71, 0], ...P3(16, d.center), ...P3(17, d.center)); // AcDbArcDimension field order
       break;
     }
+    case 'jogged': // AcDbRadialDimensionLarge field order
+      t.push([100, 'AcDbRadialDimensionLarge'], ...P3(13, d.chord), ...P3(14, d.override), ...P3(15, d.jog), [40, d.jogAngle ?? Math.PI / 4]);
+      break;
     default: break;
   }
   return t;
@@ -492,6 +526,14 @@ export function dimDefFromTags(tags) {
     for (const [c, v] of tags.slice(ai + 1)) if (!sub.has(c)) sub.set(c, v);
     const q = (c) => ({ x: parseFloat(sub.get(c) ?? '0') || 0, y: parseFloat(sub.get(c + 10) ?? '0') || 0 });
     return { kind: 'arc', center: q(15), p1: q(13), p2: q(14), at: P(10), partial: (parseInt(sub.get(70) ?? '0', 10) || 0) !== 0, text };
+  }
+  const ji = tags.findIndex(([c, v]) => c === 100 && v === 'AcDbRadialDimensionLarge');
+  if (ji >= 0) { // LARGE_RADIAL_DIMENSION: 10 = true centre, 11 = text; 13 chord, 14 override centre, 15 jog, 40 jog angle
+    const sub = new Map();
+    for (const [c, v] of tags.slice(ji + 1)) if (!sub.has(c)) sub.set(c, v);
+    const q = (c) => ({ x: parseFloat(sub.get(c) ?? '0') || 0, y: parseFloat(sub.get(c + 10) ?? '0') || 0 });
+    const ja = parseFloat(sub.get(40) ?? '');
+    return { kind: 'jogged', center: P(10), chord: q(13), override: q(14), jog: q(15), at: P(11), jogAngle: Number.isFinite(ja) ? ja : Math.PI / 4, text };
   }
   switch (Math.trunc(n(70)) & 7) {
     case 0: return { kind: 'linear', p1: P(13), p2: P(14), at: P(10), angle: n(50), text };

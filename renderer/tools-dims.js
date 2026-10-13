@@ -1,4 +1,4 @@
-// ASH Draw Studio - DIMLINEAR, DIMALIGNED, DIMANGULAR, DIMARC, DIMRADIUS, DIMDIAMETER, DIMORDINATE, DIMCONTINUE, DIMBASELINE and the
+// ASH Draw Studio - DIMLINEAR, DIMALIGNED, DIMANGULAR, DIMARC, DIMRADIUS, DIMJOGGED, DIMDIAMETER, DIMORDINATE, DIMCONTINUE, DIMBASELINE and the
 // DIMSTYLE manager: the UI over
 // src/core/dims.js. Prompts and options follow AutoCAD LT. tools.js owns the Tool base class and passes it to
 // createDimTools (a factory, so this module does not import tools.js back).
@@ -216,6 +216,41 @@ export function createDimTools(h, { Tool }) {
     draw(c) { if (this.circ) this.drawDef(c, this.def(this.vp.cursor)); }
   }
 
+  // ---- DIMJOGGED: jogged radius of an arc or circle (centre shown at an override point) ------------
+  class DimJoggedTool extends DimTool {
+    constructor(host) { super(host); this.name = 'DIMJOGGED'; }
+    activate() { super.activate(); this.circ = null; this.override = null; this.at = null; }
+    get prompt() {
+      const n = this.name;
+      if (!this.circ) return `${n}  select arc or circle`;
+      if (!this.override) return `${n}  specify center location override`;
+      if (!this.at) return `${n}  specify dimension line location`;
+      return `${n}  specify jog location`;
+    }
+    /** chord point where the line from the centre through `at` meets the curve; jog defaults half way to the override */
+    def(at, jog) {
+      const { c, r } = this.circ, d = dist(c, at);
+      const u = d > 1e-9 ? { x: (at.x - c.x) / d, y: (at.y - c.y) / d } : { x: 1, y: 0 };
+      const o = this.override, j = jog ?? { x: (at.x + o.x) / 2, y: (at.y + o.y) / 2 };
+      return { kind: 'jogged', center: { ...c }, chord: { x: c.x + u.x * r, y: c.y + u.y * r }, override: { ...o }, jog: { ...j }, at: { ...at }, jogAngle: Math.PI / 4 };
+    }
+    click(p, ev) {
+      if (!this.circ) {
+        const hit = this.vp.pick(ev?.raw ?? p), e = hit && getEntity(this.vp.doc, hit.id);
+        if (!e || (e.type !== 'CIRCLE' && e.type !== 'ARC')) { this.h.toast('Select an arc or a circle.'); return; }
+        this.circ = { c: { ...e.c }, r: e.r }; return;
+      }
+      if (!this.override) { this.override = { ...p }; return; }
+      if (!this.at) { this.at = { ...p }; return; }
+      this.place(this.def(this.at, p));
+      this.h.setTool('select');
+    }
+    draw(c) {
+      if (!this.override) return;
+      this.drawDef(c, this.at ? this.def(this.at, this.vp.cursor) : this.def(this.vp.cursor));
+    }
+  }
+
   // ---- DIMARC: arc length of an arc or a polyline arc segment ----------------------------------
   class DimArcTool extends DimTool {
     constructor(host) { super(host); this.name = 'DIMARC'; }
@@ -351,7 +386,7 @@ export function createDimTools(h, { Tool }) {
 
   return {
     dimlinear: new DimLinearTool(h, 'linear'), dimaligned: new DimLinearTool(h, 'aligned'),
-    dimangular: new DimAngularTool(h), dimarc: new DimArcTool(h), dimordinate: new DimOrdinateTool(h),
+    dimangular: new DimAngularTool(h), dimarc: new DimArcTool(h), dimjogged: new DimJoggedTool(h), dimordinate: new DimOrdinateTool(h),
     dimradius: new DimRadialTool(h, 'radius'), dimdiameter: new DimRadialTool(h, 'diameter'),
     dimcontinue: new DimChainTool(h, 'continue'), dimbaseline: new DimChainTool(h, 'baseline'),
   };

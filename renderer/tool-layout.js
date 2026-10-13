@@ -11,7 +11,7 @@ export const ALWAYS_SHOWN = Object.freeze(['select']);
 export const COMPACT_KEEPS = 'select';
 /** less common tools that start hidden (View > Customize tools shows them; the command line always runs them), so the
  *  Left panel still fits a 1366 x 768 screen; also hidden when they are new to a stored layout */
-export const DEFAULT_HIDDEN = Object.freeze(['donut', 'xline', 'ray', 'divide', 'align', 'breakatpoint', 'dimcenter']);
+export const DEFAULT_HIDDEN = Object.freeze(['donut', 'xline', 'ray', 'divide', 'align', 'breakatpoint', 'dimcenter', 'dimjogged']);
 export const MAX_LIST = 1000; // longer stored lists are cut before they are looked at
 
 export const GROUP_KEYS = Object.freeze(TOOL_BUTTONS.map(([, key]) => key));
