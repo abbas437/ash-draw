@@ -484,7 +484,8 @@ export function lengthen(e, pick, { mode = 'delta', value = 0, angle = false, po
 /** STRETCH with a crossing window {minx,miny,maxx,maxy} and displacement (dx,dy):
  *  objects entirely inside move; LINE / LWPOLYLINE (bulges kept) / SPLINE / LEADER / SOLID move the points inside;
  *  an ARC with one end inside moves that end keeping its chord height (AutoCAD); CIRCLE / ELLIPSE move when
- *  the centre is inside; TEXT / MTEXT / INSERT / POINT move when the insertion point is inside. */
+ *  the centre is inside; TEXT / MTEXT / INSERT / POINT move when the insertion point is inside; XLINE / RAY move when
+ *  the base point is inside (direction kept). */
 export function stretch(ents, win, dx, dy, doc = null) {
   const inW = (p) => p.x >= win.minx - EPS && p.x <= win.maxx + EPS && p.y >= win.miny - EPS && p.y <= win.maxy + EPS;
   const mv = (p) => ({ ...p, x: p.x + dx, y: p.y + dy });
@@ -504,6 +505,7 @@ export function stretch(ents, win, dx, dy, doc = null) {
       case 'SPLINE': c.ctrl = (e.ctrl || []).map(mvIf); c.fit = (e.fit || []).map(mvIf); break;
       case 'LEADER': case 'SOLID': c.pts = e.pts.map(mvIf); break;
       case 'CIRCLE': case 'ELLIPSE': c.c = mvIf(e.c); break;
+      case 'XLINE': case 'RAY': c.p = mvIf(e.p); break; // the base point moves; the direction stays
       case 'TEXT': case 'MTEXT': case 'INSERT': case 'POINT':
         if (e.p && inW(e.p)) { Object.assign(c, transformEntity(e, translation(dx, dy))); c.id = e.id; moved = true; }
         break;

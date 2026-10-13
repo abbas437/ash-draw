@@ -1,6 +1,6 @@
 // ASH Draw Studio - grips (AutoCAD-style editing handles) and property edits. Pure: no DOM, runs in Node.
 //
-//   gripsOf(e)                 -> [{x, y, kind}]   kind: end | mid | vtx | seg | cen | quad | axis | ins | def | text
+//   gripsOf(e)                 -> [{x, y, kind}]   kind: end | mid | vtx | seg | cen | quad | axis | ins | def | text | dir
 //   applyGrip(e, i, p)         -> edited COPY of e with grip i dragged to p (null when the edit is impossible)
 //   gripEdit(session, id, i, p)-> one undo step; DIMENSIONs are regenerated into a fresh *D block
 //   gripsStretch(session, [{id,i}], d) -> several grips moved by d, one undo step
@@ -50,9 +50,17 @@ function dimRefs(def) {
   return (DIM_KEYS[def.kind] ?? []).filter((k) => def[k]).map((k) => [def, k]);
 }
 
+/** XLINE / RAY direction grips sit this far (drawing units) from the base point along the line. AutoCAD places them a
+ *  fixed screen distance away at regen; gripsOf gets no view scale here, so a constant keeps grips view-independent. */
+export const XLINE_GRIP_DIST = 10;
+
 export function gripsOf(e) {
   const g = (p, kind) => ({ x: p.x, y: p.y, kind });
   switch (e.type) {
+    case 'XLINE': case 'RAY': { // base point, then the direction grip(s): dragging one turns the line about the base
+      const at = (k) => g({ x: e.p.x + k * XLINE_GRIP_DIST * e.dir.x, y: e.p.y + k * XLINE_GRIP_DIST * e.dir.y }, 'dir');
+      return e.type === 'XLINE' ? [g(e.p, 'mid'), at(1), at(-1)] : [g(e.p, 'end'), at(1)];
+    }
     case 'LINE': return [g(e.p1, 'end'), g(e.p2, 'end'), g(midOf(e.p1, e.p2), 'mid')];
     case 'LWPOLYLINE': {
       const v = e.vertices, n = v.length, segs = e.closed ? n : n - 1;
@@ -87,6 +95,13 @@ export function applyGrip(e, i, p) {
   const d = sub(p, grips[i]);
   const shift = (q) => add(q, d);
   switch (e.type) {
+    case 'XLINE': case 'RAY': {
+      if (i === 0) { c.p = P(p); return c; }
+      const v = i === 1 ? sub(p, e.p) : sub(e.p, p), L = len(v);
+      if (L < 1e-12) return null;
+      c.dir = { x: v.x / L, y: v.y / L };
+      return c;
+    }
     case 'LINE':
       if (i === 0) c.p1 = P(p); else if (i === 1) c.p2 = P(p); else { c.p1 = shift(e.p1); c.p2 = shift(e.p2); }
       return c;

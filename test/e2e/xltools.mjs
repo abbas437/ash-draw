@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Browser end-to-end test of XLINE (point, Hor, Bisect, Offset) and RAY typed at the command line like a user; same harness
+// Browser end-to-end test of XLINE (point, Hor, Bisect, Offset), RAY and TRIM of an XLINE typed at the command line like a user; same harness
 // as run.mjs. Asserts on app.doc.entities, that one U removes exactly what each command run added, and that ZE ignores them.
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
@@ -118,6 +118,27 @@ try {
     assert.ok(box.x0 <= 0 && box.x1 >= 20 && box.x1 - box.x0 < 60, `view x ${box.x0}..${box.x1} frames the line`);
     assert.ok(box.y0 <= -20 && box.y1 >= -20 && box.y1 < 5, `view y ${box.y0}..${box.y1} does not reach the xline or the ray`);
     await u2.undo(); await undo();
+  }
+
+  step = 'XL through 0,0 and 10,0, a crossing LINE, TR and pick the XLINE right of it: it becomes a RAY from the crossing running left';
+  {
+    const u1 = await added(await ents(), async () => { for (const s of ['XL', '0,0', '10,0', '']) await typeCmd(s); });
+    const u2 = await added(await ents(), async () => { for (const s of ['L', '5,-5', '5,5', '']) await typeCmd(s); });
+    const [xl] = u1.fresh;
+    assert.equal(xl.type, 'XLINE');
+    await typeCmd('ZE');
+    const before = await ents();
+    await typeCmd('TR');
+    assert.equal(await toolId(), 'trim');
+    await clickWorld({ x: 8, y: 0 });
+    await page.keyboard.press('Escape');
+    const after = await ents();
+    assert.equal(after.length, before.length, 'trimmed in place');
+    const r = after.find((e) => e.id === xl.id);
+    assert.equal(r.type, 'RAY'); assert.ok(near(r.p.x, 5) && near(r.p.y, 0), `ray base ${r.p.x},${r.p.y}`); dirIs(r, -1, 0);
+    await typeCmd('U');
+    assert.equal((await ents()).find((e) => e.id === xl.id).type, 'XLINE', 'one U restores the XLINE');
+    await u2.undo(); await u1.undo();
   }
 
   step = 'Escape mid-command leaves nothing behind and returns to Select';
