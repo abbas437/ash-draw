@@ -1,5 +1,4 @@
-// Command history view: the last 3 lines float over the bottom of the canvas (clicks go through to the canvas, the wheel
-// scrolls them); F2 / View > Command history expands it upward (12 lines, selectable, Copy); Escape or F2 closes.
+// Command history view: the last 3 lines float over the bottom of the canvas (clicks and the wheel go through to the canvas); F2 / View > Command history expands it upward (12 lines, selectable, Copy); Escape or F2 closes.
 import { el, toast } from './ui.js';
 
 export class CmdHistView {
@@ -14,14 +13,6 @@ export class CmdHistView {
     this.root = el('div', { id: 'cmdhist' }, this.box);
     const cv = document.getElementById('cv');
     cv.after(this.root);
-    // collapsed, the lines take no pointer events (CSS); the wheel over them scrolls the history instead of zooming
-    cv.parentElement.addEventListener('wheel', (e) => {
-      if (this.open) return;
-      const r = this.root.getBoundingClientRect();
-      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
-      e.preventDefault(); e.stopPropagation();
-      this.list.scrollTop += e.deltaY;
-    }, { capture: true, passive: false });
     this.head.hidden = true;
     this.shown = 0;
   }

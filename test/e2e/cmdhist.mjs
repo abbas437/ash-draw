@@ -61,15 +61,14 @@ try {
     assert.ok(lines.some((t) => /^ID {2}specify point: 3,4$/.test(t)), `the input with its prompt: ${JSON.stringify(lines)}`);
   }
 
-  step = 'the wheel over the strip scrolls the history, not the drawing';
+  step = 'the wheel over the collapsed strip zooms the drawing (the strip is transparent to the pointer)';
   {
-    const box = await page.locator('#cmdhist').boundingBox();
+    const box = await page.locator('#cv').boundingBox();
     const before = await page.evaluate(() => ({ zoom: window.app.vp.view.zoom, top: document.querySelector('#cmdhist .ch-list').scrollTop }));
-    assert.ok(before.top > 0, 'more than 3 lines: scrolled to the end');
-    await page.mouse.move(box.x + 40, box.y + box.height / 2);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height - 20);
     await page.mouse.wheel(0, -200);
-    await page.waitForFunction((t) => document.querySelector('#cmdhist .ch-list').scrollTop < t, before.top, { timeout: 3000 });
-    assert.equal(await page.evaluate(() => window.app.vp.view.zoom), before.zoom, 'the drawing did not zoom');
+    await page.waitForFunction((z) => window.app.vp.view.zoom !== z, before.zoom, { timeout: 3000 });
+    assert.equal(await page.evaluate(() => document.querySelector('#cmdhist .ch-list').scrollTop), before.top, 'the history did not scroll');
   }
 
   step = 'F2 opens the panel (12 lines, Copy) listing L; the canvas keeps its size; Escape closes';
