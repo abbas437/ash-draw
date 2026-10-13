@@ -459,14 +459,14 @@ class App {
       const tab = this.active;
       const r = await saveDwg(api, this.fileDoc, {
         name: this.file.name, fromPath: this.file.path, version, path,
-        confirmDifferences: async (v) => (await confirmDialog('The DWG does not match your drawing', `${verificationMessage(v)}\n\nSave this DWG anyway? (Your drawing stays open and unsaved, so you can still save it as DXF.)`, 'Save DWG anyway', 'Cancel', null)) === 'yes',
+        confirmDifferences: async (v) => (await confirmDialog('The DWG does not match your drawing', `${verificationMessage(v, { oda: true })}\n\nSave this DWG anyway? (Your drawing stays open and unsaved, so you can still save it as DXF.)`, 'Save DWG anyway', 'Cancel', null)) === 'yes',
       });
       if (!r) return false;
       if (tab) tab.dwgVersion = version;
       this.afterSave(r.path, 'dwg', { clean: !!r.verification.ok });
       const label = DWG_SAVE_VERSIONS.find((v) => v.id === version)?.label ?? 'DWG';
       if (r.verification.ok) toast(`Saved as ${label}${r.backup ? ` (previous file kept as ${r.backup.replace(/^.*[\\/]/, '')})` : ''}`, 3000);
-      else await message('DWG saved — please check', verificationMessage(r.verification));
+      else await message('DWG saved — please check', verificationMessage(r.verification, { oda: true }));
       return true;
     } catch (err) { await message('Save failed', err.message || String(err)); return false; }
   }

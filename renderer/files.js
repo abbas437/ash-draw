@@ -186,10 +186,11 @@ export async function saveDwg(api, doc, { name, fromPath = null, version = 'r200
   return { path: res.path ?? path ?? null, verification, report: doc.lastWriteReport, version, backup: res.backup ?? null };
 }
 
-export function verificationMessage(v) {
+export function verificationMessage(v, { oda = false } = {}) {
   if (v.error) return `The DWG was written, but it could not be read back to check it (${v.error}). Please open it in your CAD program to confirm, or save as DXF.`;
   if (v.ok) return 'The saved DWG was read back and matches the drawing.';
   const bad = Object.keys(v.mismatched || {});
+  if (oda) return `The saved DWG, read back through the ODA File Converter, differs from your drawing for: ${bad.join(', ') || 'some objects'}. Open it in your CAD program to check those objects, or save as DXF.`;
   return `The saved DWG differs from your drawing for: ${bad.join(', ') || 'some objects'}. DWG writing is experimental (text rotation and some hatch edges can be lost). Saving as DXF is lossless for everything this program supports.`;
 }
 
