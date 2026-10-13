@@ -60,9 +60,11 @@ export class Tool {
 }
 
 // ---------------------------------------------------------------------------------------------
-// selection helper shared by Select and the modify tools
+// selection helper shared by Select and the modify tools. AutoCAD PICKADD=2: a pick or window ADDS to the
+// selection, Shift+pick / Shift+window REMOVES. A click on empty space clears only when `clearOnEmpty` (idle Select);
+// inside a command's select-objects step it keeps the set.
 class Selector {
-  constructor(vp) { this.vp = vp; this.start = null; }
+  constructor(vp, { clearOnEmpty = false } = {}) { this.vp = vp; this.start = null; this.clearOnEmpty = clearOnEmpty; }
   down(p, ev) { this.start = ev.raw; }
   move(p, ev) {
     if (this.start && ev.dragging) this.vp.rubber = { a: this.start, b: ev.raw, crossing: ev.raw.x < this.start.x };
@@ -70,15 +72,11 @@ class Selector {
   up(p, ev) {
     const a = this.start; this.start = null; this.vp.rubber = null;
     if (!a) return false;
-    const vp = this.vp, base = ev.shiftKey ? new Set(vp.selection) : new Set();
-    if (ev.dragged) {
-      for (const id of vp.box(a, ev.raw, ev.raw.x < a.x)) base.add(id);
-      vp.setSelection(base);
-    } else {
-      const hit = vp.pick(ev.raw);
-      if (hit) { if (ev.shiftKey && vp.selection.has(hit.id)) base.delete(hit.id); else base.add(hit.id); vp.setSelection(base); }
-      else if (!ev.shiftKey) vp.setSelection([]);
-    }
+    const vp = this.vp, sel = new Set(vp.selection);
+    const ids = ev.dragged ? vp.box(a, ev.raw, ev.raw.x < a.x) : [vp.pick(ev.raw)?.id].filter((id) => id != null);
+    if (!ids.length) { if (!ev.dragged && !ev.shiftKey && this.clearOnEmpty) vp.setSelection([]); return true; }
+    for (const id of ids) { if (ev.shiftKey) sel.delete(id); else sel.add(id); }
+    vp.setSelection(sel);
     return true;
   }
 }
@@ -88,10 +86,10 @@ const GRIP_ASK = { STRETCH: 'specify stretch point', MOVE: 'specify move point (
  *  MOVE/ROTATE/SCALE/MIRROR act on the whole selection about the base point (the hot grip, or B = new base point).
  *  C = Copy: originals stay and each pick adds copies until Enter / Esc; the whole grip command is ONE undo step. */
 class SelectTool extends Tool {
-  constructor(h) { super(h); this.sel = new Selector(this.vp); this.hot = null; this.multi = []; }
+  constructor(h) { super(h); this.sel = new Selector(this.vp, { clearOnEmpty: true }); this.hot = null; this.multi = []; }
   setMulti(m) { this.multi = m; this.vp.gripHots = m.length ? m : null; this.vp.requestRender(); }
   get prompt() {
-    if (!this.hot) return 'Select objects (drag right-to-left = crossing, Shift = add/remove)';
+    if (!this.hot) return 'Select objects (picks add, Shift = remove, drag right-to-left = crossing)';
     if (this.pickBase) return `** ${this.mode} **  specify base point`;
     const done = this.copy && this.step != null ? ', Enter = done' : ', Space/Enter = next mode';
     return `** ${this.mode}${this.copy ? ' (multiple)' : ''} **  ${GRIP_ASK[this.mode]}  [B = base point, C = copy${done}, Esc = exit]`;
