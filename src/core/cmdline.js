@@ -144,3 +144,21 @@ export function setLinetypeScale(s, ltscale, target = s.doc) {
 
 /** LIST of several entities */
 export const listEntities = (entities, doc, u) => entities.map((e) => listEntity(e, doc, u)).join('\n\n');
+
+/** ZOOMFACTOR (as in AutoCAD): how strongly the mouse wheel zooms, 3..100, default 60 */
+export const ZOOMFACTOR_MIN = 3, ZOOMFACTOR_MAX = 100, ZOOMFACTOR_DEFAULT = 60;
+/** a stored / typed ZOOMFACTOR as an integer 3..100, or null when it is not one */
+export function parseZoomFactor(v) {
+  const t = typeof v === 'string' ? v.trim() : v;
+  if (t === '' || t === null || t === undefined || typeof t === 'boolean') return null;
+  const n = Number(t);
+  return Number.isInteger(n) && n >= ZOOMFACTOR_MIN && n <= ZOOMFACTOR_MAX ? n : null;
+}
+/** the view scale for one wheel event: the step per standard 100-delta notch is 1 + zoomFactor/220 (60 -> 1.27x), applied
+ *  in proportion to deltaY so a trackpad's small deltas zoom a little; scrolling up (deltaY < 0) zooms in.
+ *  deltaMode 1 (lines) counts 33 px a line; one event is capped at four notches. */
+export function wheelScale(zoomFactor, deltaY, deltaMode = 0) {
+  const zf = parseZoomFactor(zoomFactor) ?? ZOOMFACTOR_DEFAULT;
+  const d = Math.max(-400, Math.min(400, deltaY * (deltaMode === 1 ? 33 : 1)));
+  return (1 + zf / 220) ** (-d / 100);
+}

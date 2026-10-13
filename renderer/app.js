@@ -9,7 +9,7 @@ import { layIsolate, layUnisolate, layFreeze, layOn, layThaw } from '../src/core
 import { Viewport, CANVAS_BG } from './viewport.js';
 import { createDocState, findTabByPath, indexAfterClose, cycleIndex, isBlankTab } from './tabs.js';
 import { createTools, TOOL_ALIASES } from './tools.js';
-import { ViewHistory } from '../src/core/cmdline.js';
+import { ViewHistory, parseZoomFactor, ZOOMFACTOR_MIN, ZOOMFACTOR_MAX } from '../src/core/cmdline.js';
 import { dimStyleManager, dimStyleNames, dimVarsOf, setCurrentDimStyle } from './tools-dims.js';
 import { blockDoubleClick } from './tools-blocks.js';
 import { initSession } from './session.js';
@@ -105,6 +105,7 @@ class App {
     api.settingsGet?.('canvas.background').then((v) => this.setCanvasDark(canvasDarkFrom(v))).catch(() => {});
     api.settingsGet?.('tools.collapsed').then((v) => { this.collapsed = collapsedFrom(v); applyCollapsed(document.getElementById('tools'), this.collapsed); this.fitBand(); }).catch(() => {});
     api.settingsGet?.('tools.layout').then((v) => { if (v != null) this.setToolLayout(cleanLayout(v), false); }).catch(() => {});
+    api.settingsGet?.('view.zoomFactor').then((v) => { const n = parseZoomFactor(v); if (n !== null) this.setZoomFactor(n, false); }).catch(() => {});
     api.settingsGet?.('theme').then((t) => { if (t === 'dark') this.setTheme('dark', false); }).catch(() => {});
     api.version?.().then((v) => { this.version = v; this.refreshWindowTitle(); }).catch(() => {});
     api.settingsGet?.('measure.showLegs').then((v) => setShowLegs(v)).catch(() => {});
@@ -128,6 +129,11 @@ class App {
   toast(t, ms) { toast(t, ms); }
   askText(o) { return textDialog(o); }
   listDialog(text) { return listDialog(text); }
+  /** ZOOMFACTOR (3..100): mouse wheel zoom speed, saved as setting 'view.zoomFactor' */
+  setZoomFactor(n, save = true) {
+    this.vp.settings.zoomFactor = n;
+    if (save) api.settingsSet?.('view.zoomFactor', n)?.catch?.(() => {});
+  }
   refreshPrompt() { document.getElementById('prompt').textContent = this.tool?.prompt ?? ''; }
   /** add a message to the command history (ID result, LIST, errors) */
   log(text) { this.history.message(text); this.histView.update(); }
@@ -470,7 +476,15 @@ class App {
   }
   /** Edit > Preferences…: the DWG converter (Automatic / ODA File Converter / Built-in LibreDWG) and the ODA path */
   async preferences() {
-    if (!api.dwgConfig) { await message('Preferences', 'The DWG converter settings need the desktop app.'); return; }
+    const zf = el('input', { id: 'pref-zoomfactor', type: 'number', min: String(ZOOMFACTOR_MIN), max: String(ZOOMFACTOR_MAX), step: '1', value: String(this.vp.settings.zoomFactor), style: 'width:5em' });
+    const zoomRow = el('p', {}, el('label', { text: `Mouse wheel zoom speed (ZOOMFACTOR, ${ZOOMFACTOR_MIN} to ${ZOOMFACTOR_MAX}): ` }), zf);
+    if (!api.dwgConfig) {
+      const r0 = await modal('Preferences', el('div', {}, zoomRow, el('p', { text: 'The DWG converter settings need the desktop app.' })), [{ label: 'Save', value: 'save', primary: true }, { label: 'Cancel', value: null }]);
+      if (r0 !== 'save') return;
+      const n0 = parseZoomFactor(zf.value);
+      if (n0 === null) await message('Preferences not saved', `ZOOMFACTOR must be a whole number from ${ZOOMFACTOR_MIN} to ${ZOOMFACTOR_MAX}.`); else { this.setZoomFactor(n0); toast('Preferences saved', 2000); }
+      return;
+    }
     const cfg = await api.dwgConfig();
     const av = await api.dwgAvailable().catch(() => null);
     const mode = el('select', { id: 'pref-dwg-mode' }, [['auto', 'Automatic (ODA if installed, else built-in LibreDWG)'], ['oda', 'ODA File Converter'], ['libredwg', 'Built-in (LibreDWG)']].map(([v, t]) => el('option', { value: v, text: t })));
@@ -478,18 +492,21 @@ class App {
     const odaPath = el('input', { id: 'pref-oda-path', type: 'text', value: cfg.odaPath, placeholder: av?.oda?.source === 'auto' ? av.oda.path : 'Detected automatically in C:\\Program Files\\ODA', style: 'width:100%' });
     const browse = el('button', { type: 'button', text: 'Browse…', onclick: async () => { const p = await api.dwgBrowseOda(); if (p) odaPath.value = p; } });
     const status = av ? `In use: ${av.available ? av.version : `none (${av.reason})`}. ODA File Converter: ${av.oda?.available ? `${av.oda.version} at ${av.oda.path}` : av.oda?.reason ?? 'not installed'}.` : '';
-    const r = await modal('Preferences', el('div', {},
+    const r = await modal('Preferences', el('div', {}, zoomRow,
       el('label', { text: 'DWG converter ' }, mode),
       el('p', {}, el('label', { text: 'ODA File Converter (ODAFileConverter.exe), leave empty to detect it: ' }), odaPath, browse),
       el('p', { id: 'pref-dwg-status', text: status })),
     [{ label: 'Save', value: 'save', primary: true }, { label: 'Cancel', value: null }]);
     if (r !== 'save') return;
+    const nz = parseZoomFactor(zf.value);
+    if (nz !== null) this.setZoomFactor(nz); else toast(`ZOOMFACTOR not changed: it must be a whole number from ${ZOOMFACTOR_MIN} to ${ZOOMFACTOR_MAX}.`, 4000);
     try { await api.dwgSetConfig({ mode: mode.value, odaPath: odaPath.value.trim() }); toast('Preferences saved', 2000); } catch (err) { await message('Preferences not saved', String(err.message || err).replace(/^Error invoking remote method '[^']*': (\w*Error: )?/, '')); }
   }
   async limitations() {
     await message('What this program does and does not do', 'Please read before relying on it for important work:', el('ul', {},
       ['Paper-space layouts, their objects and viewports are read and saved back; viewport clip boundaries other than the rectangle are not kept.',
-        'Supported objects: lines, polylines, circles, arcs, ellipses, splines, text, multiline text, points, solids, hatches, blocks, dimensions (as drawn) and leaders. Other objects (3D solids, regions, xlines, multileaders …) are skipped and reported when you open the file.',
+        'Supported objects: lines, polylines, circles, arcs, ellipses, splines, xlines and rays, text, multiline text, points, solids, 3D faces, hatches, blocks and attributes, dimensions (as drawn), leaders, multileaders, multilines, images, wipeouts and external references.',
+        'Not shown: 3D solids (3DSOLID), BODY, REGION and proxy objects (ACAD_PROXY_ENTITY, for example Civil 3D objects); OLE objects are shown as a frame only. Any other object type this program does not know is skipped too. Skipped objects are reported when you open the file, and they are not written when you save.',
         'Dimensions are displayed from their stored drawing, but cannot be edited as dimensions; they can be moved, copied or exploded.',
         'Saving as DXF is the reliable option. Saving as DWG is experimental and is checked after saving; text rotation and some hatches can be lost.',
         'Fonts: text is drawn with a system font, so widths differ slightly from the original CAD fonts.',
@@ -531,13 +548,16 @@ class App {
         if (chk) checks.push(() => { const on = !!it[3](); chk.textContent = on ? '\u2713' : ''; b.setAttribute('aria-checked', String(on)); });
         return b;
       };
-      const menu = el('div', { class: 'menu' }, el('button', { onclick: (e) => { e.stopPropagation(); const open = menu.classList.contains('open'); closeMenus(); if (!open) { checks.forEach((f) => f()); menu.classList.add('open'); } } }, label),
+      // opens on pointerdown, so the click that only re-focuses the window is not lost; click with detail 0 = keyboard (Enter / Space)
+      const toggle = () => { const open = menu.classList.contains('open'); closeMenus(); if (!open) { checks.forEach((f) => f()); menu.classList.add('open'); } };
+      const menu = el('div', { class: 'menu' }, el('button', { 'aria-haspopup': 'true', onpointerdown: (e) => { if (e.button === 0) { e.preventDefault(); toggle(); } }, onclick: (e) => { e.stopPropagation(); if (e.detail === 0) toggle(); } }, label),
         el('div', { class: 'drop' }, items.map((it) => (it === '-' ? el('hr') : item(it)))));
       bar.append(menu);
     }
     bar.append(el('span', { class: 'title', id: 'title' }));
     const closeMenus = () => document.querySelectorAll('#menubar .menu.open').forEach((m) => m.classList.remove('open'));
     document.addEventListener('click', closeMenus);
+    document.addEventListener('pointerdown', (e) => { if (!e.target.closest?.('#menubar .menu')) closeMenus(); });
   }
 
   /** fill the toolbar's dimension-style list from the active drawing (only when it changed) */
@@ -729,6 +749,7 @@ class App {
         if (map[k]) { e.preventDefault(); map[k](); }
         return;
       }
+      if ((e.key === 'Enter' || e.key === ' ') && e.target.closest?.('#menubar')) return; // let a focused menu button / item activate by keyboard
       if (e.key === 'F2') { e.preventDefault(); this.toggleHistory(); return; }
       if (e.key === 'F3') { e.preventDefault(); this.toggle('snap'); return; }
       if (e.key === 'F8') { e.preventDefault(); this.toggle('ortho'); return; }

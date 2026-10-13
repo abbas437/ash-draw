@@ -1,6 +1,7 @@
 // ASH Draw Studio - canvas viewport: view state, pan/zoom, snapping, selection, overlays.
 // The active tool receives world-space events through vp.tool (see tools.js).
 import { buildScene, updateScene, drawScene, drawSceneSteps, drawLayout, fitView, screenToWorld, worldToScreen, zoomAt, zoomLimits } from '../src/core/render.js';
+import { wheelScale, ZOOMFACTOR_DEFAULT } from '../src/core/cmdline.js';
 import { SpatialIndex, findSnap, orthoPoint, polarPoint, pickEntity, selectInBox } from '../src/core/pick.js';
 import { bboxOf, growBox } from '../src/core/geom.js';
 import { gripsOf } from './grips.js';
@@ -46,7 +47,7 @@ export class Viewport {
     this.rawCursor = { x: 0, y: 0 };
     this.snapMarker = null;
     this.lastPoint = null;             // last point entered (for relative input and ortho)
-    this.settings = { snap: true, ortho: false, polar: false, polarStep: 45, lineweights: false, transparency: true, dark: false, kinds: new Set(DEFAULT_KINDS) };
+    this.settings = { snap: true, ortho: false, polar: false, polarStep: 45, lineweights: false, transparency: true, dark: false, zoomFactor: ZOOMFACTOR_DEFAULT, kinds: new Set(DEFAULT_KINDS) };
     this.preview = null;               // (ctx, view, vp) => void drawn above the scene
     this.rubber = null;                // selection rectangle {a,b,crossing} in world coordinates
     this.layout = null;                // the layout shown (paper space; see layouts-ui.js), null = model space
@@ -366,7 +367,7 @@ export class Viewport {
       e.preventDefault();
       const r = cv.getBoundingClientRect();
       if (this._gesture !== 'pan') { this.beginGesture('zoom'); this.endGesture(); }
-      this.zoomBy(e.deltaY < 0 ? 1.25 : 0.8, e.clientX - r.left, e.clientY - r.top);
+      this.zoomBy(wheelScale(this.settings.zoomFactor, e.deltaY, e.deltaMode), e.clientX - r.left, e.clientY - r.top);
       // no object snap here: zoomed out its tolerance spans the drawing; the next pointer move snaps
       this._dropMove();
       this._moved(e.clientX - r.left, e.clientY - r.top, e, { snap: false });
@@ -375,6 +376,11 @@ export class Viewport {
       this._flushMove();
       cv.focus();
       const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
+      if (e.button === 1) { // a second middle press within 400 ms and 5 px = Zoom Extents (AutoCAD habit)
+        const m = this._mid, now = performance.now();
+        this._mid = { t: now, x: e.clientX, y: e.clientY };
+        if (m && now - m.t < 400 && Math.hypot(e.clientX - m.x, e.clientY - m.y) <= 5) { this._mid = null; this.zoomExtents(); return; }
+      }
       if (e.button === 1 || (e.button === 0 && (this._spaceDown || this.panTool))) {
         this._pan = { x: e.clientX, y: e.clientY };
         this.beginGesture('pan');

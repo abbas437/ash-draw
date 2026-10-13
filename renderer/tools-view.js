@@ -1,6 +1,6 @@
-// ASH Draw Studio - command-line view and inquiry tools over src/core/cmdline.js (ZOOM, ID, LIST, LTSCALE; options as in AutoCAD LT).
+// ASH Draw Studio - command-line view and inquiry tools over src/core/cmdline.js (ZOOM, ID, LIST, LTSCALE, ZOOMFACTOR; options as in AutoCAD LT).
 // tools.js owns the Tool base class and passes it to createViewTools (a factory, so this module does not import tools.js back).
-import { parseZoomInput, entitiesBox, formatId, listEntities, setLinetypeScale } from '../src/core/cmdline.js';
+import { parseZoomInput, entitiesBox, formatId, listEntities, setLinetypeScale, parseZoomFactor } from '../src/core/cmdline.js';
 import { lengthPrecision } from '../src/core/measure.js';
 import { getEntity } from '../src/core/model.js';
 
@@ -112,5 +112,19 @@ export function createViewTools(h, { Tool }) {
     key(e) { if (e.key === 'Enter') { this.cancel(); return true; } return super.key(e); } // Enter keeps <current>
   }
 
-  return { zoom: new ZoomTool(h), id: new IdTool(h), list: new ListTool(h), ltscale: new LtscaleTool(h) };
+  class ZoomFactorTool extends Tool {
+    get current() { return h.vp.settings.zoomFactor; }
+    get prompt() { return `ZOOMFACTOR  mouse wheel zoom speed, 3 to 100 <${this.current}>`; }
+    text(s) {
+      const n = parseZoomFactor(s);
+      if (n === null) { h.toast('ZOOMFACTOR: requires a whole number from 3 to 100.'); return true; }
+      this.cancel();
+      h.setZoomFactor(n);
+      h.toast(`ZOOMFACTOR = ${n}`, 2500);
+      return true;
+    }
+    key(e) { if (e.key === 'Enter') { this.cancel(); return true; } return super.key(e); } // Enter keeps <current>
+  }
+
+  return { zoom: new ZoomTool(h), id: new IdTool(h), list: new ListTool(h), ltscale: new LtscaleTool(h), zoomfactor: new ZoomFactorTool(h) };
 }
