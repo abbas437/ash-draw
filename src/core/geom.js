@@ -1038,6 +1038,12 @@ export function offsetEntity(e, d, sidePt) {
     c.r = r; return c;
   }
   if (e.type === 'LWPOLYLINE') { c.vertices = offsetPolyline(e, d, sidePt); return c; }
+  if (isInfinite(e)) { // parallel XLINE / RAY: the base point moves square to the line, the direction stays
+    let nx = -e.dir.y, ny = e.dir.x;
+    if ((sidePt.x - e.p.x) * nx + (sidePt.y - e.p.y) * ny < 0) { nx = -nx; ny = -ny; }
+    c.p = { x: e.p.x + nx * d, y: e.p.y + ny * d };
+    return c;
+  }
   if (e.type === 'ELLIPSE') return offsetEllipse(e, d, sidePt);
   if (e.type === 'SPLINE') return offsetSpline(e, d, sidePt);
   throw unsupported(`offset of ${e.type}`);
@@ -1165,7 +1171,7 @@ function offsetEllipse(e, d, sidePt) {
   return polylineLike(e, pts.map((p) => ({ x: p.x, y: p.y, bulge: 0 })), full);
 }
 
-/** Trim a LINE / ARC / CIRCLE / LWPOLYLINE / ELLIPSE at the cutting edges, removing the part under `pick`.
+/** Trim a LINE / ARC / CIRCLE / LWPOLYLINE / ELLIPSE / SPLINE / XLINE / RAY at the cutting edges, removing the part under `pick`.
  *  Returns {replace: [entities...]} (0, 1 or 2 pieces; ids 0 except the first keeps e.id) or null if nothing to trim. */
 export function trimEntity(e, cutters, pick, doc = null) {
   const nu = e.type === 'SPLINE' ? nurbsOf(e) : null;
@@ -1186,6 +1192,20 @@ export function trimEntity(e, cutters, pick, doc = null) {
     if (lo > 1e-9) out.push({ ...base, p1: { ...e.p1 }, p2: at(lo) });
     if (hi < 1 - 1e-9) out.push({ ...base, id: out.length ? 0 : e.id, p1: at(hi), p2: { ...e.p2 } });
     if (out.length) out[0].id = e.id;
+    return { replace: out };
+  }
+  if (isInfinite(e)) { // AutoCAD: an XLINE cut once becomes a RAY; a RAY cut beyond its base becomes a LINE
+    const ray = e.type === 'RAY', u = e.dir;
+    const par = (p) => (p.x - e.p.x) * u.x + (p.y - e.p.y) * u.y, at = (t) => ({ x: e.p.x + t * u.x, y: e.p.y + t * u.y });
+    let ts = pts.map(par).filter((t) => !ray || t > 1e-9).sort((a, b) => a - b);
+    ts = ts.filter((t, i) => i === 0 || t - ts[i - 1] > 1e-9);
+    if (!ts.length) return { replace: [] }; // only touched at a RAY's own base point: nothing left of it to keep
+    const tp = par(pick), lo = [...ts.filter((t) => t <= tp)].pop(), hi = ts.find((t) => t > tp);
+    const { p: _p, dir: _d, ...props } = base;
+    const out = [];
+    if (lo !== undefined) out.push(ray ? { ...props, type: 'LINE', p1: { ...e.p }, p2: at(lo) } : { ...props, type: 'RAY', p: at(lo), dir: { x: -u.x, y: -u.y } });
+    if (hi !== undefined) out.push({ ...props, type: 'RAY', p: at(hi), dir: { ...u } });
+    out.forEach((o, i) => { o.id = i ? 0 : e.id; });
     return { replace: out };
   }
   // Curves trimmed by parameter: rel(p) in [0, sw) from the start; closed curves need two cutting points.
