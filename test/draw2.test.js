@@ -112,3 +112,12 @@ test('a polyline with width (DONUT) is drawn filled: one ring per segment, out t
   assert.equal(its.length, 2); assert.ok(its.every((it) => it.kind === 'fill'));
   close(Math.max(...its.map((it) => it.bbox.maxx)), 3); // outside radius: mid 2 + half width 1
 });
+
+test('a wide polyline gives each segment its own bbox (culling), not one box for the whole polyline', async () => {
+  const { buildScene } = await import('../src/core/render.js');
+  const e = M.makePolyline([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 20, y: 0 }, { x: 30, y: 0 }], false, {}); e.width = 2;
+  const its = buildScene(docWith(e)).items.filter((it) => it.id === e.id);
+  assert.equal(its.length, 3);
+  assert.ok(its[0].bbox.maxx <= 10 + 1 + 1e-9, `first item maxx ${its[0].bbox.maxx}`);
+  assert.ok(its[2].bbox.minx >= 20 - 1e-9, `last item minx ${its[2].bbox.minx}`);
+});

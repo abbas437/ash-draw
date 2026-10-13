@@ -247,7 +247,7 @@ export async function exportPdf(doc, opts = {}) {
       const t = v.twist || 0, c = Math.cos(t), sn = Math.sin(t);
       if (t) ops.push(concatTransformationMatrix(c, sn, -sn, c, cx - c * cx + sn * cy, cy - sn * cx - c * cy)); // turn about the viewport centre
       k = paper.k / s; ox = cx - v.viewCenter.x * k; oy = cy - v.viewCenter.y * k;
-      const R = Math.hypot(v.width, v.height) / 2 / s; // the viewport's model window (any twist), clipped above
+      const R = Math.hypot(v.width, v.height) / 2 * s; // the viewport's model window (any twist), clipped above
       await drawItems(modelScene(v.frozen ?? []), { minx: v.viewCenter.x - R, miny: v.viewCenter.y - R, maxx: v.viewCenter.x + R, maxy: v.viewCenter.y + R });
       ({ ox, oy, k } = paper);
       ops.push(popGraphicsState());
