@@ -19,6 +19,11 @@ const enc = new TextEncoder();
 /** part of the main process's "install the ODA File Converter" message (electron/odaConverter.js ODA_HINT) */
 export const ODA_HINT_MARK = 'Install the free ODA File Converter';
 export const extOf = (name) => (/\.([^.\\/]+)$/.exec(name || '') || [, ''])[1].toLowerCase();
+/** default path for a Save dialog: the open file's folder + `fileName`; just `fileName` for a drawing without a path on disk */
+export function savePathIn(filePath, fileName) {
+  const m = typeof filePath === 'string' ? /^(.*[\\/])[^\\/]*$/.exec(filePath) : null;
+  return m && m[1] ? m[1] + fileName : fileName;
+}
 export const baseName = (name) => String(name || 'drawing').replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '');
 
 /** INSUNITS -> drawing units per millimetre (unitless drawings are assumed to be millimetres) */
@@ -117,16 +122,16 @@ function looksLikeDwg(b) { return b.length > 6 && b[0] === 0x41 && b[1] === 0x43
 export function dxfBytesOf(doc, opts) { return enc.encode(writeDxf(doc, opts)); }
 
 /** Write the document as DXF. path === null opens the save dialog. */
-export async function saveDxf(api, doc, { path, name }) {
+export async function saveDxf(api, doc, { path, name, fromPath = null }) {
   const bytes = dxfBytesOf(doc);
-  const res = path ? await api.writeFile(path, bytes) : await api.saveFile({ defaultPath: `${baseName(name)}.dxf`, filters: [{ name: 'AutoCAD DXF', extensions: ['dxf'] }], bytes });
+  const res = path ? await api.writeFile(path, bytes) : await api.saveFile({ defaultPath: savePathIn(fromPath, `${baseName(name)}.dxf`), filters: [{ name: 'AutoCAD DXF', extensions: ['dxf'] }], bytes });
   if (!res) return null;
   return { path: res.path ?? null, report: doc.lastWriteReport };
 }
 
 /** Write the document as DWG through LibreDWG and verify it by reading the result back. */
 /** `confirmDifferences(verification)` is asked (when the read-back differs) BEFORE the save dialog; return false to abort. */
-export async function saveDwg(api, doc, { name, version = 'r2000', confirmDifferences }) {
+export async function saveDwg(api, doc, { name, fromPath = null, version = 'r2000', confirmDifferences }) {
   if (!api.isElectron) throw new Error('Saving DWG needs the desktop app.');
   const av = await api.dwgAvailable();
   if (!av.available) throw new Error(`The DWG converter is not available: ${av.reason ?? 'unknown reason'}.`);
@@ -138,7 +143,7 @@ export async function saveDwg(api, doc, { name, version = 'r2000', confirmDiffer
     verification = compareDocuments(doc, back);
   } catch (err) { verification = { ok: false, error: String(err.message || err) }; }
   if (!verification.ok && confirmDifferences && !(await confirmDifferences(verification))) return null;
-  const res = await api.saveFile({ defaultPath: `${baseName(name)}.dwg`, filters: [{ name: 'AutoCAD DWG', extensions: ['dwg'] }], bytes: dwgBytes });
+  const res = await api.saveFile({ defaultPath: savePathIn(fromPath, `${baseName(name)}.dwg`), filters: [{ name: 'AutoCAD DWG', extensions: ['dwg'] }], bytes: dwgBytes });
   if (!res) return null;
   return { path: res.path ?? null, verification, report: doc.lastWriteReport };
 }

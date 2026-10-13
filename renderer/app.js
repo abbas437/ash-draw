@@ -2,7 +2,7 @@
 import { newDocument } from '../src/core/model.js';
 import { eraseEntities, copyToClipboard, pasteEntities, setDrawingUnits } from '../src/core/edit.js';
 import { INSUNITS, unitLabel, lengthPrecision, looksLikeMapMetres } from '../src/core/measure.js';
-import { setShowLegs, refreshMeasureResults } from './tools-measure.js';
+import { setShowLegs, refreshMeasureResults, clearMeasureResults } from './tools-measure.js';
 import { parseCoordinate } from '../src/core/coords.js';
 import { PATTERN_NAMES } from '../src/core/patterns.js';
 import { layIsolate, layUnisolate, layFreeze, layOn, layThaw } from '../src/core/layers.js';
@@ -30,7 +30,7 @@ import { CmdHistView } from './cmdhist-view.js';
 import { qselectDialog, selectSimilarCommand, purgeDialog } from './selclean.js';
 import { el, message, modal, confirmDialog, textDialog, listDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
 import {
-  OPEN_FILTERS, loadDrawing, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, extOf, UNIT_NAMES,
+  OPEN_FILTERS, loadDrawing, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, savePathIn, extOf, UNIT_NAMES,
 } from './files.js';
 
 const api = window.api;
@@ -255,7 +255,7 @@ class App {
   /** bring a tab to the front: the shown tab keeps its view, selection and caches for when it comes back */
   switchTo(tab, { fit = false, firstView = false } = {}) {
     const cur = this.active;
-    if (cur && cur !== tab) exitMspace(this);
+    if (cur && cur !== tab) { exitMspace(this); clearMeasureResults(); }
     if (cur && cur !== tab && this.tabs.includes(cur)) {
       cur.view = { cx: this.vp.view.cx, cy: this.vp.view.cy, zoom: this.vp.view.zoom };
       cur.selection = [...this.vp.selection]; cur.lastPoint = this.vp.lastPoint;
@@ -277,6 +277,7 @@ class App {
     if (!(await this.confirmDiscard(tab))) return false;
     const i = this.tabs.indexOf(tab);
     if (i < 0) return true;
+    if (this.active === tab) clearMeasureResults();
     const next = indexAfterClose(this.tabs.length, i, this.tabs.indexOf(this.active));
     this.tabs.splice(i, 1);
     if (this.active === tab) this.active = null;
@@ -395,7 +396,7 @@ class App {
   }
   async writeDxfTo(path) {
     try {
-      const r = await saveDxf(api, this.fileDoc, { path, name: this.file.name });
+      const r = await saveDxf(api, this.fileDoc, { path, name: this.file.name, fromPath: this.file.path });
       if (!r) return false;
       this.afterSave(r.path ?? path, 'dxf');
       this.writeReport(r.report);
@@ -418,7 +419,7 @@ class App {
           'DWG is written through the free LibreDWG converter. Text rotation and some hatch details can be lost, so the program re-reads the saved file and tells you if anything differs. DXF keeps everything this program supports. Save as DWG anyway?', 'Save as DWG', 'Cancel', null);
         if (ok !== 'yes') return false;
         const r = await saveDwg(api, this.fileDoc, {
-          name: this.file.name,
+          name: this.file.name, fromPath: this.file.path,
           confirmDifferences: async (v) => (await confirmDialog('The DWG does not match your drawing', `${verificationMessage(v)}\n\nSave this DWG anyway? (Your drawing stays open and unsaved, so you can still save it as DXF.)`, 'Save DWG anyway', 'Cancel', null)) === 'yes',
         });
         if (!r) return false;
@@ -427,7 +428,7 @@ class App {
         await message(r.verification.ok ? 'DWG saved' : 'DWG saved — please check', verificationMessage(r.verification));
         return true;
       }
-      const r = await saveDxf(api, this.fileDoc, { path: null, name: this.file.name });
+      const r = await saveDxf(api, this.fileDoc, { path: null, name: this.file.name, fromPath: this.file.path });
       if (!r) return false;
       this.afterSave(r.path, 'dxf'); this.writeReport(r.report);
       return true;
@@ -437,7 +438,7 @@ class App {
   // ---- exports ---------------------------------------------------------------------------------
   scene() { return buildScene(this.fileDoc); }
   async saveBytes(bytes, ext, label) {
-    const r = await api.saveFile({ defaultPath: `${baseName(this.file.name)}.${ext}`, filters: [{ name: label, extensions: [ext] }], bytes });
+    const r = await api.saveFile({ defaultPath: savePathIn(this.file.path, `${baseName(this.file.name)}.${ext}`), filters: [{ name: label, extensions: [ext] }], bytes });
     if (r) toast(`Exported ${ext.toUpperCase()}`, 2000);
   }
   /** Plot to PDF (the Print dialog with a Save button) */

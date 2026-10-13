@@ -103,6 +103,14 @@ export function refreshMeasureResults() {
   showResults(last.title, last.make);
   if (marks?.a && last.label) { marks.label = last.label(); marksVp?.requestRender(); }
 }
+/** the open results panel and its marks belong to one drawing: close them when the drawing is switched away or closed,
+ *  so the result is never shown again in another drawing's units */
+export function clearMeasureResults() {
+  const had = !!panel?.isConnected;
+  panel?.remove(); panel = null; last = null;
+  if (marks && marksVp) setMarks(marksVp, null);
+  return had;
+}
 function showResults(title, make, label = null) {
   last = { title, make, label };
   const { lines, units } = make();
