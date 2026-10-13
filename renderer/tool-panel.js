@@ -10,7 +10,7 @@ export const TOOL_BUTTONS = [
     ['arrayrect', 'Array rect', 'AR'], ['arraypolar', 'Array polar', 'ARRAYPOLAR'], ['arraypath', 'Array path', 'ARRAYPATH']]],
   ['Block', 'block', [['block', 'Create block', 'B'], ['insert', 'Insert', 'I'], ['attdef', 'Attribute', 'ATT'], ['eattedit', 'Edit attributes', 'ATE']]],
   ['Dimension', 'annotate', [['dimlinear', 'Linear', 'DLI'], ['dimaligned', 'Aligned', 'DAL'], ['dimangular', 'Angular', 'DAN'], ['dimradius', 'Radius', 'DRA'], ['dimdiameter', 'Diameter', 'DDI'],
-    ['mleader', 'Multileader', 'MLD'], ['dimcontinue', 'Continue', 'DCO'], ['dimbaseline', 'Baseline', 'DBA']]],
+    ['dimcenter', 'Center mark', 'DCE'], ['mleader', 'Multileader', 'MLD'], ['dimcontinue', 'Continue', 'DCO'], ['dimbaseline', 'Baseline', 'DBA']]],
   ['Inquiry', 'inquiry', [['measure', 'Measure', 'MEA'], ['area', 'Area', 'AREA']]],
   ['Markup', 'markup', [['mkc', 'Markup circle', 'MKC'], ['mkr', 'Markup rectangle', 'MKR'], ['mkt', 'Markup note', 'MKT']]],
 ];
