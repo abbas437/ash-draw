@@ -49,6 +49,7 @@ export function setWidth(e, w) {
   if (!(w >= 0)) throw fail('GEOMETRY', 'width must be 0 or more');
   const c = clone(e);
   c.vertices = c.vertices.map(({ sw, ew, ...v }) => v);
+  if (c.frame) c.frame = c.frame.map(({ sw, ew, ...v }) => v); // a later Decurve must not bring old widths back
   if (w > 0) c.width = w; else delete c.width;
   return changed(c);
 }
@@ -61,7 +62,11 @@ const unit = (x, y) => { const l = Math.hypot(x, y); return l > 0 ? { x: x / l, 
 const cross = (a, b) => a.x * b.y - a.y * b.x;
 const dot = (a, b) => a.x * b.x + a.y * b.y;
 /** half the signed angle from direction a to direction b, as a bulge: tan(angle / 2) */
-const halfTan = (a, b) => Math.tan(Math.atan2(cross(a, b), dot(a, b)) / 2);
+const halfTan = (a, b) => {
+  const ang = Math.atan2(cross(a, b), dot(a, b));
+  if (Math.PI - Math.abs(ang) < 2e-6) return 0; // hairpin (tangent opposes the chord): tan(pi/2) blows up -> straight half
+  return Math.max(-1e6, Math.min(1e6, Math.tan(ang / 2)));
+};
 const stripVerts = (v) => v.map(({ x, y, sw, ew }) => ({ x, y, bulge: 0, ...(sw !== undefined && { sw }), ...(ew !== undefined && { ew }) }));
 /** consecutive coincident vertices dropped (a closed polyline's last vertex too when it repeats the first) */
 function distinct(v, closed) {

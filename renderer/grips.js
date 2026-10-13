@@ -189,6 +189,11 @@ export function gripsStretch(s, picks, d) {
     const e = getEntity(s.doc, id);
     if (!e) return false;
     let c = e;
+    if ((e.type === 'XLINE' || e.type === 'RAY') && idx.includes(0)) { // base moves with the window: translate, keep dir
+      c = structuredClone(e); c.p = add(e.p, d);
+      c.id = e.id; out.push(c);
+      continue;
+    }
     for (const i of idx) {
       const g = gripsOf(c)[i];
       c = g && applyGrip(c, i, add(g, d));

@@ -575,8 +575,10 @@ export function transformEntity(e, m) {
       if (hasBulge && !sim) {
         c.vertices = polylinePoints(e, 0).map((p) => ({ ...apply(m, p), bulge: 0 }));
         if (e.closed) c.vertices.pop();
+        delete c.frame; delete c.frameKind; delete c.frameSegs; // the curve is flattened: its frame no longer matches
       } else {
         c.vertices = e.vertices.map((v) => ({ ...apply(m, v), bulge: flip ? -(v.bulge || 0) : v.bulge || 0 }));
+        if (e.frame) c.frame = e.frame.map((v) => ({ ...apply(m, v), bulge: flip ? -(v.bulge || 0) : v.bulge || 0 }));
       }
       break;
     }

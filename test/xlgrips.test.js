@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as M from '../src/core/model.js';
 import { Session, trimCommand, extendCommand } from '../src/core/edit.js';
-import { gripsOf, applyGrip, XLINE_GRIP_DIST } from '../renderer/grips.js';
+import { gripsOf, applyGrip, gripsStretch, XLINE_GRIP_DIST } from '../renderer/grips.js';
 import { stretch } from '../src/core/modify.js';
 import { trimEntity, extendEntity, offsetEntity } from '../src/core/geom.js';
 
@@ -110,4 +110,12 @@ test('OFFSET an XLINE / RAY: a parallel one at the distance on the picked side',
   nearPt(o.dir, H, H); nearPt(o.p, 1 - 2 * H, 1 + 2 * H);
   const r = offsetEntity(ray({ x: 0, y: 0 }, { x: 1, y: 0 }), 3, { x: 4, y: -1 });
   assert.equal(r.type, 'RAY'); nearPt(r.p, 0, -3); nearPt(r.dir, 1, 0);
+});
+
+test('gripsStretch: base grip together with direction grips translates the line, direction unchanged', () => {
+  const doc = M.newDocument(), s = new Session(doc);
+  const { id } = M.addEntity(doc, xl({ x: 0, y: 0 }, { x: 1, y: 0 }));
+  assert.ok(gripsStretch(s, [{ id, i: 0 }, { id, i: 1 }], { x: 0, y: 5 }));
+  const e = M.getEntity(doc, id);
+  nearPt(e.p, 0, 5); nearPt(e.dir, 1, 0);
 });
