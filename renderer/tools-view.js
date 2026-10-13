@@ -1,6 +1,7 @@
-// ASH Draw Studio - ZOOM: the command-line view tool over src/core/cmdline.js (options as in AutoCAD LT).
+// ASH Draw Studio - command-line view and inquiry tools over src/core/cmdline.js (ZOOM, ID, LIST, LTSCALE; options as in AutoCAD LT).
 // tools.js owns the Tool base class and passes it to createViewTools (a factory, so this module does not import tools.js back).
-import { parseZoomInput, entitiesBox } from '../src/core/cmdline.js';
+import { parseZoomInput, entitiesBox, formatId, listEntities, setLinetypeScale } from '../src/core/cmdline.js';
+import { lengthPrecision } from '../src/core/measure.js';
 import { getEntity } from '../src/core/model.js';
 
 export function createViewTools(h, { Tool }) {
@@ -67,5 +68,47 @@ export function createViewTools(h, { Tool }) {
       c.setLineDash([]);
     }
   }
-  return { zoom: new ZoomTool(h) };
+  /** units and precision of the whole drawing (UNITS), as the Measure tool labels values */
+  const fmt = () => ({ prec: lengthPrecision(h.fileDoc.header?.luprec), units: h.fileDoc.units ?? 0 });
+
+  class IdTool extends Tool {
+    get prompt() { return 'ID  specify point'; }
+    click(p) { const t = formatId(p, fmt().prec); this.cancel(); h.toast(t, 8000); }
+  }
+
+  class ListTool extends Tool {
+    activate() { super.activate(); if (this.vp.selection.size) queueMicrotask(() => { if (h.tool === this) this.finish(); }); }
+    get prompt() { return 'LIST  select objects'; }
+    finish() {
+      const ents = [...this.vp.selection].map((id) => getEntity(h.doc, id)).filter(Boolean);
+      if (!ents.length) { h.toast('LIST: select objects first.'); return; }
+      this.cancel();
+      h.listDialog(listEntities(ents, h.doc, fmt()));
+    }
+    down(p, ev) { this.selStart = ev.raw; }
+    up(p, ev) {
+      const a = this.selStart; this.selStart = null;
+      const sel = new Set(this.vp.selection);
+      if (a && ev.dragged) for (const id of this.vp.box(a, ev.raw, ev.raw.x < a.x)) sel.add(id);
+      else { const hit = this.vp.pick(ev.raw); if (hit) sel.add(hit.id); }
+      this.vp.setSelection(sel);
+    }
+    key(e) { if (e.key === 'Enter') { if (this.vp.selection.size) this.finish(); else this.cancel(); return true; } return super.key(e); }
+  }
+
+  class LtscaleTool extends Tool {
+    get current() { return h.fileDoc.header?.ltscale || 1; }
+    get prompt() { return `LTSCALE  new linetype scale factor <${this.current}>`; }
+    text(s) {
+      const t = s.trim();
+      if (!/^[-+]?\d*\.?\d+$/.test(t) || !(Number(t) > 0)) { h.toast('LTSCALE: requires a number greater than 0.'); return true; }
+      const k = Number(t);
+      this.cancel();
+      if (setLinetypeScale(h.session, k, h.fileDoc)) h.toast(`Linetype scale = ${k}`, 2500);
+      return true;
+    }
+    key(e) { if (e.key === 'Enter') { this.cancel(); return true; } return super.key(e); } // Enter keeps <current>
+  }
+
+  return { zoom: new ZoomTool(h), id: new IdTool(h), list: new ListTool(h), ltscale: new LtscaleTool(h) };
 }

@@ -24,7 +24,7 @@ import { iconSvg } from './icons.js';
 import { defaultLayout, cleanLayout, panelGroups, samePanel, quickRow, setQuickRow, compactKeys, foldMode, SEP } from './tool-layout.js';
 import { openCustomize, initToolContextMenu } from './tool-custom.js';
 import { loadDrawingImages } from './images.js';
-import { el, message, modal, confirmDialog, textDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
+import { el, message, modal, confirmDialog, textDialog, listDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
 import {
   OPEN_FILTERS, loadDrawing, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, extOf, UNIT_NAMES,
 } from './files.js';
@@ -105,6 +105,7 @@ class App {
   newProps() { return { layer: this.state.layer, color: this.state.color, linetype: this.state.linetype, lineweight: this.state.lineweight, alpha: this.state.alpha }; }
   toast(t, ms) { toast(t, ms); }
   askText(o) { return textDialog(o); }
+  listDialog(text) { return listDialog(text); }
   refreshPrompt() { document.getElementById('prompt').textContent = this.tool?.prompt ?? ''; }
   refreshPanels(selectionOnly = false) {
     if (!selectionOnly) renderLayers(this);
@@ -137,7 +138,7 @@ class App {
     if (t.text?.(s)) { this.refreshPrompt(); return; }
     const low = s.toLowerCase();
     if (TOOL_ALIASES[low]) { this.setTool(TOOL_ALIASES[low]); return; }
-    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => { this.viewHistory.breakGesture(this.viewKey()); this.vp.zoomExtents(); }, all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), find: () => this.find.open(), compare: () => this.compare(), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), units: () => this.unitsDialog(), un: () => this.unitsDialog(), ddunits: () => this.unitsDialog(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), ...this.layerCommands(), ...this.layoutCommands };
+    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => { this.viewHistory.breakGesture(this.viewKey()); this.vp.zoomExtents(); }, all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), find: () => this.find.open(), compare: () => this.compare(), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), units: () => this.unitsDialog(), un: () => this.unitsDialog(), ddunits: () => this.unitsDialog(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), ...this.panelCommands(), ...this.layerCommands(), ...this.layoutCommands };
     if (sys[low]) { sys[low](); return; }
     const last = this.vp.lastPoint ?? { x: 0, y: 0 };
     const dir = this.vp.lastPoint ? { x: this.vp.cursor.x - last.x, y: this.vp.cursor.y - last.y } : null;
@@ -146,6 +147,13 @@ class App {
     toast(`Unknown command "${s}".`);
   }
 
+  /** PR / LA: show the side panel (Quick Access 'layers' toggles it) and bring Properties or Layers into view; RE: rebuild the scene */
+  panelCommands() {
+    const show = (id) => () => { document.getElementById('app').classList.remove('no-side'); document.getElementById(id).closest('.panel').scrollIntoView({ block: 'nearest' }); };
+    const regen = () => { this.vp.refreshStructure(); this.vp.invalidate(); toast('Regenerating model.', 1500); };
+    return { pr: show('props'), properties: show('props'), ch: show('props'), mo: show('props'), la: show('layers'), layer: show('layers'),
+      re: regen, regen, regenall: regen, redraw: regen, r: regen };
+  }
   layerCommands() {
     const sel = () => [...this.vp.selection];
     const need = (f) => () => { if (!this.vp.selection.size) { toast('Select objects first, then run the command.'); return; } f(); };

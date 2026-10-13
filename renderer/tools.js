@@ -678,5 +678,5 @@ export const TOOL_ALIASES = {
   xa: 'xattach', xattach: 'xattach',
   ate: 'eattedit', eattedit: 'eattedit', attedit: 'eattedit', ddatte: 'eattedit',
   mkc: 'mkc', mkr: 'mkr', mkt: 'mkt',
-  z: 'zoom', zoom: 'zoom',
+  z: 'zoom', zoom: 'zoom', id: 'id', li: 'list', ls: 'list', list: 'list', lts: 'ltscale', ltscale: 'ltscale',
 };
