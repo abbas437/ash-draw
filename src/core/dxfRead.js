@@ -737,6 +737,19 @@ function readSortents(tags) {
 }
 
 const HEX = /^[0-9A-F]+$/;
+/** VPORT record `*Active` -> the saved model view { cx, cy, height, aspect } (WCS centre, as readViewport), or undefined
+ *  for a degenerate height or a 3D view direction */
+function readActiveView(rec) {
+  const height = rec.num(40), aspect = rec.num(41, 1);
+  if (!(height > 0) || !Number.isFinite(height)) return undefined;
+  if (rec.num(16) !== 0 || rec.num(26) !== 0 || !(rec.num(36, 1) > 0)) return undefined;
+  const tw = rec.num(51) * Math.PI / 180, tx = rec.num(17), ty = rec.num(27), dx = rec.num(12), dy = rec.num(22);
+  const ct = Math.cos(tw), st = Math.sin(tw);
+  const cx = tx + ct * dx + st * dy, cy = ty - st * dx + ct * dy;
+  if (![cx, cy, aspect].every(Number.isFinite) || !(aspect > 0)) return undefined;
+  return { cx, cy, height, aspect };
+}
+
 /** a handle as one canonical string: upper case, no leading zeros (tables may write either) */
 function normHandle(v) { return String(v ?? '').trim().toUpperCase().replace(/^0+(?=.)/, ''); }
 /** reorder list in place by the table (entity handle -> sort handle); stable for equal keys. An entity without a
@@ -793,9 +806,11 @@ function parseTokens(tk, onProgress = null) {
   // TABLES
   if (secs.TABLES) {
     const dimRecs = [], styleH = new Map();
+    let vportSeen = false;
     for (const rec of records(tk, secs.TABLES.from, secs.TABLES.to)) {
       if (rec.type === 'BLOCK_RECORD') blockRecH.set(normHandle(rec.str(5)), rec.str(2));
       if (rec.type === 'STYLE') styleH.set(rec.str(5), rec.str(2));
+      if (rec.type === 'VPORT' && !vportSeen && rec.str(2).toLowerCase() === '*active') { vportSeen = true; const av = readActiveView(rec); if (av) doc.activeView = av; }
       if (rec.type === 'LAYER') {
         const name = rec.str(2);
         if (!name) continue;

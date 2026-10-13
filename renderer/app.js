@@ -33,6 +33,13 @@ import {
 } from './files.js';
 
 const api = window.api;
+/** the drawing's saved model view (VPORT *Active) as a world box, or null */
+const savedViewBox = (doc) => {
+  const v = doc.activeView;
+  if (!v) return null;
+  const hw = v.height * v.aspect / 2, hh = v.height / 2;
+  return { minx: v.cx - hw, maxx: v.cx + hw, miny: v.cy - hh, maxy: v.cy + hh };
+};
 
 class App {
   constructor() {
@@ -217,15 +224,15 @@ class App {
   }
   /** show a drawing in a new tab; a blank, untouched Untitled tab is replaced instead */
   /** prepared: {scene, index} built ahead (prepareView) so showing the tab does no long synchronous work */
-  installDoc(doc, file, { replaceBlank = false, prepared = null } = {}) {
+  installDoc(doc, file, { replaceBlank = false, prepared = null, firstView = false } = {}) {
     const tab = createDocState(doc, file);
     if (prepared) { tab.scene = prepared.scene; tab.index = prepared.index; }
     const blank = replaceBlank && isBlankTab(this.active) ? this.active : null;
     if (blank) this.tabs.splice(this.tabs.indexOf(blank), 1, tab); else this.tabs.push(tab);
-    this.switchTo(tab, { fit: true });
+    this.switchTo(tab, { fit: true, firstView });
   }
   /** bring a tab to the front: the shown tab keeps its view, selection and caches for when it comes back */
-  switchTo(tab, { fit = false } = {}) {
+  switchTo(tab, { fit = false, firstView = false } = {}) {
     const cur = this.active;
     if (cur && cur !== tab) exitMspace(this);
     if (cur && cur !== tab && this.tabs.includes(cur)) {
@@ -236,7 +243,7 @@ class App {
     if (cur !== tab && this.toolId) this.setTool(this.toolId === 'select' ? 'select' : this.toolId); // drop a half-done command
     this.active = tab;
     restoreSpace(this, tab);
-    this.vp.setSession(tab.session, { fit: fit || !tab.view, view: fit ? null : tab.view, selection: tab.selection, scene: tab.scene, index: tab.index, lastPoint: tab.lastPoint });
+    this.vp.setSession(tab.session, { fit: fit || !tab.view, view: fit ? null : tab.view, selection: tab.selection, scene: tab.scene, index: tab.index, lastPoint: tab.lastPoint, initialView: firstView ? savedViewBox(tab.session.doc) : null });
     tab.scene = tab.index = null;
     renderSpaceBar(this);
     this.refreshPanels(); this.refreshStatus(); this.updateTitle(); this.refreshDimStyles();
@@ -295,7 +302,7 @@ class App {
       if (missing.length) notes.push(`Raster images not found (shown as a red frame with the file name): ${missing.join(', ')}.`);
       const pp = progressToast('Preparing drawing…', () => ac.abort());
       const prepared = await prepareView(doc, { signal: ac.signal, onProgress: (x) => pp.set(x) });
-      this.installDoc(doc, { path: f.path ?? null, name: f.name, format }, { replaceBlank: true, prepared });
+      this.installDoc(doc, { path: f.path ?? null, name: f.name, format }, { replaceBlank: true, prepared, firstView: true });
       toast(`${f.name}: ${doc.entities.length.toLocaleString()} objects`, 2500);
       this.unitsHint(doc);
       if (notes.length) await message('Opened with limitations', `${f.name} was opened, but:`, el('div', {}, [el('ul', {}, notes.map((n) => el('li', { text: n }))), ...(warnings?.length ? [el('details', {}, [el('summary', { text: 'Converter messages' }), el('pre', { text: warnings.join('\n') })])] : [])]));
