@@ -18,7 +18,26 @@ export const ODA_OUT_VERSION = 'ACAD2018';
 export const ODA_EXE = 'ODAFileConverter.exe';
 export const ODA_DOWNLOAD_URL = 'https://www.opendesign.com/guestfiles/oda_file_converter';
 export const DWG_MODES = Object.freeze(['auto', 'oda', 'libredwg']);
-export const ODA_HINT = 'The built-in converter could not read this DWG (AutoCAD 2018 format files from some programs are not fully supported). Install the free ODA File Converter (opendesign.com) and ASH Draw Studio will use it automatically.';
+export const ODA_INSTALL = 'Install the free ODA File Converter (opendesign.com) and ASH Draw Studio will use it automatically.';
+export const ODA_HINT = `The built-in converter could not read this DWG (AutoCAD 2018 format files from some programs are not fully supported). ${ODA_INSTALL}`;
+// A normal DXF is 5-15x its DWG; the reviewer's failing AutoCAD 2018 file gave 0.2 MB of DXF from 115 MB with 666,694 ERROR lines.
+export const IMPLAUSIBLE_MIN_DWG = 2 * 1024 * 1024; // the size rule only applies to DWG files over 2 MB
+export const IMPLAUSIBLE_MAX_ERRORS = 100_000;
+const mb = (n) => (n < 0.05 * 1048576 ? 'less than 0.1 MB' : `${(n / 1048576).toFixed(1)} MB`);
+
+/**
+ * Whether a DWG -> DXF conversion that "succeeded" is too small or too broken to be the drawing: a DWG over 2 MB
+ * that gave less than half its size of DXF, or more than 100,000 converter ERROR lines. Sizes in bytes.
+ * Returns the reason in plain words, or null when the output is plausible.
+ */
+export function implausibleConversion({ dwgBytes, dxfBytes, errorCount = 0 }) {
+  const errs = errorCount > 0 ? ` and reported ${errorCount.toLocaleString('en-US')} errors` : '';
+  if (dwgBytes > IMPLAUSIBLE_MIN_DWG && dxfBytes < dwgBytes / 2) return `a ${mb(dwgBytes)} DWG file gave only ${mb(dxfBytes)} of drawing data${errs}`;
+  if (errorCount > IMPLAUSIBLE_MAX_ERRORS) return `the converter reported ${errorCount.toLocaleString('en-US')} errors while reading the ${mb(dwgBytes)} DWG file`;
+  return null;
+}
+/** the first lines of a converter log, made safe for the " [detail]" tail of an error message */
+const logExcerpt = (log) => String(log ?? '').split(/\r?\n/).filter((l) => l.trim()).slice(0, 20).join('\n').replace(/[[\]]/g, (c) => (c === '[' ? '(' : ')'));
 const IN_NAME = 'drawing.dwg';
 
 /** Only an executable named ODAFileConverter[.exe] is ever run (a settings value cannot name another program). */
@@ -104,7 +123,7 @@ export function createOdaBridge(exe, opts = {}) {
         const st = await fs.stat(path.join(outDir, dxf));
         if (st.size === 0) throw new Error('ODA File Converter produced an empty file');
         if (st.size > maxBytes) throw new RangeError(`ODA File Converter output exceeds ${maxBytes} bytes`);
-        return { dxfBytes: new Uint8Array(await fs.readFile(path.join(outDir, dxf))) };
+        return { dxfBytes: new Uint8Array(await fs.readFile(path.join(outDir, dxf))), errorCount: 0, log: '', converter: 'ODA' };
       } finally {
         await fs.rm(tmp, { recursive: true, force: true });
       }
@@ -150,16 +169,28 @@ export function createDwgService({ libre, getConfig, detectOda, makeOda }) {
         oda: odaInfo, libredwg: lib ?? { available: false, reason: 'not used (ODA File Converter selected)' },
       };
     },
-    /** DWG bytes -> {dxfBytes, warnings?, engine}; errors carry `odaHint` when installing ODA would help. */
+    /** DWG bytes -> {dxfBytes, warnings?, engine, converter: 'ODA'|'LibreDWG', errorCount, log}; errors carry `odaHint`
+     *  when installing ODA would help. An implausible output (implausibleConversion) counts as a failed engine. */
     async toDxf(dwgBytes) {
       const { mode, order } = await engines();
       const errors = [];
+      let incomplete = null; // the built-in converter's implausible result: {reason, log}
       for (const e of order) {
-        try { return { ...(await e.bridge.toDxf(dwgBytes)), engine: e.name }; } catch (err) { errors.push(`${e.name === 'oda' ? 'ODA File Converter' : 'LibreDWG'}: ${String(err.message || err).split('\n')[0]}`); }
+        const label = e.name === 'oda' ? 'ODA File Converter' : 'LibreDWG';
+        let r;
+        try { r = await e.bridge.toDxf(dwgBytes); } catch (err) { errors.push(`${label}: ${String(err.message || err).split('\n')[0]}`); continue; }
+        const res = { ...r, engine: e.name, converter: e.name === 'oda' ? 'ODA' : 'LibreDWG', errorCount: r.errorCount ?? 0, log: r.log ?? '' };
+        const reason = implausibleConversion({ dwgBytes: dwgBytes.byteLength, dxfBytes: res.dxfBytes.byteLength, errorCount: res.errorCount });
+        if (!reason) return res;
+        errors.push(`${label}: produced an incomplete drawing (${reason})`);
+        if (e.name === 'libredwg') incomplete = { reason, log: res.log };
       }
       const odaTried = order.some((e) => e.name === 'oda');
+      const prefs = mode === 'libredwg' ? ' (Preferences > DWG converter must be Automatic or ODA File Converter.)' : '';
+      const detail = errors.join('; ') || 'no converter available';
       const msg = odaTried ? `This DWG file could not be converted (${errors.join('; ')}).`
-        : `${ODA_HINT}${mode === 'libredwg' ? ' (Preferences > DWG converter must be Automatic or ODA File Converter.)' : ''} [${errors.join('; ') || 'no converter available'}]`;
+        : incomplete ? `The built-in converter produced an incomplete drawing from this DWG: ${incomplete.reason}. It was not opened, so that you do not work on a drawing with missing objects. ${ODA_INSTALL}${prefs} [${detail}${incomplete.log ? `\n${logExcerpt(incomplete.log)}` : ''}]`
+          : `${ODA_HINT}${prefs} [${detail}]`;
       throw Object.assign(new Error(msg), { odaHint: !odaTried });
     },
     fromDxf: (dxfBytes, version) => libre.fromDxf(dxfBytes, version),

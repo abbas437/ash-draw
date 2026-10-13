@@ -14,7 +14,7 @@ import path from 'node:path';
 export const MAX_BYTES = 1536 * 1024 * 1024; // input/output size cap (a 120 MB DWG can expand to 500+ MB of DXF)
 export const TIMEOUT_MS = 10 * 60_000; // a 120 MB AutoCAD 2018 DWG converts to a 500+ MB DXF
 export const MAX_BUFFER = 10 * 1024 * 1024; // stdout capture cap for short probes (--version)
-export const STDERR_READ = 256 * 1024; // bytes of the converter's stderr log read back (LibreDWG can print many MB of ERROR lines)
+export const STDERR_READ = 256 * 1024; // bytes of the converter's stderr kept for the log (LibreDWG can print many MB of ERROR lines; all are counted)
 export const STDERR_LIMIT = 4096; // characters of stderr surfaced in errors
 // Versions dxf2dwg 0.13.3 accepts for `--as` AND can actually encode
 // ("Encoding currently only works for R13-R2000"; r12 is accepted but not encoded).
@@ -74,41 +74,64 @@ function run(file, args, opts) {
   });
 }
 
-// Runs a converter with stderr redirected to a file inside `logDir`, so any amount of console output
-// can neither fail the run nor be held in memory; only the first STDERR_READ bytes are read back.
-// Rejects with the same error shape as execFile (numeric `code`, `killed`, `signal`, `stderr`).
-async function runLogged(file, args, { cwd, timeout, logDir }) {
-  const logPath = path.join(logDir, 'stderr.log');
-  const fh = await fs.open(logPath, 'w');
-  const readLog = async () => {
-    try {
-      const buf = Buffer.alloc(STDERR_READ);
-      const { bytesRead } = await fs.open(logPath, 'r').then(async (h) => { try { return await h.read(buf, 0, STDERR_READ, 0); } finally { await h.close(); } });
-      return buf.subarray(0, bytesRead).toString('utf8');
-    } catch { return ''; }
+/**
+ * Collects a converter's stderr as it streams: counts every line starting with "ERROR" over the WHOLE stream
+ * (LibreDWG can print hundreds of thousands) and keeps only the first `limit` bytes as text for the log.
+ * push(chunk) per Buffer/Uint8Array chunk; finish() -> {errorCount, log}. Lines may be split across chunks.
+ */
+export function stderrCollector(limit = STDERR_READ) {
+  const kept = [];
+  let keptBytes = 0;
+  let errorCount = 0;
+  let head = ''; // the start of the current, not yet ended line (only its first characters matter)
+  const isError = (line) => /^\s*ERROR\b/.test(line);
+  return {
+    push(chunk) {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      if (keptBytes < limit) { const part = buf.subarray(0, limit - keptBytes); kept.push(part); keptBytes += part.length; }
+      const text = buf.toString('latin1'); // "ERROR" is ASCII; latin1 never mis-splits a byte sequence
+      let from = 0;
+      for (let nl = text.indexOf('\n', from); nl !== -1; nl = text.indexOf('\n', from)) {
+        if (isError(head + text.slice(from, Math.min(nl, from + 64)))) errorCount++;
+        head = '';
+        from = nl + 1;
+      }
+      if (head.length < 64) head += text.slice(from, from + 64 - head.length);
+    },
+    finish() {
+      if (head && isError(head)) errorCount++;
+      head = '';
+      return { errorCount, log: Buffer.concat(kept).toString('utf8') };
+    },
   };
-  try {
-    const result = await new Promise((resolve) => {
-      let killed = false;
-      let settled = false;
-      const done = (v) => { if (!settled) { settled = true; clearTimeout(timer); resolve(v); } };
-      const child = spawn(file, args, { cwd, windowsHide: true, shell: false, stdio: ['ignore', 'ignore', fh.fd] });
-      const timer = setTimeout(() => { killed = true; child.kill('SIGTERM'); }, timeout);
-      child.on('error', (error) => done({ error }));
-      child.on('close', (code, signal) => done({ code, signal, killed }));
-    });
-    const stderr = await readLog();
-    if (result.error) { result.error.stderr = stderr; throw result.error; }
-    if (result.code === 0 && !result.signal) return { stderr };
-    const err = new Error(`Command failed: ${path.basename(file)}`);
-    err.code = result.code ?? undefined; // null (killed by signal) must not look like an exit code
-    err.killed = result.killed;
-    err.signal = result.signal;
-    err.stderr = stderr;
-    throw err;
-  } finally {
-    await fh.close();
-  }
+}
+
+// Runs a converter with its stderr streamed through stderrCollector, so any amount of console output can
+// neither fail the run nor be held in memory: ERROR lines are counted over the whole stream, only the
+// first STDERR_READ bytes are kept. Rejects with the same error shape as execFile (numeric `code`, `killed`,
+// `signal`, `stderr`) plus `errorCount`.
+async function runLogged(file, args, { cwd, timeout }) {
+  const col = stderrCollector(STDERR_READ);
+  const result = await new Promise((resolve) => {
+    let killed = false;
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; clearTimeout(timer); resolve(v); } };
+    const child = spawn(file, args, { cwd, windowsHide: true, shell: false, stdio: ['ignore', 'ignore', 'pipe'] });
+    const timer = setTimeout(() => { killed = true; child.kill('SIGTERM'); }, timeout);
+    child.stderr?.on('data', (c) => col.push(c));
+    child.on('error', (error) => done({ error }));
+    child.on('close', (code, signal) => done({ code, signal, killed }));
+  });
+  const { errorCount, log: stderr } = col.finish();
+  if (result.error) { Object.assign(result.error, { stderr, errorCount }); throw result.error; }
+  if (result.code === 0 && !result.signal) return { stderr, errorCount };
+  const err = new Error(`Command failed: ${path.basename(file)}`);
+  err.code = result.code ?? undefined; // null (killed by signal) must not look like an exit code
+  err.killed = result.killed;
+  err.signal = result.signal;
+  err.stderr = stderr;
+  err.errorCount = errorCount;
+  throw err;
 }
 
 function describeFailure(name, err, timeoutMs) {
@@ -170,19 +193,21 @@ export function createDwgBridge(dir, platform = process.platform, opts = {}) {
       const outPath = path.join(tmp, `output.${outExt}`);
       await fs.writeFile(inPath, input);
       let stderr = '';
+      let errorCount = 0;
       let failed = null;
       try {
-        ({ stderr } = await runLogged(exe, [...extraArgs, '-y', '-o', outPath, inPath], { cwd: tmp, timeout: timeoutMs, logDir: tmp }));
+        ({ stderr, errorCount } = await runLogged(exe, [...extraArgs, '-y', '-o', outPath, inPath], { cwd: tmp, timeout: timeoutMs }));
       } catch (err) {
         // only a plain non-zero exit is recoverable: never timeout / ENOENT / signal
         if (!recover || typeof err.code !== 'number' || err.killed || err.signal) throw describeFailure(name, err, timeoutMs);
         failed = err;
         stderr = err.stderr;
+        errorCount = err.errorCount ?? 0;
       }
       if (failed) {
         const bytes = await readRecoverable(outPath, maxBytes);
         if (!bytes) throw describeFailure(name, failed, timeoutMs);
-        return { bytes, warnings: recover(stderr) };
+        return { bytes, warnings: recover(stderr), errorCount, log: stderr };
       }
       let st;
       try { st = await fs.stat(outPath); } catch {
@@ -192,7 +217,7 @@ export function createDwgBridge(dir, platform = process.platform, opts = {}) {
       if (st.size === 0) throw new Error(`${name} produced an empty file`);
       if (st.size > maxBytes) throw new RangeError(`${name} output exceeds ${maxBytes} bytes`);
       const bytes = new Uint8Array(await fs.readFile(outPath));
-      return recover ? { bytes, warnings: [] } : bytes;
+      return recover ? { bytes, warnings: [], errorCount, log: stderr } : bytes;
     } finally {
       await fs.rm(tmp, { recursive: true, force: true });
     }
@@ -205,11 +230,12 @@ export function createDwgBridge(dir, platform = process.platform, opts = {}) {
       availability ??= probe();
       return availability;
     },
-    /** DWG bytes -> {dxfBytes} */
+    /** DWG bytes -> {dxfBytes, warnings?, errorCount, log, converter}: errorCount = ERROR lines over the whole
+     *  converter output, log = its first STDERR_READ bytes */
     async toDxf(dwgBytes) {
       const input = toBuffer(dwgBytes, 'DWG data', maxBytes);
-      const { bytes, warnings } = await convert('dwg2dxf', dwg2dxf, input, 'dwg', 'dxf', [], warningLines);
-      return warnings.length ? { dxfBytes: bytes, warnings } : { dxfBytes: bytes };
+      const { bytes, warnings, errorCount, log } = await convert('dwg2dxf', dwg2dxf, input, 'dwg', 'dxf', [], warningLines);
+      return { dxfBytes: bytes, ...(warnings.length ? { warnings } : {}), errorCount, log, converter: 'LibreDWG' };
     },
     /** DXF bytes -> {dwgBytes}; version one of DWG_OUT_VERSIONS (default r2000) */
     async fromDxf(dxfBytes, version = DEFAULT_DWG_OUT_VERSION) {

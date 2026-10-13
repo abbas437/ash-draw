@@ -408,8 +408,8 @@ function registerIpc() {
   // as a one-time URL (handOff) that the window's reader worker fetches.
   handle('dwg:open', async (src) => {
     const bytes = typeof src === 'string' ? await readGranted(grantedPath(src)) : asBytes(src, 'DWG data');
-    const { dxfBytes, warnings, engine } = await dwg.toDxf(bytes);
-    return { url: handOff(dxfBytes), size: dxfBytes.byteLength, warnings, engine };
+    const { dxfBytes, warnings, engine, converter, errorCount, log } = await dwg.toDxf(bytes);
+    return { url: handOff(dxfBytes), size: dxfBytes.byteLength, dwgSize: bytes.byteLength, warnings, engine, converter, errorCount, log };
   });
   // the window gives a hand-off back unserved (a cancelled or failed open), so main does not hold the DXF until it expires
   handle('dwg:release', (url) => { const t = tokenOf(url); if (t) handoffs.release(t); });

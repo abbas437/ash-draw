@@ -75,7 +75,28 @@ export async function prepareView(doc, { signal = null, onProgress = null } = {}
   return { scene, index };
 }
 
-/** Load a DWG/DXF. Returns {doc, format, notes[]}; throws Error with a user-readable message.
+/** objects a drawing shows: model space plus layout (paper space) objects; layout viewports alone do not count */
+export const objectsRead = (doc) => doc.entities.length + (doc.layouts ?? []).reduce((n, l) => n + (l.entities ?? []).filter((e) => e.type !== 'VIEWPORT').length, 0);
+export const EMPTY_DWG_MIN = 100 * 1024;
+/** A DWG over 100 KB whose conversion reads as no objects at all is a failed conversion, not an empty drawing. */
+export const isEmptyConversion = (dwgSize, doc) => dwgSize > EMPTY_DWG_MIN && objectsRead(doc) === 0;
+
+const plural = (n, w) => `${n.toLocaleString('en-US')} ${w}${n === 1 ? '' : 's'}`;
+/** Status-bar item for a DWG's last conversion ({converter, errorCount, objects, skipped}): short text + tooltip. */
+export function conversionSummary(c) {
+  const name = c.converter === 'ODA' ? 'ODA File Converter' : 'LibreDWG';
+  const errs = c.errorCount ? plural(c.errorCount, 'converter error') : 'no converter errors';
+  const sk = Object.entries(c.skipped ?? {});
+  return {
+    text: c.converter === 'ODA' ? name : `${name} · ${errs}`,
+    title: [`Converted from DWG with ${name}.`, `Objects read: ${c.objects.toLocaleString('en-US')}.`,
+      `Object types not shown: ${sk.length ? sk.map(([k, v]) => `${v.toLocaleString('en-US')} ${k}`).join(', ') : 'none'}.`,
+      c.converter === 'ODA' ? null : `Converter errors: ${c.errorCount.toLocaleString('en-US')}.`, 'Click for the converter log.'].filter(Boolean).join('\n'),
+  };
+}
+
+/** Load a DWG/DXF. Returns {doc, format, notes[], warnings, conversion}; throws Error with a user-readable message.
+ *  conversion (DWG only): {converter: 'LibreDWG'|'ODA', errorCount, log, objects, skipped} of this open.
  *  opts: {onProgress(fraction), signal} for the DXF read (see readDxfAsync); `path`: the granted file, which a DWG
  *  is then converted from without its bytes passing through the window (`bytes` may be null for a .dwg path). */
 export async function loadDrawing(api, name, bytes, { onProgress = null, signal = null, path = null } = {}) {
@@ -83,6 +104,7 @@ export async function loadDrawing(api, name, bytes, { onProgress = null, signal 
   let dxfBytes = bytes, format = 'dxf';
   const notes = [];
   let warnings = [];
+  let conv = null;
   if (ext === 'dwg' || (bytes && looksLikeDwg(bytes))) {
     format = 'dwg';
     if (!api.isElectron) throw new Error('Opening DWG files needs the desktop app (it includes the free LibreDWG converter). In this browser preview, please open a DXF file.');
@@ -93,6 +115,7 @@ export async function loadDrawing(api, name, bytes, { onProgress = null, signal 
       const res = api.dwgOpen ? await api.dwgOpen(path ?? bytes) : await api.dwgToDxf(bytes);
       dxfBytes = res.url ? { url: res.url } : res.dxfBytes;
       warnings = Array.isArray(res.warnings) ? res.warnings : [];
+      conv = { converter: res.converter === 'ODA' || res.engine === 'oda' ? 'ODA' : 'LibreDWG', errorCount: res.errorCount ?? 0, log: res.log ?? '', dwgSize: res.dwgSize ?? bytes?.byteLength ?? 0 };
     } catch (err) {
       const m = String(err.message || err).replace(/^Error invoking remote method '[^']*': (Error: )?/, '');
       if (m.includes(ODA_HINT_MARK)) throw Object.assign(new Error(m), { odaHint: true });
@@ -108,6 +131,14 @@ export async function loadDrawing(api, name, bytes, { onProgress = null, signal 
     if (err.code === 'BAD_DXF') throw new Error('This file is not a valid DXF drawing.');
     throw err;
   }
+  if (conv && isEmptyConversion(conv.dwgSize, doc)) {
+    const kb = conv.dwgSize >= 1048576 ? `${(conv.dwgSize / 1048576).toFixed(1)} MB` : `${Math.round(conv.dwgSize / 1024)} KB`;
+    const name = conv.converter === 'ODA' ? 'The ODA File Converter' : 'The built-in converter';
+    const errs = conv.errorCount ? ` and reported ${plural(conv.errorCount, 'error')}` : '';
+    const hint = conv.converter === 'ODA' ? ' Try opening it in your CAD program and saving it as DXF.' : ` ${ODA_HINT_MARK} (opendesign.com) and ASH Draw Studio will use it automatically.`;
+    const log = conv.log.split(/\r?\n/).filter((l) => l.trim()).slice(0, 20).join('\n').replace(/[[\]]/g, (c) => (c === '[' ? '(' : ')'));
+    throw Object.assign(new Error(`${name} produced an incomplete drawing from this DWG: the ${kb} file read as a drawing with no objects${errs}. It was not opened, so that you do not work on a drawing with missing objects.${hint}${log && conv.converter !== 'ODA' ? ` [${log}]` : ''}`), { odaHint: conv.converter !== 'ODA' });
+  }
   if (warnings.length) notes.push('The DWG file has checksum/format errors (reported by the converter); the drawing was recovered — check it before relying on it.');
   const rep = doc.header?.repairedValues;
   if (rep) notes.push(`${rep} damaged text value${rep === 1 ? ' was' : 's were'} repaired (split over several lines in the file).`);
@@ -115,7 +146,8 @@ export async function loadDrawing(api, name, bytes, { onProgress = null, signal 
   const ole = [doc.entities, ...[...doc.blocks.values()].map((b) => b.entities)].reduce((n, l) => n + l.filter((x) => x.type === 'OLE2FRAME').length, 0);
   if (ole) notes.push(`${ole} OLE object${ole === 1 ? '' : 's'} shown as frames (content not displayed).`);
   if (sk.length) notes.push(`Not displayed (unsupported object types): ${sk.map(([k, v]) => `${v} ${k}`).join(', ')}.`);
-  return { doc, format, notes, warnings };
+  const conversion = conv && { converter: conv.converter, errorCount: conv.errorCount, log: conv.log, objects: objectsRead(doc), skipped: { ...(doc.skipped || {}) } };
+  return { doc, format, notes, warnings, conversion };
 }
 function looksLikeDwg(b) { return b.length > 6 && b[0] === 0x41 && b[1] === 0x43 && b[2] === 0x31 && b[3] >= 0x30 && b[3] <= 0x39; } // "AC10.."
 
