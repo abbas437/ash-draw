@@ -5,7 +5,7 @@ import { iconSvg } from './icons.js';
 export const TOOL_BUTTONS = [
   ['Select', 'select', [['select', 'Select'], ['pan', 'Pan', 'P']]],
   ['Draw', 'draw', [['line', 'Line', 'L'], ['pline', 'Polyline', 'PL'], ['rect', 'Rectangle', 'REC'], ['polygon', 'Polygon', 'POL'], ['circle', 'Circle', 'C'], ['arc', 'Arc', 'A'], ['ellipse', 'Ellipse', 'EL'], ['spline', 'Spline', 'SPL'], ['donut', 'Donut', 'DO'], ['point', 'Point', 'PO'], ['text', 'Text', 'T'], ['hatch', 'Hatch', 'H']]],
-  ['Modify', 'modify', [['move', 'Move', 'M'], ['copy', 'Copy', 'CO'], ['rotate', 'Rotate', 'RO'], ['scale', 'Scale', 'SC'], ['mirror', 'Mirror', 'MI'], ['offset', 'Offset', 'O'], ['trim', 'Trim', 'TR'], ['extend', 'Extend', 'EX'], ['explode', 'Explode', 'X'], ['erase', 'Erase', 'E'],
+  ['Modify', 'modify', [['move', 'Move', 'M'], ['copy', 'Copy', 'CO'], ['rotate', 'Rotate', 'RO'], ['scale', 'Scale', 'SC'], ['align', 'Align', 'AL'], ['mirror', 'Mirror', 'MI'], ['offset', 'Offset', 'O'], ['trim', 'Trim', 'TR'], ['extend', 'Extend', 'EX'], ['explode', 'Explode', 'X'], ['erase', 'Erase', 'E'],
     ['fillet', 'Fillet', 'F'], ['chamfer', 'Chamfer', 'CHA'], ['break', 'Break', 'BR'], ['breakatpoint', 'Break at point', 'BREAKATPOINT'], ['join', 'Join', 'J'], ['pedit', 'Edit polyline', 'PE'], ['lengthen', 'Lengthen', 'LEN'], ['stretch', 'Stretch', 'STR'],
     ['arrayrect', 'Array rect', 'AR'], ['arraypolar', 'Array polar', 'ARRAYPOLAR'], ['arraypath', 'Array path', 'ARRAYPATH']]],
   ['Block', 'block', [['block', 'Create block', 'B'], ['insert', 'Insert', 'I'], ['attdef', 'Attribute', 'ATT'], ['eattedit', 'Edit attributes', 'ATE']]],
