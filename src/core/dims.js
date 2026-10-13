@@ -470,8 +470,8 @@ export function dimensionTags(e) {
     case 'ordinate': t.push([100, 'AcDbOrdinateDimension'], ...P3(13, d.feature), ...P3(14, d.end)); break;
     case 'arc': {
       const a = (p) => normAng(Math.atan2(p.y - d.center.y, p.x - d.center.x));
-      t.push([100, 'AcDbArcDimension'], ...P3(13, d.p1), ...P3(14, d.p2), ...P3(15, d.center), [70, d.partial ? 1 : 0], [71, 0],
-        ...P3(16, d.center), ...P3(17, d.center), [40, a(d.p1)], [41, a(d.p2)]);
+      t.push([100, 'AcDbArcDimension'], ...P3(13, d.p1), ...P3(14, d.p2), ...P3(15, d.center), [40, a(d.p1)], [41, a(d.p2)],
+        [70, d.partial ? 1 : 0], [71, 0], ...P3(16, d.center), ...P3(17, d.center)); // AcDbArcDimension field order
       break;
     }
     default: break;

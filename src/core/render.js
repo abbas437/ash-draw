@@ -161,13 +161,15 @@ class Builder {
   }
 
   push(item, rootId) {
+    // an item with a NaN / infinite box cannot be drawn sensibly and would poison the extents: it is left out (counted)
+    const bb = item.bbox;
+    if (bb && !Number.isFinite(bb.minx + bb.miny + bb.maxx + bb.maxy)) { this.dropped = (this.dropped ?? 0) + 1; return; }
     item.id = rootId;
     this.items.push(item);
     let list = this.byId.get(rootId);
     if (!list) this.byId.set(rootId, (list = []));
     list.push(item);
     if (this._ui) item.ui = true;
-    if (item.bbox && !Number.isFinite(item.bbox.minx + item.bbox.miny + item.bbox.maxx + item.bbox.maxy)) item.bbox = null; // never let one bad item blank the extents
     if (item.bbox) { if (this._ui) this.uiBox = unionBox(this.uiBox, item.bbox); else this.bbox = unionBox(this.bbox, item.bbox); }
   }
 
