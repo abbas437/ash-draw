@@ -3,6 +3,7 @@
 // "space doc": the drawing seen through the layout's entity list (layers, blocks, ids stay shared).
 import { buildScene, docWithFrozen, fitView, screenToWorld, viewportToPaper } from '../src/core/render.js';
 import { makeViewport, viewportScale, modelViewThrough, viewportFromModelView, viewportAt, STANDARD_SCALES, isPaperViewport } from '../src/core/layouts.js';
+import { recordViewportView, viewportView } from '../src/core/edit.js';
 import { Tool, TOOL_ALIASES } from './tools.js';
 import { el, modal, toast } from './ui.js';
 
@@ -59,11 +60,12 @@ export function enterMspace(app, v) {
   const vp = app.vp, tab = app.active;
   if (!vp.layout || !v) return false;
   if (v.twist) { toast('Model space through a twisted viewport is not supported in this version.'); return false; }
+  commitViewportView(app); // switching viewports ends the previous one's view session
   const m = vp.mspace;
   const paperView = m ? { ...m.paperView } : { ...vp.view }, paperScene = m ? m.paperScene : vp.scene;
   if (app.toolId) app.setTool(app.toolId === 'select' ? 'select' : app.toolId); // drop a half-done command
   tab.session.doc = tab.doc;
-  vp.mspace = { vp: v, paperView, paperScene, quiet: true, zoomExtents: () => zoomViewportExtents(app) };
+  vp.mspace = { vp: v, paperView, paperScene, quiet: true, start: viewportView(v), zoomExtents: () => zoomViewportExtents(app) };
   vp.setSession(tab.session, { fit: false, view: modelViewThrough(paperView, v) });
   vp.mspace.quiet = false; // the view set above is the viewport's own, not a user zoom/pan to write back
   app.refreshPanels(); app.refreshStatus();
@@ -75,6 +77,7 @@ export function exitMspace(app) {
   const vp = app.vp, m = vp.mspace, tab = app.active;
   if (!m) return false;
   if (app.toolId) app.setTool(app.toolId === 'select' ? 'select' : app.toolId);
+  commitViewportView(app);
   vp.mspace = null;
   tab.session.doc = spaces(tab).docs[spaces(tab).cur];
   vp.setSession(tab.session, { fit: false, view: { ...m.paperView, width: vp.view.width, height: vp.view.height } });
@@ -98,11 +101,24 @@ function syncViewport(vp) {
   return true;
 }
 
-/** a change with no undo step (viewport view / lock written straight onto the entity) still makes the drawing dirty */
-function touchDrawing(app) {
+/** a change with no undo step (viewport lock in MSPACE, written straight onto the entity) still makes the drawing dirty;
+ *  key 'viewPending': a view change of the active viewport, recorded as one undo step when its view session ends */
+function touchDrawing(app, key = 'viewTouched') {
   const s = app.active?.session;
-  if (!s || s.viewTouched) return;
-  s.viewTouched = true; app.renderTabs();
+  if (!s || s[key]) return;
+  s[key] = true; app.renderTabs();
+}
+
+/** End the active viewport's view session (leaving MSPACE, another viewport, undo/redo, save): a changed view becomes
+ *  one undo step, so Ctrl+Z restores the view the viewport had when the session began. No-op outside MSPACE. */
+export function commitViewportView(app) {
+  const m = app.vp.mspace, tab = app.active;
+  if (!m || !tab) return false;
+  const sp = spaces(tab), pending = tab.session.viewPending;
+  const done = recordViewportView(tab.session, m.vp, m.start, sp.docs[sp.cur] ?? tab.session.doc);
+  m.start = viewportView(m.vp);
+  if (pending && !done) app.renderTabs(); // back to the first view: no step, and no longer changed
+  return done;
 }
 
 /** VPLOCK: toggle the lock of the active (MSPACE) viewport, or of the selected viewports in paper space */
@@ -248,7 +264,18 @@ export function initLayouts(app) {
     if (m.vp.locked) { toast('Viewport is locked.'); return; }
     setViewportScale(app, 1 / k);
   };
-  vp.on('view', () => { if (vp.mspace) { if (syncViewport(vp)) touchDrawing(app); renderVpScale(app); } });
+  vp.on('view', () => { if (vp.mspace) { if (syncViewport(vp)) touchDrawing(app, 'viewPending'); renderVpScale(app); } });
+  // undo/redo in MSPACE that changed the active viewport's view: show the restored view through it
+  vp.on('change', (info) => {
+    const m = vp.mspace;
+    if (!m || info.kind === 'do') return;
+    const a = m.start, b = viewportView(m.vp);
+    if (a.viewHeight === b.viewHeight && a.viewCenter.x === b.viewCenter.x && a.viewCenter.y === b.viewCenter.y) return;
+    const w = modelViewThrough(m.paperView, m.vp);
+    m.quiet = true;
+    vp.view = { ...vp.view, cx: w.cx, cy: w.cy, zoom: w.zoom }; vp.requestRender(); vp.emit('view');
+    m.quiet = false; m.start = b;
+  });
   vp.canvas.addEventListener('contextmenu', (e) => viewportMenu(app, e));
   vp.modelScene = (frozen) => {
     const sp = spaces(app.active), key = frozen.join('\u0001');

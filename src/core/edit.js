@@ -78,6 +78,13 @@ class Tx {
     this.ops.push({ k: 'set', obj, key, before, after: value, idx });
     this.structure = true;
   }
+  /** assign plain properties of `obj` in place (a viewport's view): no scene rebuild, a redraw reads them */
+  props(obj, vals) {
+    const before = {};
+    for (const k of Object.keys(vals)) before[k] = obj[k];
+    Object.assign(obj, vals);
+    this.ops.push({ k: 'props', obj, before, after: { ...vals } });
+  }
   /** reorder doc.entities (the draw order) to `list`, the same entities in a new order; undo restores the old order */
   order(list) {
     const before = this.doc.entities.slice();
@@ -142,6 +149,7 @@ function applyInverse(doc, op) {
     case 'header': writeHeader(op.target, op.before); break;
     case 'set': putKey(op.obj, op.key, op.before, op.idx ?? -1); break;
     case 'order': setList(doc.entities, op.before); break;
+    case 'props': Object.assign(op.obj, op.before); break;
     default: break;
   }
 }
@@ -156,6 +164,7 @@ function applyForward(doc, op) {
     case 'header': writeHeader(op.target, op.after); break;
     case 'set': putKey(op.obj, op.key, op.after); break;
     case 'order': setList(doc.entities, op.after); break;
+    case 'props': Object.assign(op.obj, op.after); break;
     default: break;
   }
 }
@@ -169,13 +178,14 @@ export class Session {
     this.revision = 0;      // increments on every change (also undo/redo)
     this.stepSeq = 0;
     this.savedStep = 0;     // id of the undo step that was on top when the document was last saved (0 = none)
-    this.viewTouched = false; // a change with no undo step (viewport zoom/pan in MSPACE) since the last save
+    this.viewTouched = false; // a change with no undo step (VPLOCK in MSPACE) since the last save
+    this.viewPending = false; // a viewport view changed in MSPACE, not yet recorded as an undo step (recordViewportView)
   }
 
   /** unsaved changes? Compares the top undo step with the one recorded at save, so
    *  "save, undo, make a different edit" is correctly dirty (a plain counter would say clean). */
-  get dirty() { return this.viewTouched || (this.undoStack.at(-1)?.id ?? 0) !== this.savedStep; }
-  markSaved() { this.savedStep = this.undoStack.at(-1)?.id ?? 0; this.viewTouched = false; }
+  get dirty() { return this.viewTouched || this.viewPending || (this.undoStack.at(-1)?.id ?? 0) !== this.savedStep; }
+  markSaved() { this.savedStep = this.undoStack.at(-1)?.id ?? 0; this.viewTouched = false; this.viewPending = false; }
   get canUndo() { return this.undoStack.length > 0; }
   get canRedo() { return this.redoStack.length > 0; }
   get undoLabel() { return this.undoStack.at(-1)?.label ?? ''; }
@@ -243,6 +253,24 @@ function collectIds(op, ids) {
 /** a dimension with a definition stays a dimension (def transformed, block regenerated); others via geom */
 const xform = (doc, e, m) => (e.type === 'DIMENSION' && e.def ? transformDimension(doc, e, m) : transformEntity(e, m));
 const fail = (id, err) => ({ id, reason: err?.code ?? err?.message ?? 'failed' });
+
+/** the view fields of a VIEWPORT that zoom/pan in MSPACE changes (twist cannot: MSPACE refuses twisted viewports) */
+export const viewportView = (v) => ({ viewCenter: { x: v.viewCenter.x, y: v.viewCenter.y }, viewHeight: v.viewHeight });
+
+/** Record a viewport view change made in place (zoom/pan in MSPACE) as one undo step: `v` holds the new view, `before`
+ *  (viewportView) the view it had when the view session began. `doc` is the space the viewport lives in (its layout's),
+ *  so undo/redo redraw that space. Clears s.viewPending. Returns true when a step was recorded (false: view unchanged). */
+export function recordViewportView(s, v, before, doc = s.doc) {
+  s.viewPending = false;
+  const after = viewportView(v), tol = 1e-12 * Math.max(Math.abs(before.viewHeight), Math.abs(after.viewHeight));
+  if (Math.abs(after.viewHeight - before.viewHeight) <= tol && Math.abs(after.viewCenter.x - before.viewCenter.x) <= tol
+    && Math.abs(after.viewCenter.y - before.viewCenter.y) <= tol) return false;
+  Object.assign(v, viewportView(before)); // the step goes from the session's first view to its last
+  const cur = s.doc;
+  s.doc = doc;
+  try { s.transact('Viewport view', (tx) => tx.props(v, after)); } finally { s.doc = cur; }
+  return true;
+}
 
 export function addEntities(s, entities, label = 'Draw') {
   return s.transact(label, (tx) => entities.map((e) => tx.add(e)));
