@@ -9,6 +9,7 @@ import { layIsolate, layUnisolate, layFreeze, layOn, layThaw } from '../src/core
 import { Viewport, CANVAS_BG } from './viewport.js';
 import { createDocState, findTabByPath, indexAfterClose, cycleIndex, isBlankTab } from './tabs.js';
 import { createTools, TOOL_ALIASES } from './tools.js';
+import { ViewHistory } from '../src/core/cmdline.js';
 import { dimStyleManager, dimStyleNames, dimVarsOf, setCurrentDimStyle } from './tools-dims.js';
 import { blockDoubleClick } from './tools-blocks.js';
 import { initSession } from './session.js';
@@ -64,6 +65,8 @@ class App {
     this.vp.on('selection', () => { this.refreshPanels(true); this.refreshStatus(); });
     this.vp.on('change', () => { this.refreshPanels(); this.refreshStatus(); this.updateTitle(); this.refreshDimStyles(); });
     this.vp.on('cursor', (p) => this.showCursor(p));
+    this.viewHistory = new ViewHistory();
+    this.vp.on('view', () => this.viewHistory.observe(this.viewKey(), this.vp.view, performance.now()));
     this.vp.canvas.addEventListener('dblclick', (e) => { if (this.toolId === 'select' && !layoutDoubleClick(this, e)) blockDoubleClick(this, e); });
     window.addEventListener('beforeunload', (e) => { if (!this.closeConfirmed && this.tabs.some((t) => t.session.dirty)) { e.preventDefault(); e.returnValue = ''; } });
     api.onCloseRequest?.(() => this.closeAll());
@@ -134,7 +137,7 @@ class App {
     if (t.text?.(s)) { this.refreshPrompt(); return; }
     const low = s.toLowerCase();
     if (TOOL_ALIASES[low]) { this.setTool(TOOL_ALIASES[low]); return; }
-    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => this.vp.zoomExtents(), z: () => this.vp.zoomExtents(), 'zoom': () => this.vp.zoomExtents(), all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), find: () => this.find.open(), compare: () => this.compare(), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), units: () => this.unitsDialog(), un: () => this.unitsDialog(), ddunits: () => this.unitsDialog(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), ...this.layerCommands(), ...this.layoutCommands };
+    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => { this.viewHistory.breakGesture(this.viewKey()); this.vp.zoomExtents(); }, all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), find: () => this.find.open(), compare: () => this.compare(), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), units: () => this.unitsDialog(), un: () => this.unitsDialog(), ddunits: () => this.unitsDialog(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), ...this.layerCommands(), ...this.layoutCommands };
     if (sys[low]) { sys[low](); return; }
     const last = this.vp.lastPoint ?? { x: 0, y: 0 };
     const dir = this.vp.lastPoint ? { x: this.vp.cursor.x - last.x, y: this.vp.cursor.y - last.y } : null;
@@ -152,6 +155,16 @@ class App {
       layfrz: need(() => { const n = layFreeze(this.session, sel()); this.vp.setSelection([]); toast(`Frozen: ${n.join(', ')}`, 2500); }),
       layon: () => layOn(this.session), laythw: () => layThaw(this.session),
     };
+  }
+  /** ZOOM Previous keeps one view stack per tab and space (model, each layout, each viewport entered from a layout) */
+  viewKey() { const tab = this.active; return `${tab?.id}:${tab?.spaces?.cur ?? 'Model'}${this.vp.mspace ? ':' + this.vp.mspace.vp.id : ''}`; }
+  /** ZOOM Previous: show the earlier view of the current space; false = none left */
+  zoomPrevious() {
+    const vp = this.vp, v = this.viewHistory.previous(this.viewKey(), performance.now());
+    if (!v) return false;
+    vp.view = { ...vp.view, cx: v.cx, cy: v.cy, zoom: v.zoom };
+    vp.requestRender(); vp.emit('view');
+    return true;
   }
   undo() { if (this.session.undo()) toast(`Undo`, 1200); }
   redo() { if (this.session.redo()) toast(`Redo`, 1200); }
