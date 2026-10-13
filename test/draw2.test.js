@@ -121,3 +121,24 @@ test('a wide polyline gives each segment its own bbox (culling), not one box for
   assert.ok(its[0].bbox.maxx <= 10 + 1 + 1e-9, `first item maxx ${its[0].bbox.maxx}`);
   assert.ok(its[2].bbox.minx >= 20 - 1e-9, `last item minx ${its[2].bbox.minx}`);
 });
+
+test('a closed wide polyline that repeats its first vertex (with a bulge) keeps the scene extents finite', async () => {
+  // as in a client block: the last vertex equals the first and carries a bulge, so the closing segment has no length
+  const { buildScene } = await import('../src/core/render.js');
+  const v = [{ x: 0, y: 0, bulge: 0.4142 }, { x: 1, y: 0.3, bulge: 0 }, { x: 0, y: 2, bulge: 0 }, { x: 0, y: 0, bulge: 0.4142 }];
+  const e = M.makePolyline(v.map(({ x, y }) => ({ x, y })), true, {}); e.vertices.forEach((q, i) => { q.bulge = v[i].bulge; }); e.width = 0.01;
+  const s = buildScene(docWith(e));
+  for (const k of ['minx', 'miny', 'maxx', 'maxy']) assert.ok(Number.isFinite(s.bbox[k]), `scene ${k} = ${s.bbox[k]}`);
+  assert.ok(s.items.every((it) => !it.bbox || Object.values(it.bbox).every(Number.isFinite)));
+});
+
+test('a wide polyline much thinner than a pixel still shows as a line (as AutoCAD draws at least one pixel)', async () => {
+  const { buildScene, drawScene, fitView } = await import('../src/core/render.js');
+  const { createCanvas } = await import('@napi-rs/canvas');
+  const e = M.makePolyline([{ x: 0, y: 50 }, { x: 400, y: 50 }], false, { color: 1 }); e.width = 0.001;
+  const sc = buildScene(docWith(e)), cv = createCanvas(400, 100), ctx = cv.getContext('2d');
+  drawScene(ctx, sc, fitView({ minx: 0, miny: 0, maxx: 400, maxy: 100 }, 400, 100), { background: '#ffffff' });
+  const px = ctx.getImageData(0, 0, 400, 100).data;
+  let darkest = 765; for (let y = 0; y < 100; y++) { const i = (y * 400 + 200) * 4; darkest = Math.min(darkest, px[i] + px[i + 1] + px[i + 2]); }
+  assert.ok(darkest < 600, `the band is visible in column 200 (darkest r+g+b ${darkest}; white is 765)`);
+});
