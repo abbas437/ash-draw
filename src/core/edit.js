@@ -69,6 +69,13 @@ class Tx {
     this.ops.push({ k: 'header', target, before, after: readHeader(target), rebuild: before.ltscale !== readHeader(target).ltscale }); // labels only, unless $LTSCALE changed
     if (before.ltscale !== readHeader(target).ltscale) this.structure = true; // linetype patterns are built into the scene
   }
+  /** set obj[key] to value, or a Map entry (value undefined deletes): named tables, entity lists of other owners */
+  set(obj, key, value) {
+    const before = obj instanceof Map ? obj.get(key) : obj[key];
+    putKey(obj, key, value);
+    this.ops.push({ k: 'set', obj, key, before, after: value });
+    this.structure = true;
+  }
   /** create or change a layer: props merged into the existing layer; null deletes it */
   layer(name, props) {
     const before = getLayer(this.doc, name);
@@ -82,6 +89,9 @@ class Tx {
   }
 }
 
+function putKey(obj, key, v) {
+  if (obj instanceof Map) { if (v === undefined) obj.delete(key); else obj.set(key, v); } else if (v === undefined) delete obj[key]; else obj[key] = v;
+}
 const readHeader = (d) => ({ units: d.units ?? 0, luprec: d.header?.luprec ?? 4, ltscale: d.header?.ltscale || 1 });
 function writeHeader(d, v) {
   if (v.units !== undefined) d.units = v.units;
@@ -98,6 +108,7 @@ function applyInverse(doc, op) {
     case 'dimstyle': if (op.before) doc.dimStyles.set(op.name, op.before); else doc.dimStyles.delete(op.name); break;
     case 'block': if (op.before) doc.blocks.set(op.name, op.before); else doc.blocks.delete(op.name); break;
     case 'header': writeHeader(op.target, op.before); break;
+    case 'set': putKey(op.obj, op.key, op.before); break;
     default: break;
   }
 }
@@ -110,6 +121,7 @@ function applyForward(doc, op) {
     case 'dimstyle': if (op.after) (doc.dimStyles ??= new Map()).set(op.name, op.after); else doc.dimStyles.delete(op.name); break;
     case 'block': if (op.after) doc.blocks.set(op.name, op.after); else doc.blocks.delete(op.name); break;
     case 'header': writeHeader(op.target, op.after); break;
+    case 'set': putKey(op.obj, op.key, op.after); break;
     default: break;
   }
 }
@@ -160,7 +172,7 @@ export class Session {
     let structure = false;
     for (const op of [...step.ops].reverse()) {
       applyInverse(step.doc ?? this.doc, op);
-      if (op.k === 'layer' || op.k === 'dimstyle' || op.k === 'block' || op.rebuild) structure = true; else collectIds(op, ids);
+      if (op.k === 'layer' || op.k === 'dimstyle' || op.k === 'block' || op.k === 'set' || op.rebuild) structure = true; else collectIds(op, ids);
     }
     this.redoStack.push(step);
     this.revision--;
@@ -175,7 +187,7 @@ export class Session {
     let structure = false;
     for (const op of step.ops) {
       applyForward(step.doc ?? this.doc, op);
-      if (op.k === 'layer' || op.k === 'dimstyle' || op.k === 'block' || op.rebuild) structure = true; else collectIds(op, ids);
+      if (op.k === 'layer' || op.k === 'dimstyle' || op.k === 'block' || op.k === 'set' || op.rebuild) structure = true; else collectIds(op, ids);
     }
     this.undoStack.push(step);
     this.revision++;
