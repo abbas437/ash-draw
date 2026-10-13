@@ -22,6 +22,7 @@ import { createModifyTools } from './tools-modify.js';
 import { createDraw2Tools } from './tools-draw2.js';
 import { createXlineTools } from './tools-xline.js';
 import { createModify2Tools } from './tools-modify2.js';
+import { createAlignTools } from './tools-align.js';
 import { createDimTools } from './tools-dims.js';
 import { createBlockTools } from './tools-blocks.js';
 import { createMTextTools } from './mtext-editor.js';
@@ -654,6 +655,7 @@ export function createTools(h) {
     ...createXlineTools(h, { Tool }),
     ...createModifyTools(h, { Tool, ModifyTool }),
     ...createModify2Tools(h, { Tool, ModifyTool }),
+    ...createAlignTools(h, { Tool, ModifyTool }),
     ...createDimTools(h, { Tool }),
     ...createBlockTools(h, { Tool, ModifyTool }),
     ...createMTextTools(h, { Tool }),
@@ -671,7 +673,7 @@ export const TOOL_ALIASES = {
   xl: 'xline', xline: 'xline', ray: 'ray',
   c: 'circle', circle: 'circle', a: 'arc', arc: 'arc', el: 'ellipse', ellipse: 'ellipse', po: 'point', point: 'point',
   t: 'text', text: 'text', mt: 'mtext', mtext: 'mtext', h: 'hatch', hatch: 'hatch', di: 'measure', dist: 'measure', measure: 'measure',
-  m: 'move', move: 'move', co: 'copy', cp: 'copy', copy: 'copy', ro: 'rotate', rotate: 'rotate', sc: 'scale', scale: 'scale',
+  m: 'move', move: 'move', co: 'copy', cp: 'copy', copy: 'copy', ro: 'rotate', rotate: 'rotate', sc: 'scale', scale: 'scale', al: 'align', align: 'align',
   mi: 'mirror', mirror: 'mirror', o: 'offset', offset: 'offset', tr: 'trim', trim: 'trim', ex: 'extend', extend: 'extend',
   e: 'erase', erase: 'erase', x: 'explode', explode: 'explode', select: 'select', s: 'select', p: 'pan', pan: 'pan',
   f: 'fillet', fillet: 'fillet', cha: 'chamfer', chamfer: 'chamfer', br: 'break', break: 'break', j: 'join', join: 'join',

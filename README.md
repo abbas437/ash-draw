@@ -14,6 +14,7 @@ Built with Electron by ASH Technical & Project Management Services (ASH PMCS).
 - **More draw commands**: POLYGON (inscribed, circumscribed or by edge), SPLINE (through fit points, open or closed) and DONUT (filled ring).
 - **Construction lines**: XLINE (XL; through a point, Hor, Ver, Ang, Bisect, Offset) and RAY; each command run is one undo step.
 - **Modify**: move, copy, rotate, scale, mirror, offset, trim, extend, explode, erase; copy/paste; unlimited undo and redo.
+- **Align** (AL): move, rotate and optionally scale objects so source points land on destination points (2D AutoCAD LT ALIGN, one undo step).
 - **Polyline editing**: PEDIT (Close/Open, Join, Width, Decurve, Reverse, Multiple), REVERSE and BREAKATPOINT; PEDIT Fit, Spline and Edit vertex come later.
 - **Select**: as in AutoCAD, each pick or window adds to the selection and Shift+pick (or Shift+window) removes; Esc clears.
 - **Precision**: object snaps (endpoint, intersection, midpoint, centre, quadrant, node, insertion, perpendicular),
