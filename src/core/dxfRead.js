@@ -702,11 +702,43 @@ function readEntityList(recs, doc, target, stats) {
     if (e === undefined) { doc.skipped[t] = (doc.skipped[t] ?? 0) + 1; continue; }
     if (e === null) { doc.skipped[`${t} (unusable)`] = (doc.skipped[`${t} (unusable)`] ?? 0) + 1; continue; }
     addEntity(doc, e, list);
+    if (stats.handles) stats.handles.set(e, rec.str(5).toUpperCase()); // only kept when the file has draw-order tables
     if (attribs) linkAttribs(e, attribs.map((a) => buildEntity(a, doc, {})));
   }
 }
 
 // ---------------------------------------------------------------------------------------------
+// Draw order (SORTENTSTABLE): owner = block record (330 after the subclass marker), then pairs 331 entity handle /
+// 5 sort handle. Entities draw in ascending sort handle; an entity not in the table sorts by its own handle.
+function readSortents(tags) {
+  const t = { owner: '', map: new Map() };
+  let body = false, ent = null;
+  for (const [c, v] of tags) {
+    if (c === 100 && v === 'AcDbSortentsTable') body = true;
+    else if (!body) continue;
+    else if (c === 330 && !t.owner) t.owner = v;
+    else if (c === 331) ent = v.toUpperCase();
+    else if (c === 5 && ent) { t.map.set(ent, v.toUpperCase()); ent = null; }
+  }
+  return t;
+}
+
+const HEX = /^[0-9A-F]+$/;
+/** reorder list in place by the table (entity handle -> sort handle); stable for equal keys. An entity without a
+ *  readable handle keeps to the entity before it. */
+function applySortents(list, map, handles) {
+  if (!map.size || list.length < 2) return;
+  let prev = 0n;
+  const keyed = list.map((e, i) => {
+    const h = handles.get(e), s = h && (map.get(h) ?? h);
+    const k = s && HEX.test(s) ? BigInt(`0x${s}`) : prev;
+    prev = k;
+    return { e, k, i };
+  });
+  keyed.sort((a, b) => (a.k < b.k ? -1 : a.k > b.k ? 1 : a.i - b.i));
+  for (let i = 0; i < list.length; i++) list[i] = keyed[i].e;
+}
+
 export function parseDxf(text) {
   return parseTokens(tokenizeDxf(new TextEncoder().encode(text), { decoder: new TextDecoder('utf-8', { ignoreBOM: true }) }));
 }
@@ -788,7 +820,8 @@ function parseTokens(tk, onProgress = null) {
     }
   }
 
-  // OBJECTS: MLEADERSTYLE defaults for MLEADER entities
+  // OBJECTS: MLEADERSTYLE defaults for MLEADER entities; SORTENTSTABLE draw orders (applied once every list is read)
+  const sortents = [];
   mlStyles = new Map();
   imageDefs = new Map();
   if (secs.OBJECTS) {
@@ -796,12 +829,15 @@ function parseTokens(tk, onProgress = null) {
       if (rec.type === 'IMAGEDEF') imageDefs.set(rec.str(5), imageDefFromTags(rec.tags()));
       if (rec.type === 'WIPEOUTVARIABLES') doc.header.wipeoutFrame = rec.int(70); // WIPEOUTFRAME: 0 hidden, 1 shown + plotted, 2 shown only
       if (rec.type === 'MLINESTYLE') (doc.mlineStyles ??= new Map()).set(rec.str(5), mlineStyleFromTags(rec.tags()));
+      if (rec.type === 'SORTENTSTABLE') sortents.push(readSortents(rec.tags()));
       if (rec.type !== 'MLEADERSTYLE') continue;
       const st = mleaderStyleFromTags(rec.tags());
       mlStyles.set(rec.str(5), st);
       if (!mlStyles.has('*') || /^standard$/i.test(st.name)) mlStyles.set('*', st);
     }
   }
+
+  if (sortents.length) stats.handles = new Map();
 
   // BLOCKS
   if (secs.BLOCKS) {
@@ -856,6 +892,16 @@ function parseTokens(tk, onProgress = null) {
   }
   layouts.sort((a, b) => a.tab - b.tab);
   doc.layouts = layouts;
+  // draw order: each table's owner is the block record of a space or block definition
+  for (const t of sortents) {
+    const name = blockRecH.get(t.owner);
+    if (!name) continue;
+    const up = name.toUpperCase();
+    const list = up === '*MODEL_SPACE' ? doc.entities
+      : layouts.find((lo) => lo.block?.toUpperCase() === up)?.entities
+      ?? (doc.blocks.get(name) ?? [...doc.blocks.values()].find((b) => b.name.toUpperCase() === up))?.entities;
+    if (list) applySortents(list, t.map, stats.handles);
+  }
   if (stats.errors.length) doc.header.readErrors = stats.errors.slice(0, 20);
   if (tk.repaired) doc.header.repairedValues = tk.repaired; // text values split over several lines, rejoined
   return doc;
