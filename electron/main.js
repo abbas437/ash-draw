@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { promises as fs, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { writeWithBackup } from './backup.js';
+import { atomicWrite, saveDrawingFile } from './backup.js';
 import { createDwgBridge, DWG_OUT_VERSIONS } from './dwgBridge.js';
 import { createHandoffStore } from './handoff.js';
 import { createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isOdaExeName, ODA_DOWNLOAD_URL, ODA_DWG_VERSIONS } from './odaConverter.js';
@@ -79,16 +79,6 @@ function asFilters(f) {
 }
 const plainObject = (o) => o == null ? {} : (typeof o === 'object' && !Array.isArray(o) ? o : (() => { throw new TypeError('options must be an object'); })());
 
-async function atomicWrite(target, bytes) {
-  const tmp = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}-${randomBytes(4).toString('hex')}.tmp`);
-  try {
-    await fs.writeFile(tmp, bytes, { flag: 'wx' });
-    await fs.rename(tmp, target);
-  } catch (err) {
-    await fs.rm(tmp, { force: true });
-    throw err;
-  }
-}
 async function readGranted(p) {
   const st = await fs.stat(p);
   if (!st.isFile()) throw new Error('not a file');
@@ -303,14 +293,13 @@ function registerIpc() {
     const isDir = (d) => { try { return statSync(d).isDirectory(); } catch { return false; } };
     const r = await dialog.showSaveDialog(win, { defaultPath: saveDialogDefault(o.defaultPath, { documents: app.getPath('documents'), isDir }), filters: asFilters(o.filters) });
     if (r.canceled || !r.filePath) return null;
-    const backup = await writeWithBackup(r.filePath, bytes, atomicWrite); // an existing .dxf/.dwg is copied to .bak first
+    const { backup } = await saveDrawingFile(r.filePath, bytes); // an existing .dxf/.dwg is copied to .bak first
     return { path: grant(r.filePath), backup };
   });
   handle('file:write', async (opts) => {
     const o = plainObject(opts);
     const p = grantedPath(o.path);
-    const backup = await writeWithBackup(p, asBytes(o.bytes), atomicWrite); // an existing .dxf/.dwg is copied to .bak first
-    return { path: p, backup };
+    return saveDrawingFile(p, asBytes(o.bytes)); // an existing .dxf/.dwg is copied to .bak first
   });
   handle('app:launchFiles', () => { rendererReady = true; return pendingFiles.splice(0); });
   // Print a plot: the renderer builds the PDF; it is written to a private temp folder, shown in a hidden window by

@@ -94,6 +94,54 @@ try {
   assert.equal(await p2, false);
   assert.equal(await page.evaluate(() => window.app.file.format), 'dwg');
 
+  step = 'a slow DWG save applies to the tab it started on; a second Save on that tab is refused while it runs';
+  // the browser api is frozen: from here on leave it open, so the desktop DWG calls can be stubbed
+  await page.addInitScript(() => { const f = Object.freeze; Object.freeze = (o) => (o && 'saveFile' in o && 'isElectron' in o ? o : f(o)); });
+  await page.reload({ waitUntil: 'load' }); await ready();
+  await page.evaluate(async () => {
+    const M = await import('/src/core/model.js');
+    const api = window.api;
+    window.__writes = []; window.__sent = null;
+    window.__conv = new Promise((r) => { window.__release = r; });
+    Object.assign(api, {
+      isElectron: true,
+      dwgAvailable: async () => ({ available: true, write: { oda: true } }),
+      dxfToDwg: async (dxf) => { window.__sent = dxf; await window.__conv; return { dwgBytes: new Uint8Array([65, 67]) }; },
+      dwgToDxf: async () => ({ dxfBytes: window.__sent, converter: 'ODA' }),
+      writeFile: async (p) => { window.__writes.push(p); return { path: p, backup: null }; },
+    });
+    window.app.installDoc(M.newDocument(), { path: '/j/A.dwg', name: 'A.dwg', format: 'dwg' });
+    window.__tabA = window.app.active;
+    window.__pA = window.app.save();
+  });
+  await page.waitForFunction(() => window.__sent !== null, null, { timeout: 5000 });
+  const again = await page.evaluate(() => Promise.race([window.app.save(), new Promise((r) => setTimeout(() => r('a second save started'), 3000))]));
+  assert.equal(again, false, 'second Save on the same tab while saving');
+  assert.equal(await page.evaluate(() => document.getElementById('toast').textContent), 'Still saving…');
+  await page.evaluate(async () => {
+    const M = await import('/src/core/model.js');
+    window.app.installDoc(M.newDocument(), { path: null, name: 'B.dxf', format: 'dxf' }); // the user switches to another tab
+    window.__tabB = window.app.active;
+    window.__release();
+  });
+  assert.equal(await page.evaluate(() => window.__pA), true);
+  const after = await page.evaluate(() => ({ a: window.__tabA.file, aVer: window.__tabA.dwgVersion, aDirty: window.__tabA.session.dirty, aSaving: window.__tabA.saving,
+    b: window.__tabB.file, active: window.app.active === window.__tabB, writes: window.__writes }));
+  assert.deepEqual(after.a, { path: '/j/A.dwg', name: 'A.dwg', format: 'dwg' });
+  assert.equal(after.aVer, 'acad2018'); assert.equal(after.aDirty, false); assert.equal(after.aSaving, null);
+  assert.deepEqual(after.b, { path: null, name: 'B.dxf', format: 'dxf' }, 'the tab shown when the save finished is not touched');
+  assert.equal(after.active, true);
+  assert.deepEqual(after.writes, ['/j/A.dwg']);
+
+  step = 'the Save as DWG item: "(experimental)" only when ODA cannot write';
+  await openFile();
+  assert.equal((await dwgItem().innerText()).trim(), 'Save as DWG…');
+  await page.mouse.click(700, 500);
+  await page.evaluate(() => { window.api.dwgAvailable = async () => ({ available: true, write: { oda: false } }); window.app.allowDwgSave = true; return window.app.refreshDwgWrite(); });
+  await openFile();
+  assert.equal((await dwgItem().innerText()).trim(), 'Save as DWG… (experimental)');
+  await page.mouse.click(700, 500);
+
   assert.deepEqual(problems, []);
   console.log('dwgpref e2e: OK');
 } catch (err) {

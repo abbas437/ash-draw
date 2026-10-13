@@ -137,7 +137,8 @@ export function createOdaBridge(exe, opts = {}) {
       if (st.size > maxBytes) throw new RangeError(`ODA File Converter output exceeds ${maxBytes} bytes`);
       return new Uint8Array(await fs.readFile(path.join(outDir, outName)));
     } finally {
-      await fs.rm(tmp, { recursive: true, force: true });
+      // a converter still releasing its files (Windows) may need a retry; a leftover temp folder must not hide the real error
+      await fs.rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
     }
   }
   return {

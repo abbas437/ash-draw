@@ -59,3 +59,31 @@ test('saveDwg: ODA versions get the full DXF (real dimensions); LibreDWG gets di
   assert.match(sent[0][1], /\r?\n0\r?\nDIMENSION\r?\n/, 'ODA: the DIMENSION entity is written');
   assert.doesNotMatch(sent[1][1], /\r?\n0\r?\nDIMENSION\r?\n/, 'LibreDWG: dimensions as geometry');
 });
+
+test('saveDwg over a path: declining the read-back differences writes nothing', async () => {
+  const { newDocument } = await import('../src/core/model.js');
+  const writes = [];
+  const api = { isElectron: true, dwgAvailable: async () => ({ available: true }), dxfToDwg: async () => ({ dwgBytes: new Uint8Array([1]) }),
+    dwgToDxf: async () => { throw new Error('unreadable'); },
+    writeFile: async (p) => { writes.push(p); return { path: p }; }, saveFile: async (o) => { writes.push(o.defaultPath); return { path: 'x' }; } };
+  const seen = [];
+  const r = await saveDwg(api, newDocument(), { name: 'a.dwg', version: 'acad2018', path: '/j/a.dwg', confirmDifferences: async (v) => { seen.push(v); return false; } });
+  assert.equal(r, null);
+  assert.equal(seen.length, 1);
+  assert.deepEqual(writes, []);
+});
+
+test('saveDwg reports which converter read the DWG back, and the message names it', async () => {
+  const { newDocument } = await import('../src/core/model.js');
+  const { verificationMessage } = await import('../renderer/files.js');
+  const KNOWN = '  0\nSECTION\n  2\nENTITIES\n  0\nLINE\n  8\n0\n 10\n0\n 20\n0\n 11\n10\n 21\n10\n  0\nENDSEC\n  0\nEOF\n';
+  for (const converter of ['ODA', 'LibreDWG']) {
+    const api = { isElectron: true, dwgAvailable: async () => ({ available: true }), dxfToDwg: async () => ({ dwgBytes: new Uint8Array([1]) }),
+      dwgToDxf: async () => ({ dxfBytes: new TextEncoder().encode(KNOWN), converter }), writeFile: async (p) => ({ path: p }) };
+    const r = await saveDwg(api, newDocument(), { name: 'a.dwg', version: 'acad2018', path: '/j/a.dwg' });
+    assert.equal(r.readBack, converter);
+    assert.equal(r.verification.ok, false, 'an extra LINE read back');
+    const m = verificationMessage(r.verification, { oda: true });
+    assert.match(m, converter === 'ODA' ? /read back through the ODA File Converter/ : /read back through the built-in LibreDWG converter/);
+  }
+});

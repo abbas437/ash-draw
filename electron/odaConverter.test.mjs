@@ -215,3 +215,14 @@ test('DWG write routing: ODA versions go to ODA (error without it), r2000/r14 to
   }
   assert.deepEqual(calls, [], 'nothing ran');
 });
+
+test('ODA converter: the temp folder is removed with retries, and a failed removal does not hide the conversion error', { skip }, async (t) => {
+  const s = await stub('process.exit(3);');
+  try {
+    const seen = [];
+    const rm = t.mock.method(fs, 'rm', async (p, o) => { seen.push(o); throw Object.assign(new Error('EBUSY: resource busy'), { code: 'EBUSY' }); });
+    await assert.rejects(createOdaBridge(s.exe, { tmpRoot: s.tmpRoot }).toDxf(dwg), /ODA File Converter failed \(exit code 3\)/);
+    rm.mock.restore();
+    assert.deepEqual(seen, [{ recursive: true, force: true, maxRetries: 5, retryDelay: 200 }]);
+  } finally { await s.cleanup(); }
+});

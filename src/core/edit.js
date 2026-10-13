@@ -185,7 +185,8 @@ export class Session {
   /** unsaved changes? Compares the top undo step with the one recorded at save, so
    *  "save, undo, make a different edit" is correctly dirty (a plain counter would say clean). */
   get dirty() { return this.viewTouched || this.viewPending || (this.undoStack.at(-1)?.id ?? 0) !== this.savedStep; }
-  markSaved() { this.savedStep = this.undoStack.at(-1)?.id ?? 0; this.viewTouched = false; this.viewPending = false; }
+  /** `step`: the undo step that was on top when the save started (edits made while saving stay unsaved); default the top one */
+  markSaved(step = this.undoStack.at(-1)?.id ?? 0) { this.savedStep = step; this.viewTouched = false; this.viewPending = false; }
   get canUndo() { return this.undoStack.length > 0; }
   get canRedo() { return this.redoStack.length > 0; }
   get undoLabel() { return this.undoStack.at(-1)?.label ?? ''; }

@@ -9,7 +9,7 @@ import { layIsolate, layUnisolate, layFreeze, layOn, layThaw } from '../src/core
 import { Viewport, CANVAS_BG } from './viewport.js';
 import { createDocState, findTabByPath, indexAfterClose, cycleIndex, isBlankTab } from './tabs.js';
 import { createTools, TOOL_ALIASES } from './tools.js';
-import { DWG_SAVE_PREF_KEY, DWG_SAVE_PREF_LABEL, DWG_SAVE_DISABLED_TEXT, dwgSaveAllowed, dwgOriginSaveText, ODA_SAVE_HINT, DWG_SAVE_VERSION_KEY, DWG_SAVE_VERSIONS, DEFAULT_DWG_SAVE_VERSION, dwgSaveVersionFrom, dwgVersionFromHeader } from '../src/core/dwgpref.js';
+import { DWG_SAVE_PREF_KEY, DWG_SAVE_PREF_LABEL, DWG_SAVE_DISABLED_TEXT, dwgSaveAllowed, dwgOriginSaveText, ODA_SAVE_HINT, DWG_SAVE_VERSION_KEY, DWG_SAVE_VERSIONS, dwgSaveVersionFrom, ctrlSaveRoute } from '../src/core/dwgpref.js';
 import { ViewHistory, parseZoomFactor, ZOOMFACTOR_MIN, ZOOMFACTOR_MAX } from '../src/core/cmdline.js';
 import { dimStyleManager, dimStyleNames, dimVarsOf, setCurrentDimStyle } from './tools-dims.js';
 import { blockDoubleClick } from './tools-blocks.js';
@@ -395,39 +395,51 @@ class App {
     try { this.odaWrite = !!(await api.dwgAvailable?.())?.write?.oda; } catch { this.odaWrite = false; }
     return this.odaWrite;
   }
-  async save() {
+  // Every save applies its result to the tab it started on (captured before the first await), never to this.active or
+  // this.file read after an await: a slow DWG conversion must not rename or mark saved a tab the user switched to.
+  // One save at a time per tab: a second Save / Save As on a tab while its save runs is refused.
+  /** run `fn(tab)` as the save of the shown tab; false (and a toast) when that tab is already being saved */
+  async guardedSave(fn) {
+    const tab = this.active;
+    if (!tab) return false;
+    if (tab.saving) { toast('Still saving…', 2000); return false; }
+    commitViewportView(this); // a viewport view changed in MSPACE becomes its undo step before the save point
+    tab.saving = { step: tab.session.undoStack.at(-1)?.id ?? 0 }; // the save point: edits made while saving stay unsaved
+    try { return await fn(tab); } finally { tab.saving = null; }
+  }
+  save() { return this.guardedSave((tab) => this.saveTab(tab)); }
+  saveAs(kind) { return this.guardedSave((tab) => this.saveTabAs(tab, kind)); }
+  async saveTab(tab) {
+    const dropped = this.droppedContent(); // before any await: the tab is still the shown one
     // a drawing opened from (or saved as) DWG goes back to its .dwg in the same DWG version when ODA can write it
-    const dwgBack = this.file.format === 'dwg' && !!this.file.path && (await this.refreshDwgWrite());
-    if ((this.file.format === 'dxf' || dwgBack) && this.file.path) {
-      const dropped = this.droppedContent();
+    const odaWrite = tab.file.format === 'dwg' && !!tab.file.path && (await this.refreshDwgWrite());
+    const route = tab.file.path ? ctrlSaveRoute({ format: tab.file.format, odaWrite, tabVersion: tab.dwgVersion, header: tab.conversion?.dwgHeader }) : null;
+    if (route?.action === 'dxf-overwrite' || route?.action === 'dwg-writeback') {
+      const dwgBack = route.action === 'dwg-writeback';
       if (dropped.length) {
         const r = await modal('Overwrite the original file?', el('div', {},
-          el('p', { text: `${this.file.name} contains objects this program cannot keep: ${dropped.join(', ')}.` }),
+          el('p', { text: `${tab.file.name} contains objects this program cannot keep: ${dropped.join(', ')}.` }),
           el('p', { text: 'Overwriting the original would remove them from the file. Save a new copy instead to keep the original intact.' })),
         [{ label: 'Save as new file…', value: 'copy', primary: true }, { label: 'Overwrite original', value: 'over' }, { label: 'Cancel', value: null }]);
-        if (r === 'copy') return this.saveAs(dwgBack ? 'dwg' : 'dxf');
+        if (r === 'copy') return this.saveTabAs(tab, dwgBack ? 'dwg' : 'dxf');
         if (r !== 'over') return false;
       }
-      if (dwgBack) {
-        const tab = this.active;
-        return this.writeDwg({ version: tab?.dwgVersion ?? dwgVersionFromHeader(tab?.conversion?.dwgHeader ?? '') ?? DEFAULT_DWG_SAVE_VERSION, path: this.file.path });
-      }
-      return this.writeDxfTo(this.file.path);
+      if (dwgBack) return this.writeDwg(tab, { version: route.version, path: tab.file.path });
+      return this.writeDxfTo(tab, tab.file.path);
     }
     // a drawing opened from DWG is saved as DXF: say so once per drawing (the save dialog then names the .dxf file)
-    const tab = this.active;
-    if (this.file.format === 'dwg' && tab && !tab.dwgSaveAcked) {
-      const ok = await confirmDialog('Save as DXF', dwgOriginSaveText(this.file.name), 'Save as DXF', 'Cancel', null);
+    if (tab.file.format === 'dwg' && !tab.dwgSaveAcked) {
+      const ok = await confirmDialog('Save as DXF', dwgOriginSaveText(tab.file.name), 'Save as DXF', 'Cancel', null);
       if (ok !== 'yes') return false;
       tab.dwgSaveAcked = true;
     }
-    return this.saveAs('dxf');
+    return this.saveTabAs(tab, 'dxf');
   }
-  async writeDxfTo(path) {
+  async writeDxfTo(tab, path) {
     try {
-      const r = await saveDxf(api, this.fileDoc, { path, name: this.file.name, fromPath: this.file.path });
+      const r = await saveDxf(api, tab.doc, { path, name: tab.file.name, fromPath: tab.file.path });
       if (!r) return false;
-      this.afterSave(r.path ?? path, 'dxf');
+      this.afterSave(tab, r.path ?? path, 'dxf');
       this.writeReport(r.report);
       return true;
     } catch (err) { await message('Save failed', err.message || String(err)); return false; }
@@ -436,10 +448,11 @@ class App {
     if (rep?.skipped && Object.keys(rep.skipped).length) toast(`Saved. Not written: ${Object.entries(rep.skipped).map(([k, v]) => `${v} ${k}`).join(', ')}`, 6000);
     else toast('Saved', 1500);
   }
-  afterSave(path, format, { clean = true } = {}) {
-    this.file = { path, name: path ? path.replace(/^.*[\\/]/, '') : `${baseName(this.file.name)}.${format}`, format };
-    commitViewportView(this); // a viewport view changed in MSPACE becomes its undo step before the save point
-    if (clean) this.session.markSaved();
+  /** a finished save of `tab` (captured when the save started): its new file, and the save point recorded at the start */
+  afterSave(tab, path, format, { clean = true } = {}) {
+    if (!this.tabs.includes(tab)) return; // closed while it was being saved
+    tab.file = { path, name: path ? path.replace(/^.*[\\/]/, '') : `${baseName(tab.file.name)}.${format}`, format };
+    if (clean) tab.session.markSaved(tab.saving?.step);
     this.updateTitle();
   }
   /** Save as DWG with ODA: the DWG version to write (the last choice is remembered), or null when cancelled */
@@ -453,47 +466,47 @@ class App {
     api.settingsSet?.(DWG_SAVE_VERSION_KEY, sel.value)?.catch?.(() => {});
     return sel.value;
   }
-  /** write the drawing as DWG through ODA (`path`: overwrite that file, after its .bak copy; null: the save dialog) */
-  async writeDwg({ version, path = null }) {
+  /** write `tab` as DWG through ODA (`path`: overwrite that file, after its .bak copy; null: the save dialog) */
+  async writeDwg(tab, { version, path = null }) {
     try {
-      const tab = this.active;
-      const r = await saveDwg(api, this.fileDoc, {
-        name: this.file.name, fromPath: this.file.path, version, path,
+      const r = await saveDwg(api, tab.doc, {
+        name: tab.file.name, fromPath: tab.file.path, version, path,
         confirmDifferences: async (v) => (await confirmDialog('The DWG does not match your drawing', `${verificationMessage(v, { oda: true })}\n\nSave this DWG anyway? (Your drawing stays open and unsaved, so you can still save it as DXF.)`, 'Save DWG anyway', 'Cancel', null)) === 'yes',
       });
       if (!r) return false;
-      if (tab) tab.dwgVersion = version;
-      this.afterSave(r.path, 'dwg', { clean: !!r.verification.ok });
+      tab.dwgVersion = version;
+      this.afterSave(tab, r.path, 'dwg', { clean: !!r.verification.ok });
       const label = DWG_SAVE_VERSIONS.find((v) => v.id === version)?.label ?? 'DWG';
       if (r.verification.ok) toast(`Saved as ${label}${r.backup ? ` (previous file kept as ${r.backup.replace(/^.*[\\/]/, '')})` : ''}`, 3000);
       else await message('DWG saved — please check', verificationMessage(r.verification, { oda: true }));
       return true;
     } catch (err) { await message('Save failed', err.message || String(err)); return false; }
   }
-  async saveAs(kind) {
+  async saveTabAs(tab, kind) {
     try {
       if (kind === 'dwg') {
         if (await this.refreshDwgWrite()) {
           const version = await this.chooseDwgVersion();
-          return version ? this.writeDwg({ version }) : false;
+          return version ? this.writeDwg(tab, { version }) : false;
         }
         if (!this.allowDwgSave) { await message('Save as DWG is turned off', `${DWG_SAVE_DISABLED_TEXT} ${ODA_SAVE_HINT}`); return false; }
         const ok = await confirmDialog('Save as DWG (experimental)',
           `DWG is written through the free LibreDWG converter. Layouts and viewports may appear empty when the file is opened in AutoCAD, and text rotation and some hatch details can be lost. The program re-reads the saved file and tells you if anything differs. DXF keeps everything this program supports. ${ODA_SAVE_HINT} Save as DWG anyway?`, 'Save as DWG', 'Cancel', null);
         if (ok !== 'yes') return false;
-        const r = await saveDwg(api, this.fileDoc, {
-          name: this.file.name, fromPath: this.file.path,
+        const r = await saveDwg(api, tab.doc, {
+          name: tab.file.name, fromPath: tab.file.path,
           confirmDifferences: async (v) => (await confirmDialog('The DWG does not match your drawing', `${verificationMessage(v)}\n\nSave this DWG anyway? (Your drawing stays open and unsaved, so you can still save it as DXF.)`, 'Save DWG anyway', 'Cancel', null)) === 'yes',
         });
         if (!r) return false;
+        tab.dwgVersion = r.version; // LibreDWG's 'r2000': a later Ctrl+S with ODA keeps the 2000 family (ctrlSaveRoute)
         // a DWG that differs from the drawing is not a faithful save: keep the document marked as having unsaved changes
-        this.afterSave(r.path, 'dwg', { clean: !!r.verification.ok });
+        this.afterSave(tab, r.path, 'dwg', { clean: !!r.verification.ok });
         await message(r.verification.ok ? 'DWG saved' : 'DWG saved — please check', verificationMessage(r.verification));
         return true;
       }
-      const r = await saveDxf(api, this.fileDoc, { path: null, name: this.file.name, fromPath: this.file.path });
+      const r = await saveDxf(api, tab.doc, { path: null, name: tab.file.name, fromPath: tab.file.path });
       if (!r) return false;
-      this.afterSave(r.path, 'dxf'); this.writeReport(r.report);
+      this.afterSave(tab, r.path, 'dxf'); this.writeReport(r.report);
       return true;
     } catch (err) { await message('Save failed', err.message || String(err)); return false; }
   }
@@ -579,7 +592,7 @@ class App {
   buildMenus() {
     const vp = this.vp;
     const M = [
-      ['File', [['New', 'Ctrl+N', () => this.newDrawing()], ['Open…', 'Ctrl+O', () => this.open()], ['Recent files…', '', () => this.sessionStore.showRecent().catch((err) => message('Could not open the file', err.message || String(err)))], ['Close', 'Ctrl+W', () => this.closeTab()], '-', ['Compare…', 'COMPARE', () => this.compare()], '-', ['Save', 'Ctrl+S', () => this.save()], ['Save as DXF…', '', () => this.saveAs('dxf')], ['Save as DWG…', '', () => this.saveAs('dwg'), null, () => this.allowDwgSave || this.odaWrite], '-',
+      ['File', [['New', 'Ctrl+N', () => this.newDrawing()], ['Open…', 'Ctrl+O', () => this.open()], ['Recent files…', '', () => this.sessionStore.showRecent().catch((err) => message('Could not open the file', err.message || String(err)))], ['Close', 'Ctrl+W', () => this.closeTab()], '-', ['Compare…', 'COMPARE', () => this.compare()], '-', ['Save', 'Ctrl+S', () => this.save()], ['Save as DXF…', '', () => this.saveAs('dxf')], [() => (this.odaWrite ? 'Save as DWG…' : 'Save as DWG… (experimental)'), '', () => this.saveAs('dwg'), null, () => this.allowDwgSave || this.odaWrite], '-',
         ['Print…', 'Ctrl+P', () => this.print()], ['Plot to PDF…', '', () => this.exportPdf()], ['Export SVG…', '', () => this.exportSvg()], ['Export PNG image…', '', () => this.exportPng()]]],
       ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Paste', 'Ctrl+V', () => this.paste()], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()], ['Quick Select…', 'QSELECT', () => qselectDialog(this)], ['Select Similar', 'SELECTSIMILAR', () => selectSimilarCommand(this)], ['Find and replace…', 'Ctrl+F', () => this.find.open()], '-', ['Preferences…', '', () => this.preferences()]]],
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-',
@@ -602,11 +615,13 @@ class App {
     ];
     const bar = document.getElementById('menubar');
     for (const [label, items] of M) {
-      // an item's optional 4th element makes it a checkable item: () => checked
+      // an item's optional 4th element makes it a checkable item: () => checked; a label given as a function is read when the menu opens
       const checks = [];
       const item = (it) => {
         const chk = it[3] ? el('span', { class: 'chk' }) : null;
-        const b = el('button', { role: it[3] ? 'menuitemcheckbox' : null, onclick: () => { closeMenus(); it[2](); } }, el('span', {}, chk, it[0]), el('kbd', { text: it[1] }));
+        const text = document.createTextNode(typeof it[0] === 'function' ? it[0]() : it[0]);
+        if (typeof it[0] === 'function') checks.push(() => { text.data = it[0](); });
+        const b = el('button', { role: it[3] ? 'menuitemcheckbox' : null, onclick: () => { closeMenus(); it[2](); } }, el('span', {}, chk, text), el('kbd', { text: it[1] }));
         if (it[4]) checks.push(() => { b.hidden = !it[4](); });
         if (chk) checks.push(() => { const on = !!it[3](); chk.textContent = on ? '\u2713' : ''; b.setAttribute('aria-checked', String(on)); });
         return b;

@@ -175,22 +175,26 @@ export async function saveDwg(api, doc, { name, fromPath = null, version = 'r200
   if (!av.available) throw new Error(`The DWG converter is not available: ${av.reason ?? 'unknown reason'}.`);
   const dxf = isOdaDwgVersion(version) ? dxfBytesOf(doc) : dxfBytesOf(doc, { dimensionsAsGeometry: true });
   const { dwgBytes } = await api.dxfToDwg(dxf, version);
+  // verification.converter: which converter read the DWG back ('ODA' | 'LibreDWG'; null when the read-back failed)
   let verification;
   try {
-    const back = readDxf((await api.dwgToDxf(dwgBytes)).dxfBytes);
-    verification = compareDocuments(doc, back);
-  } catch (err) { verification = { ok: false, error: String(err.message || err) }; }
+    const res = await api.dwgToDxf(dwgBytes);
+    const converter = res.converter === 'ODA' || res.engine === 'oda' ? 'ODA' : 'LibreDWG';
+    verification = { ...compareDocuments(doc, readDxf(res.dxfBytes)), converter };
+  } catch (err) { verification = { ok: false, error: String(err.message || err), converter: null }; }
   if (!verification.ok && confirmDifferences && !(await confirmDifferences(verification))) return null;
   const res = path ? await api.writeFile(path, dwgBytes) : await api.saveFile({ defaultPath: savePathIn(fromPath, `${baseName(name)}.dwg`), filters: [{ name: 'AutoCAD DWG', extensions: ['dwg'] }], bytes: dwgBytes });
   if (!res) return null;
-  return { path: res.path ?? path ?? null, verification, report: doc.lastWriteReport, version, backup: res.backup ?? null };
+  return { path: res.path ?? path ?? null, verification, readBack: verification.converter, report: doc.lastWriteReport, version, backup: res.backup ?? null };
 }
 
+/** `oda`: the DWG was written by the ODA File Converter; the read-back converter is `v.converter` (from saveDwg) */
 export function verificationMessage(v, { oda = false } = {}) {
   if (v.error) return `The DWG was written, but it could not be read back to check it (${v.error}). Please open it in your CAD program to confirm, or save as DXF.`;
   if (v.ok) return 'The saved DWG was read back and matches the drawing.';
   const bad = Object.keys(v.mismatched || {});
-  if (oda) return `The saved DWG, read back through the ODA File Converter, differs from your drawing for: ${bad.join(', ') || 'some objects'}. Open it in your CAD program to check those objects, or save as DXF.`;
+  const reader = v.converter === 'LibreDWG' ? 'the built-in LibreDWG converter' : 'the ODA File Converter';
+  if (oda) return `The saved DWG, read back through ${reader}, differs from your drawing for: ${bad.join(', ') || 'some objects'}. Open it in your CAD program to check those objects, or save as DXF.`;
   return `The saved DWG differs from your drawing for: ${bad.join(', ') || 'some objects'}. DWG writing is experimental (text rotation and some hatch edges can be lost). Saving as DXF is lossless for everything this program supports.`;
 }
 

@@ -24,12 +24,31 @@ export const dwgSaveVersionFrom = (v) => (DWG_SAVE_VERSIONS.some((x) => x.id ===
 const HEADER_VERSIONS = { AC1032: 'acad2018', AC1027: 'acad2013', AC1024: 'acad2010', AC1021: 'acad2007', AC1018: 'acad2004', AC1015: 'acad2000' };
 /**
  * The save version of a DWG from its first 6 bytes ("AC1032" -> 'acad2018' ...); releases older than 2000
- * (AC1014, AC1012, AC1009 ...) -> 'acad2000'. Not a DWG header (or a newer, unknown one) -> null.
- * `head` is a string or bytes.
+ * (AC1014, AC1012, AC1009 ..., and the oldest "AC1.50", "AC2.10" style headers) -> 'acad2000'.
+ * Not a DWG header (or a newer, unknown one) -> null. `head` is a string or bytes.
  */
 export function dwgVersionFromHeader(head) {
   const s = typeof head === 'string' ? head.slice(0, 6) : String.fromCharCode(...Array.from(head ?? [], Number).slice(0, 6));
   if (HEADER_VERSIONS[s]) return HEADER_VERSIONS[s];
+  if (/^AC\d\.\d/.test(s)) return 'acad2000'; // AC1.2, AC1.40, AC1.50, AC2.10 ... (AutoCAD 1.x - 2.x)
   const m = /^AC(\d{4})$/.exec(s);
   return m && Number(m[1]) < 1015 ? 'acad2000' : null;
+}
+
+/** the ODA version to write for a version recorded by an earlier DWG write: ODA ids as they are; LibreDWG's 'r2000'
+ *  and 'r14' (R14 cannot be written by this program through ODA) -> 'acad2000', keeping the file's version family */
+const odaVersionOf = (v) => (DWG_SAVE_VERSIONS.some((x) => x.id === v) ? v : v === 'r2000' || v === 'r14' ? 'acad2000' : null);
+
+/**
+ * What Ctrl+S does with a drawing that has a file path, by its format:
+ *  - 'dxf' -> {action: 'dxf-overwrite'}; any other non-DWG format -> {action: 'save-as'} (the Save as DXF dialog)
+ *  - 'dwg' and ODA can write -> {action: 'dwg-writeback', version}: the version of the last DWG write of this tab
+ *    (`tabVersion`, LibreDWG ids mapped to their ODA version), else the file's header version, else 2018
+ *  - 'dwg' without ODA -> {action: 'dxf-confirm'} (saved as a DXF next to it, after a confirm)
+ */
+export function ctrlSaveRoute({ format, odaWrite, tabVersion = null, header = '' }) {
+  if (format === 'dxf') return { action: 'dxf-overwrite' };
+  if (format !== 'dwg') return { action: 'save-as' };
+  if (!odaWrite) return { action: 'dxf-confirm' };
+  return { action: 'dwg-writeback', version: odaVersionOf(tabVersion) ?? dwgVersionFromHeader(header ?? '') ?? DEFAULT_DWG_SAVE_VERSION };
 }

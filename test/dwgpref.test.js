@@ -24,3 +24,20 @@ test('DWG save version choice: stored value if offered, else 2018; the ODA hint 
   for (const v of [undefined, 'r2000', 'ACAD2013', 3]) assert.equal(dwgSaveVersionFrom(v), 'acad2018');
   assert.equal(ODA_SAVE_HINT, 'Install the free ODA File Converter for reliable DWG 2018 saving.');
 });
+import { ctrlSaveRoute } from '../src/core/dwgpref.js';
+test('DWG header: the oldest "AC1.50" / "AC2.10" style headers -> acad2000', () => {
+  for (const h of ['AC1.50', 'AC2.10', 'AC1.40', 'AC1.2\0']) assert.equal(dwgVersionFromHeader(h), 'acad2000', h);
+});
+test('Ctrl+S routing: DXF overwrites; DWG with ODA writes back (tab version, then header, then 2018); without ODA the DXF confirm', () => {
+  assert.deepEqual(ctrlSaveRoute({ format: 'dxf', odaWrite: true }), { action: 'dxf-overwrite' });
+  assert.deepEqual(ctrlSaveRoute({ format: 'svg', odaWrite: true }), { action: 'save-as' });
+  assert.deepEqual(ctrlSaveRoute({ format: 'dwg', odaWrite: false, tabVersion: 'acad2013', header: 'AC1032' }), { action: 'dxf-confirm' });
+  const back = (o) => ctrlSaveRoute({ format: 'dwg', odaWrite: true, ...o });
+  assert.deepEqual(back({ tabVersion: 'acad2004', header: 'AC1032' }), { action: 'dwg-writeback', version: 'acad2004' });
+  assert.deepEqual(back({ tabVersion: 'r2000', header: 'AC1032' }), { action: 'dwg-writeback', version: 'acad2000' }, 'LibreDWG r2000 keeps the 2000 family');
+  assert.deepEqual(back({ tabVersion: 'r14' }), { action: 'dwg-writeback', version: 'acad2000' });
+  assert.deepEqual(back({ tabVersion: null, header: 'AC1027' }), { action: 'dwg-writeback', version: 'acad2013' });
+  assert.deepEqual(back({ tabVersion: undefined, header: 'AC1012' }), { action: 'dwg-writeback', version: 'acad2000' });
+  assert.deepEqual(back({ header: undefined }), { action: 'dwg-writeback', version: 'acad2018' });
+  assert.deepEqual(back({ tabVersion: 'bogus', header: '' }), { action: 'dwg-writeback', version: 'acad2018' });
+});
