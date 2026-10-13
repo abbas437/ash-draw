@@ -121,6 +121,16 @@ try {
   await typeCmd('LA');
   assert.equal(await page.locator('#layers').isVisible(), true, 'LA shows #layers');
 
+  step = 'ZOOMFACTOR';
+  await typeCmd('ZOOMFACTOR');
+  assert.match(await page.locator('#prompt').textContent(), /ZOOMFACTOR {2}mouse wheel zoom speed, 3 to 100 <60>/);
+  await typeCmd('101');
+  assert.equal(await page.evaluate(() => window.app.vp.settings.zoomFactor), 60, 'out-of-range value rejected');
+  await typeCmd('80');
+  assert.equal(await page.evaluate(() => window.app.vp.settings.zoomFactor), 80, 'ZOOMFACTOR sets the wheel speed');
+  assert.equal(await toolId(), 'select', 'back to Select after ZOOMFACTOR');
+  await page.evaluate(() => window.app.setZoomFactor(60, false));
+
   step = 'LTSCALE 2 then U';
   await typeCmd('LTS');
   assert.match(await page.locator('#prompt').textContent(), /LTSCALE {2}new linetype scale factor <1>/);

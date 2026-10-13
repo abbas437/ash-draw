@@ -1,4 +1,4 @@
-// ASH Draw Studio - DXF writer: ASCII DXF R2000 (AC1015), model space only.
+// ASH Draw Studio - DXF writer: ASCII DXF R2000 (AC1015): model space and paper-space layouts.
 // Output is plain ASCII (non-ASCII text is written as \U+XXXX), CRLF line ends.
 // doc.lastWriteReport = { version, entities, blocks, skipped:{TYPE:n}, notes:[...] } is set on every call.
 import { mlineTags } from './mline.js';
