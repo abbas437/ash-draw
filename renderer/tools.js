@@ -20,6 +20,7 @@ import { gripsOf, applyGrip, gripEdit, gripsStretch, matchPropsEdit, nextGripMod
 import { el, modal, popMenu } from './ui.js';
 import { createModifyTools } from './tools-modify.js';
 import { createDraw2Tools } from './tools-draw2.js';
+import { createXlineTools } from './tools-xline.js';
 import { createModify2Tools } from './tools-modify2.js';
 import { createDimTools } from './tools-dims.js';
 import { createBlockTools } from './tools-blocks.js';
@@ -650,6 +651,7 @@ export function createTools(h) {
     move: new MoveTool(h), copy: new MoveTool(h, true), rotate: new RotateTool(h), scale: new ScaleTool(h), mirror: new MirrorTool(h),
     offset: new OffsetTool(h), trim: new TrimTool(h), extend: new TrimTool(h, true), erase: new EraseTool(h), explode: new ExplodeTool(h),
     ...createDraw2Tools(h, { Tool }),
+    ...createXlineTools(h, { Tool }),
     ...createModifyTools(h, { Tool, ModifyTool }),
     ...createModify2Tools(h, { Tool, ModifyTool }),
     ...createDimTools(h, { Tool }),
@@ -666,6 +668,7 @@ export const TOOL_ALIASES = {
   mea: 'measure', measuregeom: 'measure', area: 'area', aa: 'area',
   l: 'line', line: 'line', pl: 'pline', pline: 'pline', polyline: 'pline', rec: 'rect', rect: 'rect', rectangle: 'rect',
   pol: 'polygon', polygon: 'polygon', spl: 'spline', spline: 'spline', do: 'donut', donut: 'donut',
+  xl: 'xline', xline: 'xline', ray: 'ray',
   c: 'circle', circle: 'circle', a: 'arc', arc: 'arc', el: 'ellipse', ellipse: 'ellipse', po: 'point', point: 'point',
   t: 'text', text: 'text', mt: 'mtext', mtext: 'mtext', h: 'hatch', hatch: 'hatch', di: 'measure', dist: 'measure', measure: 'measure',
   m: 'move', move: 'move', co: 'copy', cp: 'copy', copy: 'copy', ro: 'rotate', rotate: 'rotate', sc: 'scale', scale: 'scale',
