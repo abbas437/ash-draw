@@ -5,6 +5,7 @@ import { getEntity } from '../src/core/model.js';
 import { bboxOf, unionBox } from '../src/core/geom.js';
 import {
   toPolyline, setClosed, setWidth, fitCurve, splineFit, decurve, reverse, reverseEntity, joinToPolyline, joinMany, breakAtPoint, mergeTopSteps,
+  insertVertex, moveVertex, breakBetween, straightenBetween, setSegmentWidth,
 } from '../src/core/pedit.js';
 
 const num = (s) => { const v = Number(String(s).trim().replace(',', '.')); return Number.isFinite(v) && String(s).trim() !== '' ? v : null; };
@@ -44,9 +45,19 @@ export function createModify2Tools(h, { Tool, ModifyTool }) {
         case 'join': return `PEDIT  select objects to join (${n} selected, Enter = done)`;
         case 'fuzz': return 'PEDIT  enter fuzz distance <0>';
         case 'width': return 'PEDIT  specify new width for all segments';
+        case 'vertex': {
+          const d = this.vlast === 'p' ? 'P' : 'N';
+          if (this.vmode) return `PEDIT  enter an option [Next/Previous/Go/eXit] <${d}>  (${this.vmode} from vertex ${this.vmark})`;
+          return `PEDIT  enter a vertex editing option [Next/Previous/Break/Insert/Move/Straighten/Tangent/Width/eXit] <${d}>  (vertex ${this.vi})`;
+        }
+        case 'vinsert': return 'PEDIT  specify location for new vertex';
+        case 'vmove': return 'PEDIT  specify new location for marked vertex';
+        case 'vsw': return `PEDIT  specify starting width for next segment <${this.vwDefault('sw')}>`;
+        case 'vew': return `PEDIT  specify ending width for next segment <${this.vsw}>`;
         default: {
           const oc = this.multi ? 'Close/Open' : this.polys[0]?.closed ? 'Open' : 'Close';
-          return `PEDIT  enter an option [${oc}/Join/Width/Fit/Spline/Decurve/Reverse/Undo]  (Enter = done)`;
+          const ev = this.multi ? '' : '/Edit vertex';
+          return `PEDIT  enter an option [${oc}/Join/Width${ev}/Fit/Spline/Decurve/Reverse/Undo]  (Enter = done)`;
         }
       }
     }
@@ -55,6 +66,7 @@ export function createModify2Tools(h, { Tool, ModifyTool }) {
     down(p, ev) { if (this.selecting()) this.sel.down(p, ev); }
     move(p, ev) { if (this.selecting()) this.sel.move(p, ev); }
     up(p, ev) {
+      if (this.state === 'vinsert' || this.state === 'vmove') { if (!ev.dragged) this.click(p); return; }
       if (!this.selecting()) return;
       // Multiple / Join build up a set: a pick or window adds to it (Shift+pick removes), as AutoCAD's "Select objects"
       const keep = this.state === 'pick' || ev.shiftKey ? null : [...this.vp.selection];
@@ -63,7 +75,68 @@ export function createModify2Tools(h, { Tool, ModifyTool }) {
       if (this.state === 'pick') { const [id] = this.vp.selection; if (id !== undefined) this.picked(id); }
       this.h.refreshPrompt();
     }
-    click() {}
+    click(p) {
+      const e = this.polys[0];
+      if (!e || !p) return;
+      if (this.state === 'vinsert') this.run(() => insertVertex(e, this.vi, p));
+      else if (this.state === 'vmove') this.run(() => moveVertex(e, this.vi, p));
+      else return;
+      this.state = 'vertex';
+      this.h.refreshPrompt();
+    }
+    // ---- Edit vertex: an X marks the current vertex; Break / Straighten mark one vertex, then Go acts on the span
+    // from it to the current one. Tangent is not supported (it only drives Fit tangents, which are computed here).
+    get vcount() { return this.polys[0]?.vertices.length ?? 0; }
+    vwDefault(k) { const v = this.polys[0]?.vertices[this.vi]; return v?.[k] ?? this.polys[0]?.width ?? 0; }
+    vstep(d) {
+      const n = this.vcount, closed = this.polys[0]?.closed;
+      this.vlast = d;
+      const i = this.vi + (d === 'p' ? -1 : 1);
+      if (closed) this.vi = (i + n) % n;
+      else if (i < 0 || i >= n) this.h.toast(d === 'p' ? 'PEDIT: already at the first vertex.' : 'PEDIT: already at the last vertex.');
+      else this.vi = i;
+    }
+    vgo() {
+      const e = this.polys[0], a = Math.min(this.vmark, this.vi), mode = this.vmode;
+      const r = this.run(() => (mode === 'break' ? breakBetween : straightenBetween)(e, this.vmark, this.vi));
+      this.vmode = null; this.vmark = null;
+      // the marker goes to the first vertex of the span (a closed polyline that was broken now starts after it)
+      if (r) this.vi = mode === 'break' && e.closed ? 0 : Math.min(a, this.vcount - 1);
+    }
+    vertexText(o, x) {
+      if (this.state === 'vsw') { if (x === null || x < 0) { this.h.toast('Enter a width of 0 or more.'); return true; } this.vsw = x; this.state = 'vew'; return true; }
+      if (this.state === 'vew') {
+        if (x === null || x < 0) { this.h.toast('Enter a width of 0 or more.'); return true; }
+        this.run(() => setSegmentWidth(this.polys[0], this.vi, this.vsw, x)); this.state = 'vertex'; return true;
+      }
+      if (this.state !== 'vertex') return false; // vinsert / vmove: a typed point goes on to click()
+      if (o === 'n' || o === 'next') this.vstep('n');
+      else if (o === 'p' || o === 'previous') this.vstep('p');
+      else if (o === 'x' || o === 'exit') { if (this.vmode) { this.vmode = null; this.vmark = null; } else this.state = 'opts'; }
+      else if (this.vmode) { if (o === 'g' || o === 'go') this.vgo(); else this.h.toast('PEDIT: enter Next, Previous, Go or eXit.'); }
+      else if (o === 'b' || o === 'break') { this.vmode = 'break'; this.vmark = this.vi; }
+      else if (o === 's' || o === 'straighten') { this.vmode = 'straighten'; this.vmark = this.vi; }
+      else if (o === 'i' || o === 'insert') this.state = 'vinsert';
+      else if (o === 'm' || o === 'move') this.state = 'vmove';
+      else if (o === 'w' || o === 'width') {
+        if (!this.polys[0].closed && this.vi === this.vcount - 1) this.h.toast('PEDIT: no segment after the last vertex.');
+        else { this.vsw = null; this.state = 'vsw'; }
+      } else if (o === 't' || o === 'tangent') this.h.toast('PEDIT: Tangent is not supported.');
+      else this.h.toast('PEDIT: invalid vertex editing option.');
+      return true;
+    }
+    draw(c) {
+      const e = this.polys[0];
+      if (!this.state?.startsWith('v') || !e) return;
+      c.strokeStyle = this.vp.inkColor; c.lineWidth = 1.5; c.setLineDash([]);
+      const cross = (v, r) => {
+        if (!v) return;
+        const s = this.vp.toScreen(v);
+        c.beginPath(); c.moveTo(s.x - r, s.y - r); c.lineTo(s.x + r, s.y + r); c.moveTo(s.x - r, s.y + r); c.lineTo(s.x + r, s.y - r); c.stroke();
+      };
+      cross(e.vertices[this.vi], 7);
+      if (this.vmode) cross(e.vertices[this.vmark], 4);
+    }
     picked(id) {
       const e = ent(id);
       this.ids = [id];
@@ -148,12 +221,14 @@ export function createModify2Tools(h, { Tool, ModifyTool }) {
           if (x === null || x < 0) { this.h.toast('Enter a distance of 0 or more.'); return true; }
           this.doJoin(x); return true;
         case 'opts': break;
+        case 'vertex': case 'vinsert': case 'vmove': case 'vsw': case 'vew': return this.vertexText(o, x);
         default: return false;
       }
       if (o === 'c' || o === 'close') this.each((e) => setClosed(e, true));
       else if (o === 'o' || o === 'open') this.each((e) => setClosed(e, false));
       else if (o === 'j' || o === 'join') { this.state = this.multi ? 'fuzz' : 'join'; if (!this.multi) this.vp.setSelection([]); }
       else if (o === 'w' || o === 'width') this.state = 'width';
+      else if (!this.multi && (o === 'e' || o === 'edit' || o === 'edit vertex')) Object.assign(this, { state: 'vertex', vi: 0, vlast: 'n', vmode: null, vmark: null });
       else if (o === 'f' || o === 'fit') this.each(fitCurve);
       else if (o === 's' || o === 'spline') this.each((e) => splineFit(e)); // SPLINETYPE 6, SPLINESEGS 8 (no such settings yet)
       else if (o === 'd' || o === 'decurve') this.each(decurve);
@@ -181,6 +256,10 @@ export function createModify2Tools(h, { Tool, ModifyTool }) {
         case 'join': if (enter) this.doJoin(null); else { this.state = 'opts'; this.vp.setSelection(this.ids); } break;
         case 'fuzz': if (enter) this.doJoin(0); else this.state = 'opts'; break;
         case 'width': this.state = 'opts'; break;
+        case 'vertex': if (enter) this.vstep(this.vlast); else this.text('x'); break; // Enter repeats Next / Previous
+        case 'vinsert': case 'vmove': this.state = 'vertex'; break;
+        case 'vsw': if (enter) { this.vsw = this.vwDefault('sw'); this.state = 'vew'; } else this.state = 'vertex'; break;
+        case 'vew': if (enter) this.text(String(this.vsw)); else this.state = 'vertex'; break;
         default: this.finish(); // Enter ends PEDIT; Esc too, keeping what was done (as AutoCAD)
       }
       this.h.refreshPrompt();

@@ -108,6 +108,22 @@ try {
   await typeCmd('u');
   assert.deepEqual((await ents())[0].vertices, square.vertices);
 
+  // 3c. Edit vertex: Next, Insert at 5,5 after vertex 1 of an open 3-segment polyline; one U gives it back
+  step = 'draw a 3-segment polyline'; await clear();
+  await typeCmd('pl'); for (const q of ['0,0', '10,0', '10,10', '0,10']) await typeCmd(q); await enter(); await typeCmd('ze');
+  const open3 = (await ents())[0];
+  assert.equal(open3.vertices.length, 4);
+  await undoable('PE E N I 5,5 X', async () => {
+    await typeCmd('pe'); await clickWorld(5, 0); await typeCmd('e'); await typeCmd('n'); await typeCmd('i'); await typeCmd('5,5');
+    await typeCmd('x'); await enter();
+  }, (list) => {
+    assert.equal(list.length, 1); assert.equal(list[0].id, open3.id);
+    assert.equal(list[0].vertices.length, 5); assert.ok(near(list[0].vertices[2], 5, 5), 'the new vertex follows vertex 1');
+  });
+  step = 'U after PE E I restores the vertices';
+  await typeCmd('u');
+  assert.deepEqual((await ents())[0].vertices, open3.vertices);
+
   // 4. break a line at a typed point
   step = 'draw a line for BREAKATPOINT'; await clear();
   await line('0,20', '10,20'); await typeCmd('ze');
