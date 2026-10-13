@@ -4,7 +4,7 @@ import { applyEditSet } from '../src/core/edit.js';
 import { getEntity } from '../src/core/model.js';
 import { bboxOf, unionBox } from '../src/core/geom.js';
 import {
-  toPolyline, setClosed, setWidth, decurve, reverse, reverseEntity, joinToPolyline, joinMany, breakAtPoint, mergeTopSteps,
+  toPolyline, setClosed, setWidth, fitCurve, splineFit, decurve, reverse, reverseEntity, joinToPolyline, joinMany, breakAtPoint, mergeTopSteps,
 } from '../src/core/pedit.js';
 
 const num = (s) => { const v = Number(String(s).trim().replace(',', '.')); return Number.isFinite(v) && String(s).trim() !== '' ? v : null; };
@@ -46,7 +46,7 @@ export function createModify2Tools(h, { Tool, ModifyTool }) {
         case 'width': return 'PEDIT  specify new width for all segments';
         default: {
           const oc = this.multi ? 'Close/Open' : this.polys[0]?.closed ? 'Open' : 'Close';
-          return `PEDIT  enter an option [${oc}/Join/Width/Decurve/Reverse/Undo]  (Enter = done)`;
+          return `PEDIT  enter an option [${oc}/Join/Width/Fit/Spline/Decurve/Reverse/Undo]  (Enter = done)`;
         }
       }
     }
@@ -154,6 +154,8 @@ export function createModify2Tools(h, { Tool, ModifyTool }) {
       else if (o === 'o' || o === 'open') this.each((e) => setClosed(e, false));
       else if (o === 'j' || o === 'join') { this.state = this.multi ? 'fuzz' : 'join'; if (!this.multi) this.vp.setSelection([]); }
       else if (o === 'w' || o === 'width') this.state = 'width';
+      else if (o === 'f' || o === 'fit') this.each(fitCurve);
+      else if (o === 's' || o === 'spline') this.each((e) => splineFit(e)); // SPLINETYPE 6, SPLINESEGS 8 (no such settings yet)
       else if (o === 'd' || o === 'decurve') this.each(decurve);
       else if (o === 'r' || o === 'reverse') this.each((e) => ({ change: [reverseEntity(e)] }));
       else if (o === 'u' || o === 'undo') this.undoOne();

@@ -53,11 +53,143 @@ export function setWidth(e, w) {
   return changed(c);
 }
 
-/** Decurve: every arc segment becomes straight. */
+// ---- Fit and Spline -------------------------------------------------------------------------------
+// Both keep the vertices they started from as `e.frame` (with `e.frameKind` 'fit' or 'spline5' / 'spline6' and the
+// segments per span), so Decurve can give them back. A frame is used only while the polyline is still exactly the
+// curve made from it (anything else edited it since), so a stale frame is ignored. The frame is not written to DXF.
+const unit = (x, y) => { const l = Math.hypot(x, y); return l > 0 ? { x: x / l, y: y / l } : null; };
+const cross = (a, b) => a.x * b.y - a.y * b.x;
+const dot = (a, b) => a.x * b.x + a.y * b.y;
+/** half the signed angle from direction a to direction b, as a bulge: tan(angle / 2) */
+const halfTan = (a, b) => Math.tan(Math.atan2(cross(a, b), dot(a, b)) / 2);
+const stripVerts = (v) => v.map(({ x, y, sw, ew }) => ({ x, y, bulge: 0, ...(sw !== undefined && { sw }), ...(ew !== undefined && { ew }) }));
+/** consecutive coincident vertices dropped (a closed polyline's last vertex too when it repeats the first) */
+function distinct(v, closed) {
+  const out = v.filter((p, i) => i === 0 || dist(p, v[i - 1]) > 1e-12);
+  if (closed && out.length > 1 && dist(out[0], out.at(-1)) <= 1e-12) out.pop();
+  return out;
+}
+
+/** Tangent directions of the fit curve at each vertex: the bisector of the two unit chords meeting there. At the ends
+ *  of an open polyline, the end chord's reflection of the next tangent (the tangent of the circle through the first
+ *  three vertices). */
+function fitTangents(P, closed) {
+  const n = P.length, ch = (i) => unit(P[(i + 1) % n].x - P[i].x, P[(i + 1) % n].y - P[i].y);
+  const t = P.map((_, i) => {
+    if (!closed && (i === 0 || i === n - 1)) return null;
+    const a = ch((i - 1 + n) % n), b = ch(i);
+    return unit(a.x + b.x, a.y + b.y) || b;
+  });
+  if (!closed) {
+    const end = (d, m) => (m ? { x: 2 * dot(d, m) * d.x - m.x, y: 2 * dot(d, m) * d.y - m.y } : d);
+    t[0] = end(ch(0), t[1]);
+    t[n - 1] = end(ch(n - 2), t[n - 2]);
+  }
+  return t;
+}
+
+/** The two-arc (biarc) piece from p0 (tangent t0) to p1 (tangent t1): equal tangent legs a, joint J halfway between
+ *  p0 + a t0 and p1 - a t1. Returns [bulge p0->J, J, bulge J->p1]. */
+function biarc(p0, t0, p1, t1) {
+  const d = { x: p1.x - p0.x, y: p1.y - p0.y }, s = { x: t0.x + t1.x, y: t0.y + t1.y };
+  const A = 2 * (dot(t0, t1) - 1), B = -2 * dot(d, s), C = dot(d, d);
+  let a = Math.abs(A) < 1e-12 ? (B < 0 ? -C / B : null) : (-B - Math.sqrt(B * B - 4 * A * C)) / (2 * A);
+  if (!(a > 0) || !Number.isFinite(a)) a = null;
+  const J = a === null ? { x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2 }
+    : { x: (p0.x + a * t0.x + p1.x - a * t1.x) / 2, y: (p0.y + a * t0.y + p1.y - a * t1.y) / 2 };
+  const c0 = unit(J.x - p0.x, J.y - p0.y), c1 = unit(p1.x - J.x, p1.y - J.y);
+  return [c0 ? halfTan(t0, c0) : 0, J, c1 ? halfTan(c1, t1) : 0];
+}
+
+/** Fit vertices through the frame `P`: every frame vertex stays, with one extra vertex between each pair; each pair of
+ *  arcs is tangent-continuous at the extra vertex and at the frame vertices. Per-vertex widths run halfway each. */
+function fitVertices(frame, closed) {
+  const P = distinct(frame, closed), n = P.length;
+  if (n < 2) throw fail('GEOMETRY', 'a polyline needs two distinct vertices to fit');
+  const T = fitTangents(P, closed), out = [];
+  const segs = closed ? n : n - 1;
+  for (let i = 0; i < segs; i++) {
+    const j = (i + 1) % n, [b0, J, b1] = biarc(P[i], T[i], P[j], T[j]);
+    const sw = P[i].sw, ew = P[i].ew, mid = sw !== undefined && ew !== undefined ? (sw + ew) / 2 : undefined;
+    out.push({ x: P[i].x, y: P[i].y, bulge: b0, ...(sw !== undefined && { sw }), ...(mid !== undefined && { ew: mid }) });
+    out.push({ x: J.x, y: J.y, bulge: b1, ...(mid !== undefined && { sw: mid }), ...(ew !== undefined && { ew }) });
+  }
+  if (!closed) out.push({ x: P[n - 1].x, y: P[n - 1].y, bulge: 0 });
+  return out;
+}
+
+/** Points of a uniform B-spline of `degree` with control points P (clamped to the ends when open, periodic when
+ *  closed), `segs` straight segments per span. */
+function bsplinePoints(P, closed, degree, segs) {
+  const n = P.length, p = Math.min(degree, n - 1);
+  const C = closed ? [...P, ...P.slice(0, p)] : P;
+  const m = C.length;
+  const U = closed ? Array.from({ length: m + p + 1 }, (_, i) => i)
+    : Array.from({ length: m + p + 1 }, (_, i) => Math.min(Math.max(i - p, 0), m - p));
+  const t0 = U[p], t1 = U[m], spans = t1 - t0, out = [];
+  const at = (t) => {
+    let k = p; while (k < m - 1 && t >= U[k + 1]) k++;
+    const d = Array.from({ length: p + 1 }, (_, j) => ({ x: C[k - p + j].x, y: C[k - p + j].y }));
+    for (let r = 1; r <= p; r++) {
+      for (let j = p; j >= r; j--) {
+        const i = k - p + j, a = (t - U[i]) / (U[i + p + 1 - r] - U[i]);
+        d[j] = { x: (1 - a) * d[j - 1].x + a * d[j].x, y: (1 - a) * d[j - 1].y + a * d[j].y };
+      }
+    }
+    return d[p];
+  };
+  const N = spans * segs;
+  for (let i = 0; i < N + (closed ? 0 : 1); i++) out.push(i === N ? { ...C[m - 1] } : at(t0 + (spans * i) / N));
+  if (!closed) { out[0] = { x: C[0].x, y: C[0].y }; out[N] = { x: C[m - 1].x, y: C[m - 1].y }; }
+  return out.map(({ x, y }) => ({ x, y, bulge: 0 }));
+}
+
+function curveOf(frame, closed, kind, segs) {
+  if (kind === 'fit') return fitVertices(frame, closed);
+  const P = distinct(frame, closed);
+  if (P.length < 2) throw fail('GEOMETRY', 'a polyline needs two distinct vertices to spline');
+  return bsplinePoints(P, closed, kind === 'spline5' ? 2 : 3, segs);
+}
+
+/** The frame of a fitted / splined polyline, or null when it has none or it no longer matches the curve. */
+export function validFrame(e) {
+  if (!Array.isArray(e.frame) || !e.frameKind) return null;
+  let v;
+  try { v = curveOf(e.frame, !!e.closed, e.frameKind, e.frameSegs || 8); } catch (err) { if (!err.code) throw err; return null; }
+  const cur = e.vertices;
+  if (v.length !== cur.length || v.some((q, i) => Math.abs(q.x - cur[i].x) > 1e-9 || Math.abs(q.y - cur[i].y) > 1e-9
+    || Math.abs(q.bulge - (cur[i].bulge || 0)) > 1e-9)) return null;
+  return e.frame;
+}
+
+function withCurve(e, kind, segs) {
+  needPoly(e);
+  const frame = validFrame(e) || stripVerts(e.vertices);
+  const c = clone(e);
+  c.vertices = curveOf(frame, !!e.closed, kind, segs);
+  c.frame = structuredClone(frame); c.frameKind = kind;
+  if (kind === 'fit') delete c.frameSegs; else c.frameSegs = segs;
+  return changed(c);
+}
+
+/** PEDIT Fit: a curve of arcs through every vertex, tangent-continuous (AutoCAD's curve fit: one extra vertex between
+ *  each pair of vertices). A polyline already fitted or splined is fitted from its frame. */
+export function fitCurve(e) { return withCurve(e, 'fit'); }
+
+/** PEDIT Spline: a quadratic (splineType 5) or cubic (6) B-spline with the vertices as control points, as `segs`
+ *  straight segments per span (AutoCAD's SPLINETYPE / SPLINESEGS; a curve fit of the samples is not done). */
+export function splineFit(e, { splineType = 6, segs = 8 } = {}) {
+  if (splineType !== 5 && splineType !== 6) throw fail('GEOMETRY', 'spline type must be 5 or 6');
+  if (!(Number.isInteger(segs) && segs >= 1)) throw fail('GEOMETRY', 'segments per span must be a whole number of 1 or more');
+  return withCurve(e, `spline${splineType}`, segs);
+}
+
+/** Decurve: every arc segment becomes straight; a fitted or splined polyline goes back to its frame. */
 export function decurve(e) {
   needPoly(e);
-  const c = clone(e);
-  c.vertices = c.vertices.map((v) => ({ ...v, bulge: 0 }));
+  const c = clone(e), frame = validFrame(e);
+  c.vertices = frame ? stripVerts(frame) : c.vertices.map((v) => ({ ...v, bulge: 0 }));
+  delete c.frame; delete c.frameKind; delete c.frameSegs;
   return changed(c);
 }
 

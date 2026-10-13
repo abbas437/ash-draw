@@ -95,6 +95,19 @@ try {
     assert.equal(list[0].vertices.length, 4);
   });
 
+  // 3b. fit a curve through it: more vertices, with bulges; one U gives the straight square back exactly
+  const square = (await ents())[0];
+  await undoable('PE F on the polyline', async () => {
+    await typeCmd('pe'); await clickWorld(10, 5); await typeCmd('f'); await enter();
+  }, (list) => {
+    assert.equal(list.length, 1); assert.equal(list[0].id, square.id);
+    assert.equal(list[0].vertices.length, 2 * square.vertices.length, 'one extra vertex per segment (closed)');
+    assert.ok(list[0].vertices.every((v) => Math.abs(v.bulge) > 1e-9), 'every segment is an arc');
+  });
+  step = 'U after PE F restores the vertices';
+  await typeCmd('u');
+  assert.deepEqual((await ents())[0].vertices, square.vertices);
+
   // 4. break a line at a typed point
   step = 'draw a line for BREAKATPOINT'; await clear();
   await line('0,20', '10,20'); await typeCmd('ze');
