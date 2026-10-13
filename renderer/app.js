@@ -31,7 +31,7 @@ import { CmdHistView } from './cmdhist-view.js';
 import { qselectDialog, selectSimilarCommand, purgeDialog } from './selclean.js';
 import { el, message, modal, confirmDialog, textDialog, listDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
 import {
-  OPEN_FILTERS, loadDrawing, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, savePathIn, extOf, UNIT_NAMES,
+  OPEN_FILTERS, loadDrawing, conversionSummary, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, savePathIn, extOf, UNIT_NAMES,
 } from './files.js';
 
 const api = window.api;
@@ -325,7 +325,7 @@ class App {
     const pt = progressToast('Reading…', () => ac.abort());
     this.vp.setBusy(true); // the system wait cursor over the canvas until the drawing is shown (no hidden pointer)
     try {
-      const { doc, format, notes, warnings } = await loadDrawing(api, f.name, f.bytes, { onProgress: (x) => pt.set(x), signal: ac.signal, path: f.path ?? null });
+      const { doc, format, notes, warnings, conversion } = await loadDrawing(api, f.name, f.bytes, { onProgress: (x) => pt.set(x), signal: ac.signal, path: f.path ?? null });
       toast(`Opening ${f.name} …`, 60000); // read: now the view is built
       await loadDrawingXrefs(api, doc, f.path ?? null); // before the scene is built: it is built once, with the xrefs
       const missing = await loadDrawingImages(api, doc, f.path ?? null);
@@ -333,6 +333,8 @@ class App {
       const pp = progressToast('Preparing drawing…', () => ac.abort());
       const prepared = await prepareView(doc, { signal: ac.signal, onProgress: (x) => pp.set(x) });
       this.installDoc(doc, { path: f.path ?? null, name: f.name, format }, { replaceBlank: true, prepared, firstView: true });
+      this.active.conversion = conversion ?? null; // the status-bar conversion item and Help > Converter log
+      this.refreshStatus();
       toast(`${f.name}: ${doc.entities.length.toLocaleString()} objects`, 2500);
       this.unitsHint(doc);
       if (notes.length) await message('Opened with limitations', `${f.name} was opened, but:`, el('div', {}, [el('ul', {}, notes.map((n) => el('li', { text: n }))), ...(warnings?.length ? [el('details', {}, [el('summary', { text: 'Converter messages' }), el('pre', { text: warnings.join('\n') })])] : [])]));
@@ -552,7 +554,7 @@ class App {
         ['External references…', 'XREF', () => xrefPanel(this)]]],
       ['Format', [['Units…', 'UNITS', () => this.unitsDialog()], ['Purge…', 'PURGE', () => purgeDialog(this)]]],
       ['Dimension', [...TOOL_BUTTONS.find(([g]) => g === 'Dimension')[2].map(([id, label, alias]) => [label, alias, () => this.setTool(id)]), '-', ['Dimension style…', 'D', () => this.dimStyles()]]],
-      ['Help', [['What this program can and cannot do', '', () => this.limitations()], ['About', '', () => this.about()]]],
+      ['Help', [['What this program can and cannot do', '', () => this.limitations()], ['Converter log…', '', () => this.converterLog()], ['About', '', () => this.about()]]],
     ];
     const bar = document.getElementById('menubar');
     for (const [label, items] of M) {
@@ -692,7 +694,9 @@ class App {
     const s = document.getElementById('status');
     const tog = (label, key, title) => { const b = el('button', { title, onclick: () => this.toggle(key) }, label); b.dataset.key = key; return b; };
     s.append(el('span', { class: 'coord', id: 'coord' }), tog('SNAP', 'snap', 'Object snap (F3)'), tog('ORTHO', 'ortho', 'Ortho (F8)'), tog('POLAR', 'polar', 'Polar tracking 45° (F10)'), tog('LWT', 'lineweights', 'Show lineweights (F9)'), tog('TPY', 'transparency', 'Show transparency'),
-      el('span', { class: 'spacer' }), el('span', { id: 'sel' }), el('span', { id: 'units', style: 'margin-left:12px', role: 'button', tabindex: '0', title: 'Drawing units (Format > Units…)', onclick: () => this.unitsDialog(), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.unitsDialog(); } } }),
+      el('span', { class: 'spacer' }),
+      el('span', { id: 'conv', hidden: true, role: 'button', tabindex: '0', style: 'margin-right:12px;cursor:pointer', onclick: () => this.converterLog(), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.converterLog(); } } }),
+      el('span', { id: 'sel' }), el('span', { id: 'units', style: 'margin-left:12px', role: 'button', tabindex: '0', title: 'Drawing units (Format > Units…)', onclick: () => this.unitsDialog(), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.unitsDialog(); } } }),
       el('button', { id: 'theme-btn', title: 'Dark theme (View menu)', onclick: () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark') }, 'DARK'));
     this.refreshToggles();
   }
@@ -728,8 +732,26 @@ class App {
     document.getElementById('stage').classList.toggle('empty', this.doc.entities.length === 0);
     const u = (this.active?.doc ?? this.doc).units;
     document.getElementById('units').textContent = `Units: ${UNIT_NAMES[u] ?? (unitLabel(u) || u)}`;
+    const conv = this.active?.conversion, ci = document.getElementById('conv');
+    if (ci) {
+      ci.hidden = !conv;
+      if (conv) { const { text, title } = conversionSummary(conv); ci.textContent = text; ci.title = title; }
+    }
     refreshMeasureResults();
     renderVpScale(this);
+  }
+  /** Help > Converter log… (and the status-bar conversion item): how the shown DWG was converted, with the kept log */
+  async converterLog() {
+    const c = this.active?.conversion;
+    if (!c) { await message('Converter log', 'The drawing shown was not converted from a DWG file (DXF files are read directly), so there is no converter log.'); return; }
+    const sk = Object.entries(c.skipped ?? {});
+    const n = (v) => v.toLocaleString('en-US');
+    await message('Converter log', `${this.file.name} was converted from DWG with ${c.converter === 'ODA' ? 'the ODA File Converter' : 'LibreDWG (built-in)'}.`, el('div', {}, [
+      el('ul', {}, [`Objects read: ${n(c.objects)}`, `Object types not shown: ${sk.length ? sk.map(([k, v]) => `${n(v)} ${k}`).join(', ') : 'none'}`,
+        ...(c.converter === 'ODA' ? [] : [`Converter errors: ${n(c.errorCount)}`])].map((t) => el('li', { text: t }))),
+      c.log ? el('pre', { id: 'conv-log', style: 'max-height:50vh;overflow:auto;white-space:pre-wrap', text: c.log }) : el('p', { text: 'The converter wrote no messages.' }),
+      c.log && c.log.length >= 256 * 1024 - 4 ? el('p', { style: 'color:var(--dim)', text: 'Only the beginning of the log is kept.' }) : null,
+    ]));
   }
   updateTitle() {
     document.getElementById('title').textContent = `${this.session?.dirty ? '• ' : ''}${this.file.name}`;

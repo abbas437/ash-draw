@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createOdaBridge, createDwgService, findOdaConverter, odaVersion, ODA_HINT, ODA_TIMEOUT_MS } from './odaConverter.js';
+import { createOdaBridge, createDwgService, findOdaConverter, implausibleConversion, odaVersion, ODA_HINT, ODA_TIMEOUT_MS } from './odaConverter.js';
 
 const skip = process.platform === 'win32' ? 'the stub converter is a shebang script' : false;
 const KNOWN_DXF = '  0\nSECTION\n  2\nENTITIES\n  0\nLINE\n  8\n0\n 10\n0\n 20\n0\n 11\n10\n 21\n10\n  0\nENDSEC\n  0\nEOF\n';
@@ -126,4 +126,44 @@ test('ODA path setting must name ODAFileConverter[.exe]; ODA mode without ODA is
   assert.match(av.reason, /not found at \/bin\/sh/);
   await assert.rejects(svc.toDxf(dwg), /Install the free ODA File Converter/);
   assert.deepEqual(used, []);
+});
+
+const MB = 1024 * 1024;
+// the reviewer's 115 MB AutoCAD 2018 DWG came back from LibreDWG as 0.2 MB of DXF with 666,694 ERROR lines (an empty drawing);
+// real drawings that convert fine give 5-15x their size of DXF, some with a few thousand ERROR lines
+test('implausibleConversion: a near-empty or error-flooded conversion is rejected, normal ones are not', () => {
+  const failing = implausibleConversion({ dwgBytes: 115 * MB, dxfBytes: 0.2 * MB, errorCount: 666_694 });
+  assert.match(failing, /115\.0 MB DWG file gave only 0\.2 MB of drawing data and reported 666,694 errors/);
+  assert.ok(implausibleConversion({ dwgBytes: 115 * MB, dxfBytes: 0.2 * MB, errorCount: 0 }), 'size alone');
+  assert.match(implausibleConversion({ dwgBytes: 1 * MB, dxfBytes: 8 * MB, errorCount: 100_001 }), /reported 100,001 errors/);
+  assert.equal(implausibleConversion({ dwgBytes: 0.9 * MB, dxfBytes: 12 * MB, errorCount: 0 }), null);
+  assert.equal(implausibleConversion({ dwgBytes: 66 * MB, dxfBytes: 336 * MB, errorCount: 8_933 }), null);
+  assert.equal(implausibleConversion({ dwgBytes: 2 * MB, dxfBytes: 15 * MB, errorCount: 1_376 }), null);
+  assert.equal(implausibleConversion({ dwgBytes: 1.5 * MB, dxfBytes: 0.1 * MB, errorCount: 0 }), null, 'small DWGs: the size rule does not apply');
+  assert.equal(implausibleConversion({ dwgBytes: 4 * MB, dxfBytes: 2.1 * MB, errorCount: 100_000 }), null, 'at the limits');
+});
+
+test('implausible LibreDWG output is a failed open: ODA tried next when installed, else the install hint with sizes and errors', async () => {
+  const big = new Uint8Array(3 * MB);
+  const tinyLibre = { calls: 0, available: async () => ({ available: true, version: '0.13.3' }), async toDxf() { this.calls++; return { dxfBytes: new Uint8Array(1000), errorCount: 200_000, log: 'ERROR: bad [section]\nERROR: x\n', converter: 'LibreDWG' }; } };
+  // ODA installed but failing first (Automatic): LibreDWG's empty result must not be shown either
+  const both = service(tinyLibre, { mode: 'auto' }, '/x/ODAFileConverter.exe', false);
+  await assert.rejects(both.svc.toDxf(big), /could not be converted \(ODA File Converter: ODA crashed; LibreDWG: produced an incomplete drawing/);
+  // ODA installed and working: it is used
+  const ok = service(tinyLibre, { mode: 'auto' }, '/x/ODAFileConverter.exe');
+  const r = await ok.svc.toDxf(new Uint8Array(10));
+  assert.equal(r.converter, 'ODA');
+  // no ODA: the error names what went wrong in plain words and carries the hint (and the log, without brackets)
+  for (const mode of ['auto', 'libredwg']) {
+    const err = await service(tinyLibre, { mode }, null).svc.toDxf(big).then(() => null, (e) => e);
+    assert.ok(err, mode);
+    assert.equal(err.odaHint, true);
+    assert.match(err.message, /^The built-in converter produced an incomplete drawing from this DWG: a 3\.0 MB DWG file gave only less than 0\.1 MB of drawing data and reported 200,000 errors\./);
+    assert.match(err.message, /Install the free ODA File Converter/);
+    assert.match(err.message, / \[[^[]*ERROR: bad \(section\)[^[]*\]$/);
+  }
+  // a plausible result passes through with the counts
+  const fine = { available: async () => ({ available: true, version: '0.13.3' }), async toDxf() { return { dxfBytes: new Uint8Array(20 * MB), errorCount: 12, log: 'ERROR: a', converter: 'LibreDWG' }; } };
+  const f = await service(fine, { mode: 'auto' }, null).svc.toDxf(big);
+  assert.deepEqual([f.converter, f.engine, f.errorCount, f.log], ['LibreDWG', 'libredwg', 12, 'ERROR: a']);
 });

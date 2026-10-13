@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createDwgBridge, converterPath, MAX_BYTES, STDERR_LIMIT } from './dwgBridge.js';
+import { createDwgBridge, converterPath, stderrCollector, MAX_BYTES, STDERR_LIMIT, STDERR_READ } from './dwgBridge.js';
 
 const posix = process.platform !== 'win32';
 const skip = posix ? false : 'fake converters are POSIX shell scripts';
@@ -165,6 +165,36 @@ test('tens of MB of stderr do not fail a conversion that wrote valid output', { 
     const b = createDwgBridge(f.dir, 'linux', { tmpRoot: f.tmpRoot });
     const r = await b.toDxf(new Uint8Array([1, 2, 3]));
     assert.match(Buffer.from(r.dxfBytes).toString(), /SECTION[\s\S]*EOF/);
+    assert.deepEqual(await fs.readdir(f.tmpRoot), []);
+  } finally { await f.cleanup(); }
+});
+
+test('stderrCollector counts ERROR lines across chunk boundaries and keeps only the first bytes', () => {
+  const text = 'Reading DWG file x\nERROR: one\n  ERROR 0x12: two\nWarning: not an error\nnot ERROR here\nERRORS is not ERROR\nERROR: last without newline';
+  const expected = 3; // one, two and the unterminated last line; "ERRORS" and mid-line ERROR do not count
+  for (let size = 1; size <= text.length; size++) {
+    const c = stderrCollector(10);
+    for (let i = 0; i < text.length; i += size) c.push(Buffer.from(text.slice(i, i + size)));
+    const { errorCount, log } = c.finish();
+    assert.equal(errorCount, expected, `chunk size ${size}`);
+    assert.equal(log, text.slice(0, 10), `chunk size ${size}`);
+  }
+  // a very long line split over many chunks still counts once
+  const c = stderrCollector();
+  c.push(Buffer.from('ERR')); c.push(Buffer.from('OR: ' + 'x'.repeat(100_000))); c.push(Buffer.from('\nok\n'));
+  assert.equal(c.finish().errorCount, 1);
+});
+
+test('toDxf counts converter ERROR lines over the whole stderr, past the kept log', { skip }, async () => {
+  // 30,000 ERROR lines of ~40 bytes = ~1.2 MB of stderr, well past the 256 KB kept
+  const f = await fakeDir(`${FIND_OUT}\n${GOOD_DXF}\necho "Reading DWG file x" >&2\ni=0; while [ $i -lt 30000 ]; do echo "ERROR: object 0x$i out of range padding" ; i=$((i+1)); done >&2\nexit 0`);
+  try {
+    const b = createDwgBridge(f.dir, 'linux', { tmpRoot: f.tmpRoot });
+    const r = await b.toDxf(new Uint8Array([1, 2, 3]));
+    assert.equal(r.errorCount, 30000);
+    assert.equal(r.converter, 'LibreDWG');
+    assert.ok(r.log.startsWith('Reading DWG file x\nERROR: object 0x0 out of range'));
+    assert.ok(r.log.length <= STDERR_READ && r.log.length > STDERR_READ - 64, String(r.log.length));
     assert.deepEqual(await fs.readdir(f.tmpRoot), []);
   } finally { await f.cleanup(); }
 });
