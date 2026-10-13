@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as X from '../src/core/pedit.js';
 import { makePolyline, newDocument, addEntity } from '../src/core/model.js';
 import { writeDxf } from '../src/core/dxfWrite.js';
+import { transformEntity } from '../src/core/geom.js';
 
 const near = (a, b, tol = 1e-9) => assert.ok(Math.abs(a - b) <= tol, `${a} !~ ${b}`);
 const pt = (x, y) => ({ x, y });
@@ -92,4 +93,31 @@ test('PEDIT Fit / Spline frame is not written to DXF', () => {
   const lines = s.split(/\r?\n/).map((l) => l.trim()), at = lines.indexOf('AcDbPolyline');
   assert.deepEqual(lines.slice(at + 1, at + 3), ['90', '9'], 'the 9 samples (one cubic span) are written');
   assert.ok(!/frame/i.test(s));
+});
+
+test('PEDIT Fit: a polyline doubling back 180 degrees stays finite (hairpin guard)', () => {
+  const f = X.fitCurve(PL([pt(0, 0), pt(10, 0), pt(5, 0)])).change[0];
+  assert.ok(f.vertices.every((v) => Number.isFinite(v.bulge) && Math.abs(v.bulge) <= 1e6 && Math.abs(v.x) <= 20 && Math.abs(v.y) <= 10),
+    JSON.stringify(f.vertices));
+  // a near-hairpin still fits smoothly (arcs, tangent-continuous)
+  const g = X.fitCurve(PL([pt(0, 0), pt(10, 0), pt(5, 0.001)])).change[0];
+  assert.ok(g.vertices.some((v) => v.bulge !== 0));
+  assert.ok(g.vertices.every((v) => Number.isFinite(v.bulge)));
+});
+
+test('PEDIT Fit -> Width -> Decurve: old per-vertex widths do not come back', () => {
+  const src = PL(P4); src.vertices = src.vertices.map((v, i) => ({ ...v, sw: 1 + i, ew: 2 + i }));
+  const f = X.fitCurve(src).change[0];
+  const w = X.setWidth(f, 3).change[0];
+  const d = X.decurve(w).change[0];
+  assert.equal(d.width, 3);
+  assert.ok(d.vertices.every((v) => v.sw === undefined && v.ew === undefined), JSON.stringify(d.vertices));
+});
+
+test('PEDIT Fit -> move -> Decurve restores the frame at the new position', () => {
+  const f = X.fitCurve(PL(P4)).change[0];
+  const t = transformEntity(f, [1, 0, 0, 1, 5, 5]);
+  const d = X.decurve(t).change[0];
+  assert.equal(d.vertices.length, P4.length);
+  d.vertices.forEach((v, i) => { near(v.x, P4[i].x + 5); near(v.y, P4[i].y + 5); });
 });
