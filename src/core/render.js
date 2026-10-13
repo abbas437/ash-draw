@@ -172,7 +172,24 @@ class Builder {
 
   /** a polyline with constant width (DONUT, PLINE Width): each segment filled as its own ring (a band for a line,
    *  an annular sector for an arc), so the joints of the rings never cancel under the even-odd fill */
-  wideSegments(e, mapArc, P, M, L, arcOp, ops, emit) {
+  // Its own copies of _build's helpers: handing _build's closures to another function makes V8 allocate them for
+  // every object built (520k scene items: +20% build time), so the uncommon cases stay out of _build.
+  wideSegments(e, m, style, rootId) {
+    const P = (p) => (m ? apply(m, p) : p);
+    const s = m ? matScale(m) : 1, flip = m ? m[0] * m[3] - m[1] * m[2] < 0 : false, ang = m ? Math.atan2(m[1], m[0]) : 0;
+    const ops = [];
+    let bbox = null;
+    const grow = (x, y) => { bbox = growBox(bbox, { x, y }); };
+    const M = (p) => { ops.push(OP_M, p.x, p.y); grow(p.x, p.y); };
+    const L = (p) => { ops.push(OP_L, p.x, p.y); grow(p.x, p.y); };
+    const arcOp = (c, r, a0, sweep) => { // as _build's arcOp
+      ops.push(OP_A, c.x, c.y, r, a0, sweep);
+      const lo = Math.min(a0, a0 + sweep), hi = Math.max(a0, a0 + sweep);
+      if (hi - lo >= TAU) { grow(c.x - r, c.y - r); grow(c.x + r, c.y + r); return; }
+      grow(c.x + r * Math.cos(lo), c.y + r * Math.sin(lo)); grow(c.x + r * Math.cos(hi), c.y + r * Math.sin(hi));
+      for (let k = Math.ceil(lo / (Math.PI / 2)), a = k * Math.PI / 2; a < hi; a = ++k * Math.PI / 2) grow(c.x + r * Math.cos(a), c.y + r * Math.sin(a));
+    };
+    const mapArc = (c, r, a0, sweep) => [P(c), r * s, flip ? -a0 + ang : a0 + ang, flip ? -sweep : sweep]; // as _build's mapArc
     const v = e.vertices, hw = e.width / 2, n = e.closed ? v.length : v.length - 1;
     for (let i = 0; i < n; i++) {
       const p1 = v[i], p2 = v[(i + 1) % v.length];
@@ -188,8 +205,14 @@ class Builder {
         M(P({ x: p1.x + nx, y: p1.y + ny })); L(P({ x: p2.x + nx, y: p2.y + ny })); L(P({ x: p2.x - nx, y: p2.y - ny })); L(P({ x: p1.x - nx, y: p1.y - ny }));
       }
       ops.push(OP_Z);
-      emit(ops.splice(0));
+      this.push({ kind: 'fill', ops: ops.splice(0), style, bbox }, rootId);
     }
+  }
+
+  /** XLINE / RAY: no bbox (out of the extents, always a grid candidate); its path is made per drawing (infiniteItem) */
+  infinite(e, m, style, rootId) {
+    const d = m ? applyVec(m, e.dir) : e.dir, l = Math.hypot(d.x, d.y);
+    this.push({ kind: 'path', ops: [], style, bbox: null, inf: { p: m ? apply(m, e.p) : e.p, dir: { x: d.x / l, y: d.y / l }, ray: e.type === 'RAY' } }, rootId);
   }
 
   /** build(); the items of a `ui: true` entity (a placeholder label) are marked ui and kept out of the drawing extents
@@ -230,12 +253,7 @@ class Builder {
 
     switch (e.type) {
       case 'LINE': M(P(e.p1)); L(P(e.p2)); this.push(mkItem('path'), rootId); return;
-      case 'XLINE': case 'RAY': {
-        // no bbox: out of the extents, always a grid candidate; its path is made per drawing (infiniteOps)
-        const d = m ? applyVec(m, e.dir) : e.dir, l = Math.hypot(d.x, d.y);
-        this.push({ kind: 'path', ops: [], style, bbox: null, inf: { p: P(e.p), dir: { x: d.x / l, y: d.y / l }, ray: e.type === 'RAY' } }, rootId);
-        return;
-      }
+      case 'XLINE': case 'RAY': this.infinite(e, m, style, rootId); return;
       case 'CIRCLE': {
         const [c, r] = mapArc(e.c, e.r, 0, TAU);
         M({ x: c.x + r, y: c.y }); arcOp(c, r, 0, TAU); this.push(mkItem('path'), rootId); return;
@@ -262,7 +280,7 @@ class Builder {
       case 'LWPOLYLINE': {
         const v = e.vertices;
         if (!v || v.length < 2) return;
-        if (e.width > 0) { this.wideSegments(e, mapArc, P, M, L, arcOp, ops, (sub) => this.push({ kind: 'fill', ops: sub, style, bbox }, rootId)); return; }
+        if (e.width > 0) { this.wideSegments(e, m, style, rootId); return; }
         M(P(v[0]));
         const n = e.closed ? v.length : v.length - 1;
         for (let i = 0; i < n; i++) {
