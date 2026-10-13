@@ -8,6 +8,8 @@
 //   { kind:'angular3', vertex, p1, p2, at }
 //   { kind:'radius',   center, p }           p on the curve
 //   { kind:'diameter', center, p }           p on the curve (the opposite point is mirrored through center)
+//   { kind:'arc',      center, p1, p2, at, partial? }   arc length: p1/p2 = ends of the measured arc, `at` on the
+//                                            dimension arc (also picks which of the two arcs p1-p2 is measured)
 //   { kind:'ordinate', feature, end, xType, origin? }   feature = measured point, end = leader endpoint (text side),
 //                                            xType = X-datum (vertical leader, measures X); origin defaults to the WCS origin
 //   optional on every def: text (override; '' or '<>' = measured, '<>' inside is substituted, ' ' = no text)
@@ -37,7 +39,7 @@ const perp = (a) => ({ x: -a.y, y: a.x });
 const polar = (c, r, a) => ({ x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a) });
 const normAng = (a) => ((a % TAU) + TAU) % TAU;
 
-export const DIM_TYPE = { linear: 0, aligned: 1, angular: 2, diameter: 3, radius: 4, angular3: 5, ordinate: 6 };
+export const DIM_TYPE = { linear: 0, aligned: 1, angular: 2, diameter: 3, radius: 4, angular3: 5, ordinate: 6, arc: 5 }; // arc: ARC_DIMENSION, 5 up to DXF R2013 (8 from R2018)
 /** DXF group 70 type bits of a def (without the +32 'block is anonymous' flag): ordinate X-datum adds 64 */
 export const dimTypeBits = (def) => DIM_TYPE[def.kind] | (def.kind === 'ordinate' && def.xType ? 64 : 0);
 
@@ -236,6 +238,30 @@ function angularSector(def) {
   return { c, a0: rays[0][0], sweep: normAng(rays[1][0] - rays[0][0]), rays: [rays[0], rays[1]] };
 }
 
+/** arc length: dimension arc through `at`, concentric with the measured arc. Extension lines are radial for an
+ *  included angle of 90 degrees or more; below that AutoCAD draws them parallel to the bisector (hence to each other) */
+function arcLengthGeom(def, st, out, o) {
+  const z = sizes(st);
+  const { c, a0, sweep } = angularSector({ kind: 'angular3', vertex: def.center, p1: def.p1, p2: def.p2, at: def.at });
+  const R = len(sub(def.p1, c)), r = len(sub(def.at, c)), a1 = a0 + sweep;
+  out.push(makeArc(c, r, a0 * DEG, a1 * DEG, o.dim));
+  const hs = sweep / 2, wb = { x: Math.cos(a0 + hs), y: Math.sin(a0 + hs) };
+  for (const ang of [a0, a1]) {
+    const w = { x: Math.cos(ang), y: Math.sin(ang) }, s = r >= R ? 1 : -1;
+    if (sweep < Math.PI / 2 - 1e-9) {
+      // orthogonal: from the arc end along the bisector direction to the dimension circle (outer root), DIMEXE past it
+      const q = r * r - R * R * Math.sin(hs) ** 2;
+      if (q < 0) continue;
+      const t = -R * Math.cos(hs) + Math.sqrt(q), sg = t >= 0 ? 1 : -1, e = add(c, mul(w, R));
+      if (Math.abs(t) > 1e-9) out.push(makeLine(add(e, mul(wb, sg * z.exo)), add(e, mul(wb, t + sg * z.exe)), o.ext));
+    } else if (Math.abs(r - R) > 1e-9) out.push(makeLine(add(c, mul(w, R + s * z.exo)), add(c, mul(w, r + s * z.exe)), o.ext));
+  }
+  out.push(...arrowEntities(st.DIMBLK, polar(c, r, a0), { x: Math.sin(a0), y: -Math.cos(a0) }, z.asz, o.dim));
+  out.push(...arrowEntities(st.DIMBLK, polar(c, r, a1), { x: -Math.sin(a1), y: Math.cos(a1) }, z.asz, o.dim));
+  const am = a0 + sweep / 2;
+  return { length: R * sweep, tp: placeText(polar(c, r, am), { x: -Math.sin(am), y: Math.cos(am) }, st, z, true) };
+}
+
 function angularGeom(def, st, text, out, o) {
   const z = sizes(st);
   const { c, a0, sweep, rays } = angularSector(def);
@@ -282,6 +308,14 @@ export function buildDimension(def, st) {
       text = composeText(formatAngle(measurement, st), st, def.text);
       entities.push(...tmp);
       ({ tp, P10 } = g);
+      break;
+    }
+    case 'arc': {
+      const g = arcLengthGeom(def, st, entities, o);
+      measurement = g.length * lf;
+      // DIMARCSYM (not in the style model yet, so 0): 0 symbol before the value, 1 above (drawn before here), 2 none
+      text = composeText((st.DIMARCSYM === 2 ? '' : '\u2312') + formatLinear(measurement, st), st, def.text);
+      tp = g.tp; P10 = def.at;
       break;
     }
     case 'radius': case 'diameter': {
@@ -434,6 +468,12 @@ export function dimensionTags(e) {
     case 'radius': t.push([100, 'AcDbRadialDimension'], ...P3(15, d.p), [40, 0]); break;
     case 'diameter': t.push([100, 'AcDbDiametricDimension'], ...P3(15, d.p), [40, 0]); break;
     case 'ordinate': t.push([100, 'AcDbOrdinateDimension'], ...P3(13, d.feature), ...P3(14, d.end)); break;
+    case 'arc': {
+      const a = (p) => normAng(Math.atan2(p.y - d.center.y, p.x - d.center.x));
+      t.push([100, 'AcDbArcDimension'], ...P3(13, d.p1), ...P3(14, d.p2), ...P3(15, d.center), [70, d.partial ? 1 : 0], [71, 0],
+        ...P3(16, d.center), ...P3(17, d.center), [40, a(d.p1)], [41, a(d.p2)]);
+      break;
+    }
     default: break;
   }
   return t;
@@ -446,6 +486,13 @@ export function dimDefFromTags(tags) {
   const n = (c) => parseFloat(first.get(c) ?? '0') || 0;
   const P = (c) => ({ x: n(c), y: n(c + 10) });
   const text = first.get(1) ?? '';
+  const ai = tags.findIndex(([c, v]) => c === 100 && v === 'AcDbArcDimension');
+  if (ai >= 0) { // ARC_DIMENSION: its subclass reuses 70 (partial) and 40-42, so its codes are read after the marker
+    const sub = new Map();
+    for (const [c, v] of tags.slice(ai + 1)) if (!sub.has(c)) sub.set(c, v);
+    const q = (c) => ({ x: parseFloat(sub.get(c) ?? '0') || 0, y: parseFloat(sub.get(c + 10) ?? '0') || 0 });
+    return { kind: 'arc', center: q(15), p1: q(13), p2: q(14), at: P(10), partial: (parseInt(sub.get(70) ?? '0', 10) || 0) !== 0, text };
+  }
   switch (Math.trunc(n(70)) & 7) {
     case 0: return { kind: 'linear', p1: P(13), p2: P(14), at: P(10), angle: n(50), text };
     case 1: return { kind: 'aligned', p1: P(13), p2: P(14), at: P(10), text };

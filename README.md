@@ -25,6 +25,7 @@ Built with Electron by ASH Technical & Project Management Services (ASH PMCS).
 - **Command line**: ZOOM (All/Extents/Window/Previous/Object, nX), ID (point coordinates), LIST (object geometry in drawing units, with Copy), LTSCALE (undoable), REGEN/RE, and PR/LA to show the Properties or Layers panel.
 - **Layers and properties** panels, including layer on/off and lock, colour, linetype and lineweight; measure tool.
 - **Select and clean up**: QSELECT (Quick Select by object type, property, operator and value), SELECTSIMILAR (same type and layer), PURGE (unused blocks, layers, linetypes, text and dimension styles, with nested items and zero-length geometry; one undo step).
+- **Arc length dimension**: DIMARC (DAR) dimensions an arc or a polyline arc segment (`⌒` before the length; one undo step); ARC_DIMENSION entities are read, drawn, moved and saved.
 - **Save and convert**: DXF (R2000, lossless for everything the program supports), DWG (experimental, verified after saving),
   and export to PDF (vector), SVG and PNG.
 

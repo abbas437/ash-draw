@@ -1,9 +1,9 @@
-// ASH Draw Studio - DIMLINEAR, DIMALIGNED, DIMANGULAR, DIMRADIUS, DIMDIAMETER, DIMORDINATE, DIMCONTINUE, DIMBASELINE and the
+// ASH Draw Studio - DIMLINEAR, DIMALIGNED, DIMANGULAR, DIMARC, DIMRADIUS, DIMDIAMETER, DIMORDINATE, DIMCONTINUE, DIMBASELINE and the
 // DIMSTYLE manager: the UI over
 // src/core/dims.js. Prompts and options follow AutoCAD LT. tools.js owns the Tool base class and passes it to
 // createDimTools (a factory, so this module does not import tools.js back).
 import { getEntity } from '../src/core/model.js';
-import { tessellate, dist } from '../src/core/geom.js';
+import { tessellate, dist, toPrims } from '../src/core/geom.js';
 import { buildDimension, rebuildDimension, continueDimension, baselineDimension } from '../src/core/dims.js';
 import { ensureDimStyle, resolveDimStyle } from '../src/core/dimsStyle.js';
 import { setDimStyle } from '../src/core/edit.js';
@@ -216,6 +216,29 @@ export function createDimTools(h, { Tool }) {
     draw(c) { if (this.circ) this.drawDef(c, this.def(this.vp.cursor)); }
   }
 
+  // ---- DIMARC: arc length of an arc or a polyline arc segment ----------------------------------
+  class DimArcTool extends DimTool {
+    constructor(host) { super(host); this.name = 'DIMARC'; }
+    activate() { super.activate(); this.arc = null; }
+    get prompt() { return this.arc ? `${this.name}  specify arc length dimension location` : `${this.name}  select arc or polyline arc segment`; }
+    /** the dimension arc goes through the cursor's distance from the centre; `at` stays on the arc's bisector so the
+     *  measured arc is always the picked one */
+    def(at) {
+      const { c, r, a0, sweep } = this.arc, P = (rr, a) => ({ x: c.x + rr * Math.cos(a), y: c.y + rr * Math.sin(a) });
+      const d = dist(c, at) > 1e-9 ? dist(c, at) : r;
+      return { kind: 'arc', center: { ...c }, p1: P(r, a0), p2: P(r, a0 + sweep), at: P(d, a0 + sweep / 2) };
+    }
+    click(p, ev) {
+      if (this.arc) { this.place(this.def(p)); this.h.setTool('select'); return; }
+      const raw = ev?.raw ?? p, hit = this.vp.pick(raw), e = hit && getEntity(this.vp.doc, hit.id);
+      const arcs = e && (e.type === 'ARC' || e.type === 'LWPOLYLINE') ? toPrims(e, this.vp.doc).filter((q) => q.k === 'arc' && q.sweep < Math.PI * 2 - 1e-9) : [];
+      if (!arcs.length) { this.h.toast('Select an arc or a polyline arc segment.'); return; }
+      const best = arcs.reduce((a, b) => (Math.abs(dist(b.c, p) - b.r) < Math.abs(dist(a.c, p) - a.r) ? b : a));
+      this.arc = { c: { ...best.c }, r: best.r, a0: best.a0, sweep: best.sweep };
+    }
+    draw(c) { if (this.arc) this.drawDef(c, this.def(this.vp.cursor)); }
+  }
+
   // ---- DIMANGULAR: two lines, an arc, a circle (centre + two points) or Enter = vertex and two points -----------
   class DimAngularTool extends DimTool {
     constructor(host) { super(host); this.name = 'DIMANGULAR'; }
@@ -328,7 +351,7 @@ export function createDimTools(h, { Tool }) {
 
   return {
     dimlinear: new DimLinearTool(h, 'linear'), dimaligned: new DimLinearTool(h, 'aligned'),
-    dimangular: new DimAngularTool(h), dimordinate: new DimOrdinateTool(h),
+    dimangular: new DimAngularTool(h), dimarc: new DimArcTool(h), dimordinate: new DimOrdinateTool(h),
     dimradius: new DimRadialTool(h, 'radius'), dimdiameter: new DimRadialTool(h, 'diameter'),
     dimcontinue: new DimChainTool(h, 'continue'), dimbaseline: new DimChainTool(h, 'baseline'),
   };
