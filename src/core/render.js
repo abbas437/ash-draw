@@ -170,6 +170,28 @@ class Builder {
     if (item.bbox) { if (this._ui) this.uiBox = unionBox(this.uiBox, item.bbox); else this.bbox = unionBox(this.bbox, item.bbox); }
   }
 
+  /** a polyline with constant width (DONUT, PLINE Width): each segment filled as its own ring (a band for a line,
+   *  an annular sector for an arc), so the joints of the rings never cancel under the even-odd fill */
+  wideSegments(e, mapArc, P, M, L, arcOp, ops, emit) {
+    const v = e.vertices, hw = e.width / 2, n = e.closed ? v.length : v.length - 1;
+    for (let i = 0; i < n; i++) {
+      const p1 = v[i], p2 = v[(i + 1) % v.length];
+      if (p1.bulge && Math.abs(p1.bulge) > 1e-12) {
+        const a = bulgeToArc(p1, p2, p1.bulge), ro = a.r + hw, ri = Math.max(0, a.r - hw);
+        const [co, rO, a0, sw] = mapArc(a.c, ro, a.a0, a.sweep), [, rI] = mapArc(a.c, ri, a.a0, a.sweep);
+        M({ x: co.x + rO * Math.cos(a0), y: co.y + rO * Math.sin(a0) }); arcOp(co, rO, a0, sw);
+        L({ x: co.x + rI * Math.cos(a0 + sw), y: co.y + rI * Math.sin(a0 + sw) }); arcOp(co, rI, a0 + sw, -sw);
+      } else {
+        const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+        if (!(len > 0)) continue;
+        const nx = (-(p2.y - p1.y) / len) * hw, ny = ((p2.x - p1.x) / len) * hw;
+        M(P({ x: p1.x + nx, y: p1.y + ny })); L(P({ x: p2.x + nx, y: p2.y + ny })); L(P({ x: p2.x - nx, y: p2.y - ny })); L(P({ x: p1.x - nx, y: p1.y - ny }));
+      }
+      ops.push(OP_Z);
+      emit(ops.splice(0));
+    }
+  }
+
   /** build(); the items of a `ui: true` entity (a placeholder label) are marked ui and kept out of the drawing extents
    *  (zoom extents / fit), as AutoCAD keeps an unloaded xref's path at 0,0 out of EXTMIN/EXTMAX. Still drawn and picked. */
   build(e, m, style, rootId) {
@@ -234,6 +256,7 @@ class Builder {
       case 'LWPOLYLINE': {
         const v = e.vertices;
         if (!v || v.length < 2) return;
+        if (e.width > 0) { this.wideSegments(e, mapArc, P, M, L, arcOp, ops, (sub) => this.push({ kind: 'fill', ops: sub, style, bbox }, rootId)); return; }
         M(P(v[0]));
         const n = e.closed ? v.length : v.length - 1;
         for (let i = 0; i < n; i++) {

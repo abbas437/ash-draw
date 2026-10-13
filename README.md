@@ -11,6 +11,7 @@ Built with Electron by ASH Technical & Project Management Services (ASH PMCS).
   Layers, colours (ACI and true colour), linetypes, blocks and block arrays, hatches (solid and common patterns), text and
   multiline text, splines, ellipses, dimensions (as drawn) and leaders are displayed.
 - **Draw**: line, polyline, rectangle, circle, arc (3 points), ellipse, point, text, hatch (click inside a closed shape).
+- **More draw commands**: POLYGON (inscribed, circumscribed or by edge), SPLINE (through fit points, open or closed) and DONUT (filled ring).
 - **Modify**: move, copy, rotate, scale, mirror, offset, trim, extend, explode, erase; copy/paste; unlimited undo and redo.
 - **Precision**: object snaps (endpoint, intersection, midpoint, centre, quadrant, node, insertion, perpendicular),
   ortho and polar tracking, and an AutoCAD-style command line (`L`, `PL`, `C`, `M`, `CO`, `RO`, `TR` ... and typed
