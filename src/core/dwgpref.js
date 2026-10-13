@@ -7,3 +7,29 @@ export const dwgSaveAllowed = (stored) => stored === true;
 export const DWG_SAVE_DISABLED_TEXT = 'Saving as DWG is experimental and is turned off: layouts and viewports may appear empty when the file is opened in AutoCAD. '
   + 'To turn it on, open Edit > Preferences… and tick “Allow saving DWG (experimental)”. To exchange or submit the drawing, use File > Save as DXF… instead.';
 export const dwgOriginSaveText = (name) => `This drawing was opened from DWG. It will be saved as DXF (${String(name || 'drawing').replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '')}.dxf) next to the original; the DWG is not changed.`;
+
+// Reliable DWG saving through the ODA File Converter (when the user has installed it).
+/** one line added to the experimental-save refusal/confirm when ODA is not installed */
+export const ODA_SAVE_HINT = 'Install the free ODA File Converter for reliable DWG 2018 saving.';
+/** settings key of the last DWG version chosen in Save as DWG */
+export const DWG_SAVE_VERSION_KEY = 'dwg.saveVersion';
+/** DWG versions offered when ODA writes the file (ids accepted by dwg:fromDxf), newest first; the first is the default */
+export const DWG_SAVE_VERSIONS = Object.freeze([
+  ['acad2018', 'AutoCAD 2018 DWG'], ['acad2013', 'AutoCAD 2013 DWG'], ['acad2010', 'AutoCAD 2010 DWG'],
+  ['acad2007', 'AutoCAD 2007 DWG'], ['acad2004', 'AutoCAD 2004 DWG'], ['acad2000', 'AutoCAD 2000 DWG'],
+].map(([id, label]) => Object.freeze({ id, label })));
+export const DEFAULT_DWG_SAVE_VERSION = 'acad2018';
+/** a stored choice, or the default when it is missing or not offered */
+export const dwgSaveVersionFrom = (v) => (DWG_SAVE_VERSIONS.some((x) => x.id === v) ? v : DEFAULT_DWG_SAVE_VERSION);
+const HEADER_VERSIONS = { AC1032: 'acad2018', AC1027: 'acad2013', AC1024: 'acad2010', AC1021: 'acad2007', AC1018: 'acad2004', AC1015: 'acad2000' };
+/**
+ * The save version of a DWG from its first 6 bytes ("AC1032" -> 'acad2018' ...); releases older than 2000
+ * (AC1014, AC1012, AC1009 ...) -> 'acad2000'. Not a DWG header (or a newer, unknown one) -> null.
+ * `head` is a string or bytes.
+ */
+export function dwgVersionFromHeader(head) {
+  const s = typeof head === 'string' ? head.slice(0, 6) : String.fromCharCode(...Array.from(head ?? [], Number).slice(0, 6));
+  if (HEADER_VERSIONS[s]) return HEADER_VERSIONS[s];
+  const m = /^AC(\d{4})$/.exec(s);
+  return m && Number(m[1]) < 1015 ? 'acad2000' : null;
+}

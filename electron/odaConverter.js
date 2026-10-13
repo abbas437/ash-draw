@@ -15,6 +15,8 @@ import path from 'node:path';
 export const ODA_TIMEOUT_MS = 10 * 60_000;
 export const ODA_MAX_BYTES = 1536 * 1024 * 1024; // same cap as the LibreDWG bridge
 export const ODA_OUT_VERSION = 'ACAD2018';
+/** DWG versions the ODA File Converter writes for Save as DWG (ids as in src/core/dwgpref.js DWG_SAVE_VERSIONS) */
+export const ODA_DWG_VERSIONS = Object.freeze({ acad2018: 'ACAD2018', acad2013: 'ACAD2013', acad2010: 'ACAD2010', acad2007: 'ACAD2007', acad2004: 'ACAD2004', acad2000: 'ACAD2000' });
 export const ODA_EXE = 'ODAFileConverter.exe';
 export const ODA_DOWNLOAD_URL = 'https://www.opendesign.com/guestfiles/oda_file_converter';
 export const DWG_MODES = Object.freeze(['auto', 'oda', 'libredwg']);
@@ -39,6 +41,18 @@ export function implausibleConversion({ dwgBytes, dxfBytes, errorCount = 0 }) {
 /** the first lines of a converter log, made safe for the " [detail]" tail of an error message */
 const logExcerpt = (log) => String(log ?? '').split(/\r?\n/).filter((l) => l.trim()).slice(0, 20).join('\n').replace(/[[\]]/g, (c) => (c === '[' ? '(' : ')'));
 const IN_NAME = 'drawing.dwg';
+const IN_DXF_NAME = 'drawing.dxf';
+
+/**
+ * The converter's argument array: `<inDir> <outDir> <ACADxxxx> <DXF|DWG> 0 1 <input file name>` (no recursion, audit on).
+ * `version` is an ODA_DWG_VERSIONS id ('acad2018', ...) for DWG output; DXF output is always ACAD2018.
+ */
+export function odaArgs(inDir, outDir, outType, version) {
+  if (outType === 'DXF') return [inDir, outDir, ODA_OUT_VERSION, 'DXF', '0', '1', IN_NAME];
+  if (outType !== 'DWG') throw new RangeError(`unsupported ODA output type ${JSON.stringify(outType)}`);
+  if (!Object.hasOwn(ODA_DWG_VERSIONS, version)) throw new RangeError(`unsupported DWG output version ${JSON.stringify(version)}; use one of ${Object.keys(ODA_DWG_VERSIONS).join(', ')}`);
+  return [inDir, outDir, ODA_DWG_VERSIONS[version], 'DWG', '0', '1', IN_DXF_NAME];
+}
 
 /** Only an executable named ODAFileConverter[.exe] is ever run (a settings value cannot name another program). */
 export const isOdaExeName = (p) => typeof p === 'string' && /^ODAFileConverter(\.exe)?$/i.test(path.basename(p));
@@ -89,44 +103,55 @@ export function createOdaBridge(exe, opts = {}) {
   const tmpRoot = opts.tmpRoot ?? os.tmpdir();
   const timeoutMs = opts.timeoutMs ?? ODA_TIMEOUT_MS;
   const maxBytes = opts.maxBytes ?? ODA_MAX_BYTES;
+  /** run the converter on one input file in a private temp folder and return the single output file's bytes */
+  async function convert(bytes, inKind, inName, outType, version) {
+    const input = Buffer.from(bytes.buffer ?? bytes, bytes.byteOffset ?? 0, bytes.byteLength);
+    if (input.length === 0) throw new RangeError(`${inKind} data is empty`);
+    if (input.length > maxBytes) throw new RangeError(`${inKind} data is ${input.length} bytes; the limit is ${maxBytes} bytes`);
+    const tmp = await fs.mkdtemp(path.join(tmpRoot, 'ash-oda-'));
+    try {
+      const inDir = path.join(tmp, 'in'), outDir = path.join(tmp, 'out');
+      await fs.mkdir(inDir); await fs.mkdir(outDir);
+      await fs.writeFile(path.join(inDir, inName), input);
+      const args = odaArgs(inDir, outDir, outType, version);
+      try {
+        await run(exe, args, { cwd: tmp, timeout: timeoutMs, windowsHide: true, shell: false, maxBuffer: 10 * 1024 * 1024, encoding: 'utf8' });
+      } catch (err) {
+        let why;
+        if (err.code === 'ENOENT') why = 'executable not found';
+        else if (err.killed && err.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') why = `timed out after ${Math.round(timeoutMs / 1000)} s`;
+        else if (typeof err.code === 'number') why = `exit code ${err.code}`;
+        else why = err.signal ? `terminated by ${err.signal}` : err.message;
+        throw new Error(`ODA File Converter failed (${why})`);
+      }
+      const names = await fs.readdir(outDir);
+      const ext = `.${outType.toLowerCase()}`;
+      const outName = names.find((n) => n.toLowerCase().endsWith(ext));
+      if (!outName) {
+        const errFile = names.find((n) => /\.err$/i.test(n));
+        const detail = errFile ? (await fs.readFile(path.join(outDir, errFile), 'utf8')).trim().slice(0, 4096) : '';
+        throw new Error(`ODA File Converter produced no ${outType}${detail ? `: ${detail}` : ''}`);
+      }
+      const st = await fs.stat(path.join(outDir, outName));
+      if (st.size === 0) throw new Error('ODA File Converter produced an empty file');
+      if (st.size > maxBytes) throw new RangeError(`ODA File Converter output exceeds ${maxBytes} bytes`);
+      return new Uint8Array(await fs.readFile(path.join(outDir, outName)));
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  }
   return {
     exe,
     version: opts.version ?? odaVersion(exe),
     /** DWG bytes -> {dxfBytes} (ASCII DXF, ACAD2018, audit on); the temp folder is always removed. */
     async toDxf(dwgBytes) {
-      const input = Buffer.from(dwgBytes.buffer ?? dwgBytes, dwgBytes.byteOffset ?? 0, dwgBytes.byteLength);
-      if (input.length === 0) throw new RangeError('DWG data is empty');
-      if (input.length > maxBytes) throw new RangeError(`DWG data is ${input.length} bytes; the limit is ${maxBytes} bytes`);
-      const tmp = await fs.mkdtemp(path.join(tmpRoot, 'ash-oda-'));
-      try {
-        const inDir = path.join(tmp, 'in'), outDir = path.join(tmp, 'out');
-        await fs.mkdir(inDir); await fs.mkdir(outDir);
-        await fs.writeFile(path.join(inDir, IN_NAME), input);
-        const args = [inDir, outDir, ODA_OUT_VERSION, 'DXF', '0', '1', IN_NAME];
-        try {
-          await run(exe, args, { cwd: tmp, timeout: timeoutMs, windowsHide: true, shell: false, maxBuffer: 10 * 1024 * 1024, encoding: 'utf8' });
-        } catch (err) {
-          let why;
-          if (err.code === 'ENOENT') why = 'executable not found';
-          else if (err.killed && err.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') why = `timed out after ${Math.round(timeoutMs / 1000)} s`;
-          else if (typeof err.code === 'number') why = `exit code ${err.code}`;
-          else why = err.signal ? `terminated by ${err.signal}` : err.message;
-          throw new Error(`ODA File Converter failed (${why})`);
-        }
-        const names = await fs.readdir(outDir);
-        const dxf = names.find((n) => /\.dxf$/i.test(n));
-        if (!dxf) {
-          const errFile = names.find((n) => /\.err$/i.test(n));
-          const detail = errFile ? (await fs.readFile(path.join(outDir, errFile), 'utf8')).trim().slice(0, 4096) : '';
-          throw new Error(`ODA File Converter produced no DXF${detail ? `: ${detail}` : ''}`);
-        }
-        const st = await fs.stat(path.join(outDir, dxf));
-        if (st.size === 0) throw new Error('ODA File Converter produced an empty file');
-        if (st.size > maxBytes) throw new RangeError(`ODA File Converter output exceeds ${maxBytes} bytes`);
-        return { dxfBytes: new Uint8Array(await fs.readFile(path.join(outDir, dxf))), errorCount: 0, log: '', converter: 'ODA' };
-      } finally {
-        await fs.rm(tmp, { recursive: true, force: true });
-      }
+      const out = await convert(dwgBytes, 'DWG', IN_NAME, 'DXF');
+      return { dxfBytes: out, errorCount: 0, log: '', converter: 'ODA' };
+    },
+    /** DXF bytes -> {dwgBytes} in the given ODA_DWG_VERSIONS version ('acad2018', ...); the temp folder is always removed. */
+    async fromDxf(dxfBytes, version) {
+      odaArgs('', '', 'DWG', version); // unknown versions fail before anything is written
+      return { dwgBytes: await convert(dxfBytes, 'DXF', IN_DXF_NAME, 'DWG', version) };
     },
   };
 }
@@ -167,6 +192,8 @@ export function createDwgService({ libre, getConfig, detectOda, makeOda }) {
         version: first === 'oda' ? `ODA File Converter ${odaInfo.version}` : first ? `LibreDWG ${lib.version}` : null,
         reason: first ? undefined : (mode === 'oda' ? odaInfo.reason : lib?.reason),
         oda: odaInfo, libredwg: lib ?? { available: false, reason: 'not used (ODA File Converter selected)' },
+        // DWG writing: ODA versions when ODA is usable (see dwgWriteEngines)
+        write: { oda: !!o?.exe, odaVersions: o?.exe ? Object.keys(ODA_DWG_VERSIONS) : [], libredwg: !!lib?.available },
       };
     },
     /** DWG bytes -> {dxfBytes, warnings?, engine, converter: 'ODA'|'LibreDWG', errorCount, log}; errors carry `odaHint`
@@ -193,6 +220,24 @@ export function createDwgService({ libre, getConfig, detectOda, makeOda }) {
           : `${ODA_HINT}${prefs} [${detail}]`;
       throw Object.assign(new Error(msg), { odaHint: !odaTried });
     },
-    fromDxf: (dxfBytes, version) => libre.fromDxf(dxfBytes, version),
+    /** Which engines can write DWG now: ODA (versions ODA_DWG_VERSIONS) when it is installed and the converter
+     *  preference is not Built-in; LibreDWG (r2000/r14) unless the preference is ODA File Converter. */
+    async dwgWriteEngines() {
+      const { mode, oda: o } = await engines();
+      return {
+        oda: !!o?.exe, odaVersions: o?.exe ? Object.keys(ODA_DWG_VERSIONS) : [],
+        odaReason: o?.exe ? undefined : (o?.reason ?? 'not used (Built-in selected)'), libredwg: mode !== 'oda',
+      };
+    },
+    /** DXF bytes -> {dwgBytes, engine}. ODA versions ('acad2018', ...) are written by the ODA File Converter (an error
+     *  when it is not available); 'r2000'/'r14' by LibreDWG. */
+    async fromDxf(dxfBytes, version) {
+      if (Object.hasOwn(ODA_DWG_VERSIONS, version)) {
+        const { oda: o } = await engines();
+        if (!o?.exe) throw new Error(`Saving DWG ${version.replace(/^acad/, '')} needs the ODA File Converter (${o?.reason ?? 'the DWG converter preference is Built-in (LibreDWG)'}). ${ODA_INSTALL}`);
+        return { ...(await makeOda(o.exe).fromDxf(dxfBytes, version)), engine: 'oda' };
+      }
+      return { ...(await libre.fromDxf(dxfBytes, version)), engine: 'libredwg' };
+    },
   };
 }

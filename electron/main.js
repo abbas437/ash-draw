@@ -4,9 +4,10 @@ import { randomBytes } from 'node:crypto';
 import { promises as fs, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { writeWithBackup } from './backup.js';
 import { createDwgBridge, DWG_OUT_VERSIONS } from './dwgBridge.js';
 import { createHandoffStore } from './handoff.js';
-import { createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isOdaExeName, ODA_DOWNLOAD_URL } from './odaConverter.js';
+import { createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isOdaExeName, ODA_DOWNLOAD_URL, ODA_DWG_VERSIONS } from './odaConverter.js';
 import { saveDialogDefault } from './savePath.js';
 import { cleanSession, isPathString, pushRecent, startupModeOf } from './sessionLists.js';
 import { xrefCandidates } from '../src/core/xref.js';
@@ -302,14 +303,14 @@ function registerIpc() {
     const isDir = (d) => { try { return statSync(d).isDirectory(); } catch { return false; } };
     const r = await dialog.showSaveDialog(win, { defaultPath: saveDialogDefault(o.defaultPath, { documents: app.getPath('documents'), isDir }), filters: asFilters(o.filters) });
     if (r.canceled || !r.filePath) return null;
-    await atomicWrite(r.filePath, bytes);
-    return { path: grant(r.filePath) };
+    const backup = await writeWithBackup(r.filePath, bytes, atomicWrite); // an existing .dxf/.dwg is copied to .bak first
+    return { path: grant(r.filePath), backup };
   });
   handle('file:write', async (opts) => {
     const o = plainObject(opts);
     const p = grantedPath(o.path);
-    await atomicWrite(p, asBytes(o.bytes));
-    return { path: p };
+    const backup = await writeWithBackup(p, asBytes(o.bytes), atomicWrite); // an existing .dxf/.dwg is copied to .bak first
+    return { path: p, backup };
   });
   handle('app:launchFiles', () => { rendererReady = true; return pendingFiles.splice(0); });
   // Print a plot: the renderer builds the PDF; it is written to a private temp folder, shown in a hidden window by
@@ -409,14 +410,16 @@ function registerIpc() {
   handle('dwg:open', async (src) => {
     const bytes = typeof src === 'string' ? await readGranted(grantedPath(src)) : asBytes(src, 'DWG data');
     const { dxfBytes, warnings, engine, converter, errorCount, log } = await dwg.toDxf(bytes);
-    return { url: handOff(dxfBytes), size: dxfBytes.byteLength, dwgSize: bytes.byteLength, warnings, engine, converter, errorCount, log };
+    const header = Buffer.from(bytes.subarray(0, 6)).toString('latin1'); // "AC1032": the DWG version, kept for Save in the same version
+    return { url: handOff(dxfBytes), size: dxfBytes.byteLength, dwgSize: bytes.byteLength, header, warnings, engine, converter, errorCount, log };
   });
   // the window gives a hand-off back unserved (a cancelled or failed open), so main does not hold the DXF until it expires
   handle('dwg:release', (url) => { const t = tokenOf(url); if (t) handoffs.release(t); });
   handle('dwg:fromDxf', (opts) => {
     const o = plainObject(opts);
     const version = o.version ?? 'r2000';
-    if (!DWG_OUT_VERSIONS.includes(version)) throw new RangeError(`version must be one of ${DWG_OUT_VERSIONS.join(', ')}`);
+    const versions = [...Object.keys(ODA_DWG_VERSIONS), ...DWG_OUT_VERSIONS]; // ODA versions, then LibreDWG's
+    if (!versions.includes(version)) throw new RangeError(`version must be one of ${versions.join(', ')}`);
     return dwg.fromDxf(asBytes(o.dxfBytes, 'DXF data'), version);
   });
 }

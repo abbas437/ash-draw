@@ -9,7 +9,7 @@ import { layIsolate, layUnisolate, layFreeze, layOn, layThaw } from '../src/core
 import { Viewport, CANVAS_BG } from './viewport.js';
 import { createDocState, findTabByPath, indexAfterClose, cycleIndex, isBlankTab } from './tabs.js';
 import { createTools, TOOL_ALIASES } from './tools.js';
-import { DWG_SAVE_PREF_KEY, DWG_SAVE_PREF_LABEL, DWG_SAVE_DISABLED_TEXT, dwgSaveAllowed, dwgOriginSaveText } from '../src/core/dwgpref.js';
+import { DWG_SAVE_PREF_KEY, DWG_SAVE_PREF_LABEL, DWG_SAVE_DISABLED_TEXT, dwgSaveAllowed, dwgOriginSaveText, ODA_SAVE_HINT, DWG_SAVE_VERSION_KEY, DWG_SAVE_VERSIONS, DEFAULT_DWG_SAVE_VERSION, dwgSaveVersionFrom, dwgVersionFromHeader } from '../src/core/dwgpref.js';
 import { ViewHistory, parseZoomFactor, ZOOMFACTOR_MIN, ZOOMFACTOR_MAX } from '../src/core/cmdline.js';
 import { dimStyleManager, dimStyleNames, dimVarsOf, setCurrentDimStyle } from './tools-dims.js';
 import { blockDoubleClick } from './tools-blocks.js';
@@ -107,6 +107,7 @@ class App {
     api.settingsGet?.('tools.collapsed').then((v) => { this.collapsed = collapsedFrom(v); applyCollapsed(document.getElementById('tools'), this.collapsed); this.fitBand(); }).catch(() => {});
     api.settingsGet?.('tools.layout').then((v) => { if (v != null) this.setToolLayout(cleanLayout(v), false); }).catch(() => {});
     api.settingsGet?.(DWG_SAVE_PREF_KEY).then((v) => { this.allowDwgSave = dwgSaveAllowed(v); }).catch(() => {});
+    this.odaWrite = false; this.refreshDwgWrite();
     api.settingsGet?.('view.zoomFactor').then((v) => { const n = parseZoomFactor(v); if (n !== null) this.setZoomFactor(n, false); }).catch(() => {});
     api.settingsGet?.('theme').then((t) => { if (t === 'dark') this.setTheme('dark', false); }).catch(() => {});
     api.version?.().then((v) => { this.version = v; this.refreshWindowTitle(); }).catch(() => {});
@@ -389,16 +390,27 @@ class App {
     const sk = Object.entries(this.doc.skipped || {}).map(([k, v]) => `${v} ${k}`);
     return sk;
   }
+  /** whether DWG can be written by the ODA File Converter now (installed, and the converter preference allows it); cached in this.odaWrite for the File menu */
+  async refreshDwgWrite() {
+    try { this.odaWrite = !!(await api.dwgAvailable?.())?.write?.oda; } catch { this.odaWrite = false; }
+    return this.odaWrite;
+  }
   async save() {
-    if (this.file.format === 'dxf' && this.file.path) {
+    // a drawing opened from (or saved as) DWG goes back to its .dwg in the same DWG version when ODA can write it
+    const dwgBack = this.file.format === 'dwg' && !!this.file.path && (await this.refreshDwgWrite());
+    if ((this.file.format === 'dxf' || dwgBack) && this.file.path) {
       const dropped = this.droppedContent();
       if (dropped.length) {
         const r = await modal('Overwrite the original file?', el('div', {},
           el('p', { text: `${this.file.name} contains objects this program cannot keep: ${dropped.join(', ')}.` }),
           el('p', { text: 'Overwriting the original would remove them from the file. Save a new copy instead to keep the original intact.' })),
         [{ label: 'Save as new file…', value: 'copy', primary: true }, { label: 'Overwrite original', value: 'over' }, { label: 'Cancel', value: null }]);
-        if (r === 'copy') return this.saveAs('dxf');
+        if (r === 'copy') return this.saveAs(dwgBack ? 'dwg' : 'dxf');
         if (r !== 'over') return false;
+      }
+      if (dwgBack) {
+        const tab = this.active;
+        return this.writeDwg({ version: tab?.dwgVersion ?? dwgVersionFromHeader(tab?.conversion?.dwgHeader ?? '') ?? DEFAULT_DWG_SAVE_VERSION, path: this.file.path });
       }
       return this.writeDxfTo(this.file.path);
     }
@@ -430,12 +442,44 @@ class App {
     if (clean) this.session.markSaved();
     this.updateTitle();
   }
+  /** Save as DWG with ODA: the DWG version to write (the last choice is remembered), or null when cancelled */
+  async chooseDwgVersion() {
+    const sel = el('select', { id: 'dwg-save-version' }, DWG_SAVE_VERSIONS.map((v) => el('option', { value: v.id, text: v.label })));
+    sel.value = dwgSaveVersionFrom(await api.settingsGet?.(DWG_SAVE_VERSION_KEY)?.catch?.(() => undefined));
+    const r = await modal('Save as DWG', el('div', {}, el('p', {}, el('label', { text: 'DWG version: ' }, sel)),
+      el('p', { text: 'The DWG is written by the ODA File Converter. AutoCAD 2018 opens in AutoCAD 2018 and later; choose an older version for older programs.' })),
+    [{ label: 'Save', value: 'save', primary: true }, { label: 'Cancel', value: null }]);
+    if (r !== 'save') return null;
+    api.settingsSet?.(DWG_SAVE_VERSION_KEY, sel.value)?.catch?.(() => {});
+    return sel.value;
+  }
+  /** write the drawing as DWG through ODA (`path`: overwrite that file, after its .bak copy; null: the save dialog) */
+  async writeDwg({ version, path = null }) {
+    try {
+      const tab = this.active;
+      const r = await saveDwg(api, this.fileDoc, {
+        name: this.file.name, fromPath: this.file.path, version, path,
+        confirmDifferences: async (v) => (await confirmDialog('The DWG does not match your drawing', `${verificationMessage(v)}\n\nSave this DWG anyway? (Your drawing stays open and unsaved, so you can still save it as DXF.)`, 'Save DWG anyway', 'Cancel', null)) === 'yes',
+      });
+      if (!r) return false;
+      if (tab) tab.dwgVersion = version;
+      this.afterSave(r.path, 'dwg', { clean: !!r.verification.ok });
+      const label = DWG_SAVE_VERSIONS.find((v) => v.id === version)?.label ?? 'DWG';
+      if (r.verification.ok) toast(`Saved as ${label}${r.backup ? ` (previous file kept as ${r.backup.replace(/^.*[\\/]/, '')})` : ''}`, 3000);
+      else await message('DWG saved — please check', verificationMessage(r.verification));
+      return true;
+    } catch (err) { await message('Save failed', err.message || String(err)); return false; }
+  }
   async saveAs(kind) {
     try {
       if (kind === 'dwg') {
-        if (!this.allowDwgSave) { await message('Save as DWG is turned off', DWG_SAVE_DISABLED_TEXT); return false; }
+        if (await this.refreshDwgWrite()) {
+          const version = await this.chooseDwgVersion();
+          return version ? this.writeDwg({ version }) : false;
+        }
+        if (!this.allowDwgSave) { await message('Save as DWG is turned off', `${DWG_SAVE_DISABLED_TEXT} ${ODA_SAVE_HINT}`); return false; }
         const ok = await confirmDialog('Save as DWG (experimental)',
-          'DWG is written through the free LibreDWG converter. Layouts and viewports may appear empty when the file is opened in AutoCAD, and text rotation and some hatch details can be lost. The program re-reads the saved file and tells you if anything differs. DXF keeps everything this program supports. Save as DWG anyway?', 'Save as DWG', 'Cancel', null);
+          `DWG is written through the free LibreDWG converter. Layouts and viewports may appear empty when the file is opened in AutoCAD, and text rotation and some hatch details can be lost. The program re-reads the saved file and tells you if anything differs. DXF keeps everything this program supports. ${ODA_SAVE_HINT} Save as DWG anyway?`, 'Save as DWG', 'Cancel', null);
         if (ok !== 'yes') return false;
         const r = await saveDwg(api, this.fileDoc, {
           name: this.file.name, fromPath: this.file.path,
@@ -518,7 +562,7 @@ class App {
     applyDwgSave();
     const nz = parseZoomFactor(zf.value);
     if (nz !== null) this.setZoomFactor(nz); else toast(`ZOOMFACTOR not changed: it must be a whole number from ${ZOOMFACTOR_MIN} to ${ZOOMFACTOR_MAX}.`, 4000);
-    try { await api.dwgSetConfig({ mode: mode.value, odaPath: odaPath.value.trim() }); toast('Preferences saved', 2000); } catch (err) { await message('Preferences not saved', String(err.message || err).replace(/^Error invoking remote method '[^']*': (\w*Error: )?/, '')); }
+    try { await api.dwgSetConfig({ mode: mode.value, odaPath: odaPath.value.trim() }); this.refreshDwgWrite(); toast('Preferences saved', 2000); } catch (err) { await message('Preferences not saved', String(err.message || err).replace(/^Error invoking remote method '[^']*': (\w*Error: )?/, '')); }
   }
   async limitations() {
     await message('What this program does and does not do', 'Please read before relying on it for important work:', el('ul', {},
@@ -526,7 +570,7 @@ class App {
         'Supported objects: lines, polylines, circles, arcs, ellipses, splines, xlines and rays, text, multiline text, points, solids, 3D faces, hatches, blocks and attributes, dimensions (as drawn), leaders, multileaders, multilines, images, wipeouts and external references.',
         'Not shown: 3D solids (3DSOLID), BODY, REGION and proxy objects (ACAD_PROXY_ENTITY, for example Civil 3D objects); OLE objects are shown as a frame only. Any other object type this program does not know is skipped too. Skipped objects are reported when you open the file, and they are not written when you save.',
         'Dimensions are displayed from their stored drawing, but cannot be edited as dimensions; they can be moved, copied or exploded.',
-        'Saving as DXF is the reliable option. Saving as DWG is experimental and off by default (Edit > Preferences); layouts and viewports may appear empty in AutoCAD, and text rotation and some hatches can be lost.',
+        'Saving as DXF is the reliable option. With the free ODA File Converter installed, DWG is saved in AutoCAD 2018 format (or an older version you choose), and Save writes a drawing opened from DWG back to its file in its own version, keeping the previous file as a .bak copy. Without it, saving as DWG is experimental and off by default (Edit > Preferences); layouts and viewports may appear empty in AutoCAD, and text rotation and some hatches can be lost.',
         'Fonts: text is drawn with a system font, so widths differ slightly from the original CAD fonts.',
       ].map((t) => el('li', { text: t }))));
   }
@@ -535,7 +579,7 @@ class App {
   buildMenus() {
     const vp = this.vp;
     const M = [
-      ['File', [['New', 'Ctrl+N', () => this.newDrawing()], ['Open…', 'Ctrl+O', () => this.open()], ['Recent files…', '', () => this.sessionStore.showRecent().catch((err) => message('Could not open the file', err.message || String(err)))], ['Close', 'Ctrl+W', () => this.closeTab()], '-', ['Compare…', 'COMPARE', () => this.compare()], '-', ['Save', 'Ctrl+S', () => this.save()], ['Save as DXF…', '', () => this.saveAs('dxf')], ['Save as DWG… (experimental)', '', () => this.saveAs('dwg'), null, () => this.allowDwgSave], '-',
+      ['File', [['New', 'Ctrl+N', () => this.newDrawing()], ['Open…', 'Ctrl+O', () => this.open()], ['Recent files…', '', () => this.sessionStore.showRecent().catch((err) => message('Could not open the file', err.message || String(err)))], ['Close', 'Ctrl+W', () => this.closeTab()], '-', ['Compare…', 'COMPARE', () => this.compare()], '-', ['Save', 'Ctrl+S', () => this.save()], ['Save as DXF…', '', () => this.saveAs('dxf')], ['Save as DWG…', '', () => this.saveAs('dwg'), null, () => this.allowDwgSave || this.odaWrite], '-',
         ['Print…', 'Ctrl+P', () => this.print()], ['Plot to PDF…', '', () => this.exportPdf()], ['Export SVG…', '', () => this.exportSvg()], ['Export PNG image…', '', () => this.exportPng()]]],
       ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Paste', 'Ctrl+V', () => this.paste()], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()], ['Quick Select…', 'QSELECT', () => qselectDialog(this)], ['Select Similar', 'SELECTSIMILAR', () => selectSimilarCommand(this)], ['Find and replace…', 'Ctrl+F', () => this.find.open()], '-', ['Preferences…', '', () => this.preferences()]]],
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-',

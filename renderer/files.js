@@ -115,7 +115,8 @@ export async function loadDrawing(api, name, bytes, { onProgress = null, signal 
       const res = api.dwgOpen ? await api.dwgOpen(path ?? bytes) : await api.dwgToDxf(bytes);
       dxfBytes = res.url ? { url: res.url } : res.dxfBytes;
       warnings = Array.isArray(res.warnings) ? res.warnings : [];
-      conv = { converter: res.converter === 'ODA' || res.engine === 'oda' ? 'ODA' : 'LibreDWG', errorCount: res.errorCount ?? 0, log: res.log ?? '', dwgSize: res.dwgSize ?? bytes?.byteLength ?? 0 };
+      conv = { converter: res.converter === 'ODA' || res.engine === 'oda' ? 'ODA' : 'LibreDWG', errorCount: res.errorCount ?? 0, log: res.log ?? '', dwgSize: res.dwgSize ?? bytes?.byteLength ?? 0,
+        dwgHeader: typeof res.header === 'string' ? res.header : bytes ? String.fromCharCode(...bytes.subarray(0, 6)) : '' };
     } catch (err) {
       const m = String(err.message || err).replace(/^Error invoking remote method '[^']*': (Error: )?/, '');
       if (m.includes(ODA_HINT_MARK)) throw Object.assign(new Error(m), { odaHint: true });
@@ -146,7 +147,7 @@ export async function loadDrawing(api, name, bytes, { onProgress = null, signal 
   const ole = [doc.entities, ...[...doc.blocks.values()].map((b) => b.entities)].reduce((n, l) => n + l.filter((x) => x.type === 'OLE2FRAME').length, 0);
   if (ole) notes.push(`${ole} OLE object${ole === 1 ? '' : 's'} shown as frames (content not displayed).`);
   if (sk.length) notes.push(`Not displayed (unsupported object types): ${sk.map(([k, v]) => `${v} ${k}`).join(', ')}.`);
-  const conversion = conv && { converter: conv.converter, errorCount: conv.errorCount, log: conv.log, objects: objectsRead(doc), skipped: { ...(doc.skipped || {}) } };
+  const conversion = conv && { converter: conv.converter, errorCount: conv.errorCount, log: conv.log, objects: objectsRead(doc), skipped: { ...(doc.skipped || {}) }, dwgHeader: conv.dwgHeader };
   return { doc, format, notes, warnings, conversion };
 }
 function looksLikeDwg(b) { return b.length > 6 && b[0] === 0x41 && b[1] === 0x43 && b[2] === 0x31 && b[3] >= 0x30 && b[3] <= 0x39; } // "AC10.."
@@ -158,16 +159,21 @@ export async function saveDxf(api, doc, { path, name, fromPath = null }) {
   const bytes = dxfBytesOf(doc);
   const res = path ? await api.writeFile(path, bytes) : await api.saveFile({ defaultPath: savePathIn(fromPath, `${baseName(name)}.dxf`), filters: [{ name: 'AutoCAD DXF', extensions: ['dxf'] }], bytes });
   if (!res) return null;
-  return { path: res.path ?? null, report: doc.lastWriteReport };
+  return { path: res.path ?? null, report: doc.lastWriteReport, backup: res.backup ?? null };
 }
 
-/** Write the document as DWG through LibreDWG and verify it by reading the result back. */
-/** `confirmDifferences(verification)` is asked (when the read-back differs) BEFORE the save dialog; return false to abort. */
-export async function saveDwg(api, doc, { name, fromPath = null, version = 'r2000', confirmDifferences }) {
+/** DWG versions written by the ODA File Converter ('acad2018', ...); 'r2000'/'r14' are LibreDWG's */
+export const isOdaDwgVersion = (v) => /^acad\d{4}$/.test(String(v));
+
+/** Write the document as DWG and verify it by reading the result back.
+ *  ODA versions ('acad2018', ...) get the full DXF (real dimensions); LibreDWG ('r2000', 'r14') gets dimensions as
+ *  geometry. `path`: overwrite this granted file (Save); null opens the save dialog (Save as).
+ *  `confirmDifferences(verification)` is asked (when the read-back differs) BEFORE anything is written; return false to abort. */
+export async function saveDwg(api, doc, { name, fromPath = null, version = 'r2000', path = null, confirmDifferences }) {
   if (!api.isElectron) throw new Error('Saving DWG needs the desktop app.');
   const av = await api.dwgAvailable();
   if (!av.available) throw new Error(`The DWG converter is not available: ${av.reason ?? 'unknown reason'}.`);
-  const dxf = dxfBytesOf(doc, { dimensionsAsGeometry: true });
+  const dxf = isOdaDwgVersion(version) ? dxfBytesOf(doc) : dxfBytesOf(doc, { dimensionsAsGeometry: true });
   const { dwgBytes } = await api.dxfToDwg(dxf, version);
   let verification;
   try {
@@ -175,9 +181,9 @@ export async function saveDwg(api, doc, { name, fromPath = null, version = 'r200
     verification = compareDocuments(doc, back);
   } catch (err) { verification = { ok: false, error: String(err.message || err) }; }
   if (!verification.ok && confirmDifferences && !(await confirmDifferences(verification))) return null;
-  const res = await api.saveFile({ defaultPath: savePathIn(fromPath, `${baseName(name)}.dwg`), filters: [{ name: 'AutoCAD DWG', extensions: ['dwg'] }], bytes: dwgBytes });
+  const res = path ? await api.writeFile(path, dwgBytes) : await api.saveFile({ defaultPath: savePathIn(fromPath, `${baseName(name)}.dwg`), filters: [{ name: 'AutoCAD DWG', extensions: ['dwg'] }], bytes: dwgBytes });
   if (!res) return null;
-  return { path: res.path ?? null, verification, report: doc.lastWriteReport };
+  return { path: res.path ?? path ?? null, verification, report: doc.lastWriteReport, version, backup: res.backup ?? null };
 }
 
 export function verificationMessage(v) {

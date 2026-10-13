@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createOdaBridge, createDwgService, findOdaConverter, implausibleConversion, odaVersion, ODA_HINT, ODA_TIMEOUT_MS } from './odaConverter.js';
+import { createOdaBridge, createDwgService, findOdaConverter, implausibleConversion, odaArgs, odaVersion, ODA_DWG_VERSIONS, ODA_HINT, ODA_TIMEOUT_MS } from './odaConverter.js';
+import { DWG_SAVE_VERSIONS } from '../src/core/dwgpref.js';
 
 const skip = process.platform === 'win32' ? 'the stub converter is a shebang script' : false;
 const KNOWN_DXF = '  0\nSECTION\n  2\nENTITIES\n  0\nLINE\n  8\n0\n 10\n0\n 20\n0\n 11\n10\n 21\n10\n  0\nENDSEC\n  0\nEOF\n';
@@ -166,4 +167,51 @@ test('implausible LibreDWG output is a failed open: ODA tried next when installe
   const fine = { available: async () => ({ available: true, version: '0.13.3' }), async toDxf() { return { dxfBytes: new Uint8Array(20 * MB), errorCount: 12, log: 'ERROR: a', converter: 'LibreDWG' }; } };
   const f = await service(fine, { mode: 'auto' }, null).svc.toDxf(big);
   assert.deepEqual([f.converter, f.engine, f.errorCount, f.log], ['LibreDWG', 'libredwg', 12, 'ERROR: a']);
+});
+
+test('odaArgs: DXF read and DWG write argument arrays, versions mapped to ODA names', () => {
+  assert.deepEqual(odaArgs('/i', '/o', 'DXF'), ['/i', '/o', 'ACAD2018', 'DXF', '0', '1', 'drawing.dwg']);
+  const want = { acad2018: 'ACAD2018', acad2013: 'ACAD2013', acad2010: 'ACAD2010', acad2007: 'ACAD2007', acad2004: 'ACAD2004', acad2000: 'ACAD2000' };
+  for (const [id, oda] of Object.entries(want)) assert.deepEqual(odaArgs('/i', '/o', 'DWG', id), ['/i', '/o', oda, 'DWG', '0', '1', 'drawing.dxf']);
+  assert.deepEqual(Object.keys(ODA_DWG_VERSIONS), DWG_SAVE_VERSIONS.map((v) => v.id), 'the renderer offers exactly the versions main accepts');
+  for (const bad of ['r2000', 'ACAD2018', 'acad2021', undefined]) assert.throws(() => odaArgs('/i', '/o', 'DWG', bad), RangeError);
+  assert.throws(() => odaArgs('/i', '/o', 'DXB'), RangeError);
+});
+
+test('ODA converter fromDxf: writes drawing.dxf, asks for DWG in the version, picks up the .dwg, cleans up', { skip }, async () => {
+  const s = await stub(`fs.writeFileSync(path.join(a[1], 'drawing.dwg'), 'AC1027 out');`);
+  try {
+    const { dwgBytes } = await createOdaBridge(s.exe, { tmpRoot: s.tmpRoot }).fromDxf(new TextEncoder().encode(KNOWN_DXF), 'acad2013');
+    assert.equal(Buffer.from(dwgBytes).toString(), 'AC1027 out');
+    const { argv, input } = await s.calls();
+    assert.deepEqual(argv.slice(2), ['ACAD2013', 'DWG', '0', '1', 'drawing.dxf']);
+    assert.deepEqual(input, ['drawing.dxf']);
+    assert.deepEqual(await fs.readdir(s.tmpRoot), []);
+  } finally { await s.cleanup(); }
+  const t = await stub(`fs.writeFileSync(path.join(a[1], 'drawing.dxf.err'), 'Error: bad DXF');`);
+  try {
+    await assert.rejects(createOdaBridge(t.exe, { tmpRoot: t.tmpRoot }).fromDxf(new Uint8Array([1]), 'acad2018'), /produced no DWG: Error: bad DXF/);
+    await assert.rejects(createOdaBridge(t.exe, { tmpRoot: t.tmpRoot }).fromDxf(new Uint8Array([1]), 'r2000'), RangeError);
+    assert.deepEqual(await fs.readdir(t.tmpRoot), []);
+  } finally { await t.cleanup(); }
+});
+
+test('DWG write routing: ODA versions go to ODA (error without it), r2000/r14 to LibreDWG', async () => {
+  const calls = [];
+  const libre = { available: async () => ({ available: true, version: '0.13.3' }), fromDxf: async (b, v) => { calls.push(['libre', v]); return { dwgBytes: new Uint8Array([7]) }; } };
+  const mk = (cfg, exe) => createDwgService({ libre, getConfig: () => cfg, detectOda: async () => exe, makeOda: (p) => ({ fromDxf: async (b, v) => { calls.push(['oda', p, v]); return { dwgBytes: new Uint8Array([8]) }; } }) });
+  const dxf = new Uint8Array([1]);
+  const auto = mk({ mode: 'auto' }, '/x/ODAFileConverter.exe');
+  assert.deepEqual(await auto.fromDxf(dxf, 'acad2018'), { dwgBytes: new Uint8Array([8]), engine: 'oda' });
+  assert.deepEqual(await auto.fromDxf(dxf, 'r2000'), { dwgBytes: new Uint8Array([7]), engine: 'libredwg' });
+  assert.deepEqual(calls, [['oda', '/x/ODAFileConverter.exe', 'acad2018'], ['libre', 'r2000']]);
+  assert.deepEqual((await auto.dwgWriteEngines()).oda, true);
+  assert.deepEqual((await auto.available()).write, { oda: true, odaVersions: Object.keys(ODA_DWG_VERSIONS), libredwg: true });
+  calls.length = 0;
+  for (const svc of [mk({ mode: 'auto' }, null), mk({ mode: 'libredwg' }, '/x/ODAFileConverter.exe')]) {
+    await assert.rejects(svc.fromDxf(dxf, 'acad2013'), /Saving DWG 2013 needs the ODA File Converter[\s\S]*Install the free ODA File Converter/);
+    assert.equal((await svc.dwgWriteEngines()).oda, false);
+    assert.equal((await svc.available()).write.oda, false);
+  }
+  assert.deepEqual(calls, [], 'nothing ran');
 });

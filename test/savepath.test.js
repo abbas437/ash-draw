@@ -42,3 +42,20 @@ test('saveDialogDefault: Windows host', () => {
   assert.equal(saveDialogDefault('a.pdf', o), 'C:\\Users\\u\\Documents\\a.pdf');
   assert.equal(saveDialogDefault('..\\..\\evil\\a.pdf', o), 'C:\\Users\\u\\Documents\\a.pdf'); // relative: Documents, name only
 });
+
+test('saveDwg: ODA versions get the full DXF (real dimensions); LibreDWG gets dimensions as geometry; a path overwrites in place', async () => {
+  const { readDxf } = await import('../src/core/dxfRead.js');
+  const { readFileSync } = await import('node:fs');
+  const doc = readDxf(readFileSync(new URL('./fixtures/dims_r2000.dxf', import.meta.url)));
+  const sent = [], wrote = [];
+  const api = { isElectron: true, dwgAvailable: async () => ({ available: true }),
+    dxfToDwg: async (dxf, v) => { sent.push([v, new TextDecoder().decode(dxf)]); return { dwgBytes: new Uint8Array([1]) }; },
+    dwgToDxf: async () => { throw new Error('skip verify'); },
+    writeFile: async (p) => { wrote.push(p); return { path: p, backup: '/j/a.bak' }; }, saveFile: async () => ({ path: '/j/new.dwg' }) };
+  const r = await saveDwg(api, doc, { name: 'a.dwg', version: 'acad2013', path: '/j/a.dwg' });
+  assert.deepEqual([r.path, r.version, r.backup, wrote], ['/j/a.dwg', 'acad2013', '/j/a.bak', ['/j/a.dwg']]);
+  await saveDwg(api, doc, { name: 'a.dwg', version: 'r2000' });
+  assert.deepEqual(sent.map((x) => x[0]), ['acad2013', 'r2000']);
+  assert.match(sent[0][1], /\r?\n0\r?\nDIMENSION\r?\n/, 'ODA: the DIMENSION entity is written');
+  assert.doesNotMatch(sent[1][1], /\r?\n0\r?\nDIMENSION\r?\n/, 'LibreDWG: dimensions as geometry');
+});

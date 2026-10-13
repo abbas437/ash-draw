@@ -68,9 +68,9 @@ test('loadDrawing: a large DWG that converts to an empty drawing is refused with
 
 test('loadDrawing returns the conversion quality of a DWG; conversionSummary words it for the status bar', async () => {
   const dxf = fixture('basic_r2000.dxf');
-  const api = { isElectron: true, dwgAvailable: async () => ({ available: true }), dwgOpen: async () => ({ url: dataUrl(dxf), warnings: [], dwgSize: 900_000, errorCount: 12, log: 'ERROR: a\n', converter: 'LibreDWG', engine: 'libredwg' }) };
+  const api = { isElectron: true, dwgAvailable: async () => ({ available: true }), dwgOpen: async () => ({ url: dataUrl(dxf), warnings: [], dwgSize: 900_000, header: 'AC1027', errorCount: 12, log: 'ERROR: a\n', converter: 'LibreDWG', engine: 'libredwg' }) };
   const { doc, conversion } = await loadDrawing(api, 'plan.dwg', null, { path: '/d/plan.dwg' });
-  assert.deepEqual({ ...conversion, skipped: undefined }, { converter: 'LibreDWG', errorCount: 12, log: 'ERROR: a\n', objects: doc.entities.length, skipped: undefined });
+  assert.deepEqual({ ...conversion, skipped: undefined }, { converter: 'LibreDWG', errorCount: 12, log: 'ERROR: a\n', objects: doc.entities.length, skipped: undefined, dwgHeader: 'AC1027' });
   const s = conversionSummary({ ...conversion, objects: 1234, skipped: { '3DSOLID': 3 } });
   assert.equal(s.text, 'LibreDWG · 12 converter errors');
   assert.match(s.title, /Objects read: 1,234\.\nObject types not shown: 3 3DSOLID\.\nConverter errors: 12\./);
