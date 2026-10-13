@@ -28,6 +28,8 @@ const PROGRESSIVE_SLICE_MS = 25;
 /** drawing-area background per theme; settings.dark picks one (it follows the app theme unless overridden) */
 export const CANVAS_BG = { light: '#ffffff', dark: '#1b1f23' };
 
+const boxesOverlap = (a, b) => a.minx <= b.maxx && a.maxx >= b.minx && a.miny <= b.maxy && a.maxy >= b.miny;
+
 export class Viewport {
   constructor(canvas) {
     this.canvas = canvas;
@@ -71,7 +73,7 @@ export class Viewport {
 
   // ---- document ------------------------------------------------------------------------------
   /** show a document. A file tab coming back to the front passes its saved view, selection, scene and index. */
-  setSession(session, { fit = true, view = null, selection = [], scene = null, index = null, lastPoint = null } = {}) {
+  setSession(session, { fit = true, view = null, selection = [], scene = null, index = null, lastPoint = null, initialView = null } = {}) {
     if (this.session && this.session !== session) this.session.onChange = null;
     this.session = session;
     this.doc = session.doc;
@@ -81,6 +83,7 @@ export class Viewport {
     this.lastPoint = lastPoint;
     session.onChange = (info) => this._changed(info);
     if (view) { this.view = { ...this.view, cx: view.cx, cy: view.cy, zoom: view.zoom }; this.requestRender(); this.emit('view'); }
+    else if (fit && initialView && !this.layout && !this.mspace && this.scene?.bbox && boxesOverlap(initialView, this.scene.bbox)) this.zoomBox(initialView, 0);
     else if (fit) this.zoomExtents(); else this.requestRender();
     this.emit('selection', this.selection);
     this.emit('doc');
@@ -127,8 +130,8 @@ export class Viewport {
     this.requestRender();
     this.emit('view');
   }
-  zoomBox(b) {
-    this.view = fitView(b, this.view.width, this.view.height, 0.04);
+  zoomBox(b, margin = 0.04) {
+    this.view = fitView(b, this.view.width, this.view.height, margin);
     this.requestRender(); this.emit('view');
   }
   /** zoom about a screen point, within zoomLimits of the model extents (paper space: of the sheet; inside a viewport
