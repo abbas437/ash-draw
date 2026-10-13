@@ -5,9 +5,10 @@
 // definition, used or not: as in AutoCAD, an item referenced only from an unused block stays until that block is
 // purged; "Purge nested items" repeats the purge so it goes too. A layer frozen in a viewport (VP freeze list) is
 // kept, as AutoCAD keeps it: the viewport references it.
-// Never purged: layer 0, Defpoints, the current layer, Standard text/dimension styles, the current dimension style,
+// Never purged: layer 0, Defpoints, the current layer, the current linetype, Standard text/dimension styles, the current dimension style,
 // Continuous/ByLayer/ByBlock, layout blocks, xrefs and xref-dependent items (names with "|").
 // Multileader and multiline styles are not listed: the model keeps them only as read-time defaults (no named table).
+import { mtextPlain } from './mtext.js';
 
 export const KINDS = ['Blocks', 'Layers', 'Linetypes', 'Text styles', 'Dimension styles'];
 const U = (s) => String(s ?? '').toUpperCase();
@@ -47,11 +48,11 @@ export const dimStyleNames = (doc) => {
 };
 
 /** names that may never be purged */
-function protectedName(doc, kind, name, currentLayer) {
+function protectedName(doc, kind, name, currentLayer, currentLinetype) {
   const n = U(name);
   if (n.includes('|')) return true; // xref-dependent
   if (kind === 'Layers') return n === '0' || n === 'DEFPOINTS' || n === U(currentLayer) || !!doc.layers.get(name)?.xrefDep;
-  if (kind === 'Linetypes') return n === 'CONTINUOUS' || n === 'BYLAYER' || n === 'BYBLOCK';
+  if (kind === 'Linetypes') return n === 'CONTINUOUS' || n === 'BYLAYER' || n === 'BYBLOCK' || n === U(currentLinetype);
   if (kind === 'Text styles') return n === 'STANDARD';
   if (kind === 'Dimension styles') return n === 'STANDARD' || n === U(doc.header?.currentDimStyle);
   if (kind === 'Blocks') { const b = doc.blocks.get(name); return /^[*$](MODEL|PAPER)_SPACE/.test(n) || !!b?.xref || !!b?.xrefDep; }
@@ -62,9 +63,9 @@ const namesOf = (doc, kind) => (kind === 'Blocks' ? [...doc.blocks.keys()] : kin
   : kind === 'Linetypes' ? [...doc.linetypes.keys()] : kind === 'Text styles' ? [...doc.textStyles.keys()] : dimStyleNames(doc));
 
 /** unused, purgeable items: { kind: [names] } (sorted) */
-export function purgeable(doc, { currentLayer = '0' } = {}) {
+export function purgeable(doc, { currentLayer = '0', currentLinetype = 'ByLayer' } = {}) {
   const u = usage(doc), out = {};
-  for (const k of KINDS) out[k] = namesOf(doc, k).filter((n) => !u[k].has(U(n)) && !protectedName(doc, k, n, currentLayer)).sort((a, b) => a.localeCompare(b));
+  for (const k of KINDS) out[k] = namesOf(doc, k).filter((n) => !u[k].has(U(n)) && !protectedName(doc, k, n, currentLayer, currentLinetype)).sort((a, b) => a.localeCompare(b));
   return out;
 }
 
@@ -83,24 +84,24 @@ function drop(d, kind, name) {
 
 /** what a purge removes: [{ kind, name }]. pick: { kind: [names] } (checked items) or 'all'.
  *  nested: repeat until nothing more becomes unused (with 'all', everything; with picked items, only what they freed). */
-export function planPurge(doc, { pick = 'all', nested = false, currentLayer = '0' } = {}) {
+export function planPurge(doc, { pick = 'all', nested = false, currentLayer = '0', currentLinetype = 'ByLayer' } = {}) {
   const d = shadow(doc), plan = [];
-  const first = purgeable(d, { currentLayer });
+  const first = purgeable(d, { currentLayer, currentLinetype });
   const before = new Set(KINDS.flatMap((k) => first[k].map((n) => `${k}\u0001${n}`)));
-  let take = pick === 'all' ? first : Object.fromEntries(KINDS.map((k) => [k, (pick[k] ?? []).filter((n) => first[k].includes(n))]));
+  const firstSet = Object.fromEntries(KINDS.map((k) => [k, new Set(first[k])]));
+  let take = pick === 'all' ? first : Object.fromEntries(KINDS.map((k) => [k, (pick[k] ?? []).filter((n) => firstSet[k].has(n))]));
   for (;;) {
     const items = KINDS.flatMap((k) => (take[k] ?? []).map((name) => ({ kind: k, name })));
     if (!items.length) break;
     for (const it of items) { drop(d, it.kind, it.name); plan.push(it); }
     if (!nested) break;
-    const next = purgeable(d, { currentLayer });
+    const next = purgeable(d, { currentLayer, currentLinetype });
     take = pick === 'all' ? next : Object.fromEntries(KINDS.map((k) => [k, next[k].filter((n) => !before.has(`${k}\u0001${n}`))]));
   }
   return plan;
 }
 
 /** zero-length geometry and empty text in an entity list */
-const MT_CODES = /\\[PpNn~]|\\[A-Za-z][^;\\{}]*;|[{}]/g;
 export function isZeroOrEmpty(e) {
   const same = (a, b) => Math.abs(a.x - b.x) < 1e-12 && Math.abs(a.y - b.y) < 1e-12;
   switch (e.type) {
@@ -108,7 +109,7 @@ export function isZeroOrEmpty(e) {
     case 'LWPOLYLINE': return e.vertices.every((v) => same(v, e.vertices[0]));
     case 'CIRCLE': case 'ARC': return !(e.r > 0);
     case 'TEXT': return !e.attdef && !String(e.text ?? '').trim();
-    case 'MTEXT': return !String(e.text ?? '').replace(MT_CODES, '').trim();
+    case 'MTEXT': return !mtextPlain(String(e.text ?? '')).trim();
     default: return false;
   }
 }
