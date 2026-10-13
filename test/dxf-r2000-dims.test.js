@@ -19,6 +19,10 @@ test('DIMENSION tags from a newer file are reduced to the DXF R2000 set', () => 
   assert.ok(codes.indexOf(70) < codes.indexOf(100, 1), '70 sits in AcDbDimension');
   assert.deepEqual(t.filter(([c]) => c === 100).map(([, v]) => v), ['AcDbDimension', 'AcDbAlignedDimension', 'AcDbRotatedDimension']);
   assert.deepEqual(t.find(([c]) => c === 50), [50, '90.0']);
+  // TrueView 2026: "Unexpected DXF group code: 52 in AcDbRotatedDimension" when 52 sits in AcDbAlignedDimension
+  const sub = (i) => t.slice(0, i).filter(([c]) => c === 100).pop()[1];
+  assert.equal(sub(codes.indexOf(52)), 'AcDbDimension');
+  assert.ok(codes.indexOf(13) < codes.indexOf(14) && codes.indexOf(14) < codes.indexOf(50), 'AutoCAD order 13, 14, 50');
 });
 
 test('a saved DXF (R2000) holds no R2010+ DIMENSION codes', () => {

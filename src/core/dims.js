@@ -513,36 +513,44 @@ export function dimensionTags(e) {
   return t;
 }
 
-// DXF R2000 (AC1015) group codes per DIMENSION subclass. AutoCAD reads a DXF by its $ACADVER and discards the whole
-// file on a code it does not expect (e.g. 280 "version" or 73-75 of R2007+ in AcDbDimension), so tags copied from a newer
-// file are filtered to this set. Subclasses newer than R2000 (arc length, jogged radius) are kept as read.
+// DXF R2000 (AC1015) DIMENSION layout. AutoCAD reads a DXF by its $ACADVER and discards the whole file on a code it does
+// not expect where it finds it (280 "version" of R2010+; 52 oblique angle anywhere but AcDbDimension; 73-75), so tags
+// read from a newer file are rewritten in this order (the order ezdxf writes and AutoCAD accepts). Subclasses newer than
+// R2000 (arc length, jogged radius) are kept as read.
 const XYZ = (...b) => b.flatMap((c) => [c, c + 10, c + 20]);
+const DIM_HEAD = [2, 3, ...XYZ(10, 11, 12), 70, 71, 72, 41, 42, 1, 52, 53, 51, ...XYZ(210)];
 const R2000_DIM = {
-  AcDbDimension: new Set([2, ...XYZ(10, 11, 12), 70, 71, 72, 41, 42, 1, 53, 51, 3, 210, 220, 230]),
-  AcDbAlignedDimension: new Set([...XYZ(12, 13, 14), 50, 52]),
-  AcDbRotatedDimension: new Set([]),
-  AcDb2LineAngularDimension: new Set(XYZ(13, 14, 15, 16)),
-  AcDb3PointAngularDimension: new Set(XYZ(13, 14, 15, 16)),
-  AcDbRadialDimension: new Set([...XYZ(15), 40]),
-  AcDbDiametricDimension: new Set([...XYZ(15), 40]),
-  AcDbOrdinateDimension: new Set(XYZ(13, 14)),
+  AcDbAlignedDimension: [...XYZ(13, 14), 50],
+  AcDbRotatedDimension: [],
+  AcDb2LineAngularDimension: XYZ(13, 14, 15, 16),
+  AcDb3PointAngularDimension: XYZ(13, 14, 15, 16),
+  AcDbRadialDimension: [...XYZ(15), 40],
+  AcDbDiametricDimension: [...XYZ(15), 40],
+  AcDbOrdinateDimension: XYZ(13, 14),
 };
 
-/** DIMENSION tags read from a file, reduced to what a DXF R2000 reader accepts; the dimension type (70) is added when
- *  the source left it out (LibreDWG omits a zero) */
+/** DIMENSION tags read from a file, rewritten for a DXF R2000 reader: codes in AutoCAD's order, newer codes dropped, the
+ *  dimension type (70) added when the source left it out (LibreDWG omits a zero) */
 export function r2000DimensionTags(raw, def) {
-  const out = [];
-  let allowed = null, has70 = false;
+  const subs = []; // [name, Map(code -> value)] in file order; first value per code
+  let cur = null;
   for (const [c, v] of raw) {
-    if (c === 100) { allowed = R2000_DIM[v] ?? 'all'; out.push([c, v]); continue; }
-    if (allowed === null) continue; // codes before AcDbDimension are entity codes, written by the caller
-    if (allowed !== 'all' && !allowed.has(c)) continue;
-    if (allowed === R2000_DIM.AcDbDimension && c === 70) has70 = true;
-    out.push([c, v]);
+    if (c === 100) { cur = [v, new Map(), []]; subs.push(cur); continue; }
+    if (!cur) continue; // codes before AcDbDimension are entity codes, written by the caller
+    if (!cur[1].has(c)) cur[1].set(c, v);
+    cur[2].push([c, v]);
   }
-  if (!has70) {
-    const at = out.findIndex(([c], i) => i > 0 && c === 100);
-    out.splice(at < 0 ? out.length : at, 0, [70, def ? dimTypeBits(def) : 0]);
+  const head = subs.find(([n]) => n === 'AcDbDimension')?.[1] ?? new Map();
+  const oblique = subs.map(([, m]) => m.get(52)).find((v) => v !== undefined);
+  if (oblique !== undefined) head.set(52, oblique);
+  if (!head.has(70)) head.set(70, def ? dimTypeBits(def) : 0);
+  const out = [[100, 'AcDbDimension']];
+  for (const c of DIM_HEAD) if (head.has(c)) out.push([c, head.get(c)]);
+  for (const [name, m, all] of subs) {
+    if (name === 'AcDbDimension') continue;
+    out.push([100, name]);
+    const order = R2000_DIM[name];
+    if (order) { for (const c of order) if (m.has(c)) out.push([c, m.get(c)]); } else out.push(...all);
   }
   return out;
 }
