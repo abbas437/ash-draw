@@ -13,6 +13,7 @@ Built with Electron by ASH Technical & Project Management Services (ASH PMCS).
 - **Draw**: line, polyline, rectangle, circle, arc (3 points), ellipse, point, text, hatch (click inside a closed shape).
 - **More draw commands**: POLYGON (inscribed, circumscribed or by edge), SPLINE (through fit points, open or closed) and DONUT (filled ring).
 - **Construction lines**: XLINE (XL; through a point, Hor, Ver, Ang, Bisect, Offset) and RAY; each command run is one undo step.
+- **Divide / measure**: DIVIDE (DIV) places points or blocks at N equal divisions of a line, arc, circle, ellipse, polyline or spline; MEASUREPOINTS (ME, AutoCAD's point-placing MEASURE) places them every given length from the picked end.
 - **Modify**: move, copy, rotate, scale, mirror, offset, trim, extend, explode, erase; copy/paste; unlimited undo and redo.
 - **Align** (AL): move, rotate and optionally scale objects so source points land on destination points (2D AutoCAD LT ALIGN, one undo step).
 - **Polyline editing**: PEDIT (Close/Open, Join, Width, Decurve, Reverse, Multiple), REVERSE and BREAKATPOINT; PEDIT Fit, Spline and Edit vertex come later.
