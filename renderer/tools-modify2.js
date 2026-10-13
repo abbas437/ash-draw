@@ -56,7 +56,10 @@ export function createModify2Tools(h, { Tool, ModifyTool }) {
     move(p, ev) { if (this.selecting()) this.sel.move(p, ev); }
     up(p, ev) {
       if (!this.selecting()) return;
+      // Multiple / Join build up a set: a pick or window adds to it (Shift+pick removes), as AutoCAD's "Select objects"
+      const keep = this.state === 'pick' || ev.shiftKey ? null : [...this.vp.selection];
       this.sel.up(p, ev);
+      if (keep) this.vp.setSelection([...new Set([...keep, ...this.vp.selection])]);
       if (this.state === 'pick') { const [id] = this.vp.selection; if (id !== undefined) this.picked(id); }
       this.h.refreshPrompt();
     }

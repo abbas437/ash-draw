@@ -12,6 +12,7 @@ Built with Electron by ASH Technical & Project Management Services (ASH PMCS).
   multiline text, splines, ellipses, dimensions (as drawn) and leaders are displayed.
 - **Draw**: line, polyline, rectangle, circle, arc (3 points), ellipse, point, text, hatch (click inside a closed shape).
 - **Modify**: move, copy, rotate, scale, mirror, offset, trim, extend, explode, erase; copy/paste; unlimited undo and redo.
+- **Polyline editing**: PEDIT (Close/Open, Join, Width, Decurve, Reverse, Multiple), REVERSE and BREAKATPOINT; PEDIT Fit, Spline and Edit vertex come later.
 - **Precision**: object snaps (endpoint, intersection, midpoint, centre, quadrant, node, insertion, perpendicular),
   ortho and polar tracking, and an AutoCAD-style command line (`L`, `PL`, `C`, `M`, `CO`, `RO`, `TR` ... and typed
   coordinates such as `10,20`, `@5,0`, `@10<45`).
