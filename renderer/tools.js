@@ -24,6 +24,7 @@ import { createBlockTools } from './tools-blocks.js';
 import { createMTextTools } from './mtext-editor.js';
 import { createMLeaderTools } from './tools-mleader.js';
 import { createMarkupTools } from './markup.js';
+import { createViewTools } from './tools-view.js';
 import { findBoundary } from '../src/core/boundary.js';
 import { tessellate, transformEntity, translation, rotation, scaling, mirrorLine, dist, DEG } from '../src/core/geom.js';
 
@@ -654,6 +655,7 @@ export function createTools(h) {
     ...createMTextTools(h, { Tool }),
     ...createMLeaderTools(h, { Tool }),
     ...createMarkupTools(h, { Tool }),
+    ...createViewTools(h, { Tool }),
     matchprop: new MatchPropTool(h),
   };
 }
@@ -676,4 +678,5 @@ export const TOOL_ALIASES = {
   xa: 'xattach', xattach: 'xattach',
   ate: 'eattedit', eattedit: 'eattedit', attedit: 'eattedit', ddatte: 'eattedit',
   mkc: 'mkc', mkr: 'mkr', mkt: 'mkt',
+  z: 'zoom', zoom: 'zoom', id: 'id', li: 'list', ls: 'list', list: 'list', lts: 'ltscale', ltscale: 'ltscale',
 };

@@ -59,6 +59,11 @@ export async function textDialog({ title, value = '', height = 1 }) {
 
 let toastTimer = 0;
 /** A toast that stays up with a percentage and a Cancel button: returns {set(fraction)}; any toast() replaces it. */
+/** LIST: read-only text in a <pre> with Copy; Close or Escape dismisses */
+export function listDialog(text) {
+  const copy = el('button', { id: 'list-copy', onclick: () => navigator.clipboard?.writeText(text).then(() => toast('Copied to the clipboard.', 1500), () => toast('Copy failed.')) }, 'Copy');
+  return modal('LIST', [el('pre', { id: 'list-text', class: 'list-text', text }), copy], [{ label: 'Close', value: true, primary: true }]);
+}
 export function progressToast(text, onCancel) {
   const t = document.getElementById('toast');
   const label = el('span', { class: 'toast-text', text });
