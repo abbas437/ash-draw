@@ -169,7 +169,7 @@ export function writeDxf(doc, opts = {}) {
   // XDATA (kept applications only) goes after the entity's own data; INSERT / MLEADER / DIMENSION write sub-records
   const XD_TYPES = new Set(['LINE', 'CIRCLE', 'ARC', 'ELLIPSE', 'LWPOLYLINE', 'SPLINE', 'TEXT', 'MTEXT', 'POINT', 'LEADER', 'HATCH']);
   const xdApps = new Set();
-  const imageDefsOut = new Map(); // file path -> { h, def, reactors: IMAGE handles }
+  const imageDefsOut = new Map(); // file path -> { h, def, reactors: [{ img: IMAGE handle, r: IMAGEDEF_REACTOR handle }] }
   const hImageDict = H(), hWipeoutVars = H();
   let hasWipeouts = false, hasArcDims = false, hasJoggedDims = false;
   function writeEntity(o, e, owner) {
@@ -368,8 +368,9 @@ export function writeDxf(doc, opts = {}) {
         const key = e.def?.path ?? e.path ?? '';
         let d = imageDefsOut.get(key);
         if (!d) imageDefsOut.set(key, (d = { h: H(), def: { ...(e.def ?? {}), path: key, size: e.def?.size ?? e.size }, reactors: [] }));
-        d.reactors.push(hImg);
-        for (const [c, v] of imageTags(e, d.h)) if (typeof v === 'string') o.s(c, v); else o.p(c, v);
+        const hReactor = H();
+        d.reactors.push({ img: hImg, r: hReactor });
+        for (const [c, v] of imageTags(e, d.h, hReactor)) if (typeof v === 'string') o.s(c, v); else o.p(c, v);
         return true;
       }
       case 'WIPEOUT': {
@@ -467,6 +468,7 @@ export function writeDxf(doc, opts = {}) {
   }
   if (imageDefsOut.size) {
     cls('IMAGEDEF', 'AcDbRasterImageDef', 'ISM', 0);
+    cls('IMAGEDEF_REACTOR', 'AcDbRasterImageDefReactor', 'ISM', 1);
     cls('IMAGE', 'AcDbRasterImage', 'ISM', 127);
   }
   if (hasWipeouts) {
@@ -608,8 +610,11 @@ export function writeDxf(doc, opts = {}) {
     const used = new Set();
     dict(hImageDict, [...imageDefsOut.values()].map((d) => { let n = stem(d.def.path), k = 2; while (used.has(n.toUpperCase())) n = `${stem(d.def.path)}_${k++}`; used.add(n.toUpperCase()); return [n, d.h]; }));
     for (const d of imageDefsOut.values()) {
-      out.p(0, 'IMAGEDEF'); out.p(5, d.h); out.p(102, '{ACAD_REACTORS'); out.p(330, hImageDict); out.p(102, '}'); out.p(330, hImageDict);
+      out.p(0, 'IMAGEDEF'); out.p(5, d.h); out.p(102, '{ACAD_REACTORS'); out.p(330, hImageDict); for (const x of d.reactors) out.p(330, x.r); out.p(102, '}'); out.p(330, hImageDict);
       for (const [c, v] of imageDefTags(d.def)) if (typeof v === 'string') out.s(c, v); else out.p(c, v);
+    }
+    for (const d of imageDefsOut.values()) {
+      for (const x of d.reactors) { out.p(0, 'IMAGEDEF_REACTOR'); out.p(5, x.r); out.p(330, x.img); out.p(100, 'AcDbRasterImageDefReactor'); out.p(90, 2); out.p(330, x.img); }
     }
   }
   if (hasWipeouts) {

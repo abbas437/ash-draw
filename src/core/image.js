@@ -41,22 +41,28 @@ export function imageFromTags(tags, def) {
       default:
     }
   }
+  // AutoCAD writes a polygonal boundary closed (last = first); kept open here, closed again on write
+  const q = e.clip.pts;
+  if (e.clip.type === 2 && q.length > 3 && q[0].x === q[q.length - 1].x && q[0].y === q[q.length - 1].y) q.pop();
   e.def = def ? structuredClone(def) : null;
   e.path = def?.path ?? '';
   return e;
 }
 
 /** IMAGE entity body tags after AcDbEntity (`defH` IMAGEDEF handle) */
-export function imageTags(e, defH) {
+export function imageTags(e, defH, reactorH = '0') {
   const t = [[100, 'AcDbRasterImage'], [90, 0], [10, e.p.x], [20, e.p.y], [30, 0], [11, e.u.x], [21, e.u.y], [31, 0],
     [12, e.v.x], [22, e.v.y], [32, 0], [13, e.size.x], [23, e.size.y], [340, defH], [70, e.flags ?? 7],
-    [280, e.clip?.on ? 1 : 0], [281, e.brightness ?? 50], [282, e.contrast ?? 50], [283, e.fade ?? 0]];
+    [280, e.clip?.on ? 1 : 0], [281, e.brightness ?? 50], [282, e.contrast ?? 50], [283, e.fade ?? 0],
+    [360, reactorH]]; // AutoCAD reads the reactor handle in sequence: without it the file is discarded ("Xdata wasn't read")
   const pts = e.clip?.pts ?? [];
   if (pts.length >= 2) {
-    t.push([71, e.clip.type ?? 1], [91, pts.length]);
-    for (const q of pts) t.push([14, q.x], [24, q.y]);
+    // a polygonal boundary is written closed: AutoCAD discards the file on an open one ("Xdata wasn't read")
+    const ring = (e.clip.type ?? 1) === 2 && pts.length >= 3 && (pts[0].x !== pts[pts.length - 1].x || pts[0].y !== pts[pts.length - 1].y) ? [...pts, pts[0]] : pts;
+    t.push([71, e.clip.type ?? 1], [91, ring.length]);
+    for (const q of ring) t.push([14, q.x], [24, q.y]);
   }
-  if (e.clip?.mode !== undefined) t.push([290, e.clip.mode]);
+  // no 290 (clip mode, R2010+): the file is R2000, and AutoCAD discards an R2000 DXF holding it ("Xdata wasn't read")
   return t;
 }
 
