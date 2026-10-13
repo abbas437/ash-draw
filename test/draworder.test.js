@@ -87,3 +87,9 @@ test('write -> read keeps the draw order', () => {
   assert.deepEqual(colors(parseDxf(s).entities), [2, 1]);
 });
 
+
+
+test('table handles match regardless of case and leading zeros (owner, entity and sort handles)', () => {
+  const text = dxf({ model: [...solid('A0', 0, 1), ...solid('A1', 5, 2)], objects: sortents('D1', '001f', [['00a1', '09f']]) });
+  assert.deepEqual(colors(parseDxf(text).entities), [2, 1]);
+});

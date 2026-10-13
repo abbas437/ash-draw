@@ -1,5 +1,5 @@
 // ASH Draw Studio - draw order (AutoCAD LT DRAWORDER, TEXTTOFRONT, HATCHTOBACK). The entity list of a space IS its draw
-// order (dxfRead applies SORTENTSTABLE, the renderer and dxfWrite follow the array), so each command is one reorder
+// order (dxfRead applies SORTENTSTABLE, dxfWrite follows the array; the renderer follows it within each pass (images, fills, lines, text)), so each command is one reorder
 // of the session document's entities: one undo step that restores the exact old order.
 
 export const TEXT_TYPES = new Set(['TEXT', 'MTEXT', 'DIMENSION', 'LEADER', 'MLEADER']);

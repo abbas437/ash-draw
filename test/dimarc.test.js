@@ -86,3 +86,16 @@ test('arc length extension lines: parallel to the bisector under 90 degrees, rad
   assert.equal(l120.length, 2);
   assert.ok(l120.every((l) => Math.abs(l.p1.x * l.p2.y - l.p1.y * l.p2.x) < 1e-9), 'radial: passes through the centre');
 });
+
+test('AcDbArcDimension fields are written in AutoCAD order: 13, 14, 15, 40, 41, 70, 71, 16, 17', () => {
+  const doc = readDxf(Buffer.from(DXF));
+  const e = doc.entities.find((x) => x.type === 'DIMENSION');
+  Object.assign(e, { raw: null, defPoint: { ...e.def.at }, measurement: 5 * Math.PI }); // rebuilt by the writer
+  const lines = writeDxf(doc).split(/\r?\n/).map((l) => l.trim());
+  const at = lines.findIndex((l, i) => l === 'AcDbArcDimension' && lines[i - 1] === '100'); // the entity's subclass marker, not the CLASSES entry
+  assert.ok(at > 0);
+  const codes = [];
+  for (let i = at + 1; i < lines.length - 1 && lines[i] !== '0' && lines[i] !== '100'; i += 2) codes.push(+lines[i]);
+  const want = [13, 14, 15, 40, 41, 70, 71, 16, 17];
+  assert.deepEqual(codes.filter((c) => want.includes(c)), want);
+});

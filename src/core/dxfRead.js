@@ -702,7 +702,7 @@ function readEntityList(recs, doc, target, stats) {
     if (e === undefined) { doc.skipped[t] = (doc.skipped[t] ?? 0) + 1; continue; }
     if (e === null) { doc.skipped[`${t} (unusable)`] = (doc.skipped[`${t} (unusable)`] ?? 0) + 1; continue; }
     addEntity(doc, e, list);
-    if (stats.handles) stats.handles.set(e, rec.str(5).toUpperCase()); // only kept when the file has draw-order tables
+    if (stats.handles) stats.handles.set(e, normHandle(rec.str(5))); // only kept when the file has draw-order tables
     if (attribs) linkAttribs(e, attribs.map((a) => buildEntity(a, doc, {})));
   }
 }
@@ -716,22 +716,24 @@ function readSortents(tags) {
   for (const [c, v] of tags) {
     if (c === 100 && v === 'AcDbSortentsTable') body = true;
     else if (!body) continue;
-    else if (c === 330 && !t.owner) t.owner = v;
-    else if (c === 331) ent = v.toUpperCase();
-    else if (c === 5 && ent) { t.map.set(ent, v.toUpperCase()); ent = null; }
+    else if (c === 330 && !t.owner) t.owner = normHandle(v);
+    else if (c === 331) ent = normHandle(v);
+    else if (c === 5 && ent) { t.map.set(ent, normHandle(v)); ent = null; }
   }
   return t;
 }
 
 const HEX = /^[0-9A-F]+$/;
+/** a handle as one canonical string: upper case, no leading zeros (tables may write either) */
+function normHandle(v) { return String(v ?? '').trim().toUpperCase().replace(/^0+(?=.)/, ''); }
 /** reorder list in place by the table (entity handle -> sort handle); stable for equal keys. An entity without a
  *  readable handle keeps to the entity before it. */
 function applySortents(list, map, handles) {
   if (!map.size || list.length < 2) return;
-  let prev = 0n;
+  let prev = '';
   const keyed = list.map((e, i) => {
     const h = handles.get(e), s = h && (map.get(h) ?? h);
-    const k = s && HEX.test(s) ? BigInt(`0x${s}`) : prev;
+    const k = s && HEX.test(s) && s.length <= 16 ? s.padStart(16, '0') : prev; // fixed-width hex compares as a number
     prev = k;
     return { e, k, i };
   });
@@ -779,7 +781,7 @@ function parseTokens(tk, onProgress = null) {
   if (secs.TABLES) {
     const dimRecs = [], styleH = new Map();
     for (const rec of records(tk, secs.TABLES.from, secs.TABLES.to)) {
-      if (rec.type === 'BLOCK_RECORD') blockRecH.set(rec.str(5), rec.str(2));
+      if (rec.type === 'BLOCK_RECORD') blockRecH.set(normHandle(rec.str(5)), rec.str(2));
       if (rec.type === 'STYLE') styleH.set(rec.str(5), rec.str(2));
       if (rec.type === 'LAYER') {
         const name = rec.str(2);
@@ -815,7 +817,7 @@ function parseTokens(tk, onProgress = null) {
       }
     }
     if (dimRecs.length) {
-      const resolve = (k, h) => (k === 'DIMBLK' ? blockRecH : styleH).get(h);
+      const resolve = (k, h) => (k === 'DIMBLK' ? blockRecH.get(normHandle(h)) : styleH.get(h));
       doc.dimStyles = new Map(dimRecs.map((r) => { const st = dimStyleFromTags(r.tags(), resolve); return [st.name, st]; }));
     }
   }
@@ -874,7 +876,7 @@ function parseTokens(tk, onProgress = null) {
     for (const rec of records(tk, secs.OBJECTS.from, secs.OBJECTS.to)) {
       if (rec.type !== 'LAYOUT') continue;
       const lo = parseLayoutObject(rec.tags());
-      const block = blockRecH.get(lo.blockHandle) ?? '';
+      const block = blockRecH.get(normHandle(lo.blockHandle)) ?? '';
       if (/^\*model_space$/i.test(block) || lo.name.toUpperCase() === 'MODEL') continue;
       lo.block = block || (layouts.length ? `*Paper_Space${layouts.length - 1}` : '*Paper_Space');
       delete lo.blockHandle;
