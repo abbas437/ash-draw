@@ -24,6 +24,7 @@ import { createXlineTools } from './tools-xline.js';
 import { createModify2Tools } from './tools-modify2.js';
 import { createAlignTools } from './tools-align.js';
 import { createDivideTools } from './tools-divide.js';
+import { createCenterTools } from './tools-center.js';
 import { createDimTools } from './tools-dims.js';
 import { createBlockTools } from './tools-blocks.js';
 import { createMTextTools } from './mtext-editor.js';
@@ -658,6 +659,7 @@ export function createTools(h) {
     ...createModify2Tools(h, { Tool, ModifyTool }),
     ...createAlignTools(h, { Tool, ModifyTool }),
     ...createDivideTools(h, { Tool }),
+    ...createCenterTools(h, { Tool }),
     ...createDimTools(h, { Tool }),
     ...createBlockTools(h, { Tool, ModifyTool }),
     ...createMTextTools(h, { Tool }),
@@ -685,6 +687,7 @@ export const TOOL_ALIASES = {
   div: 'divide', divide: 'divide', me: 'measurepoints', measurepoints: 'measurepoints',
   dli: 'dimlinear', dimlinear: 'dimlinear', dal: 'dimaligned', dimaligned: 'dimaligned', dan: 'dimangular', dimangular: 'dimangular', dra: 'dimradius', dimradius: 'dimradius',
   ddi: 'dimdiameter', dimdiameter: 'dimdiameter', dor: 'dimordinate', dimordinate: 'dimordinate', dco: 'dimcontinue', dimcontinue: 'dimcontinue', dba: 'dimbaseline', dimbaseline: 'dimbaseline',
+  dce: 'dimcenter', dimcenter: 'dimcenter', cm: 'centermark', centermark: 'centermark', centerline: 'centerline',
   mld: 'mleader', mleader: 'mleader', ma: 'matchprop', matchprop: 'matchprop', painter: 'matchprop',
   b: 'block', block: 'block', bmake: 'block', att: 'attdef', attdef: 'attdef', i: 'insert', insert: 'insert', ddinsert: 'insert',
   xa: 'xattach', xattach: 'xattach',

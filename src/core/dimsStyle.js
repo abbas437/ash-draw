@@ -13,7 +13,7 @@ import { aciField } from './aci.js';
  *  converters are decoded), 's' string, 'h' handle (name resolved) */
 export const DIMVARS = {
   DIMPOST: [3, 's'], DIMSCALE: [40, 'n'], DIMASZ: [41, 'n'], DIMEXO: [42, 'n'], DIMDLI: [43, 'n'], DIMEXE: [44, 'n'],
-  DIMRND: [45, 'n'], DIMTXT: [140, 'n'], DIMLFAC: [144, 'n'], DIMGAP: [147, 'n'],
+  DIMRND: [45, 'n'], DIMTXT: [140, 'n'], DIMCEN: [141, 'n'], DIMLFAC: [144, 'n'], DIMGAP: [147, 'n'],
   DIMTIH: [73, 'i'], DIMTOH: [74, 'i'], DIMTAD: [77, 'i'], DIMZIN: [78, 'i'], DIMAZIN: [79, 'i'],
   DIMTOFL: [172, 'i'], DIMCLRD: [176, 'c'], DIMCLRE: [177, 'c'], DIMCLRT: [178, 'c'], DIMADEC: [179, 'i'],
   DIMDEC: [271, 'i'], DIMAUNIT: [275, 'i'], DIMLUNIT: [277, 'i'], DIMDSEP: [278, 'i'], DIMJUST: [280, 'i'],
@@ -21,13 +21,13 @@ export const DIMVARS = {
 };
 
 const STANDARD = {
-  DIMPOST: '', DIMSCALE: 1, DIMASZ: 0.18, DIMEXO: 0.0625, DIMDLI: 0.38, DIMEXE: 0.18, DIMRND: 0, DIMTXT: 0.18,
+  DIMPOST: '', DIMSCALE: 1, DIMASZ: 0.18, DIMEXO: 0.0625, DIMDLI: 0.38, DIMEXE: 0.18, DIMRND: 0, DIMTXT: 0.18, DIMCEN: 0.09,
   DIMLFAC: 1, DIMGAP: 0.09, DIMTIH: 1, DIMTOH: 1, DIMTAD: 0, DIMZIN: 0, DIMAZIN: 0, DIMTOFL: 0,
   DIMCLRD: 0, DIMCLRE: 0, DIMCLRT: 0, DIMADEC: 0, DIMDEC: 4, DIMAUNIT: 0, DIMLUNIT: 2, DIMDSEP: 46, DIMJUST: 0,
   DIMTXSTY: 'Standard', DIMBLK: '',
 };
 const ISO25 = {
-  ...STANDARD, DIMASZ: 2.5, DIMEXO: 0.625, DIMDLI: 3.75, DIMEXE: 1.25, DIMTXT: 2.5, DIMGAP: 0.625,
+  ...STANDARD, DIMASZ: 2.5, DIMEXO: 0.625, DIMDLI: 3.75, DIMEXE: 1.25, DIMTXT: 2.5, DIMCEN: 2.5, DIMGAP: 0.625,
   DIMTIH: 0, DIMTOH: 0, DIMTAD: 1, DIMZIN: 8, DIMTOFL: 1, DIMDEC: 2, DIMDSEP: 44,
 };
 

@@ -16,6 +16,7 @@ Built with Electron by ASH Technical & Project Management Services (ASH PMCS).
 - **Divide / measure**: DIVIDE (DIV) places points or blocks at N equal divisions of a line, arc, circle, ellipse, polyline or spline; MEASUREPOINTS (ME, AutoCAD's point-placing MEASURE) places them every given length from the picked end.
 - **Modify**: move, copy, rotate, scale, mirror, offset, trim, extend, explode, erase; copy/paste; unlimited undo and redo.
 - **Align** (AL): move, rotate and optionally scale objects so source points land on destination points (2D AutoCAD LT ALIGN, one undo step).
+- **Center marks / centerlines**: DIMCENTER (DCE) marks the centre of arcs and circles per the dimension style's DIMCEN (negative adds extension lines); CENTERMARK (CM) always adds them; CENTERLINE draws the mid / bisecting axis of two lines (CENTER linetype when loaded). Plain lines (not associative), one undo step per command.
 - **Polyline editing**: PEDIT (Close/Open, Join, Width, Decurve, Reverse, Multiple), REVERSE and BREAKATPOINT; PEDIT Fit, Spline and Edit vertex come later.
 - **Select**: as in AutoCAD, each pick or window adds to the selection and Shift+pick (or Shift+window) removes; Esc clears.
 - **Precision**: object snaps (endpoint, intersection, midpoint, centre, quadrant, node, insertion, perpendicular),

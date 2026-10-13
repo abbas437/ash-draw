@@ -65,6 +65,7 @@ export const ICONS = {
   dimaligned: p('M2.5 13L13 2.5M7 17.5L17.5 7', 'M5 15l10-10', 'M5 11.5V15h3.5M15 8.5V5h-3.5'),
   dimangular: p('M3 17h14', 'M3 17L12 4', 'M11 17a8 8 0 0 0-3.5-6.6'),
   dimradius: c(10, 10, 7) + p('M10 10l4.9-4.9', 'M12.5 5.1l2.4 0 0 2.4') + dot(10, 10),
+  dimcenter: c(10, 10, 6) + p('M7.5 10h5M10 7.5v5', 'M14 10h4.5M1.5 10H6M10 1.5V6M10 14v4.5'),
   dimdiameter: c(10, 10, 7) + p('M5.1 14.9l9.8-9.8', 'M12.5 5.1h2.4v2.4M7.5 14.9H5.1v-2.4'),
   dimordinate: p('M4 2.5v15h13.5', 'M4 7h4M4 12.5h7', 'M8 7l2-3M11 12.5l2-3'),
   dimcontinue: p('M2 5v10M10 5v10M18 5v10', 'M2 10h16'),
