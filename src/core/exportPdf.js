@@ -17,6 +17,7 @@ const PT_PER_MM = 72 / 25.4;
 const MAX_PAGE_PT = 14400;          // PDF 1.x user-unit page size limit (200 inch)
 const MIN_LW_PT = 0.25;
 const fillEvenOdd = () => PDFOperator.of(PDFOperatorNames.FillEvenOdd);
+const fillEvenOddAndStroke = () => PDFOperator.of(PDFOperatorNames.FillEvenOddAndStroke);
 const SIZES = { A4: PageSizes.A4, A3: PageSizes.A3, A2: PageSizes.A2, A1: PageSizes.A1, A0: PageSizes.A0, Letter: PageSizes.Letter };
 
 /**
@@ -179,7 +180,11 @@ export async function exportPdf(doc, opts = {}) {
         ops.push(moveTo(X(t[0].x), Y(t[0].y)), lineTo(X(t[1].x), Y(t[1].y)), lineTo(X(t[2].x), Y(t[2].y)), closePath(), fillEvenOdd(), popGraphicsState());
       }
     } else if (it.kind === 'fill' || (it.kind === 'hatch' && it.solid)) {
-      ops.push(pushGraphicsState()); fillState(it.style); pathOps(it.ops); ops.push(fillEvenOdd(), popGraphicsState());
+      // a wide polyline band thinner than the minimum plotted line weight is outlined at that weight, so it still prints
+      const thin = it.wide && !(it.w * k >= MIN_LW_PT);
+      ops.push(pushGraphicsState()); fillState(it.style);
+      if (thin) { const [r, g, b] = colOf(it.style); ops.push(setStrokingRgbColor(r, g, b), setLineWidth(MIN_LW_PT), setLineCap(1), setLineJoin(1)); }
+      pathOps(it.ops); ops.push(thin ? fillEvenOddAndStroke() : fillEvenOdd(), popGraphicsState());
     } else if (it.kind === 'hatch') {
       const fams = hatchFamilies(it);
       ops.push(pushGraphicsState());

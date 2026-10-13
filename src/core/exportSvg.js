@@ -239,6 +239,8 @@ const fontFamily = (font) => {
  * Stroke width in SVG user units (= drawing units): max(lineweightMm, 0.18) * (unitsPerMm ?? 1);
  * default lineweight (-3) and lineweights:false use 0.25 mm.
  */
+const MIN_LW_MM = 0.18; // thinnest plotted stroke
+
 export function exportSvg(doc, opts = {}) {
   const scene = opts.scene || buildScene(doc);
   const { background = '#ffffff', monochrome = false, lineweights = true, margin = 0.02 } = opts;
@@ -246,7 +248,7 @@ export function exportSvg(doc, opts = {}) {
   const bb = scene.bbox;
   const colOpts = { monochrome, darkBackground: background != null && luminance(background) < 0.5 };
   const rgb = (style) => `rgb(${colorRgb(style, colOpts).map((v) => Math.round(v)).join(',')})`;
-  const strokeW = (style) => num(Math.max(lineweightMm(style, lineweights), 0.18) * upm);
+  const strokeW = (style) => num(Math.max(lineweightMm(style, lineweights), MIN_LW_MM) * upm);
 
   let vx = 0, vy = 0, vw = 1, vh = 1;
   if (bb) {
@@ -281,7 +283,9 @@ export function exportSvg(doc, opts = {}) {
         out.push(`<path d="M${t.map((p) => `${num(p.x)} ${num(-p.y)}`).join('L')}Z" fill="${col}" stroke="none"${oa}/>`);
       }
     } else if (it.kind === 'fill' || (it.kind === 'hatch' && it.solid)) {
-      out.push(`<path d="${svgPathData(it.ops)}" fill="${col}" fill-rule="evenodd" stroke="none"${oa}/>`);
+      // a wide polyline band thinner than the minimum plotted line weight is outlined at that weight, so it still prints
+      const thin = it.wide && !(it.w >= MIN_LW_MM * upm);
+      out.push(`<path d="${svgPathData(it.ops)}" fill="${col}" fill-rule="evenodd" stroke="${thin ? col : 'none'}"${thin ? ` stroke-width="${num(MIN_LW_MM * upm)}"` : ''}${oa}/>`);
     } else if (it.kind === 'hatch') {
       const fams = hatchFamilies(it);
       const d = svgPathData(it.ops);

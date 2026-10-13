@@ -210,7 +210,7 @@ class Builder {
         M(P({ x: p1.x + nx, y: p1.y + ny })); L(P({ x: p2.x + nx, y: p2.y + ny })); L(P({ x: p2.x - nx, y: p2.y - ny })); L(P({ x: p1.x - nx, y: p1.y - ny }));
       }
       ops.push(OP_Z);
-      this.push({ kind: 'fill', wide: true, ops: ops.splice(0), style, bbox }, rootId);
+      this.push({ kind: 'fill', wide: true, w: e.width * s, ops: ops.splice(0), style, bbox }, rootId); // w: band width (world units), for plotting
     }
   }
 
