@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { newDocument, addEntity, addLayer, addLinetype, addTextStyle, addBlock, makeLine, makeCircle, makeText, makeInsert, makeDimension, makeRect } from '../src/core/model.js';
 import { Session } from '../src/core/edit.js';
 import { quickSelect, selectSimilar, matches, wildcard, typesPresent } from '../src/core/select-filter.js';
-import { purgeable, planPurge, applyPurge, zeroLengthCleanup } from '../src/core/purge.js';
+import { purgeable, planPurge, applyPurge, zeroLengthCleanup, isZeroOrEmpty } from '../src/core/purge.js';
 
 function drawing() {
   const doc = newDocument();
@@ -132,4 +132,17 @@ test('PURGE: one undo step; undo restores everything', () => {
   assert.equal(doc.entities.length, n);
   s.redo();
   assert.ok(!doc.blocks.has('OUTER'));
+});
+
+test('PURGE: stacked-fraction / tolerance MTEXT is not empty; code-only MTEXT is', () => {
+  for (const text of ['\\S1/2;', '\\A1;\\S+0.1^-0.2;']) assert.equal(isZeroOrEmpty({ type: 'MTEXT', text }), false, text);
+  for (const text of ['', '\\A1;', '{\\fArial|b0;}', '\\P']) assert.equal(isZeroOrEmpty({ type: 'MTEXT', text }), true, text);
+});
+
+test('PURGE: the current linetype is never purgeable', () => {
+  const doc = newDocument();
+  addLinetype(doc, { name: 'DASHED', pattern: [1, -1] });
+  assert.deepEqual(purgeable(doc, { currentLinetype: 'DASHED' }).Linetypes, []);
+  assert.deepEqual(purgeable(doc, { currentLinetype: 'ByLayer' }).Linetypes, ['DASHED']);
+  assert.deepEqual(planPurge(doc, { currentLinetype: 'dashed' }).filter((i) => i.kind === 'Linetypes'), []);
 });

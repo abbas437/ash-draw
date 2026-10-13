@@ -54,8 +54,8 @@ export function selectSimilarCommand(app) {
 
 /** PURGE: unused named items of the whole drawing, one undo step */
 export async function purgeDialog(app) {
-  const doc = app.fileDoc, currentLayer = app.state.layer;
-  const items = purgeable(doc, { currentLayer });
+  const doc = app.fileDoc, currentLayer = app.state.layer, currentLinetype = app.state.linetype;
+  const items = purgeable(doc, { currentLayer, currentLinetype });
   const geo = zeroLengthCleanup(doc).reduce((n, g) => n + g.removed, 0);
   const boxes = [];
   const groups = KINDS.map((k) => el('fieldset', { style: 'margin:4px 0' }, el('legend', { text: `${k} (${items[k].length})` }),
@@ -69,7 +69,7 @@ export async function purgeDialog(app) {
   const how = await modal('Purge', body, [{ label: 'Purge checked', value: 'checked' }, { label: 'Purge all', value: 'all', primary: true }, { label: 'Close', value: null }]);
   if (!how) return null;
   const pick = how === 'all' ? 'all' : Object.fromEntries(KINDS.map((k) => [k, boxes.filter((b) => b.checked && b.dataset.kind === k).map((b) => b.dataset.name)]));
-  const plan = planPurge(doc, { pick, nested: nested.checked, currentLayer });
+  const plan = planPurge(doc, { pick, nested: nested.checked, currentLayer, currentLinetype });
   if (!plan.length && !(zero.checked && geo)) { toast('Nothing to purge.'); return null; }
   const r = applyPurge(app.session, doc, plan, { zeroLength: zero.checked });
   toast(`Purged ${r.items} item(s)${r.geometry ? `, ${r.geometry} zero-length/empty object(s)` : ''}.`, 3000);
