@@ -134,6 +134,29 @@ test('PURGE: one undo step; undo restores everything', () => {
   assert.ok(!doc.blocks.has('OUTER'));
 });
 
+test('PURGE: undo restores the table order (DXF tables are written in Map order)', () => {
+  const doc = purgeDoc(), s = new Session(doc);
+  const tables = { layers: doc.layers, blocks: doc.blocks, linetypes: doc.linetypes, textStyles: doc.textStyles, dimStyles: doc.dimStyles };
+  const gone = { layers: 'EMPTY', blocks: 'OUTER', linetypes: 'DASHED', textStyles: 'UNUSEDST', dimStyles: 'SPARE' };
+  const before = {}, objs = {};
+  for (const [t, m] of Object.entries(tables)) {
+    before[t] = [...m.keys()]; objs[t] = [...m.values()];
+    const i = before[t].indexOf(gone[t]);
+    assert.ok(i >= 0 && i < before[t].length - 1, t + ': the purged entry is not the last one');
+  }
+  applyPurge(s, doc, planPurge(doc, { nested: true, currentLayer: 'CUR' }), {});
+  for (const [t, m] of Object.entries(tables)) assert.ok(!m.has(gone[t]), t + ' purged');
+  s.undo();
+  for (const [t, m] of Object.entries(tables)) {
+    assert.deepEqual([...m.keys()], before[t], t + ' key order after undo');
+    assert.ok([...m.values()].every((v, i) => v === objs[t][i]), t + ' entry objects kept');
+  }
+  s.redo();
+  for (const [t, m] of Object.entries(tables)) assert.ok(!m.has(gone[t]), t + ' purged again on redo');
+  s.undo();
+  for (const [t, m] of Object.entries(tables)) assert.deepEqual([...m.keys()], before[t], t + ' key order after redo+undo');
+});
+
 test('PURGE: stacked-fraction / tolerance MTEXT is not empty; code-only MTEXT is', () => {
   for (const text of ['\\S1/2;', '\\A1;\\S+0.1^-0.2;']) assert.equal(isZeroOrEmpty({ type: 'MTEXT', text }), false, text);
   for (const text of ['', '\\A1;', '{\\fArial|b0;}', '\\P']) assert.equal(isZeroOrEmpty({ type: 'MTEXT', text }), true, text);
