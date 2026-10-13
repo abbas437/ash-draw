@@ -176,10 +176,12 @@ test('unsupported entities are counted, not silently lost, and do not stop the l
   assert.equal(M.countByType(doc).LINE, 2);
   assert.equal(doc.skipped['3DFACE'], undefined); // drawn since 3DFACE support
   assert.equal(M.countByType(doc)['3DFACE'], 1);
-  assert.equal(doc.skipped.XLINE, 1);
-  assert.equal(doc.skipped.RAY, 1);
+  assert.equal(doc.skipped.XLINE, undefined); // read since XLINE / RAY support
+  assert.equal(doc.skipped.RAY, undefined);
+  assert.equal(M.countByType(doc).XLINE, 1);
+  assert.equal(M.countByType(doc).RAY, 1);
   writeDxf(doc);
-  assert.equal(doc.lastWriteReport.skipped['XLINE (not read)'], 1);
+  assert.equal(doc.lastWriteReport.skipped['XLINE (not read)'], undefined);
 });
 
 test('paper-space objects without a LAYOUT object are kept in a default layout and saved back', () => {

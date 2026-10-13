@@ -199,11 +199,29 @@ function ellipsePoints(e, tol) {
   return out;
 }
 
+// ---- XLINE / RAY ----------------------------------------------------------------------------
+/** XLINE (infinite both ways) and RAY (infinite forward of e.p along e.dir) */
+export const isInfinite = (e) => e.type === 'XLINE' || e.type === 'RAY';
+/** the part of the line p + t dir (t >= 0 when ray) inside the box, as [a, b] (a at the smaller t), or null.
+ *  Computed from the base point, so the result is as precise as the box far from the origin (UTM drawings). */
+export function clipInfinite(p, dir, ray, box) {
+  let t0 = ray ? 0 : -Infinity, t1 = Infinity;
+  for (const [d, lo, hi] of [[dir.x, box.minx - p.x, box.maxx - p.x], [dir.y, box.miny - p.y, box.maxy - p.y]]) {
+    if (d === 0) { if (lo > 0 || hi < 0) return null; continue; }
+    let a = lo / d, b = hi / d;
+    if (a > b) [a, b] = [b, a];
+    if (a > t0) t0 = a; if (b < t1) t1 = b;
+  }
+  if (!(t0 <= t1)) return null;
+  return [{ x: p.x + t0 * dir.x, y: p.y + t0 * dir.y }, { x: p.x + t1 * dir.x, y: p.y + t1 * dir.y }];
+}
+
 // ---- tessellation ---------------------------------------------------------------------------
 /** Entity -> array of polylines (each an array of {x,y}); closed shapes repeat the first point. */
 export function tessellate(e, doc = null, tol = 0) {
   switch (e.type) {
     case 'LINE': return [[{ ...e.p1 }, { ...e.p2 }]];
+    case 'XLINE': case 'RAY': return []; // no finite outline: drawn clipped to the view (clipInfinite)
     case 'VIEWPORT': { const w = e.width / 2, h = e.height / 2, c = e.c; return [[{ x: c.x - w, y: c.y - h }, { x: c.x + w, y: c.y - h }, { x: c.x + w, y: c.y + h }, { x: c.x - w, y: c.y + h }, { x: c.x - w, y: c.y - h }]]; }
     case 'LWPOLYLINE': return [polylinePoints(e, tol)];
     case 'CIRCLE': return [arcPoints(e.c, e.r, 0, TAU, tol)];
@@ -298,6 +316,7 @@ export function textExtent(e) {
 }
 /** Axis-aligned bbox {minx,miny,maxx,maxy} or null. */
 export function bboxOf(e, doc = null) {
+  if (isInfinite(e)) return null; // kept out of the extents, as AutoCAD does
   if (e.type === 'TEXT') return boxOfPoints(textCorners(textFrame(e, doc)));
   if (e.type === 'MTEXT') {
     const { w, h } = textExtent(e);
@@ -516,6 +535,10 @@ export function transformEntity(e, m) {
   const s = matScale(m);
   switch (e.type) {
     case 'LINE': c.p1 = apply(m, e.p1); c.p2 = apply(m, e.p2); break;
+    case 'XLINE': case 'RAY': {
+      const d = applyVec(m, e.dir), l = Math.hypot(d.x, d.y);
+      c.p = apply(m, e.p); c.dir = { x: d.x / l, y: d.y / l }; break;
+    }
     case 'POINT': c.p = apply(m, e.p); break;
     case 'IMAGE': case 'WIPEOUT': return Object.assign(c, transformImage(e, m));
     case 'SOLID': case '3DFACE': c.pts = e.pts.map((p) => apply(m, p)); break;
@@ -636,9 +659,12 @@ function transformEllipse(e, m) {
 }
 
 // ---- primitives, distance, snapping ---------------------------------------------------------
-// Primitive: {k:'seg', a, b} | {k:'arc', c, r, a0, sweep}  (radians; sweep > 0 CCW)
+// Primitive: {k:'seg', a, b, ext?} | {k:'arc', c, r, a0, sweep}  (radians; sweep > 0 CCW). ext: the segment's line
+// a + t (b - a) goes on for t > 1 (ext 1: RAY) or for every t (ext 2: XLINE); b - a is then the unit direction
+const segRange = (pr, t) => (pr.ext === 2 ? t : pr.ext === 1 ? Math.max(0, t) : Math.max(0, Math.min(1, t)));
 export function toPrims(e, doc = null) {
   switch (e.type) {
+    case 'XLINE': case 'RAY': return [{ k: 'seg', a: e.p, b: { x: e.p.x + e.dir.x, y: e.p.y + e.dir.y }, ext: e.type === 'RAY' ? 1 : 2 }];
     case 'LINE': return [{ k: 'seg', a: e.p1, b: e.p2 }];
     case 'CIRCLE': return [{ k: 'arc', c: e.c, r: e.r, a0: 0, sweep: TAU }];
     case 'ARC': return [{ k: 'arc', c: e.c, r: e.r, a0: e.a0 * DEG, sweep: ccwSweep(e.a0 * DEG, e.a1 * DEG) }];
@@ -699,9 +725,10 @@ function arcArcIntersect(A, B) {
   return pts.filter((p) => onSweep(Math.atan2(p.y - A.c.y, p.x - A.c.x), A.a0, A.sweep) && onSweep(Math.atan2(p.y - B.c.y, p.x - B.c.x), B.a0, B.sweep));
 }
 function primIntersections(p, q) {
-  if (p.k === 'seg' && q.k === 'seg') { const r = segSegIntersect(p.a, p.b, q.a, q.b); return r ? [r] : []; }
-  if (p.k === 'seg' && q.k === 'arc') return segArcIntersect(p.a, p.b, q);
-  if (p.k === 'arc' && q.k === 'seg') return segArcIntersect(q.a, q.b, p);
+  const onRay = (pr, t) => pr.ext !== 1 || t >= -1e-9;
+  if (p.k === 'seg' && q.k === 'seg') { const r = segSegIntersect(p.a, p.b, q.a, q.b, !!p.ext, !!q.ext); return r && onRay(p, r.t) && onRay(q, r.u) ? [r] : []; }
+  if (p.k === 'seg' && q.k === 'arc') return segArcIntersect(p.a, p.b, q, !!p.ext).filter((r) => onRay(p, r.t));
+  if (p.k === 'arc' && q.k === 'seg') return segArcIntersect(q.a, q.b, p, !!q.ext).filter((r) => onRay(q, r.t));
   return arcArcIntersect(p, q);
 }
 /** All intersection points {x,y} between two entities (real intersections only; no extension). */
@@ -747,6 +774,7 @@ function pointInPoly(p, poly) {
 }
 /** Distance from point to entity outline (0 when inside text boxes / filled shapes). */
 export function distanceToEntity(e, p, doc = null) {
+  if (isInfinite(e)) return dist(p, nearestPoint(e, p));
   if (e.type === 'TEXT' || e.type === 'MTEXT') {
     const b = bboxOf(e, doc);
     if (!b) return Infinity;
@@ -769,7 +797,7 @@ export function nearestPoint(e, p, doc = null) {
     let q;
     if (pr.k === 'seg') {
       const dx = pr.b.x - pr.a.x, dy = pr.b.y - pr.a.y, l2 = dx * dx + dy * dy;
-      const t = l2 < EPS ? 0 : Math.max(0, Math.min(1, ((p.x - pr.a.x) * dx + (p.y - pr.a.y) * dy) / l2));
+      const t = l2 < EPS ? 0 : segRange(pr, ((p.x - pr.a.x) * dx + (p.y - pr.a.y) * dy) / l2);
       q = { x: pr.a.x + t * dx, y: pr.a.y + t * dy };
     } else {
       const ang = Math.atan2(p.y - pr.c.y, p.x - pr.c.x);
@@ -791,6 +819,8 @@ export function snapPoints(e, doc = null) {
   const add = (p, kind) => out.push({ x: p.x, y: p.y, kind });
   switch (e.type) {
     case 'LINE': add(e.p1, 'end'); add(e.p2, 'end'); add(mid(e.p1, e.p2), 'mid'); break;
+    case 'RAY': add(e.p, 'end'); break; // its base point only
+    case 'XLINE': add(e.p, 'mid'); break; // AutoCAD: midpoint snaps to an xline's root point
     case 'LWPOLYLINE': {
       const v = e.vertices, n = e.closed ? v.length : v.length - 1;
       v.forEach((q) => add(q, 'end'));

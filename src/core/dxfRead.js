@@ -12,7 +12,7 @@ import { buildAttribute, linkAttribs } from './blocks.js';
 import {
   newDocument, addLayer, addLinetype, addTextStyle, addBlock, addEntity, BYLAYER,
   makeLine, makeCircle, makeArc, makeEllipse, makePolyline, makePoint, makeText, makeMText,
-  makeSpline, makeSolid, makeInsert, makeHatch, makeDimension, makeLeader,
+  makeSpline, makeSolid, makeInsert, makeHatch, makeDimension, makeLeader, makeXline,
 } from './model.js';
 import { transformEntity, applyVec, apply, det, matScale } from './geom.js';
 import { dimStyleFromTags } from './dimsStyle.js';
@@ -616,6 +616,7 @@ function buildEntity(rec, doc, extra) {
   let e = null;
   switch (rec.type) {
     case 'LINE': e = makeLine(pt(rec, 10), pt(rec, 11), o); break;
+    case 'XLINE': case 'RAY': e = makeXline(rec.type, pt(rec, 10), pt(rec, 11), o); break; // 11/21: unit direction
     case 'CIRCLE': e = makeCircle(pt(rec, 10), rec.num(40), o); break;
     case 'ARC': e = makeArc(pt(rec, 10), rec.num(40), rec.num(50), rec.num(51), o); break;
     case 'ELLIPSE': e = ellipseToPlan(rec, makeEllipse(pt(rec, 10), pt(rec, 11), rec.num(40, 1), rec.num(41), rec.has(42) ? rec.num(42) : Math.PI * 2, o)); break;

@@ -4,7 +4,7 @@
 //
 // Also holds the scene helpers shared with exportPdf.js (path walking, colours, lineweights, dashes,
 // hatch pattern lines, text layout).
-import { buildScene } from './render.js';
+import { buildScene, infiniteItem } from './render.js';
 import { runColor } from './aci.js';
 import { layoutMText, approxMeasure } from './mtext.js';
 
@@ -269,7 +269,9 @@ export function exportSvg(doc, opts = {}) {
 
   // transparency: the item's opacity on its own element (a group for clipped hatches and text runs)
   const op = (st) => { const a = opts.transparency === false ? 1 : st.alpha ?? 1; return a < 1 ? ` opacity="${num(a)}"` : ''; };
-  for (const it of scene.items) {
+  const plotBox = { minx: vx, miny: -(vy + vh), maxx: vx + vw, maxy: -vy }; // XLINE / RAY: their part inside the sheet
+  for (let it of scene.items) {
+    if (it.inf && !(it = infiniteItem(it, plotBox))) continue;
     const col = rgb(it.style), oa = op(it.style);
     if (it.kind === 'path') {
       const sw = strokeW(it.style);
