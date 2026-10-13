@@ -23,6 +23,7 @@ Built with Electron by ASH Technical & Project Management Services (ASH PMCS).
   ortho and polar tracking, and an AutoCAD-style command line (`L`, `PL`, `C`, `M`, `CO`, `RO`, `TR` ... and typed
   coordinates such as `10,20`, `@5,0`, `@10<45`).
 - **Command line**: ZOOM (All/Extents/Window/Previous/Object, nX), ID (point coordinates), LIST (object geometry in drawing units, with Copy), LTSCALE (undoable), REGEN/RE, and PR/LA to show the Properties or Layers panel.
+- **Command history**: the last 3 lines show above the prompt bar (inputs with their prompts, ID / LIST results, errors; last 500 lines per window); F2 or View > Command history opens a scrollable panel with Copy; Up/Down in the empty command line recall earlier inputs.
 - **Layers and properties** panels, including layer on/off and lock, colour, linetype and lineweight; measure tool.
 - **Select and clean up**: QSELECT (Quick Select by object type, property, operator and value), SELECTSIMILAR (same type and layer), PURGE (unused blocks, layers, linetypes, text and dimension styles, with nested items and zero-length geometry; one undo step).
 - **Arc length dimension**: DIMARC (DAR) dimensions an arc or a polyline arc segment (`⌒` before the length; one undo step); ARC_DIMENSION entities are read, drawn, moved and saved.

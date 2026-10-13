@@ -73,7 +73,7 @@ export function createViewTools(h, { Tool }) {
 
   class IdTool extends Tool {
     get prompt() { return 'ID  specify point'; }
-    click(p) { const t = formatId(p, fmt().prec); this.cancel(); h.toast(t, 8000); }
+    click(p) { const t = formatId(p, fmt().prec); this.cancel(); h.toast(t, 8000); h.log(t); }
   }
 
   class ListTool extends Tool {
@@ -83,7 +83,9 @@ export function createViewTools(h, { Tool }) {
       const ents = [...this.vp.selection].map((id) => getEntity(h.doc, id)).filter(Boolean);
       if (!ents.length) { h.toast('LIST: select objects first.'); return; }
       this.cancel();
-      h.listDialog(listEntities(ents, h.doc, fmt()));
+      const text = listEntities(ents, h.doc, fmt());
+      h.log(`LIST: ${ents.length} objects\n${text}`);
+      h.listDialog(text);
     }
     down(p, ev) { this.selStart = ev.raw; }
     up(p, ev) {
