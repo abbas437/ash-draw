@@ -7,7 +7,7 @@ const OVERSIZE_CELLS = 1024; // an item spanning more cells than this goes to th
 export class SceneGrid {
   /** ext: world box to lay the grid over; n: expected item count (sets the cell size) */
   constructor(ext, n) {
-    if (!ext) ext = { minx: 0, miny: 0, maxx: 1, maxy: 1 };
+    if (!ext || !Number.isFinite(ext.minx + ext.miny + ext.maxx + ext.maxy)) ext = { minx: 0, miny: 0, maxx: 1, maxy: 1 };
     const w = ext.maxx - ext.minx, h = ext.maxy - ext.miny, big = Math.max(w, h, 1e-9);
     let cell = Math.sqrt(Math.max(w * h, 0) / Math.max(n, 1)) * 2;
     cell = Math.max(cell, big / MAX_CELLS_AXIS, big * 1e-12);

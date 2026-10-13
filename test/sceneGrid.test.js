@@ -71,3 +71,10 @@ test('visibleItems: a view containing the whole scene returns scene.items withou
   const b = scene.bbox;
   assert.equal(visibleItems(scene, b.minx - 1, b.miny - 1, b.maxx + 1, b.maxy + 1), scene.items);
 });
+
+test('SceneGrid: extents with NaN fall back instead of throwing (one bad item must not blank the drawing)', async () => {
+  const { SceneGrid } = await import('../src/core/sceneGrid.js');
+  const g = new SceneGrid({ minx: NaN, miny: 0, maxx: NaN, maxy: 1 }, 1000);
+  g.insert({ bbox: { minx: 0, miny: 0, maxx: 1, maxy: 1 } });
+  assert.equal(g.size, 1);
+});

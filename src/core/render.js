@@ -167,6 +167,7 @@ class Builder {
     if (!list) this.byId.set(rootId, (list = []));
     list.push(item);
     if (this._ui) item.ui = true;
+    if (item.bbox && !Number.isFinite(item.bbox.minx + item.bbox.miny + item.bbox.maxx + item.bbox.maxy)) item.bbox = null; // never let one bad item blank the extents
     if (item.bbox) { if (this._ui) this.uiBox = unionBox(this.uiBox, item.bbox); else this.bbox = unionBox(this.bbox, item.bbox); }
   }
 
@@ -194,6 +195,7 @@ class Builder {
     for (let i = 0; i < n; i++) {
       const p1 = v[i], p2 = v[(i + 1) % v.length];
       bbox = null;
+      if (!(Math.hypot(p2.x - p1.x, p2.y - p1.y) > 0)) continue; // a repeated vertex (closed polylines often end on their start): nothing to fill, and an arc on it is NaN
       if (p1.bulge && Math.abs(p1.bulge) > 1e-12) {
         const a = bulgeToArc(p1, p2, p1.bulge), ro = a.r + hw, ri = Math.max(0, a.r - hw); // hw > r: AutoCAD folds the inner edge through the centre; this draws a wedge instead
         const [co, rO, a0, sw] = mapArc(a.c, ro, a.a0, a.sweep), [, rI] = mapArc(a.c, ri, a.a0, a.sweep);
@@ -206,7 +208,7 @@ class Builder {
         M(P({ x: p1.x + nx, y: p1.y + ny })); L(P({ x: p2.x + nx, y: p2.y + ny })); L(P({ x: p2.x - nx, y: p2.y - ny })); L(P({ x: p1.x - nx, y: p1.y - ny }));
       }
       ops.push(OP_Z);
-      this.push({ kind: 'fill', ops: ops.splice(0), style, bbox }, rootId);
+      this.push({ kind: 'fill', wide: true, ops: ops.splice(0), style, bbox }, rootId);
     }
   }
 
@@ -984,6 +986,9 @@ export function* drawSceneSteps(ctx, scene, view, opts = {}) {
       if (it.kind === 'fill' || it.solid) {
         ctx.beginPath(); fillPath(it.ops);
         ctx.fillStyle = col; ctx.fill('evenodd');
+        // a wide polyline band thinner than a pixel would vanish under antialiasing: AutoCAD always shows at least
+        // a one-pixel line, so its outline is also stroked one pixel wide
+        if (it.wide) { ctx.save(); ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.setLineDash([]); ctx.stroke(); ctx.restore(); }
       } else if (it.lines) {
         drawPatternHatch(ctx, it, view, col, fillPath, sx, sy, fillAlphaPattern * a);
       } else {
