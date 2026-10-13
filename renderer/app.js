@@ -21,6 +21,7 @@ import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
 import { loadDrawingXrefs, xrefPanel } from './xref-panel.js';
 import { TOOL_BUTTONS, buildToolPanel, iconButton, quickCommand, canvasDarkFrom, labelsFrom, placementFrom, PLACEMENTS, collapsedFrom, applyCollapsed, toolTitle, moreButton, fitToolBand, initToolBand } from './tool-panel.js';
 import { iconSvg } from './icons.js';
+import { initSidePanel, applySide, markHead, windowTitle } from './side-panel.js';
 import { defaultLayout, cleanLayout, panelGroups, samePanel, quickRow, setQuickRow, compactKeys, foldMode, SEP } from './tool-layout.js';
 import { openCustomize, initToolContextMenu } from './tool-custom.js';
 import { loadDrawingImages } from './images.js';
@@ -64,6 +65,7 @@ class App {
     this.histView = new CmdHistView(this.history);
     this.comparePanel = new ComparePanel(this);
     this.markupPanel = new MarkupPanel(this);
+    initSidePanel(this, api);
     this.cmd = document.getElementById('cmd');
     this.cmd.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); const v = this.cmd.value; this.cmd.value = ''; this.vp.canvas.focus(); this.submit(v); }
@@ -104,6 +106,7 @@ class App {
     api.settingsGet?.('tools.collapsed').then((v) => { this.collapsed = collapsedFrom(v); applyCollapsed(document.getElementById('tools'), this.collapsed); this.fitBand(); }).catch(() => {});
     api.settingsGet?.('tools.layout').then((v) => { if (v != null) this.setToolLayout(cleanLayout(v), false); }).catch(() => {});
     api.settingsGet?.('theme').then((t) => { if (t === 'dark') this.setTheme('dark', false); }).catch(() => {});
+    api.version?.().then((v) => { this.version = v; this.refreshWindowTitle(); }).catch(() => {});
     api.settingsGet?.('measure.showLegs').then((v) => setShowLegs(v)).catch(() => {});
     api.onOpenFile?.((f) => this.openFromFile(f));
     // files given at start-up open first; then the previous session is offered (or reopened, per startup.mode)
@@ -133,6 +136,19 @@ class App {
   refreshPanels(selectionOnly = false) {
     if (!selectionOnly) renderLayers(this);
     renderProperties(this);
+    markHead(document.querySelector('#side .panel[data-sec="props"]')); // its header is rebuilt on each render
+  }
+  /** the side panel shown or collapsed to its strip (View > Side panel, Ctrl+3, the strip's button), saved as 'side.shown' */
+  setSidePanel(shown, save = true) {
+    this.sideShown = !!shown;
+    applySide(this);
+    if (save) api.settingsSet?.('side.shown', this.sideShown)?.catch?.(() => {});
+  }
+  /** fold or unfold one side panel section ('layers', 'markups', 'props'), saved as 'side.folded' */
+  foldSideSection(key, folded = !this.sideFolded.includes(key)) {
+    this.sideFolded = folded ? [...new Set([...this.sideFolded, key])] : this.sideFolded.filter((k) => k !== key);
+    applySide(this);
+    api.settingsSet?.('side.folded', this.sideFolded)?.catch?.(() => {});
   }
 
   setTool(id) {
@@ -176,7 +192,12 @@ class App {
 
   /** PR / LA: show the side panel (Quick Access 'layers' toggles it) and bring Properties or Layers into view; RE: rebuild the scene */
   panelCommands() {
-    const show = (id) => () => { document.getElementById('app').classList.remove('no-side'); document.getElementById(id).closest('.panel').scrollIntoView({ block: 'nearest' }); };
+    const show = (id) => () => {
+      const panel = document.getElementById(id).closest('.panel');
+      this.setSidePanel(true);
+      if (this.sideFolded.includes(panel.dataset.sec)) this.foldSideSection(panel.dataset.sec, false);
+      panel.scrollIntoView({ block: 'nearest' });
+    };
     const regen = () => { this.vp.refreshStructure(); this.vp.invalidate(); toast('Regenerating model.', 1500); };
     return { pr: show('props'), properties: show('props'), ch: show('props'), mo: show('props'), la: show('layers'), layer: show('layers'),
       re: regen, regen, regenall: regen, redraw: regen, r: regen };
@@ -481,7 +502,8 @@ class App {
         ['Print…', 'Ctrl+P', () => this.print()], ['Plot to PDF…', '', () => this.exportPdf()], ['Export SVG…', '', () => this.exportSvg()], ['Export PNG image…', '', () => this.exportPng()]]],
       ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Paste', 'Ctrl+V', () => this.paste()], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()], ['Quick Select…', 'QSELECT', () => qselectDialog(this)], ['Select Similar', 'SELECTSIMILAR', () => selectSimilarCommand(this)], ['Find and replace…', 'Ctrl+F', () => this.find.open()], '-', ['Preferences…', '', () => this.preferences()]]],
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-',
-        ['Command history', 'F2', () => this.toggleHistory(), () => this.histView.open], '-',
+        ['Command history', 'F2', () => this.toggleHistory(), () => this.histView.open],
+        ['Side panel', 'Ctrl+3', () => this.setSidePanel(!this.sideShown), () => this.sideShown], '-',
         ['Show lineweights', 'F9', () => this.toggle('lineweights')], ['Model space background: dark', '', () => this.toggle('dark'), () => this.vp.settings.dark], '-',
         ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark'],
         ...PLACEMENTS.map((p) => [`Tool panel: ${p[0].toUpperCase()}${p.slice(1)}`, '', () => this.setToolPlacement(p), () => this.toolPlacement === p]),
@@ -570,7 +592,7 @@ class App {
     this.renderQuickAccess();
   }
   renderQuickAccess() {
-    const run = { new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), undo: () => this.undo(), redo: () => this.redo(), zoomfit: () => this.vp.zoomExtents(), layers: () => document.getElementById('app').classList.toggle('no-side') };
+    const run = { new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), undo: () => this.undo(), redo: () => this.redo(), zoomfit: () => this.vp.zoomExtents(), layers: () => this.setSidePanel(!this.sideShown) };
     document.getElementById('qat').replaceChildren(...quickRow(this.toolLayout).map((it) => {
       if (it === SEP) return el('span', { class: 'sep' });
       const [key, id] = it, [label, alias] = quickCommand(id);
@@ -671,12 +693,13 @@ class App {
     renderVpScale(this);
   }
   updateTitle() {
-    const t = `${this.session?.dirty ? '• ' : ''}${this.file.name}`;
-    document.getElementById('title').textContent = t;
-    api.setTitle?.(`${t} — ASH Draw Studio`);
+    document.getElementById('title').textContent = `${this.session?.dirty ? '• ' : ''}${this.file.name}`;
+    this.refreshWindowTitle();
     this.renderTabs();
     this.sessionStore.changed();
   }
+  /** window title with the build version (api.version: 0.2.0-beta.N in test builds), so side-by-side builds can be told apart */
+  refreshWindowTitle() { if (this.active) api.setTitle?.(windowTitle(this.file.name, this.session?.dirty, this.version)); }
   /** the file tab strip above the drawing area: name, unsaved-changes dot, close button; middle-click closes */
   renderTabs() {
     const bar = document.getElementById('tabbar');
@@ -700,7 +723,7 @@ class App {
         if (e.key === 'Tab') { e.preventDefault(); this.cycleTab(e.shiftKey ? -1 : 1); return; }
         if (e.key === 'F4') { e.preventDefault(); this.closeTab(); return; }
         if (typing && !['s', 'o', 'n', 'w', 'f', 'p'].includes(k)) return;
-        const map = { z: () => this.undo(), y: () => this.redo(), a: () => this.selectAll(), c: () => this.copySel(), v: () => this.paste(), s: () => this.save(), o: () => this.open(), n: () => this.newDrawing(), w: () => this.closeTab(), f: () => this.find.open(), p: () => this.print() };
+        const map = { z: () => this.undo(), y: () => this.redo(), a: () => this.selectAll(), c: () => this.copySel(), v: () => this.paste(), s: () => this.save(), o: () => this.open(), n: () => this.newDrawing(), w: () => this.closeTab(), f: () => this.find.open(), p: () => this.print(), 3: () => this.setSidePanel(!this.sideShown) };
         if (map[k]) { e.preventDefault(); map[k](); }
         return;
       }

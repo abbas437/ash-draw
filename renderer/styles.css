@@ -46,7 +46,8 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 #tools { grid-area:tools; } #docs { grid-area:docs; } #side { grid-area:side; }
 #tools .tgroup { display:contents; }
 #app.no-tool-labels { --tools-w:90px; }
-#app.no-side { --side-w:0px; } #app.no-side #side { display:none; }
+/* side panel: "»" on its left edge collapses it to an 18 px strip with "«" (View > Side panel, Ctrl+3); saved as setting 'side.shown' */
+#app.no-side { --side-w:18px; } #app.no-side #side .panel { display:none; }
 /* Quick Access row under the menu bar */
 #qat { display:flex; align-items:center; gap:2px; height:28px; padding:0 6px; /* even height keeps the canvas pixel grid as before */ background:var(--panel); border-bottom:1px solid var(--line); overflow-x:auto; }
 #qat button { display:flex; padding:3px; border-color:transparent; background:none; }
@@ -154,8 +155,17 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 #units-hint { position:absolute; right:10px; top:10px; max-width:420px; display:flex; align-items:flex-start; gap:8px; background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:4px; padding:8px 10px; box-shadow:0 2px 8px var(--shadow); font-size:12px; z-index:5; }
 #drop { display:none; position:absolute; inset:10px; border:3px dashed var(--accent); background:var(--drop-bg); align-items:center; justify-content:center; font-size:20px; z-index:5; }
 #stage.dragover #drop { display:flex; }
-#side { background:var(--panel); border-left:1px solid var(--line); overflow:auto; display:flex; flex-direction:column; }
+#side { background:var(--panel); border-left:1px solid var(--line); overflow:auto; display:flex; flex-direction:column; position:relative; padding-left:17px; }
 .panel { border-bottom:1px solid var(--line); padding:6px; }
+#side-toggle { position:absolute; left:0; top:0; width:17px; height:26px; padding:0; border:none; border-right:1px solid var(--line); border-bottom:1px solid var(--line); border-radius:0; background:var(--panel); color:var(--dim); line-height:1; }
+#side-toggle:hover { background:var(--hover); color:var(--text); }
+#app.no-side #side { padding-left:0; overflow:hidden; } #app.no-side #side-toggle { border-right:none; }
+/* section headers fold their section (setting 'side.folded'); the header's own buttons keep their clicks */
+.panel[data-sec] .phead { cursor:pointer; user-select:none; }
+.panel[data-sec] .phead::before { content:'\25BE'; display:inline-block; width:1em; font-weight:400; color:var(--dim); }
+.panel[data-sec].folded .phead::before { content:'\25B8'; }
+.panel[data-sec].folded .phead { margin-bottom:0; }
+.panel[data-sec].folded > :not(.phead):not(#props), .panel[data-sec].folded #props > :not(.phead) { display:none; }
 .phead { display:flex; align-items:center; gap:4px; font-weight:600; margin-bottom:6px; }
 .phead .spacer, .spacer { flex:1; }
 .phead button { padding:0 7px; }
@@ -170,6 +180,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 .mk-row.closed .mk-comment { text-decoration:line-through; opacity:.7; }
 .mk-row button { padding:0 6px; }
 #mk-filter { max-width:6em; }
+#mk-panel .phead { flex-wrap:wrap; row-gap:4px; } /* narrow panel: CSV wraps rather than being cut off */
 .layer { display:flex; align-items:center; gap:4px; padding:2px 0; }
 .layer.current { background:var(--current-bg); }
 .layer .lay-tr { width:2.2em; text-align:right; cursor:pointer; opacity:.75; font-size:11px; }
