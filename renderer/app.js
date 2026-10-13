@@ -15,7 +15,7 @@ import { blockDoubleClick } from './tools-blocks.js';
 import { initSession } from './session.js';
 import { FindPanel } from './find.js';
 import { plotDialog } from './plot.js';
-import { initLayouts, restoreSpace, renderSpaceBar, layoutDoubleClick, exitMspace, renderVpScale } from './layouts-ui.js';
+import { initLayouts, restoreSpace, renderSpaceBar, layoutDoubleClick, exitMspace, renderVpScale, commitViewportView } from './layouts-ui.js';
 import { ComparePanel, runCompare } from './compare.js';
 import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
 import { loadDrawingXrefs, xrefPanel } from './xref-panel.js';
@@ -201,8 +201,8 @@ class App {
     vp.requestRender(); vp.emit('view');
     return true;
   }
-  undo() { if (this.session.undo()) toast(`Undo`, 1200); }
-  redo() { if (this.session.redo()) toast(`Redo`, 1200); }
+  undo() { commitViewportView(this); if (this.session.undo()) toast(`Undo`, 1200); }
+  redo() { commitViewportView(this); if (this.session.redo()) toast(`Redo`, 1200); }
   selectAll() { this.vp.setSelection(this.doc.entities.filter((e) => this.vp.index.bboxOf(e)).map((e) => e.id)); }
   deleteSelection() { if (this.vp.selection.size) { eraseEntities(this.session, [...this.vp.selection]); } }
   copySel() { this.clip = copyToClipboard(this.doc, [...this.vp.selection]); if (this.clip.length) toast(`${this.clip.length} object(s) copied`, 1500); }
@@ -387,6 +387,7 @@ class App {
   }
   afterSave(path, format, { clean = true } = {}) {
     this.file = { path, name: path ? path.replace(/^.*[\\/]/, '') : `${baseName(this.file.name)}.${format}`, format };
+    commitViewportView(this); // a viewport view changed in MSPACE becomes its undo step before the save point
     if (clean) this.session.markSaved();
     this.updateTitle();
   }
