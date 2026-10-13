@@ -9,6 +9,7 @@ import { layIsolate, layUnisolate, layFreeze, layOn, layThaw } from '../src/core
 import { Viewport, CANVAS_BG } from './viewport.js';
 import { createDocState, findTabByPath, indexAfterClose, cycleIndex, isBlankTab } from './tabs.js';
 import { createTools, TOOL_ALIASES } from './tools.js';
+import { DWG_SAVE_PREF_KEY, DWG_SAVE_PREF_LABEL, DWG_SAVE_DISABLED_TEXT, dwgSaveAllowed, dwgOriginSaveText } from '../src/core/dwgpref.js';
 import { ViewHistory, parseZoomFactor, ZOOMFACTOR_MIN, ZOOMFACTOR_MAX } from '../src/core/cmdline.js';
 import { dimStyleManager, dimStyleNames, dimVarsOf, setCurrentDimStyle } from './tools-dims.js';
 import { blockDoubleClick } from './tools-blocks.js';
@@ -105,6 +106,7 @@ class App {
     api.settingsGet?.('canvas.background').then((v) => this.setCanvasDark(canvasDarkFrom(v))).catch(() => {});
     api.settingsGet?.('tools.collapsed').then((v) => { this.collapsed = collapsedFrom(v); applyCollapsed(document.getElementById('tools'), this.collapsed); this.fitBand(); }).catch(() => {});
     api.settingsGet?.('tools.layout').then((v) => { if (v != null) this.setToolLayout(cleanLayout(v), false); }).catch(() => {});
+    api.settingsGet?.(DWG_SAVE_PREF_KEY).then((v) => { this.allowDwgSave = dwgSaveAllowed(v); }).catch(() => {});
     api.settingsGet?.('view.zoomFactor').then((v) => { const n = parseZoomFactor(v); if (n !== null) this.setZoomFactor(n, false); }).catch(() => {});
     api.settingsGet?.('theme').then((t) => { if (t === 'dark') this.setTheme('dark', false); }).catch(() => {});
     api.version?.().then((v) => { this.version = v; this.refreshWindowTitle(); }).catch(() => {});
@@ -398,6 +400,13 @@ class App {
       }
       return this.writeDxfTo(this.file.path);
     }
+    // a drawing opened from DWG is saved as DXF: say so once per drawing (the save dialog then names the .dxf file)
+    const tab = this.active;
+    if (this.file.format === 'dwg' && tab && !tab.dwgSaveAcked) {
+      const ok = await confirmDialog('Save as DXF', dwgOriginSaveText(this.file.name), 'Save as DXF', 'Cancel', null);
+      if (ok !== 'yes') return false;
+      tab.dwgSaveAcked = true;
+    }
     return this.saveAs('dxf');
   }
   async writeDxfTo(path) {
@@ -422,8 +431,9 @@ class App {
   async saveAs(kind) {
     try {
       if (kind === 'dwg') {
+        if (!this.allowDwgSave) { await message('Save as DWG is turned off', DWG_SAVE_DISABLED_TEXT); return false; }
         const ok = await confirmDialog('Save as DWG (experimental)',
-          'DWG is written through the free LibreDWG converter. Text rotation and some hatch details can be lost, so the program re-reads the saved file and tells you if anything differs. DXF keeps everything this program supports. Save as DWG anyway?', 'Save as DWG', 'Cancel', null);
+          'DWG is written through the free LibreDWG converter. Layouts and viewports may appear empty when the file is opened in AutoCAD, and text rotation and some hatch details can be lost. The program re-reads the saved file and tells you if anything differs. DXF keeps everything this program supports. Save as DWG anyway?', 'Save as DWG', 'Cancel', null);
         if (ok !== 'yes') return false;
         const r = await saveDwg(api, this.fileDoc, {
           name: this.file.name, fromPath: this.file.path,
@@ -478,9 +488,14 @@ class App {
   async preferences() {
     const zf = el('input', { id: 'pref-zoomfactor', type: 'number', min: String(ZOOMFACTOR_MIN), max: String(ZOOMFACTOR_MAX), step: '1', value: String(this.vp.settings.zoomFactor), style: 'width:5em' });
     const zoomRow = el('p', {}, el('label', { text: `Mouse wheel zoom speed (ZOOMFACTOR, ${ZOOMFACTOR_MIN} to ${ZOOMFACTOR_MAX}): ` }), zf);
+    const dwgSave = el('input', { id: 'pref-dwg-save', type: 'checkbox' });
+    dwgSave.checked = !!this.allowDwgSave;
+    const dwgSaveRow = el('p', {}, el('label', {}, dwgSave, ` ${DWG_SAVE_PREF_LABEL}`));
+    const applyDwgSave = () => { this.allowDwgSave = dwgSave.checked; api.settingsSet?.(DWG_SAVE_PREF_KEY, this.allowDwgSave)?.catch?.(() => {}); };
     if (!api.dwgConfig) {
-      const r0 = await modal('Preferences', el('div', {}, zoomRow, el('p', { text: 'The DWG converter settings need the desktop app.' })), [{ label: 'Save', value: 'save', primary: true }, { label: 'Cancel', value: null }]);
+      const r0 = await modal('Preferences', el('div', {}, zoomRow, dwgSaveRow, el('p', { text: 'The DWG converter settings need the desktop app.' })), [{ label: 'Save', value: 'save', primary: true }, { label: 'Cancel', value: null }]);
       if (r0 !== 'save') return;
+      applyDwgSave();
       const n0 = parseZoomFactor(zf.value);
       if (n0 === null) await message('Preferences not saved', `ZOOMFACTOR must be a whole number from ${ZOOMFACTOR_MIN} to ${ZOOMFACTOR_MAX}.`); else { this.setZoomFactor(n0); toast('Preferences saved', 2000); }
       return;
@@ -492,12 +507,13 @@ class App {
     const odaPath = el('input', { id: 'pref-oda-path', type: 'text', value: cfg.odaPath, placeholder: av?.oda?.source === 'auto' ? av.oda.path : 'Detected automatically in C:\\Program Files\\ODA', style: 'width:100%' });
     const browse = el('button', { type: 'button', text: 'Browse…', onclick: async () => { const p = await api.dwgBrowseOda(); if (p) odaPath.value = p; } });
     const status = av ? `In use: ${av.available ? av.version : `none (${av.reason})`}. ODA File Converter: ${av.oda?.available ? `${av.oda.version} at ${av.oda.path}` : av.oda?.reason ?? 'not installed'}.` : '';
-    const r = await modal('Preferences', el('div', {}, zoomRow,
+    const r = await modal('Preferences', el('div', {}, zoomRow, dwgSaveRow,
       el('label', { text: 'DWG converter ' }, mode),
       el('p', {}, el('label', { text: 'ODA File Converter (ODAFileConverter.exe), leave empty to detect it: ' }), odaPath, browse),
       el('p', { id: 'pref-dwg-status', text: status })),
     [{ label: 'Save', value: 'save', primary: true }, { label: 'Cancel', value: null }]);
     if (r !== 'save') return;
+    applyDwgSave();
     const nz = parseZoomFactor(zf.value);
     if (nz !== null) this.setZoomFactor(nz); else toast(`ZOOMFACTOR not changed: it must be a whole number from ${ZOOMFACTOR_MIN} to ${ZOOMFACTOR_MAX}.`, 4000);
     try { await api.dwgSetConfig({ mode: mode.value, odaPath: odaPath.value.trim() }); toast('Preferences saved', 2000); } catch (err) { await message('Preferences not saved', String(err.message || err).replace(/^Error invoking remote method '[^']*': (\w*Error: )?/, '')); }
@@ -508,7 +524,7 @@ class App {
         'Supported objects: lines, polylines, circles, arcs, ellipses, splines, xlines and rays, text, multiline text, points, solids, 3D faces, hatches, blocks and attributes, dimensions (as drawn), leaders, multileaders, multilines, images, wipeouts and external references.',
         'Not shown: 3D solids (3DSOLID), BODY, REGION and proxy objects (ACAD_PROXY_ENTITY, for example Civil 3D objects); OLE objects are shown as a frame only. Any other object type this program does not know is skipped too. Skipped objects are reported when you open the file, and they are not written when you save.',
         'Dimensions are displayed from their stored drawing, but cannot be edited as dimensions; they can be moved, copied or exploded.',
-        'Saving as DXF is the reliable option. Saving as DWG is experimental and is checked after saving; text rotation and some hatches can be lost.',
+        'Saving as DXF is the reliable option. Saving as DWG is experimental and off by default (Edit > Preferences); layouts and viewports may appear empty in AutoCAD, and text rotation and some hatches can be lost.',
         'Fonts: text is drawn with a system font, so widths differ slightly from the original CAD fonts.',
       ].map((t) => el('li', { text: t }))));
   }
@@ -517,7 +533,7 @@ class App {
   buildMenus() {
     const vp = this.vp;
     const M = [
-      ['File', [['New', 'Ctrl+N', () => this.newDrawing()], ['Open…', 'Ctrl+O', () => this.open()], ['Recent files…', '', () => this.sessionStore.showRecent().catch((err) => message('Could not open the file', err.message || String(err)))], ['Close', 'Ctrl+W', () => this.closeTab()], '-', ['Compare…', 'COMPARE', () => this.compare()], '-', ['Save', 'Ctrl+S', () => this.save()], ['Save as DXF…', '', () => this.saveAs('dxf')], ['Save as DWG… (experimental)', '', () => this.saveAs('dwg')], '-',
+      ['File', [['New', 'Ctrl+N', () => this.newDrawing()], ['Open…', 'Ctrl+O', () => this.open()], ['Recent files…', '', () => this.sessionStore.showRecent().catch((err) => message('Could not open the file', err.message || String(err)))], ['Close', 'Ctrl+W', () => this.closeTab()], '-', ['Compare…', 'COMPARE', () => this.compare()], '-', ['Save', 'Ctrl+S', () => this.save()], ['Save as DXF…', '', () => this.saveAs('dxf')], ['Save as DWG… (experimental)', '', () => this.saveAs('dwg'), null, () => this.allowDwgSave], '-',
         ['Print…', 'Ctrl+P', () => this.print()], ['Plot to PDF…', '', () => this.exportPdf()], ['Export SVG…', '', () => this.exportSvg()], ['Export PNG image…', '', () => this.exportPng()]]],
       ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Paste', 'Ctrl+V', () => this.paste()], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()], ['Quick Select…', 'QSELECT', () => qselectDialog(this)], ['Select Similar', 'SELECTSIMILAR', () => selectSimilarCommand(this)], ['Find and replace…', 'Ctrl+F', () => this.find.open()], '-', ['Preferences…', '', () => this.preferences()]]],
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-',
@@ -545,6 +561,7 @@ class App {
       const item = (it) => {
         const chk = it[3] ? el('span', { class: 'chk' }) : null;
         const b = el('button', { role: it[3] ? 'menuitemcheckbox' : null, onclick: () => { closeMenus(); it[2](); } }, el('span', {}, chk, it[0]), el('kbd', { text: it[1] }));
+        if (it[4]) checks.push(() => { b.hidden = !it[4](); });
         if (chk) checks.push(() => { const on = !!it[3](); chk.textContent = on ? '\u2713' : ''; b.setAttribute('aria-checked', String(on)); });
         return b;
       };

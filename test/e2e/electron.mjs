@@ -161,6 +161,7 @@ try {
   setStep('save as DWG, verified by read-back');
   const dwgOut = path.join(tmp, 'out.dwg');
   await app.evaluate(({ dialog }, p) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: p }); }, dwgOut);
+  await win.evaluate(() => { window.app.allowDwgSave = true; }); // DWG save is off by default
   const done = win.evaluate(() => window.app.saveAs('dwg'));
   await win.locator('#dlg button', { hasText: 'Save as DWG' }).click();
   await win.waitForSelector('#dlg[open] h2', { timeout: 60000 });
