@@ -50,16 +50,18 @@ class Tx {
   /** define (block object) or delete (null) the block definition `name` in doc.blocks */
   block(name, blk) {
     const before = this.doc.blocks.get(name) ?? null;
-    if (blk) this.doc.blocks.set(name, blk); else this.doc.blocks.delete(name);
-    this.ops.push({ k: 'block', name, before, after: blk });
+    const idx = blk ? -1 : mapDelete(this.doc.blocks, name);
+    if (blk) this.doc.blocks.set(name, blk);
+    this.ops.push({ k: 'block', name, before, after: blk, idx });
     this.structure = true;
   }
   /** set (style object) or delete (null) the dimension style `name` in doc.dimStyles */
   dimStyle(name, style) {
     const m = (this.doc.dimStyles ??= new Map());
     const before = m.get(name) ?? null;
-    if (style) m.set(name, style); else m.delete(name);
-    this.ops.push({ k: 'dimstyle', name, before, after: style });
+    const idx = style ? -1 : mapDelete(m, name);
+    if (style) m.set(name, style);
+    this.ops.push({ k: 'dimstyle', name, before, after: style, idx });
     this.structure = true;
   }
   /** set drawing header values on `target` (the whole drawing; default the session's): units ($INSUNITS), luprec ($LUPREC) */
@@ -72,8 +74,8 @@ class Tx {
   /** set obj[key] to value, or a Map entry (value undefined deletes): named tables, entity lists of other owners */
   set(obj, key, value) {
     const before = obj instanceof Map ? obj.get(key) : obj[key];
-    putKey(obj, key, value);
-    this.ops.push({ k: 'set', obj, key, before, after: value });
+    const idx = putKey(obj, key, value);
+    this.ops.push({ k: 'set', obj, key, before, after: value, idx });
     this.structure = true;
   }
   /** reorder doc.entities (the draw order) to `list`, the same entities in a new order; undo restores the old order */
@@ -87,19 +89,40 @@ class Tx {
   layer(name, props) {
     const before = getLayer(this.doc, name);
     const snap = before ? { ...before } : null;
-    if (props === null) this.doc.layers.delete(name);
+    let idx = -1;
+    if (props === null) idx = mapDelete(this.doc.layers, name);
     else if (before) Object.assign(before, props);
     else addLayer(this.doc, { name, ...props });
     const after = getLayer(this.doc, name);
-    this.ops.push({ k: 'layer', name, before: snap, after: after ? { ...after } : null });
+    this.ops.push({ k: 'layer', name, before: snap, after: after ? { ...after } : null, idx });
     this.structure = true;
   }
 }
 
 /** overwrite arr's contents with src's (keeps the array object, which other holders reference) */
 function setList(arr, src) { arr.length = src.length; for (let i = 0; i < src.length; i++) arr[i] = src[i]; }
-function putKey(obj, key, v) {
-  if (obj instanceof Map) { if (v === undefined) obj.delete(key); else obj.set(key, v); } else if (v === undefined) delete obj[key]; else obj[key] = v;
+/** delete a Map entry; returns its position in the key order (-1 when absent) so an undo can put it back there */
+function mapDelete(m, key) {
+  if (!m.has(key)) return -1;
+  let i = 0;
+  for (const k of m.keys()) { if (k === key) break; i++; }
+  m.delete(key);
+  return i;
+}
+/** set a Map entry; a key that is absent goes back at position idx (when >= 0), keeping the other entries' order and identity */
+function mapSetAt(m, key, v, idx) {
+  if (idx < 0 || idx >= m.size || m.has(key)) { m.set(key, v); return; }
+  const rest = [...m]; m.clear();
+  rest.splice(idx, 0, [key, v]);
+  for (const [k, x] of rest) m.set(k, x);
+}
+/** returns the deleted Map entry's position (see mapDelete), else -1 */
+function putKey(obj, key, v, idx = -1) {
+  if (obj instanceof Map) {
+    if (v === undefined) return mapDelete(obj, key);
+    mapSetAt(obj, key, v, idx);
+  } else if (v === undefined) delete obj[key]; else obj[key] = v;
+  return -1;
 }
 const readHeader = (d) => ({ units: d.units ?? 0, luprec: d.header?.luprec ?? 4, ltscale: d.header?.ltscale || 1 });
 function writeHeader(d, v) {
@@ -113,11 +136,11 @@ function applyInverse(doc, op) {
     case 'add': removeEntities(doc, [op.e.id]); break;
     case 'remove': for (const it of [...op.items].sort((a, b) => a.index - b.index)) doc.entities.splice(it.index, 0, it.e); break;
     case 'replace': { const i = doc.entities.findIndex((e) => e.id === op.after.id); if (i >= 0) doc.entities[i] = op.before; break; }
-    case 'layer': if (op.before) doc.layers.set(op.name, { ...op.before }); else doc.layers.delete(op.name); break;
-    case 'dimstyle': if (op.before) doc.dimStyles.set(op.name, op.before); else doc.dimStyles.delete(op.name); break;
-    case 'block': if (op.before) doc.blocks.set(op.name, op.before); else doc.blocks.delete(op.name); break;
+    case 'layer': if (op.before) mapSetAt(doc.layers, op.name, { ...op.before }, op.idx ?? -1); else doc.layers.delete(op.name); break;
+    case 'dimstyle': if (op.before) mapSetAt(doc.dimStyles, op.name, op.before, op.idx ?? -1); else doc.dimStyles.delete(op.name); break;
+    case 'block': if (op.before) mapSetAt(doc.blocks, op.name, op.before, op.idx ?? -1); else doc.blocks.delete(op.name); break;
     case 'header': writeHeader(op.target, op.before); break;
-    case 'set': putKey(op.obj, op.key, op.before); break;
+    case 'set': putKey(op.obj, op.key, op.before, op.idx ?? -1); break;
     case 'order': setList(doc.entities, op.before); break;
     default: break;
   }
