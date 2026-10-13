@@ -24,6 +24,8 @@ import { iconSvg } from './icons.js';
 import { defaultLayout, cleanLayout, panelGroups, samePanel, quickRow, setQuickRow, compactKeys, foldMode, SEP } from './tool-layout.js';
 import { openCustomize, initToolContextMenu } from './tool-custom.js';
 import { loadDrawingImages } from './images.js';
+import { CommandHistory } from '../src/core/cmdhist.js';
+import { CmdHistView } from './cmdhist-view.js';
 import { qselectDialog, selectSimilarCommand, purgeDialog } from './selclean.js';
 import { el, message, modal, confirmDialog, textDialog, listDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
 import {
@@ -51,12 +53,21 @@ class App {
     this.bindDrop();
     this.find = new FindPanel(this);
     initLayouts(this);
+    this.history = new CommandHistory(); // one per window, shared by all tabs
+    this.histView = new CmdHistView(this.history);
     this.comparePanel = new ComparePanel(this);
     this.markupPanel = new MarkupPanel(this);
     this.cmd = document.getElementById('cmd');
     this.cmd.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); const v = this.cmd.value; this.cmd.value = ''; this.vp.canvas.focus(); this.submit(v); }
+      else if (e.key === 'Escape' && this.histView.open) { e.preventDefault(); this.toggleHistory(false); }
       else if (e.key === 'Escape') { this.cmd.value = ''; this.cmd.blur(); this.vp.canvas.focus(); this.tool?.key({ key: 'Escape' }); }
+      else if (e.key === 'F2') { e.preventDefault(); this.toggleHistory(); }
+      else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && (!this.cmd.value || this.cmd.value === this.history.recalled)) { // AutoCAD: recall earlier inputs
+        e.preventDefault();
+        const v = e.key === 'ArrowUp' ? this.history.older() : this.history.newer();
+        if (v != null) { this.cmd.value = v; this.cmd.setSelectionRange(v.length, v.length); }
+      }
       else if (e.key === ' ' && !this.cmd.value.trim() && this.tool?.key?.({ key: ' ' })) { e.preventDefault(); this.cmd.value = ''; this.refreshPrompt(); } // Space = Enter (grip modes)
       e.stopPropagation();
     });
@@ -108,6 +119,10 @@ class App {
   askText(o) { return textDialog(o); }
   listDialog(text) { return listDialog(text); }
   refreshPrompt() { document.getElementById('prompt').textContent = this.tool?.prompt ?? ''; }
+  /** add a message to the command history (ID result, LIST, errors) */
+  log(text) { this.history.message(text); this.histView.update(); }
+  /** F2 / View > Command history: expand or collapse the history (closing gives the keyboard back to the canvas) */
+  toggleHistory(on) { this.histView.toggle(on); if (!this.histView.open) this.vp.canvas.focus(); }
   refreshPanels(selectionOnly = false) {
     if (!selectionOnly) renderLayers(this);
     renderProperties(this);
@@ -132,6 +147,8 @@ class App {
   submit(raw) {
     const s = raw.trim();
     const t = this.tool;
+    this.history.input(this.toolId === 'select' && !t.hot ? '' : t.prompt, s); // idle select shows as "Command:"
+    this.histView.update();
     if (!s) { // Enter: finish the tool, or repeat the last command from idle
       if (this.pendingEnter && this.toolId === 'select') { this.pendingEnter(); this.refreshPrompt(); return; } // select, then Enter (SELECTSIMILAR)
       if (this.toolId === 'select' && !t.hot) this.setTool(this.lastTool); else t.key({ key: 'Enter' });
@@ -147,6 +164,7 @@ class App {
     const pt = parseCoordinate(s, last, dir);
     if (pt && Number.isFinite(pt.x) && (this.toolId !== 'select' || t.hot)) { this.vp.cursor = { x: pt.x, y: pt.y }; t.click({ x: pt.x, y: pt.y }); this.refreshPrompt(); this.vp.requestRender(); return; }
     toast(`Unknown command "${s}".`);
+    this.log(`Unknown command "${s}".`);
   }
 
   /** PR / LA: show the side panel (Quick Access 'layers' toggles it) and bring Properties or Layers into view; RE: rebuild the scene */
@@ -456,6 +474,7 @@ class App {
         ['Print…', 'Ctrl+P', () => this.print()], ['Plot to PDF…', '', () => this.exportPdf()], ['Export SVG…', '', () => this.exportSvg()], ['Export PNG image…', '', () => this.exportPng()]]],
       ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Paste', 'Ctrl+V', () => this.paste()], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()], ['Quick Select…', 'QSELECT', () => qselectDialog(this)], ['Select Similar', 'SELECTSIMILAR', () => selectSimilarCommand(this)], ['Find and replace…', 'Ctrl+F', () => this.find.open()], '-', ['Preferences…', '', () => this.preferences()]]],
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-',
+        ['Command history', 'F2', () => this.toggleHistory(), () => this.histView.open], '-',
         ['Show lineweights', 'F9', () => this.toggle('lineweights')], ['Model space background: dark', '', () => this.toggle('dark'), () => this.vp.settings.dark], '-',
         ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark'],
         ...PLACEMENTS.map((p) => [`Tool panel: ${p[0].toUpperCase()}${p.slice(1)}`, '', () => this.setToolPlacement(p), () => this.toolPlacement === p]),
@@ -677,10 +696,12 @@ class App {
         if (map[k]) { e.preventDefault(); map[k](); }
         return;
       }
+      if (e.key === 'F2') { e.preventDefault(); this.toggleHistory(); return; }
       if (e.key === 'F3') { e.preventDefault(); this.toggle('snap'); return; }
       if (e.key === 'F8') { e.preventDefault(); this.toggle('ortho'); return; }
       if (e.key === 'F9') { e.preventDefault(); this.toggle('lineweights'); return; }
       if (e.key === 'F10') { e.preventDefault(); this.toggle('polar'); return; }
+      if (e.key === 'Escape' && this.histView.open) { e.preventDefault(); this.toggleHistory(false); return; }
       if (typing) return;
       if (e.key === 'Escape') { e.preventDefault(); this.tool.key(e) || this.tool.cancel(); this.refreshPrompt(); return; }
       if (e.key === 'Enter') { e.preventDefault(); this.submit(''); return; }

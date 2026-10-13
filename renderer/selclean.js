@@ -36,7 +36,7 @@ export async function qselectDialog(app) {
   if (!ok) return null;
   const ids = quickSelect(ents, selIds, { applyTo: apply.value, type: type.value, prop: prop.value, op: op.value, value: valWrap.firstChild.value, exclude: exc.checked, append: append.checked });
   app.vp.setSelection(ids);
-  toast(`${ids.length} objects selected`, 2500);
+  toast(`${ids.length} objects selected`, 2500); app.log?.(`${ids.length} objects selected`);
   return ids;
 }
 
@@ -45,7 +45,7 @@ export function selectSimilarCommand(app) {
   const run = () => {
     const ids = selectSimilar(app.doc.entities, [...app.vp.selection]);
     app.vp.setSelection(ids);
-    toast(`${ids.length} objects selected`, 2500);
+    toast(`${ids.length} objects selected`, 2500); app.log?.(`${ids.length} objects selected`);
   };
   if (app.vp.selection.size) { run(); return; }
   app.pendingEnter = () => { app.pendingEnter = null; if (app.vp.selection.size) run(); };
