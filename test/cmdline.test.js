@@ -34,9 +34,12 @@ test('parseZoomInput: options and nX / nXP', () => {
   assert.deepEqual(parseZoomInput('E'), { opt: 'extents' });
   assert.deepEqual(parseZoomInput('all'), { opt: 'all' });
   assert.deepEqual(parseZoomInput('p'), { opt: 'previous' });
-  assert.deepEqual(parseZoomInput('2x'), { scale: 2, paper: false });
-  assert.deepEqual(parseZoomInput('0,5X'), { scale: 0.5, paper: false });
-  assert.deepEqual(parseZoomInput('2xp'), { scale: 2, paper: true });
+  assert.deepEqual(parseZoomInput('2x'), { scale: 2 });
+  assert.deepEqual(parseZoomInput('0,5X'), { scale: 0.5 });
+  assert.deepEqual(parseZoomInput('2xp'), { mode: 'xp', k: 2 });
+  assert.deepEqual(parseZoomInput('1/50xp'), { mode: 'xp', k: 1 / 50 });
+  assert.deepEqual(parseZoomInput('0.02XP'), { mode: 'xp', k: 0.02 });
+  assert.equal(parseZoomInput('1/0xp'), null);
   assert.equal(parseZoomInput('2'), null);
   assert.equal(parseZoomInput('0x'), null);
 });
