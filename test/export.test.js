@@ -4,11 +4,12 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, PDFArray, decodePDFRawStream } from 'pdf-lib';
 import { createCanvas, loadImage, Path2D } from '@napi-rs/canvas';
 import { fixture } from './helpers.js';
 import { readDxf } from '../src/core/dxfRead.js';
-import { newDocument, addEntity, makeLine, makeCircle, makeArc, makeText } from '../src/core/model.js';
+import { newLayout } from '../src/core/layouts.js';
+import { newDocument, addEntity, makeXline, makeLine, makeCircle, makeArc, makeText } from '../src/core/model.js';
 import { exportSvg } from '../src/core/exportSvg.js';
 import { exportPdf, plotLayout, plotScale } from '../src/core/exportPdf.js';
 
@@ -155,4 +156,19 @@ test('PDF: only what lies inside the plot window is drawn', { skip: !existsSync(
   };
   assert.equal(await inkCols({ minx: 0, miny: -50, maxx: 100, maxy: 50 }, 'win'), 0);
   assert.ok(await inkCols(null, 'ext') > 0, 'extents plot draws to the right');
+});
+
+test('layout PDF: an XLINE through a 1:100 viewport is plotted across the whole viewport window', async () => {
+  const doc = newDocument();
+  addEntity(doc, makeXline('XLINE', { x: 0, y: 0 }, { x: 1, y: 1 }));
+  const lay = newLayout('Layout1', 1);
+  lay.entities.push({ type: 'VIEWPORT', id: 99, layer: '0', color: 256, vpId: 2, on: true, c: { x: 200, y: 150 }, width: 200, height: 100, viewCenter: { x: 0, y: 0 }, viewHeight: 10000, twist: 0 });
+  doc.layouts = [lay];
+  const pdf = await PDFDocument.load((await exportPdf(doc, { layout: lay })).bytes), c = pdf.getPage(0).node.Contents();
+  const streams = c instanceof PDFArray ? c.asArray().map((r) => pdf.context.lookup(r)) : [c];
+  const text = streams.map((st) => new TextDecoder().decode(decodePDFRawStream(st).decode())).join('\n');
+  const segs = [...text.matchAll(/([-\d.]+) ([-\d.]+) m\s+([-\d.]+) ([-\d.]+) l/g)].map((m) => Math.hypot(m[3] - m[1], m[4] - m[2]));
+  // window = the viewport diagonal 223.6 mm; the 45 degree line crosses its square bounding box corner to corner: 223.6 * sqrt(2) mm
+  const want = Math.hypot(200, 100) * Math.SQRT2 * 72 / 25.4;
+  assert.ok(segs.some((l) => Math.abs(l - want) < 0.5), `no segment of ${want.toFixed(1)} pt in ${segs.map((l) => l.toFixed(1))}`);
 });

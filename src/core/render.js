@@ -178,7 +178,7 @@ class Builder {
     const P = (p) => (m ? apply(m, p) : p);
     const s = m ? matScale(m) : 1, flip = m ? m[0] * m[3] - m[1] * m[2] < 0 : false, ang = m ? Math.atan2(m[1], m[0]) : 0;
     const ops = [];
-    let bbox = null;
+    let bbox = null; // reset per segment, so each item is culled by its own box
     const grow = (x, y) => { bbox = growBox(bbox, { x, y }); };
     const M = (p) => { ops.push(OP_M, p.x, p.y); grow(p.x, p.y); };
     const L = (p) => { ops.push(OP_L, p.x, p.y); grow(p.x, p.y); };
@@ -193,8 +193,9 @@ class Builder {
     const v = e.vertices, hw = e.width / 2, n = e.closed ? v.length : v.length - 1;
     for (let i = 0; i < n; i++) {
       const p1 = v[i], p2 = v[(i + 1) % v.length];
+      bbox = null;
       if (p1.bulge && Math.abs(p1.bulge) > 1e-12) {
-        const a = bulgeToArc(p1, p2, p1.bulge), ro = a.r + hw, ri = Math.max(0, a.r - hw);
+        const a = bulgeToArc(p1, p2, p1.bulge), ro = a.r + hw, ri = Math.max(0, a.r - hw); // hw > r: AutoCAD folds the inner edge through the centre; this draws a wedge instead
         const [co, rO, a0, sw] = mapArc(a.c, ro, a.a0, a.sweep), [, rI] = mapArc(a.c, ri, a.a0, a.sweep);
         M({ x: co.x + rO * Math.cos(a0), y: co.y + rO * Math.sin(a0) }); arcOp(co, rO, a0, sw);
         L({ x: co.x + rI * Math.cos(a0 + sw), y: co.y + rI * Math.sin(a0 + sw) }); arcOp(co, rI, a0 + sw, -sw);
