@@ -16,6 +16,7 @@ Built with Electron by ASH Technical & Project Management Services (ASH PMCS).
   ortho and polar tracking, and an AutoCAD-style command line (`L`, `PL`, `C`, `M`, `CO`, `RO`, `TR` ... and typed
   coordinates such as `10,20`, `@5,0`, `@10<45`).
 - **Layers and properties** panels, including layer on/off and lock, colour, linetype and lineweight; measure tool.
+- **Select and clean up**: QSELECT (Quick Select by object type, property, operator and value), SELECTSIMILAR (same type and layer), PURGE (unused blocks, layers, linetypes, text and dimension styles, with nested items and zero-length geometry; one undo step).
 - **Save and convert**: DXF (R2000, lossless for everything the program supports), DWG (experimental, verified after saving),
   and export to PDF (vector), SVG and PNG.
 
