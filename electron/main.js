@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createDwgBridge, DWG_OUT_VERSIONS } from './dwgBridge.js';
 import { createHandoffStore } from './handoff.js';
 import { createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isOdaExeName, ODA_DOWNLOAD_URL } from './odaConverter.js';
+import { saveDialogDefault } from './savePath.js';
 import { cleanSession, isPathString, pushRecent, startupModeOf } from './sessionLists.js';
 import { xrefCandidates } from '../src/core/xref.js';
 
@@ -296,10 +297,10 @@ function registerIpc() {
   handle('dialog:save', async (opts) => {
     const o = plainObject(opts);
     const bytes = asBytes(o.bytes);
-    if (o.defaultPath != null && (typeof o.defaultPath !== 'string' || o.defaultPath.length > 255)) throw new TypeError('invalid defaultPath');
-    // Only the file name is honoured; the folder is the user's Documents folder.
-    const name = o.defaultPath ? path.basename(o.defaultPath) : 'drawing.dxf';
-    const r = await dialog.showSaveDialog(win, { defaultPath: path.join(app.getPath('documents'), name), filters: asFilters(o.filters) });
+    if (o.defaultPath != null && (typeof o.defaultPath !== 'string' || o.defaultPath.length > 1024)) throw new TypeError('invalid defaultPath');
+    // The dialog opens in the drawing's folder when defaultPath carries an existing one, else in Documents.
+    const isDir = (d) => { try { return statSync(d).isDirectory(); } catch { return false; } };
+    const r = await dialog.showSaveDialog(win, { defaultPath: saveDialogDefault(o.defaultPath, { documents: app.getPath('documents'), isDir }), filters: asFilters(o.filters) });
     if (r.canceled || !r.filePath) return null;
     await atomicWrite(r.filePath, bytes);
     return { path: grant(r.filePath) };

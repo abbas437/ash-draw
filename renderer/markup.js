@@ -5,6 +5,7 @@
 import { addMarkup, listMarkups, setMarkupStatus, deleteMarkup, setMarkupsVisible, markupsCsv, MARKUP_LAYER } from '../src/core/markup.js';
 import { dist } from '../src/core/geom.js';
 import { el, toast, promptDialog } from './ui.js';
+import { savePathIn } from './files.js';
 
 export const DEFAULT_AUTHOR = 'ASH user';
 const PREVIEW = '#e02020';
@@ -104,7 +105,7 @@ export class MarkupPanel {
     const all = listMarkups(this.app.doc);
     if (!all.length) { toast('This drawing has no markups.'); return; }
     const name = String(this.app.file?.name ?? 'drawing').replace(/\.[^.]*$/, '');
-    await window.api.saveFile({ defaultPath: `${name}-markups.csv`, filters: [{ name: 'CSV', extensions: ['csv'] }], bytes: new TextEncoder().encode(markupsCsv(all)) });
+    await window.api.saveFile({ defaultPath: savePathIn(this.app.file?.path, `${name}-markups.csv`), filters: [{ name: 'CSV', extensions: ['csv'] }], bytes: new TextEncoder().encode(markupsCsv(all)) });
   }
   render() {
     const doc = this.app.doc;
