@@ -67,3 +67,20 @@ print(json.dumps(out))`, file], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(JSON.parse(r.stdout), ['Layout1', 'Layout2'].map((n) => ({ name: n, texts: [`TITLE ${n}`], vps: [[300, 100, 5000, ['HIDE']]] })));
 });
+
+test('write: plot window, paper image origin, style table and layout flags survive; UCS axes are unit; paper viewport first', () => {
+  const doc = readDxf(source());
+  const lo = doc.layouts[0];
+  Object.assign(lo.plot, { window: { x1: -517.38, y1: -299.94, x2: 671.62, y2: 541.06 }, imageOrigin: { x: 517.38, y: 299.94 }, styleSheet: 'acad n.ctb', stdScale: 0 });
+  lo.layoutFlags = 0;
+  // the paper viewport listed after the model viewport (as LibreDWG converts some drawings)
+  const vps = lo.entities.filter((e) => e.type === 'VIEWPORT');
+  lo.entities = [...lo.entities.filter((e) => e.type !== 'VIEWPORT'), ...vps.filter((v) => !v.paper), ...vps.filter((v) => v.paper)];
+  const text = writeDxf(doc), back = parseDxf(text).layouts[0];
+  assert.deepEqual(back.plot.window, lo.plot.window);
+  assert.deepEqual(back.plot.imageOrigin, lo.plot.imageOrigin);
+  assert.equal(back.plot.styleSheet, 'acad n.ctb'); assert.equal(back.plot.stdScale, 0); assert.equal(back.layoutFlags, 0);
+  assert.ok(back.entities.find((e) => e.type === 'VIEWPORT').paper, 'the paper viewport is the first viewport written');
+  const lines = text.split(/\r?\n/).map((s) => s.trim()), hv = (name) => { const i = lines.indexOf(name); return [lines[i + 2], lines[i + 4], lines[i + 6]].map(Number); };
+  for (const p of ['', 'P']) { assert.deepEqual(hv(`$${p}UCSXDIR`), [1, 0, 0]); assert.deepEqual(hv(`$${p}UCSYDIR`), [0, 1, 0]); }
+});

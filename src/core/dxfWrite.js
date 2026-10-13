@@ -16,7 +16,7 @@ const num = (n) => {
 };
 import { dimStyleTags } from './dimsStyle.js';
 import { decodeColor } from './aci.js';
-import { dimensionTags, arrowEntities } from './dims.js';
+import { dimensionTags, arrowEntities, r2000DimensionTags } from './dims.js';
 import { mleaderTags, mleaderStyleTags, mleaderParts } from './mleader.js';
 import { viewportTags } from './layouts.js';
 import { imageTags, imageDefTags } from './image.js';
@@ -308,7 +308,7 @@ export function writeDxf(doc, opts = {}) {
         if (dimName === 'LARGE_RADIAL_DIMENSION' && !asGeometry) hasJoggedDims = true;
         if (e.raw && e.raw.length && !asGeometry) {
           head(o, e, dimName, owner);
-          for (const [c, v] of e.raw) o.p(c, v);
+          for (const [c, v] of r2000DimensionTags(e.raw, e.def)) o.p(c, v);
           return true;
         }
         if (e.def && !asGeometry) {
@@ -411,8 +411,10 @@ export function writeDxf(doc, opts = {}) {
   }
   for (const e of doc.entities) if (writeEntity(entOut, e, hModelRec)) report.entities++;
   // paper space: the first layout is the active one (*Paper_Space, entities in ENTITIES), the others own *Paper_SpaceN
-  // blocks. Viewports go last in each list.
-  const paperOrder = (list) => [...list.filter((e) => e.type !== 'VIEWPORT'), ...list.filter((e) => e.type === 'VIEWPORT')];
+  // blocks. Model viewports go last in each list.
+  // The overall (paper) viewport goes first: AutoCAD takes the first viewport of a layout as its paper view.
+  const paperOrder = (list) => [...list.filter((e) => e.type === 'VIEWPORT' && e.paper), ...list.filter((e) => e.type !== 'VIEWPORT'),
+    ...list.filter((e) => e.type === 'VIEWPORT' && !e.paper)];
   const paperLayouts = (doc.layouts?.length ? doc.layouts : [{ name: 'Layout1', tab: 1, entities: [], plot: null }]).map((lo, i) => ({
     lo, name: i === 0 ? '*Paper_Space' : `*Paper_Space${i - 1}`, rec: i === 0 ? hPaperRec : H(), layoutH: i === 0 ? hPaperLayout : H(),
   }));
@@ -447,6 +449,10 @@ export function writeDxf(doc, opts = {}) {
   out.p(9, '$AUNITS'); out.p(70, 0);
   out.p(9, '$AUPREC'); out.p(70, 2);
   out.p(9, '$INSUNITS'); out.p(70, doc.units || 0);
+  // UCS axes: a zero axis makes AutoCAD report "Non-unitary UCS ... normalizing" on a DWG made from this file
+  for (const pre of ['', 'P']) {
+    out.p(9, `$${pre}UCSORG`); out.pt(10, 0, 0, 0); out.p(9, `$${pre}UCSXDIR`); out.pt(10, 1, 0, 0); out.p(9, `$${pre}UCSYDIR`); out.pt(10, 0, 1, 0);
+  }
   out.p(9, '$HANDSEED'); out.p(5, '__HANDSEED__');
   out.p(0, 'ENDSEC');
 
@@ -617,10 +623,11 @@ export function writeDxf(doc, opts = {}) {
     const p = lo?.plot, m = p?.margins ?? { l: 7.5, b: 20, r: 7.5, t: 20 };
     out.p(0, 'LAYOUT'); out.p(5, h); out.p(330, hLayoutDict); out.p(100, 'AcDbPlotSettings');
     out.s(1, p?.pageName ?? ''); if (p?.printer) out.s(2, p.printer); out.s(4, p?.paperName || 'A3'); out.p(6, ''); out.p(40, m.l); out.p(41, m.b); out.p(42, m.r); out.p(43, m.t); out.p(44, p?.paperW || 420); out.p(45, p?.paperH || 297);
-    out.p(46, p?.origin.x ?? 0); out.p(47, p?.origin.y ?? 0); out.p(48, 0); out.p(49, 0); out.p(140, 0); out.p(141, 0); out.p(142, p?.scaleNum || 1); out.p(143, p?.scaleDen || 1);
-    out.p(70, isModel ? 1024 : (p?.flags ?? 0)); out.p(72, p?.units ?? 1); out.p(73, p?.rotation ?? 0); out.p(74, p?.plotType ?? 5); out.p(7, ''); out.p(75, 16); out.p(76, 0); out.p(77, 2); out.p(78, 300);
-    out.p(147, (p?.scaleNum || 1) / (p?.scaleDen || 1)); out.p(148, 0); out.p(149, 0);
-    out.p(100, 'AcDbLayout'); out.s(1, name); out.p(70, 1); out.p(71, tab);
+    const w = p?.window ?? { x1: 0, y1: 0, x2: 0, y2: 0 }, io = p?.imageOrigin ?? { x: 0, y: 0 };
+    out.p(46, p?.origin.x ?? 0); out.p(47, p?.origin.y ?? 0); out.p(48, w.x1); out.p(49, w.y1); out.p(140, w.x2); out.p(141, w.y2); out.p(142, p?.scaleNum || 1); out.p(143, p?.scaleDen || 1);
+    out.p(70, isModel ? 1024 : (p?.flags ?? 0)); out.p(72, p?.units ?? 1); out.p(73, p?.rotation ?? 0); out.p(74, p?.plotType ?? 5); out.s(7, p?.styleSheet ?? ''); out.p(75, p?.stdScale ?? 16); out.p(76, 0); out.p(77, 2); out.p(78, 300);
+    out.p(147, (p?.scaleNum || 1) / (p?.scaleDen || 1)); out.p(148, io.x); out.p(149, io.y);
+    out.p(100, 'AcDbLayout'); out.s(1, name); out.p(70, lo?.layoutFlags ?? 1); out.p(71, tab);
     out.pt(10, lo?.limMin.x ?? 0, lo?.limMin.y ?? 0, 0, false); out.pt(11, lo?.limMax.x ?? 420, lo?.limMax.y ?? 297, 0, false); out.pt(12, 0, 0, 0); out.pt(14, 1e20, 1e20, 1e20); out.pt(15, -1e20, -1e20, -1e20);
     out.p(146, 0); out.pt(13, 0, 0, 0); out.pt(16, 1, 0, 0); out.pt(17, 0, 1, 0); out.p(76, 1); out.p(330, ownerRec);
   };

@@ -4,7 +4,7 @@
 //   block: '*Paper_Space' for the active layout (its entities live in ENTITIES with 67=1),
 //          '*Paper_Space0..n' for the others (entities live in those blocks).
 //   plot:  { pageName, printer, paperName, margins:{l,b,r,t}, paperW, paperH, origin:{x,y}, scaleNum, scaleDen,
-//            units (0 in, 1 mm, 2 px), rotation (0..3), plotType (74), flags (70) }
+//            units (0 in, 1 mm, 2 px), rotation (0..3), plotType (74), flags (70), window, imageOrigin, styleSheet, stdScale }
 //   entities: paper-space entities, including { type:'VIEWPORT', ... } (see readViewport).
 
 const VP_LOCKED = 16384, VP_OFF = 131072, VP_CLIP = 65536;
@@ -42,7 +42,12 @@ export function parseLayoutObject(tags) {
       scaleNum: f(ps, 142, 1), scaleDen: f(ps, 143, 1),
       units: parseInt(first(ps, 72, '1'), 10) || 0, rotation: parseInt(first(ps, 73, '0'), 10) || 0,
       plotType: parseInt(first(ps, 74, '5'), 10) || 0, flags: parseInt(first(ps, 70, '0'), 10) || 0,
+      // kept so a saved layout plots and sits on its paper as before: plot window (48/49 140/141), paper image origin
+      // (148/149: where the paper lies in layout units), plot style table, standard scale type
+      window: { x1: f(ps, 48), y1: f(ps, 49), x2: f(ps, 140), y2: f(ps, 141) }, imageOrigin: { x: f(ps, 148), y: f(ps, 149) },
+      styleSheet: first(ps, 7, ''), stdScale: parseInt(first(ps, 75, '16'), 10) || 0,
     },
+    layoutFlags: parseInt(first(ly, 70, '1'), 10) || 0,
   };
 }
 
