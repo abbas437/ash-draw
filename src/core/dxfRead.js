@@ -16,7 +16,7 @@ import {
 } from './model.js';
 import { transformEntity, applyVec, apply, det, matScale } from './geom.js';
 import { dimStyleFromTags } from './dimsStyle.js';
-import { decodeColor } from './aci.js';
+import { decodeColor, aciToRgb } from './aci.js';
 import { dimDefFromTags } from './dims.js';
 import { mtextPlain } from './mtext.js';
 import { mleaderFromTags, mleaderStyleFromTags } from './mleader.js';
@@ -249,8 +249,19 @@ function normLt(name) {
   return u === 'BYLAYER' || u === 'BYBLOCK' ? u : name;
 }
 
+/** LibreDWG (DWG -> DXF) writes an entity's transparency word as its 420 true colour when the DWG colour carries a
+ *  transparency (flags 0xA0): 420 is then 0..255 (only "blue", the alpha byte) beside a 62 index that is not a blue
+ *  at all (client asphalt hatch: 62 = 9 grey, 420 = 255). AutoCAD writes 62 as the nearest index to 420, so such a
+ *  pair cannot come from it: the index is the colour. */
+function bogusTrueColor(rec) {
+  const v = rec.int(420), idx = Math.abs(rec.int(62, 0));
+  if (!(v >= 0 && v <= 255) || !(idx >= 1 && idx <= 255)) return false;
+  const [r, g] = aciToRgb(idx);
+  return r > 48 || g > 48;
+}
+
 function readColor(rec) {
-  if (rec.has(420)) return trueColor(rec.int(420));
+  if (rec.has(420) && !bogusTrueColor(rec)) return trueColor(rec.int(420));
   if (rec.has(62)) { const c = decodeColor(rec.int(62)); return c === undefined ? BYLAYER : typeof c === 'number' ? Math.abs(c) : c; }
   return BYLAYER;
 }
@@ -553,7 +564,9 @@ function buildHatch(rec, o, doc) {
           for (let q = 0; q < nc; q++) {
             const x = nextNum(10), y = nextNum(20);
             ctrl.push({ x, y });
-            if (rational) weights.push(nextNum(42, 1)); else if (i < end && codes[i] === 42) { weights.push(f(i)); i++; }
+            // a weight follows its control point as 42 (DXF spec) or 40 (LibreDWG's DWG -> DXF); read either, so the
+            // next control point is not shifted onto the weight (which turned the rest of the loop into (0,0) points)
+            if (i < end && (codes[i] === 42 || (rational && codes[i] === 40))) { weights.push(f(i)); i++; } else if (rational) weights.push(1);
           }
           const nf = nextNum(97);
           const fit = [];

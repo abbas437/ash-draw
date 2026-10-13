@@ -26,6 +26,7 @@ export function mleaderFromTags(tags, style = null) {
   };
   let ctx = false, leader = null, line = null, cur = null, hasText = false;
   const own = new Set(); // context values present (already scaled)
+  let overrides = null;
   for (const [c, v] of tags) {
     if (c === 300 && v.startsWith('CONTEXT_DATA')) { ctx = true; continue; }
     if (c === 301) { ctx = false; continue; }
@@ -58,10 +59,14 @@ export function mleaderFromTags(tags, style = null) {
       }
       continue;
     }
-    if (c === 290) e.landing = f !== 0;
+    if (c === 90) overrides = parseInt(v, 10) >>> 0; // property override flags: which entity values replace the style's
+    else if (c === 290) e.landing = f !== 0;
     else if (c === 291) e.dogleg = f !== 0;
     else if (c === 42) { if (!e.arrowSize) e.arrowSize = f; }
   }
+  // arrowhead size not overridden (flag bit 9): AutoCAD draws the style's size, whatever the context holds (a client
+  // drawing has 400 there beside a 0.18 style size, and its arrows are tiny)
+  if (overrides !== null && !(overrides & 0x200) && style?.arrowSize != null) { e.arrowSize = style.arrowSize; own.delete(140); }
   // style defaults (no context value) are unscaled sizes
   if (!own.has(41)) e.textHeight *= e.scale;
   if (!own.has(140)) e.arrowSize *= e.scale;
@@ -86,6 +91,9 @@ export function mleaderParts(e) {
       out.push({ id: 0, type: 'LWPOLYLINE', ...o, vertices: pts.map((p) => ({ x: p.x, y: p.y, bulge: 0 })), closed: false });
       if (e.arrow === false || !(sz > 0)) continue;
       const tip = pts[0], nx = pts[1];
+      // an arrowhead longer than the leader segment it sits on is not drawn (AutoCAD leaves it out; a client drawing
+      // has 400-unit arrows on 20-unit leaders, which would otherwise cover the sheet in triangles)
+      if (!(Math.hypot(nx.x - tip.x, nx.y - tip.y) >= sz)) continue;
       const d = Math.hypot(nx.x - tip.x, nx.y - tip.y) || 1, ux = (nx.x - tip.x) / d, uy = (nx.y - tip.y) / d, w = sz / 6;
       const b = { x: tip.x + ux * sz, y: tip.y + uy * sz };
       const p1 = { x: b.x - uy * w, y: b.y + ux * w }, p2 = { x: b.x + uy * w, y: b.y - ux * w };
@@ -145,7 +153,7 @@ export function mleaderTags(e, h, encode) {
     p(271, 0); p(303, '}');
   });
   p(301, '}');
-  p(340, h.style); p(90, 0); p(170, 1); p(91, BYBLOCK); p(171, -2); p(290, 1); p(291, e.dogleg === false ? 0 : 1);
+  p(340, h.style); p(90, 0x200); // arrowhead size overridden: the entity's own size (42) is the one drawn p(170, 1); p(91, BYBLOCK); p(171, -2); p(290, 1); p(291, e.dogleg === false ? 0 : 1);
   p(41, e.leaders[0]?.doglegLen ?? 8); p(42, e.arrowSize); p(172, e.text ? 2 : 0); p(343, h.textStyle);
   p(173, 1); p(95, 1); p(174, 1); p(175, 0); p(92, BYBLOCK); p(292, 0); p(93, BYBLOCK); p(10, 1); p(20, 1); p(30, 1); p(43, 0); p(176, 0);
   p(293, 0); p(294, 0); p(178, 0); p(179, 1); p(45, 1); p(271, 0); p(272, 9); p(273, 9);
