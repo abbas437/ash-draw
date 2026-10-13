@@ -303,6 +303,83 @@ export function breakAtPoint(e, p) {
   return breakAt(e, p);
 }
 
+// ---- Edit vertex ----------------------------------------------------------------------------------
+// PEDIT Edit vertex. `i`, `j` are vertex indices. Every edit drops a Fit / Spline frame (the curve is no longer the
+// one made from it). Segment k runs from vertex k to vertex k+1 (to vertex 0 for the closing segment).
+function vedit(e) {
+  needPoly(e);
+  const c = clone(e);
+  delete c.frame; delete c.frameKind; delete c.frameSegs;
+  return c;
+}
+function needIndex(e, ...ix) {
+  for (const i of ix) if (!(Number.isInteger(i) && i >= 0 && i < e.vertices.length)) throw fail('GEOMETRY', `no vertex ${i}`);
+}
+/** an end vertex of an open polyline: no segment starts there, so no bulge and no widths */
+const endVertex = ({ sw, ew, ...v }) => ({ ...v, bulge: 0 });
+
+/** Insert: a new vertex at `p` after vertex `i`; the segment it splits becomes two straight ones (as AutoCAD). The
+ *  new vertex carries vertex i's segment widths, so both halves keep them. */
+export function insertVertex(e, i, p) {
+  needIndex(e, i);
+  const c = vedit(e), v = c.vertices[i];
+  const nv = { x: p.x, y: p.y, bulge: 0, ...(v.sw !== undefined && { sw: v.sw }), ...(v.ew !== undefined && { ew: v.ew }) };
+  v.bulge = 0;
+  c.vertices.splice(i + 1, 0, nv);
+  return changed(c);
+}
+
+/** Move: vertex `i` to `p` (the bulges stay, so arc segments keep their included angle). */
+export function moveVertex(e, i, p) {
+  needIndex(e, i);
+  const c = vedit(e);
+  Object.assign(c.vertices[i], { x: p.x, y: p.y });
+  return changed(c);
+}
+
+/** Break: the segments between vertices i and j (in vertex order) are removed. Open: up to two polylines remain (the
+ *  first keeps the id; a piece of one vertex is dropped, so a break at an end shortens it). Closed: it opens, starting
+ *  at the later vertex. i === j: an open polyline is split there; a closed one is opened there. */
+export function breakBetween(e, i, j) {
+  needIndex(e, i, j);
+  const a = Math.min(i, j), b = Math.max(i, j), c = vedit(e), v = c.vertices, n = v.length;
+  if (c.closed) {
+    const ring = a === b ? [...v.slice(a), ...v.slice(0, a + 1)] : [...v.slice(b), ...v.slice(0, a + 1)];
+    const last = ring.length - 1;
+    ring[last] = endVertex(ring[last]);
+    return changed({ ...c, closed: false, vertices: structuredClone(ring) });
+  }
+  const first = v.slice(0, a + 1), second = v.slice(b);
+  if (first.length < 2 && second.length < 2) throw fail('GEOMETRY', 'cannot break off the whole polyline');
+  if (a === b && (first.length < 2 || second.length < 2)) throw fail('GEOMETRY', 'cannot break a polyline at its end');
+  first[first.length - 1] = endVertex(first[first.length - 1]);
+  const pieces = [first, second].filter((p) => p.length >= 2).map((p) => structuredClone(p));
+  const out = changed({ ...c, vertices: pieces[0] });
+  if (pieces[1]) out.add.push({ ...clone(c), vertices: pieces[1] });
+  return out;
+}
+
+/** Straighten: the vertices between i and j (in vertex order) are removed and the segment from the first is straight.
+ *  i === j straightens the segment after that vertex. */
+export function straightenBetween(e, i, j) {
+  needIndex(e, i, j);
+  const a = Math.min(i, j), b = Math.max(i, j), c = vedit(e);
+  if (a === b && !c.closed && a === c.vertices.length - 1) throw fail('GEOMETRY', 'no segment after the last vertex');
+  c.vertices.splice(a + 1, Math.max(0, b - a - 1));
+  c.vertices[a].bulge = 0;
+  return changed(c);
+}
+
+/** Width: start and end width of the segment after vertex i (its `sw` / `ew`). */
+export function setSegmentWidth(e, i, sw, ew = sw) {
+  needIndex(e, i);
+  if (!(sw >= 0 && ew >= 0)) throw fail('GEOMETRY', 'width must be 0 or more');
+  if (!e.closed && i === e.vertices.length - 1) throw fail('GEOMETRY', 'no segment after the last vertex');
+  const c = vedit(e);
+  Object.assign(c.vertices[i], { sw, ew });
+  return changed(c);
+}
+
 /** Merge the session's top `n` undo steps into one step called `label` (PEDIT is one undo step however many
  *  options were used). Returns true when merged. */
 export function mergeTopSteps(session, n, label) {
