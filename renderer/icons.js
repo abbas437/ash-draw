@@ -23,6 +23,7 @@ export const ICONS = {
   polygon: p('M10 2.5l7.1 5.2-2.7 8.3H5.6L2.9 7.7z') + dot(10, 10),
   spline: p('M3 14c2-8 5-8 7-4s5 4 7-4') + dot(3, 14) + dot(10, 10) + dot(17, 6),
   donut: c(10, 10, 7) + c(10, 10, 3.5),
+  divide: p('M2 13c4-6 12-6 16 0') + dot(6, 9.6) + dot(10, 8.5) + dot(14, 9.6),
   point: c(10, 10, 2.5) + p('M10 3v4M10 13v4M3 10h4M13 10h4'),
   text: p('M4 5V4h12v1', 'M10 4v12', 'M7.5 16h5'),
   mtext: p('M3 5V4h8v1', 'M7 4v10', 'M5 14h4', 'M13 8h4M13 11h4M13 14h4'),

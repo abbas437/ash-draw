@@ -21,6 +21,7 @@ import { el, modal, popMenu } from './ui.js';
 import { createModifyTools } from './tools-modify.js';
 import { createDraw2Tools } from './tools-draw2.js';
 import { createModify2Tools } from './tools-modify2.js';
+import { createDivideTools } from './tools-divide.js';
 import { createDimTools } from './tools-dims.js';
 import { createBlockTools } from './tools-blocks.js';
 import { createMTextTools } from './mtext-editor.js';
@@ -652,6 +653,7 @@ export function createTools(h) {
     ...createDraw2Tools(h, { Tool }),
     ...createModifyTools(h, { Tool, ModifyTool }),
     ...createModify2Tools(h, { Tool, ModifyTool }),
+    ...createDivideTools(h, { Tool }),
     ...createDimTools(h, { Tool }),
     ...createBlockTools(h, { Tool, ModifyTool }),
     ...createMTextTools(h, { Tool }),
@@ -675,6 +677,7 @@ export const TOOL_ALIASES = {
   len: 'lengthen', lengthen: 'lengthen', str: 'stretch', stretch: 'stretch', ar: 'arrayrect', arrayrect: 'arrayrect',
   arraypolar: 'arraypolar', arraypath: 'arraypath',
   pe: 'pedit', pedit: 'pedit', reverse: 'reverse', breakatpoint: 'breakatpoint',
+  div: 'divide', divide: 'divide', me: 'measurepoints', measurepoints: 'measurepoints',
   dli: 'dimlinear', dimlinear: 'dimlinear', dal: 'dimaligned', dimaligned: 'dimaligned', dan: 'dimangular', dimangular: 'dimangular', dra: 'dimradius', dimradius: 'dimradius',
   ddi: 'dimdiameter', dimdiameter: 'dimdiameter', dor: 'dimordinate', dimordinate: 'dimordinate', dco: 'dimcontinue', dimcontinue: 'dimcontinue', dba: 'dimbaseline', dimbaseline: 'dimbaseline',
   mld: 'mleader', mleader: 'mleader', ma: 'matchprop', matchprop: 'matchprop', painter: 'matchprop',
