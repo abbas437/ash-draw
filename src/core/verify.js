@@ -15,7 +15,9 @@ const round = (v, d) => {
   if (v && typeof v === 'object') { const o = {}; for (const k of Object.keys(v).sort()) o[k] = round(v[k], d); return o; }
   return v;
 };
-const sig = (e, d) => JSON.stringify(round((PICK[e.type] ?? []).map((k) => e[k]), d));
+// rotations are degrees: -90 and 270 are the same angle (a DWG round trip through ODA writes the positive one)
+const angle = (k, v) => (k === 'rot' && typeof v === 'number' ? ((v % 360) + 360) % 360 : v);
+const sig = (e, d) => JSON.stringify(round((PICK[e.type] ?? []).map((k) => angle(k, e[k])), d));
 
 export function compareDocuments(a, b, digits = 5) {
   const group = (doc) => { const g = {}; for (const e of doc.entities) { for (const x of e.type === 'MLEADER' ? mleaderParts(e) : [e]) (g[x.type] ??= []).push(x); } return g; };
