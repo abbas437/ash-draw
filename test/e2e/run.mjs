@@ -1328,7 +1328,7 @@ try {
   const redAt = (x, y) => page.evaluate(([x, y]) => {
     const vp = window.app.vp, s = vp.toScreen({ x, y }), d = vp.dpr;
     const px = vp.ctx.getImageData(Math.round(s.x * d) - 3, Math.round(s.y * d) - 3, 7, 7).data;
-    let n = 0; for (let i = 0; i < px.length; i += 4) if (px[i] > 180 && px[i + 1] < 90 && px[i + 2] < 90) n++;
+    let n = 0; for (let i = 0; i < px.length; i += 4) if (px[i] > 90 && px[i + 1] < px[i] / 4 && px[i + 2] < px[i] / 4) n++; // red-dominant: a 1 px diagonal split over two pixels peaks near r=170 at some sub-pixel offsets
     return n;
   }, [x, y]);
   await page.mouse.move(mid.x, mid.y);
