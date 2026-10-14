@@ -366,7 +366,7 @@ class Builder {
           const ll = at(x0, y1), lr = at(x1, y1), ul = at(x0, y0);
           const u = { x: (lr.x - ll.x) / pv.width, y: (lr.y - ll.y) / pv.width }, v = { x: (ul.x - ll.x) / pv.height, y: (ul.y - ll.y) / pv.height };
           this.push(mkItem('image', { image: { p: ll, u, v, size: { x: pv.width, y: pv.height }, ole: pv } }), rootId);
-          this.push({ kind: 'path', ops: ops.slice(), style, bbox }, rootId);
+          this.push({ kind: 'path', ops: ops.slice(), style, bbox, oleFrame: true }, rootId); // OLEFRAME=2: shown on screen, not plotted
           return;
         }
         this.push(mkItem('path'), rootId);

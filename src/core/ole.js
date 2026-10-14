@@ -82,11 +82,11 @@ export function decodeDib(b, info, bits = null) {
     if (mo + 12 > b.length) return null;
     masks = [dv.getUint32(mo, true), dv.getUint32(mo + 4, true), dv.getUint32(mo + 8, true)];
   } else if (bpp === 16) masks = [0x7c00, 0x03e0, 0x001f];
-  const nPal = bpp <= 8 ? (used || 1 << bpp) : 0;
+  const nPal = bpp <= 8 ? Math.min(used || 1 << bpp, 1 << bpp) : 0;
   const palAt = info + hs + (comp === 3 && hs === 40 ? 12 : 0);
   if (bits == null) bits = palAt + nPal * palEntry;
   const stride = ((w * bpp + 31) >>> 5) * 4;
-  if (bits + stride * (h - 1) + Math.ceil(w * bpp / 8) > b.length) return null;
+  if (!(bits >= 0) || bits + stride * (h - 1) + Math.ceil(w * bpp / 8) > b.length) return null;
   const pal = [];
   for (let i = 0; i < nPal; i++) { const o = palAt + i * palEntry; pal.push(o + 2 < b.length ? [b[o + 2], b[o + 1], b[o]] : [0, 0, 0]); }
   const field = (m) => {

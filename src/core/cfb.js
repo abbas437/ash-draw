@@ -25,27 +25,32 @@ export function readCfb(bytes) {
   const nSectors = Math.floor((bytes.length - SS) / SS) + 1; // a truncated last sector still counts
   const sectorAt = (s) => SS + s * SS;
 
-  // FAT sector list: 109 in the header, the rest in the DIFAT chain
-  const fatSectors = [];
-  for (let i = 0; i < 109; i++) { const s = u32(76 + i * 4); if (s < END) fatSectors.push(s); }
-  for (let d = u32(68), n = u32(72), guard = 0; d < END && n > 0 && guard < nSectors; n--, guard++) {
+  // FAT sector list: 109 in the header, the rest in the DIFAT chain; each sector once, none past the end of the file
+  const fatSet = new Set();
+  const addFat = (s) => { if (s < nSectors) fatSet.add(s); };
+  for (let i = 0; i < 109; i++) addFat(u32(76 + i * 4));
+  for (let d = u32(68), n = u32(72), guard = 0; d < nSectors && n > 0 && guard < nSectors; n--, guard++) {
     const o = sectorAt(d), per = SS / 4 - 1;
-    for (let i = 0; i < per; i++) { const s = u32(o + i * 4); if (s < END) fatSectors.push(s); }
+    if (o + SS > bytes.length) break;
+    for (let i = 0; i < per; i++) addFat(u32(o + i * 4));
     d = u32(o + per * 4);
   }
+  const fatSectors = [...fatSet];
   const fat = new Uint32Array(fatSectors.length * (SS / 4));
   fatSectors.forEach((s, k) => { const o = sectorAt(s); for (let i = 0; i < SS / 4; i++) fat[k * (SS / 4) + i] = o + i * 4 + 4 <= bytes.length ? u32(o + i * 4) : FREE; });
 
-  /** the sector chain from `start` in `table` (guards against loops and running off the table) */
-  const chain = (start, table) => {
-    const out = [];
-    for (let s = start; s < END && s < table.length && out.length <= table.length; s = table[s]) out.push(s);
+  /** the sector chain from `start` in `table` (stops at a loop, at the table's end, and after `limit` sectors) */
+  const chain = (start, table, limit = nSectors) => {
+    const out = [], seen = new Uint8Array(table.length);
+    for (let s = start; s < END && s < table.length && !seen[s] && out.length < limit; s = table[s]) { seen[s] = 1; out.push(s); }
     return out;
   };
   const readChain = (start, size) => {
+    const secs = chain(start, fat);
+    if (size > secs.length * SS) throw bad('stream is longer than its sectors');
     const out = new Uint8Array(size);
     let at = 0;
-    for (const s of chain(start, fat)) {
+    for (const s of secs) {
       if (at >= size) break;
       const o = sectorAt(s), n = Math.min(SS, size - at, Math.max(0, bytes.length - o));
       out.set(bytes.subarray(o, o + n), at); at += n;
@@ -55,7 +60,7 @@ export function readCfb(bytes) {
   };
 
   // directory
-  const dirSecs = chain(u32(48), fat);
+  const dirSecs = chain(u32(48), fat); // at most one entry per 128 bytes of the file
   if (!dirSecs.length) throw bad('no directory');
   const dir = readChain(u32(48), dirSecs.length * SS);
   const ddv = new DataView(dir.buffer);
@@ -76,9 +81,11 @@ export function readCfb(bytes) {
   const mfBytes = mfSecs.length ? readChain(mfStart, mfSecs.length * SS) : new Uint8Array(0);
   const miniFat = new Uint32Array(mfBytes.buffer, 0, mfBytes.length >> 2);
   const readMini = (start, size) => {
+    const secs = chain(start, miniFat, Math.ceil(miniStream.length / MS));
+    if (size > secs.length * MS) throw bad('mini stream is longer than its sectors');
     const out = new Uint8Array(size);
     let at = 0;
-    for (const s of chain(start, miniFat)) {
+    for (const s of secs) {
       if (at >= size) break;
       const n = Math.min(MS, size - at);
       out.set(miniStream.subarray(s * MS, s * MS + n), at); at += n;

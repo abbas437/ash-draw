@@ -3,28 +3,51 @@ import assert from 'node:assert/strict';
 
 // ---- synthetic fixtures built here (no client data) ----
 
-/** a version-3 compound file (512-byte sectors) holding `streams` {name: bytes}, each padded to >= 4096 bytes so it
- *  lives in regular sectors */
-export function makeCfb(streams) {
-  const SS = 512, names = Object.keys(streams);
-  const data = names.map((n) => { const b = streams[n]; const p = new Uint8Array(Math.max(4096, b.length)); p.set(b); return { n, b: p, size: Math.max(4096, b.length) }; });
+/** a compound file holding `streams` {name: bytes}. Default: version 3 (512-byte sectors), each stream padded to >= 4096
+ *  bytes so it lives in regular sectors. opts.v4: 4096-byte sectors. opts.mini: a stream under 4096 bytes is kept as is, in
+ *  the mini stream (64-byte mini sectors) */
+export function makeCfb(streams, opts = {}) {
+  const SS = opts.v4 ? 4096 : 512, names = Object.keys(streams), PER = SS / 4;
+  const data = names.map((n) => {
+    const b = streams[n], mini = opts.mini && b.length < 4096, size = mini ? b.length : Math.max(4096, b.length);
+    const p = new Uint8Array(mini ? Math.ceil(Math.max(size, 1) / 64) * 64 : size); p.set(b);
+    return { n, b: p, size, mini };
+  });
   let next = 2; // sector 0: FAT, sector 1: directory
-  for (const d of data) { d.start = next; d.count = Math.ceil(d.size / SS); next += d.count; }
-  assert.ok(next <= SS / 4, 'one FAT sector is enough');
+  const minis = data.filter((d) => d.mini);
+  const hasMini = minis.length > 0;
+  const mfSec = hasMini ? next++ : -1; // the mini FAT
+  let miniLen = 0;
+  for (const d of minis) { d.mstart = miniLen / 64; miniLen += d.b.length; }
+  const msStart = hasMini ? next : 0xfffffffe, msCount = Math.ceil(miniLen / SS);
+  next += msCount;
+  for (const d of data) if (!d.mini) { d.start = next; d.count = Math.ceil(d.size / SS); next += d.count; }
+  assert.ok(next <= PER, 'one FAT sector is enough');
+  assert.ok(miniLen / 64 <= PER, 'one mini FAT sector is enough');
+  assert.ok(data.length <= SS / 128 - 1, 'one directory sector is enough');
   const out = new Uint8Array(SS * (next + 1)), dv = new DataView(out.buffer);
   [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1].forEach((x, i) => { out[i] = x; });
-  dv.setUint16(24, 0x3e, true); dv.setUint16(26, 3, true); dv.setUint16(28, 0xfffe, true); dv.setUint16(30, 9, true); dv.setUint16(32, 6, true);
+  dv.setUint16(24, 0x3e, true); dv.setUint16(26, opts.v4 ? 4 : 3, true); dv.setUint16(28, 0xfffe, true); dv.setUint16(30, opts.v4 ? 12 : 9, true); dv.setUint16(32, 6, true);
   dv.setUint32(44, 1, true); dv.setUint32(48, 1, true); dv.setUint32(56, 4096, true);
-  dv.setUint32(60, 0xfffffffe, true); dv.setUint32(68, 0xfffffffe, true);
+  dv.setUint32(60, hasMini ? mfSec : 0xfffffffe, true); dv.setUint32(64, hasMini ? 1 : 0, true); dv.setUint32(68, 0xfffffffe, true);
   for (let i = 0; i < 109; i++) dv.setUint32(76 + i * 4, i ? 0xffffffff : 0, true);
-  const fat = SS; // sector 0
-  for (let i = 0; i < SS / 4; i++) dv.setUint32(fat + i * 4, 0xffffffff, true);
+  const at = (sec) => SS * (sec + 1);
+  const fat = at(0);
+  for (let i = 0; i < PER; i++) dv.setUint32(fat + i * 4, 0xffffffff, true);
   dv.setUint32(fat, 0xfffffffd, true); dv.setUint32(fat + 4, 0xfffffffe, true);
-  for (const d of data) {
-    for (let k = 0; k < d.count; k++) dv.setUint32(fat + (d.start + k) * 4, k === d.count - 1 ? 0xfffffffe : d.start + k + 1, true);
-    out.set(d.b, SS * (d.start + 1));
+  const link = (start, count) => { for (let k = 0; k < count; k++) dv.setUint32(fat + (start + k) * 4, k === count - 1 ? 0xfffffffe : start + k + 1, true); };
+  if (hasMini) {
+    dv.setUint32(fat + mfSec * 4, 0xfffffffe, true); link(msStart, msCount);
+    const mf = at(mfSec);
+    for (let i = 0; i < PER; i++) dv.setUint32(mf + i * 4, 0xffffffff, true);
+    for (const d of minis) {
+      const n = d.b.length / 64;
+      for (let k = 0; k < n; k++) dv.setUint32(mf + (d.mstart + k) * 4, k === n - 1 ? 0xfffffffe : d.mstart + k + 1, true);
+      out.set(d.b, at(msStart) + d.mstart * 64);
+    }
   }
-  const dir = SS * 2; // sector 1: Root Entry + the streams as a right-leaning chain
+  for (const d of data) if (!d.mini) { link(d.start, d.count); out.set(d.b, at(d.start)); }
+  const dir = at(1); // sector 1: Root Entry + the streams as a right-leaning chain
   const entry = (i, name, type, child, right, start, size) => {
     const o = dir + i * 128;
     for (let k = 0; k < name.length; k++) dv.setUint16(o + k * 2, name.charCodeAt(k), true);
@@ -32,8 +55,21 @@ export function makeCfb(streams) {
     dv.setUint32(o + 68, 0xffffffff, true); dv.setUint32(o + 72, right, true); dv.setUint32(o + 76, child, true);
     dv.setUint32(o + 116, start, true); dv.setUint32(o + 120, size, true);
   };
-  entry(0, 'Root Entry', 5, data.length ? 1 : 0xffffffff, 0xffffffff, 0xfffffffe, 0);
-  data.forEach((d, i) => entry(i + 1, d.n, 2, 0xffffffff, i + 2 <= data.length ? i + 2 : 0xffffffff, d.start, d.size));
+  entry(0, 'Root Entry', 5, data.length ? 1 : 0xffffffff, 0xffffffff, msStart, miniLen);
+  data.forEach((d, i) => entry(i + 1, d.n, 2, 0xffffffff, i + 2 <= data.length ? i + 2 : 0xffffffff, d.mini ? d.mstart : d.start, d.size));
+  return out;
+}
+
+/** the 12 KB hostile file of the review: version 4, all 109 header DIFAT slots name sector 0, and the directory chain loops */
+export function loopCfb() {
+  const SS = 4096, out = new Uint8Array(SS * 3), dv = new DataView(out.buffer);
+  [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1].forEach((x, i) => { out[i] = x; });
+  dv.setUint16(24, 0x3e, true); dv.setUint16(26, 4, true); dv.setUint16(28, 0xfffe, true); dv.setUint16(30, 12, true); dv.setUint16(32, 6, true);
+  dv.setUint32(44, 109, true); dv.setUint32(48, 1, true); dv.setUint32(56, 4096, true);
+  dv.setUint32(60, 0xfffffffe, true); dv.setUint32(68, 0xfffffffe, true);
+  for (let i = 0; i < 109; i++) dv.setUint32(76 + i * 4, 0, true);
+  for (let i = 0; i < SS / 4; i++) dv.setUint32(SS + i * 4, 0xffffffff, true);
+  dv.setUint32(SS, 1, true); dv.setUint32(SS + 4, 1, true); // sector 0 (the FAT) is "all" the FAT sectors; the directory chain 1 -> 1
   return out;
 }
 

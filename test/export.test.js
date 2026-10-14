@@ -12,6 +12,7 @@ import { readDxf } from '../src/core/dxfRead.js';
 import { newLayout } from '../src/core/layouts.js';
 import { newDocument, addEntity, addLayer, makeXline, makeLine, makeCircle, makeArc, makeText } from '../src/core/model.js';
 import { exportSvg } from '../src/core/exportSvg.js';
+import { buildScene } from '../src/core/render.js';
 import { exportPdf, exportPdfPages, plotLayout, plotScale, pageFit } from '../src/core/exportPdf.js';
 import { plotSettingsFrom, plotSettingsToStore, PLOT_DEFAULTS } from '../src/core/plotSettings.js';
 
@@ -352,4 +353,27 @@ test('layout PDF: a model OLE picture seen through a viewport is clipped by the 
   const text = await pageText((await exportPdf(doc, { layout: lay })).bytes);
   // the viewport's rectangle clip (m l l l h W n) is the one open when the picture is drawn: next operators are q, cm, Do
   assert.match(text, /([-\d.]+ [-\d.]+ l\n){3}h\nW\nn\nq\n([-\d.]+ ){6}cm\n\/Img[-\w]* Do\n/);
+});
+
+test('PDF: imageRgba runs once for an IMAGE drawn twice (the cache is looked up first)', async () => {
+  const bitmap = {}, d = newDocument();
+  d.images = new Map([['pic.png', { status: 'loaded', bitmap }]]);
+  const img = (x) => ({ type: 'IMAGE', id: 0, layer: '0', color: 256, path: 'pic.png', p: { x, y: 0 }, u: { x: 0.1, y: 0 }, v: { x: 0, y: 0.1 }, size: { x: 10, y: 10 }, clip: { on: false } });
+  d.entities.push(img(0), img(20));
+  let calls = 0;
+  const imageRgba = () => { calls++; return { width: 1, height: 1, rgba: new Uint8ClampedArray([1, 2, 3, 255]) }; };
+  const { bytes } = await exportPdf(d, { pageSize: 'fit', scale: 1, margin: 10, centre: false, imageRgba });
+  assert.equal(imageXObjects(await PDFDocument.load(bytes)).length, 1);
+  assert.equal(calls, 1);
+});
+
+test('PDF: the border of an OLE2FRAME with a preview is shown on screen but not plotted; SVG keeps a frame', async () => {
+  const chunks = oleData({ x: 100, y: 60 }, { x: 140, y: 20 }, makeCfb({ CONTENTS: bmpFile(dib(40, 40, [220, 30, 40])) }));
+  const doc = oleDoc([chunks, 0]);
+  const sc = buildScene(doc);
+  assert.ok(sc.items.some((it) => it.kind === 'path' && it.oleFrame), 'the frame is in the scene (screen)');
+  const text = await pageText((await exportPdf(doc, { pageSize: 'fit', scale: 1, margin: 10, centre: false })).bytes);
+  assert.doesNotMatch(text, /\sl\n/, 'no line segment: only the picture');
+  assert.match(text, /\/Img[-\w]* Do/);
+  assert.match(exportSvg(doc), /<path/, 'SVG has no image path: the frame stays');
 });

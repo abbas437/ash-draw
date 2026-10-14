@@ -257,17 +257,20 @@ async function addPdfPage(pdf, doc, opts) {
   for (let it of scn.items) {
     // an item wholly outside the plot area is not written at all (the clip would hide it, but its points would stay in the file)
     if (cull && it.bbox && (it.bbox.maxx < cull.minx || it.bbox.minx > cull.maxx || it.bbox.maxy < cull.miny || it.bbox.miny > cull.maxy)) continue;
+    if (it.oleFrame) continue; // an OLE object's border is shown on screen but not plotted (AutoCAD OLEFRAME=2)
     if (doc.layers.get(it.style?.layerName)?.plot === false) continue; // a non-plotting layer is shown, never plotted
     if (it.inf && !(it = infiniteItem(it, box))) continue;
     if (it.kind === 'image') {
       // a raster picture (OLE preview or IMAGE): pixel (x, y from the top row) sits at p + u x + v (rows - y)
       const im = it.image, bmp = im.ole ? im.ole : doc.images?.get(im.path)?.bitmap;
-      const src = im.ole ?? (bmp && (opts.imageRgba ? opts.imageRgba(bmp) : bmp));
-      if (!src?.rgba) continue;
       if (!PICTURES.has(pdf)) PICTURES.set(pdf, new WeakMap());
       const cache = PICTURES.get(pdf);
       let ref = cache.get(bmp);
-      if (!ref) cache.set(bmp, (ref = embedRgba(pdf, src)));
+      if (!ref) {
+        const src = im.ole ?? (bmp && (opts.imageRgba ? opts.imageRgba(bmp) : bmp));
+        if (!src?.rgba) continue;
+        cache.set(bmp, (ref = embedRgba(pdf, src)));
+      }
       ops.push(pushGraphicsState());
       if (im.clipPts?.length >= 3) {
         im.clipPts.forEach((q, i) => ops.push(i ? lineTo(X(q.x), Y(q.y)) : moveTo(X(q.x), Y(q.y))));
