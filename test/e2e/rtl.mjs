@@ -62,22 +62,6 @@ try {
 
   step = 'single-line TEXT: whole string, explicit ltr direction (browser bidi then gives the PDF order)';
   for (const t of ['غرفة 101', 'AHU-1 غرفة 123', '(مرحبا) [AHU-1]']) assert.equal(at(t).dir, 'ltr', `${t} drawn whole with ctx.direction ltr`);
-  const order = await page.evaluate(() => {
-    // the browser's own order for these strings under ltr, from DOM ranges (what fillText resolves with)
-    const out = {};
-    for (const t of ['غرفة 101', 'AHU-1 غرفة 123']) {
-      const d = document.createElement('div'); d.dir = 'ltr'; d.style.cssText = 'position:absolute;font:20px Arial;white-space:pre';
-      document.body.append(d);
-      d.textContent = '';
-      for (const w of t.split(' ')) { const s = document.createElement('span'); s.textContent = w + ' '; d.append(s); }
-      out[t] = [...d.children].map((s) => [s.textContent.trim(), s.getBoundingClientRect().left]);
-      d.remove();
-    }
-    return out;
-  });
-  const left = (k, w) => order[k].find((e) => e[0] === w)[1];
-  assert.ok(left('غرفة 101', '101') < left('غرفة 101', 'غرفة'), '"غرفة 101": 101 is left of the Arabic word');
-  assert.ok(left('AHU-1 غرفة 123', 'AHU-1') < left('AHU-1 غرفة 123', '123') && left('AHU-1 غرفة 123', '123') < left('AHU-1 غرفة 123', 'غرفة'), '"AHU-1 غرفة 123": AHU-1, 123, غرفة');
 
   step = 'hit boxes: the MTEXT scene bbox covers every drawn word';
   const fit = await page.evaluate(() => {

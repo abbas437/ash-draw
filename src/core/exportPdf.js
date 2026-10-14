@@ -13,7 +13,7 @@ import {
   walkOps, colorRgb, lineweightMm, dashUnits, hatchFamilies, layoutText, markerSize, arrowTriangle, runRgb, mtextItemLayout,
 } from './exportSvg.js';
 import { textShaper, textOps } from './pdfText.js';
-import { reorderLines } from './bidiText.js';
+import { reorderLines, reorderRules } from './bidiText.js';
 
 const PT_PER_MM = 72 / 25.4;
 const MAX_PAGE_PT = 14400;          // PDF 1.x user-unit page size limit (200 inch)
@@ -353,7 +353,7 @@ async function addPdfPage(pdf, doc, opts) {
         page.drawText(g.text, { x: 0, y: 0, size: g.h * k, font: HELV[variant(g)], color: rgb(...rc(g.color)), opacity: opacity(it.style) });
         page.pushOperators(popGraphicsState());
       }
-      for (const r of lay.rules) {
+      for (const r of reorderRules(lay.rules, glyphs)) {
         const [cr, cg, cb] = rc(r.color);
         alphaState(it.style); page.pushOperators(...ops.splice(0));
         page.pushOperators(setStrokingRgbColor(cr, cg, cb), setLineWidth(r.h * k * 0.06), moveTo(r.x1 * k, -r.y * k), lineTo(r.x2 * k, -r.y * k), stroke());

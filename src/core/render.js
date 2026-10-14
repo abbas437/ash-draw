@@ -13,7 +13,7 @@ import { imageCorners, imageClipWorld, wipeoutRing } from './image.js';
 import { olePreviewOf } from './ole.js';
 import { resolveColor, runColor } from './aci.js';
 import { parseMText, layoutMText } from './mtext.js';
-import { reorderLines } from './bidiText.js';
+import { reorderLines, reorderRules } from './bidiText.js';
 import {
   DEG, compose, translation, rotation, scaling, apply, isSimilarity, matScale, transformEntity, bulgeToArc,
   ccwSweep, tessellate, ellipsePoint, unionBox, growBox, dimensionContent, applyVec, clipInfinite,
@@ -1269,7 +1269,7 @@ export function mtextLayout(ctx, it) {
     ctx.direction = 'ltr';
     return w;
   });
-  it._lay = glyphs === lay.glyphs ? lay : { ...lay, glyphs };
+  it._lay = glyphs === lay.glyphs ? lay : { ...lay, glyphs, rules: reorderRules(lay.rules, glyphs) };
   return it._lay;
 }
 

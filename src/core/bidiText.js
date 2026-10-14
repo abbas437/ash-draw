@@ -33,7 +33,9 @@ export function visualOrder(items) {
  * MTEXT layout glyphs ({li, text, x, w, ...}, logical order) -> the same with every line that holds right-to-left text
  * in visual order: the line's words / spaces split at bidi level changes (pieces carry `level`) and laid from the
  * line's left end. width(text, level, glyph) -> the piece's advance in drawing units. Lines with stacked fractions
- * (glyphs without a width) or stroke text keep their place.
+ * (glyphs without a width) keep their place. Lines holding SHX stroke glyphs are not reordered either (the screen path
+ * draws stroke text from fixed vector layouts), a deliberate skip pinned by a test. Each moved piece keeps `src`, the
+ * logical glyph it came from, for reorderRules.
  */
 export function reorderLines(glyphs, width) {
   const byLine = new Map();
@@ -49,7 +51,7 @@ export function reorderLines(glyphs, width) {
         let b = a + 1;
         while (b < g.text.length && levels[i + b] === levels[i + a]) b++;
         const text = g.text.slice(a, b), level = levels[i + a];
-        pieces.push({ ...g, text, level, w: width(text, level, g) });
+        pieces.push({ ...g, text, level, src: g, w: width(text, level, g) });
         a = b;
       }
       i += g.text.length;
@@ -60,4 +62,20 @@ export function reorderLines(glyphs, width) {
     for (const g of group.slice(1)) moved.set(g, []);
   }
   return moved.size ? glyphs.flatMap((g) => moved.get(g) ?? [g]) : glyphs;
+}
+
+/**
+ * Underline / overline / strike rules ({li, x1, x2, ...}) follow the pieces reorderLines moved: a rule that covers
+ * pieces of a reordered line (their source glyph's middle lies inside it) is replaced by one rule per piece, each
+ * spanning its piece's new x-range. Other rules are returned as they are. `out` is reorderLines' result.
+ */
+export function reorderRules(rules, out) {
+  const pieces = out.filter((p) => p.src);
+  if (!pieces.length) return rules;
+  const lines = new Set(pieces.map((p) => p.li));
+  return rules.flatMap((r) => {
+    if (!lines.has(r.li)) return [r];
+    const hit = pieces.filter((p) => p.li === r.li && p.src.x + p.src.w / 2 >= r.x1 && p.src.x + p.src.w / 2 <= r.x2);
+    return hit.length ? hit.map((p) => ({ ...r, x1: p.x, x2: p.x + p.w })) : [r];
+  });
 }

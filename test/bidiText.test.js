@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseMText, layoutMText } from '../src/core/mtext.js';
-import { reorderLines } from '../src/core/bidiText.js';
+import { reorderLines, reorderRules } from '../src/core/bidiText.js';
 
 const order = (text) => {
   const lay = layoutMText(parseMText(text, { height: 1 }));
@@ -35,4 +35,31 @@ test('pieces are laid from the line start without gaps, and keep the line width'
 test('a left-to-right line is returned untouched', () => {
   const lay = layoutMText(parseMText('PUMP P-101', { height: 1 }));
   assert.equal(reorderLines(lay.glyphs, () => 1), lay.glyphs);
+});
+
+test('an underline follows its Arabic word to the word\'s new x-range', () => {
+  const lay = layoutMText(parseMText('\\Lغرفة\\l 12', { height: 1 }));
+  const out = reorderLines(lay.glyphs, (t, level, g) => t.length * g.h * 0.6);
+  const word = out.find((g) => g.text === 'غرفة');
+  assert.ok(lay.rules[0].x1 < word.x, 'the logical underline is not under the moved word');
+  const rules = reorderRules(lay.rules, out);
+  assert.equal(rules.length, 1);
+  assert.ok(Math.abs(rules[0].x1 - word.x) < 1e-9 && Math.abs(rules[0].x2 - (word.x + word.w)) < 1e-9);
+});
+
+test('a rule covering two pieces becomes one rule per piece, each moved with its piece', () => {
+  const lay = layoutMText(parseMText('\\Lواحد اثنان\\l', { height: 1 }));
+  const rules0 = lay.rules.length;
+  const out = reorderLines(lay.glyphs, (t, level, g) => t.length * g.h * 0.6);
+  const wide = [{ ...lay.rules[0], x1: Math.min(...lay.rules.map((r) => r.x1)), x2: Math.max(...lay.rules.map((r) => r.x2)) }];
+  const rules = reorderRules(wide, out);
+  assert.ok(rules0 >= 2);
+  assert.equal(rules.length, out.length, 'one rule per piece (the two words and the space between them)');
+  for (const w of out) assert.ok(rules.some((r) => Math.abs(r.x1 - w.x) < 1e-9 && Math.abs(r.x2 - (w.x + w.w)) < 1e-9), `a rule under ${w.text}`);
+});
+
+test('a line holding SHX stroke glyphs is not reordered', () => {
+  const lay = layoutMText(parseMText('غرفة 12', { height: 1 }));
+  const glyphs = lay.glyphs.map((g, i) => (i === 0 ? { ...g, stroke: true } : g));
+  assert.equal(reorderLines(glyphs, () => 1), glyphs);
 });

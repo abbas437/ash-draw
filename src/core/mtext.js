@@ -220,14 +220,14 @@ export function layoutMText(model, { width = 0, attach = 1, lineSpacing = 1, mea
         } else {
           glyphs.push({ ...g, text: st.a, x: x + (w - p.wa) / 2, y: by - pr.h * 0.55, h: sp.h });
           glyphs.push({ ...g, text: st.b, x: x + (w - p.wb) / 2, y: by + pr.h * 0.15, h: sp.h });
-          if (st.type === '/') rules.push({ x1: x, x2: x + w, y: by - pr.h * 0.4, h: pr.h, color: pr.color, stroke: !!pr.stroke });
+          if (st.type === '/') rules.push({ li, x1: x, x2: x + w, y: by - pr.h * 0.4, h: pr.h, color: pr.color, stroke: !!pr.stroke });
         }
       } else if (p.text) {
         glyphs.push({ ...g, text: p.text, x, y: by, h: pr.h, w: p.w });
       }
-      if (pr.u) rules.push({ x1: x, x2: x + p.w, y: by + pr.h * 0.15, h: pr.h, color: pr.color, stroke: !!pr.stroke });
-      if (pr.o) rules.push({ x1: x, x2: x + p.w, y: by - pr.h * 1.0, h: pr.h, color: pr.color, stroke: !!pr.stroke });
-      if (pr.k) rules.push({ x1: x, x2: x + p.w, y: by - pr.h * 0.3, h: pr.h, color: pr.color, stroke: !!pr.stroke });
+      if (pr.u) rules.push({ li, x1: x, x2: x + p.w, y: by + pr.h * 0.15, h: pr.h, color: pr.color, stroke: !!pr.stroke });
+      if (pr.o) rules.push({ li, x1: x, x2: x + p.w, y: by - pr.h * 1.0, h: pr.h, color: pr.color, stroke: !!pr.stroke });
+      if (pr.k) rules.push({ li, x1: x, x2: x + p.w, y: by - pr.h * 0.3, h: pr.h, color: pr.color, stroke: !!pr.stroke });
       x += p.w;
     }
   }
