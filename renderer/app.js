@@ -14,6 +14,8 @@ import { ViewHistory, parseZoomFactor, ZOOMFACTOR_MIN, ZOOMFACTOR_MAX } from '..
 import { dimStyleManager, dimStyleNames, dimVarsOf, setCurrentDimStyle } from './tools-dims.js';
 import { blockDoubleClick } from './tools-blocks.js';
 import { initSession } from './session.js';
+import { initAutosave } from './autosave.js';
+import { AUTOSAVE_CHOICES, shouldDiscardAutosave } from '../src/core/autosave.js';
 import { FindPanel } from './find.js';
 import { plotDialog, publishDialog } from './plot.js';
 import { initLayouts, restoreSpace, renderSpaceBar, layoutDoubleClick, exitMspace, renderVpScale, commitViewportView } from './layouts-ui.js';
@@ -55,6 +57,7 @@ class App {
     this.tools = createTools(this);
     this.toolId = null;
     this.sessionStore = initSession(this); // last session and recent files
+    this.autosave = initAutosave(this); // timed copies of unsaved drawings, recovered at the next start
     this.buildMenus();
     this.buildToolbar();
     this.buildStatus();
@@ -113,8 +116,10 @@ class App {
     api.version?.().then((v) => { this.version = v; this.refreshWindowTitle(); }).catch(() => {});
     api.settingsGet?.('measure.showLegs').then((v) => setShowLegs(v)).catch(() => {});
     api.onOpenFile?.((f) => this.openFromFile(f));
-    // files given at start-up open first; then the previous session is offered (or reopened, per startup.mode)
+    // files given at start-up open first; then autosaved drawings are offered for recovery; then the previous session
+    // is offered (or reopened, per startup.mode) - without the files just recovered
     api.getLaunchFiles?.().then(async (files) => { for (const f of files ?? []) await this.openFromFile(f); }).catch(() => {})
+      .then(() => this.autosave.recover()).catch(() => {})
       .then(() => this.sessionStore.start());
   }
 
@@ -250,13 +255,14 @@ class App {
   }
 
   // ---- new / open / save -------------------------------------------------------------------------
-  /** asks to save a drawing with unsaved changes (shown first); false = the user cancelled */
+  /** asks to save a drawing with unsaved changes (shown first). The choice: 'clean' (nothing to save), 'save' (saved -
+   *  a DWG that differs from the drawing leaves it unsaved), 'dont-save'; null = cancelled, or the save failed */
   async confirmDiscard(tab = this.active) {
-    if (!tab?.session.dirty) return true;
+    if (!tab?.session.dirty) return 'clean';
     if (tab !== this.active) this.switchTo(tab);
     const r = await confirmDialog('Unsaved changes', `Save changes to ${tab.file.name}?`, 'Save', "Don't save", 'Cancel');
-    if (r === 'yes') return this.save();
-    return r === 'no';
+    if (r === 'yes') return (await this.save()) ? 'save' : null;
+    return r === 'no' ? 'dont-save' : null;
   }
   /** show a drawing in a new tab; a blank, untouched Untitled tab is replaced instead */
   /** prepared: {scene, index} built ahead (prepareView) so showing the tab does no long synchronous work */
@@ -289,7 +295,10 @@ class App {
   cycleTab(step) { this.activateIndex(cycleIndex(this.tabs.length, this.tabs.indexOf(this.active), step)); }
   /** close a tab after the save prompt; closing the last tab leaves a new blank drawing. Returns false if cancelled. */
   async closeTab(tab = this.active) {
-    if (!(await this.confirmDiscard(tab))) return false;
+    const choice = await this.confirmDiscard(tab);
+    if (!choice) return false;
+    // saved or "Don't save": its autosave copy goes (a save that left it unsaved keeps the copy for the next start)
+    if (shouldDiscardAutosave({ choice, dirtyAfter: tab.session.dirty })) await this.autosave.discard(tab);
     const i = this.tabs.indexOf(tab);
     if (i < 0) return true;
     if (this.active === tab) clearMeasureResults();
@@ -302,7 +311,15 @@ class App {
   }
   /** window close / quit: one save prompt per drawing with unsaved changes, then close */
   async closeAll() {
-    for (const tab of this.tabs.filter((t) => t.session.dirty)) if (!(await this.confirmDiscard(tab))) return false;
+    const choices = new Map();
+    for (const tab of this.tabs.filter((t) => t.session.dirty)) {
+      const choice = await this.confirmDiscard(tab);
+      if (!choice) return false;
+      choices.set(tab, choice);
+    }
+    this.autosave.stop(); // no autosave may start (and outlive the window) from here
+    // saved or "Don't save": no copy is offered next time (a save that left a drawing unsaved keeps its copy)
+    for (const tab of this.tabs) if (shouldDiscardAutosave({ choice: choices.get(tab) ?? 'clean', dirtyAfter: tab.session.dirty })) await this.autosave.discard(tab);
     this.closeConfirmed = true;
     api.closeWindow?.();
     return true;
@@ -425,6 +442,8 @@ class App {
     try { return await fn(tab); } finally { tab.saving = null; }
   }
   save() { return this.guardedSave((tab) => this.saveTab(tab)); }
+  /** autosave the due drawings now (also used by the e2e test); the number of copies written */
+  autosaveNow() { return this.autosave.now(); }
   saveAs(kind) { return this.guardedSave((tab) => this.saveTabAs(tab, kind)); }
   async saveTab(tab) {
     const dropped = this.droppedContent(); // before any await: the tab is still the shown one
@@ -469,7 +488,7 @@ class App {
   afterSave(tab, path, format, { clean = true } = {}) {
     if (!this.tabs.includes(tab)) return; // closed while it was being saved
     tab.file = { path, name: path ? path.replace(/^.*[\\/]/, '') : `${baseName(tab.file.name)}.${format}`, format };
-    if (clean) tab.session.markSaved(tab.saving?.step);
+    if (clean) { tab.session.markSaved(tab.saving?.step); tab.recoveredFrom = null; this.autosave.discard(tab); }
     this.updateTitle();
   }
   /** Save as DWG with ODA: the DWG version to write (the last choice is remembered), or null when cancelled */
@@ -487,7 +506,7 @@ class App {
   async writeDwg(tab, { version, path = null }) {
     try {
       const r = await saveDwg(api, tab.doc, {
-        name: tab.file.name, fromPath: tab.file.path, version, path,
+        name: tab.recoveredFrom?.name ?? tab.file.name, fromPath: tab.file.path ?? tab.recoveredFrom?.path ?? null, version, path,
         confirmDifferences: async (v) => (await confirmDialog('The DWG does not match your drawing', `${verificationMessage(v, { oda: true })}\n\nSave this DWG anyway? (Your drawing stays open and unsaved, so you can still save it as DXF.)`, 'Save DWG anyway', 'Cancel', null)) === 'yes',
       });
       if (!r) return false;
@@ -511,7 +530,7 @@ class App {
           `DWG is written through the free LibreDWG converter. Layouts and viewports may appear empty when the file is opened in AutoCAD, and text rotation and some hatch details can be lost. The program re-reads the saved file and tells you if anything differs. DXF keeps everything this program supports. ${ODA_SAVE_HINT} Save as DWG anyway?`, 'Save as DWG', 'Cancel', null);
         if (ok !== 'yes') return false;
         const r = await saveDwg(api, tab.doc, {
-          name: tab.file.name, fromPath: tab.file.path,
+          name: tab.recoveredFrom?.name ?? tab.file.name, fromPath: tab.file.path ?? tab.recoveredFrom?.path ?? null,
           confirmDifferences: async (v) => (await confirmDialog('The DWG does not match your drawing', `${verificationMessage(v)}\n\nSave this DWG anyway? (Your drawing stays open and unsaved, so you can still save it as DXF.)`, 'Save DWG anyway', 'Cancel', null)) === 'yes',
         });
         if (!r) return false;
@@ -521,7 +540,7 @@ class App {
         await message(r.verification.ok ? 'DWG saved' : 'DWG saved — please check', verificationMessage(r.verification));
         return true;
       }
-      const r = await saveDxf(api, tab.doc, { path: null, name: tab.file.name, fromPath: tab.file.path });
+      const r = await saveDxf(api, tab.doc, { path: null, name: tab.recoveredFrom?.name ?? tab.file.name, fromPath: tab.file.path ?? tab.recoveredFrom?.path ?? null });
       if (!r) return false;
       this.afterSave(tab, r.path, 'dxf'); this.writeReport(r.report);
       return true;
@@ -570,10 +589,16 @@ class App {
     dwgSave.checked = !!this.allowDwgSave;
     const dwgSaveRow = el('p', {}, el('label', {}, dwgSave, ` ${DWG_SAVE_PREF_LABEL}`));
     const applyDwgSave = () => { this.allowDwgSave = dwgSave.checked; api.settingsSet?.(DWG_SAVE_PREF_KEY, this.allowDwgSave)?.catch?.(() => {}); };
+    const autoSel = el('select', { id: 'pref-autosave' }, AUTOSAVE_CHOICES.map((m) => el('option', { value: String(m), text: m ? `Every ${m} minutes` : 'Off' })));
+    await this.autosave.ready; // the saved interval, not the default shown before it has loaded
+    autoSel.value = String(this.autosave.minutes);
+    autoSel.disabled = !this.autosave.enabled;
+    const autosaveRow = el('p', {}, el('label', { text: 'Autosave unsaved drawings (recovered after a crash): ' }), autoSel);
+    const applyAutosave = () => { if (this.autosave.enabled) this.autosave.setMinutes(Number(autoSel.value)); };
     if (!api.dwgConfig) {
-      const r0 = await modal('Preferences', el('div', {}, zoomRow, dwgSaveRow, el('p', { text: 'The DWG converter settings need the desktop app.' })), [{ label: 'Save', value: 'save', primary: true }, { label: 'Cancel', value: null }]);
+      const r0 = await modal('Preferences', el('div', {}, zoomRow, dwgSaveRow, autosaveRow, el('p', { text: 'The DWG converter settings and autosave need the desktop app.' })), [{ label: 'Save', value: 'save', primary: true }, { label: 'Cancel', value: null }]);
       if (r0 !== 'save') return;
-      applyDwgSave();
+      applyDwgSave(); applyAutosave();
       const n0 = parseZoomFactor(zf.value);
       if (n0 === null) await message('Preferences not saved', `ZOOMFACTOR must be a whole number from ${ZOOMFACTOR_MIN} to ${ZOOMFACTOR_MAX}.`); else { this.setZoomFactor(n0); toast('Preferences saved', 2000); }
       return;
@@ -585,13 +610,13 @@ class App {
     const odaPath = el('input', { id: 'pref-oda-path', type: 'text', value: cfg.odaPath, placeholder: av?.oda?.source === 'auto' ? av.oda.path : 'Detected automatically in C:\\Program Files\\ODA', style: 'width:100%' });
     const browse = el('button', { type: 'button', text: 'Browse…', onclick: async () => { const p = await api.dwgBrowseOda(); if (p) odaPath.value = p; } });
     const status = av ? `In use: ${av.available ? av.version : `none (${av.reason})`}. ODA File Converter: ${av.oda?.available ? `${av.oda.version} at ${av.oda.path}` : av.oda?.reason ?? 'not installed'}.` : '';
-    const r = await modal('Preferences', el('div', {}, zoomRow, dwgSaveRow,
+    const r = await modal('Preferences', el('div', {}, zoomRow, dwgSaveRow, autosaveRow,
       el('label', { text: 'DWG converter ' }, mode),
       el('p', {}, el('label', { text: 'ODA File Converter (ODAFileConverter.exe), leave empty to detect it: ' }), odaPath, browse),
       el('p', { id: 'pref-dwg-status', text: status })),
     [{ label: 'Save', value: 'save', primary: true }, { label: 'Cancel', value: null }]);
     if (r !== 'save') return;
-    applyDwgSave();
+    applyDwgSave(); applyAutosave();
     const nz = parseZoomFactor(zf.value);
     if (nz !== null) this.setZoomFactor(nz); else toast(`ZOOMFACTOR not changed: it must be a whole number from ${ZOOMFACTOR_MIN} to ${ZOOMFACTOR_MAX}.`, 4000);
     try { await api.dwgSetConfig({ mode: mode.value, odaPath: odaPath.value.trim() }); this.refreshDwgWrite(); toast('Preferences saved', 2000); } catch (err) { await message('Preferences not saved', String(err.message || err).replace(/^Error invoking remote method '[^']*': (\w*Error: )?/, '')); }

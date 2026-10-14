@@ -1,6 +1,7 @@
 // ASH Draw Studio - last session and recent files (desktop app only). Main owns both lists: this module reports the
 // open tabs' file paths, offers the previous session in the drawing area at start-up and shows File > Recent files.
 import { el, modal, toast } from './ui.js';
+import { withoutRecovered } from './tabs.js';
 
 const fileLabel = (p) => {
   const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
@@ -35,7 +36,7 @@ export function initSession(app) {
     let r;
     try { r = await api.sessionRestore(); } catch (err) { toast(`Could not reopen the last session: ${err.message}`); return; }
     if (!r) return;
-    for (const f of r.files) await app.openFromFile(f);
+    for (const f of withoutRecovered(r.files, app.tabs)) await app.openFromFile(f); // a recovered drawing is not reopened unchanged beside it
     const active = r.active && app.tabs.find((t) => t.file.path === r.active);
     if (active && active !== app.active) app.switchTo(active);
     if (r.missing?.length) await modal('Some files are not available', missingList(r.missing));
