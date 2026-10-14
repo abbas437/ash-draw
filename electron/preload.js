@@ -31,6 +31,8 @@ contextBridge.exposeInMainWorld('api', {
   setTitle: (t) => invoke('app:setTitle', t),
   showItem: (p) => invoke('shell:showItem', p),
   settingsGet: (k) => invoke('app:settingsGet', k),
+  clipboardWriteDxf: (dxf) => invoke('clipboard:writeDxf', dxf),
+  clipboardReadDxf: () => invoke('clipboard:readDxf'),
   settingsSet: (k, v) => invoke('app:settingsSet', k, v),
   // last session and recent files (main owns both lists)
   sessionUpdate: (s) => invoke('app:sessionUpdate', s),

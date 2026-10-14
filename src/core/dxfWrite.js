@@ -496,7 +496,7 @@ export function* writeDxfSteps(doc, opts = {}) {
   out.p(0, 'SECTION'); out.p(2, 'HEADER');
   out.p(9, '$ACADVER'); out.p(1, 'AC1015');
   out.p(9, '$DWGCODEPAGE'); out.p(3, 'ANSI_1252');
-  out.p(9, '$INSBASE'); out.pt(10, 0, 0, 0);
+  out.p(9, '$INSBASE'); out.pt(10, doc.header?.insbase?.x ?? 0, doc.header?.insbase?.y ?? 0, 0); // base point (COPYBASE fragments)
   out.p(9, '$EXTMIN'); if (ext) out.pt(10, ext.minx, ext.miny, 0); else out.pt(10, 1e20, 1e20, 1e20);
   out.p(9, '$EXTMAX'); if (ext) out.pt(10, ext.maxx, ext.maxy, 0); else out.pt(10, -1e20, -1e20, -1e20);
   out.p(9, '$LTSCALE'); out.p(40, doc.header.ltscale || 1);

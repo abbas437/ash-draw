@@ -1,5 +1,5 @@
 // ASH Draw Studio - Electron main process.
-import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, screen, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, protocol, screen, session, shell } from 'electron';
 import { randomBytes } from 'node:crypto';
 import { promises as fs, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -8,6 +8,7 @@ import { atomicWrite, saveDrawingFile } from './backup.js';
 import { createAutosaveStore } from './autosave.js';
 import { createDwgBridge, DWG_OUT_VERSIONS } from './dwgBridge.js';
 import { createHandoffStore } from './handoff.js';
+import { createClipboardBridge } from './clipboard.js';
 import { createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isOdaExeName, ODA_DOWNLOAD_URL, ODA_DWG_VERSIONS } from './odaConverter.js';
 import { saveDialogDefault } from './savePath.js';
 import { cleanSession, isPathString, pushRecent, startupModeOf } from './sessionLists.js';
@@ -334,6 +335,9 @@ function registerIpc() {
   });
   handle('app:closeWindow', () => { setImmediate(() => win?.close()); return true; });
   handle('app:version', () => app.getVersion());
+  const clip = createClipboardBridge(clipboard); // drawing fragments as DXF text; the renderer never names a format
+  handle('clipboard:writeDxf', (dxf) => clip.write(dxf));
+  handle('clipboard:readDxf', () => clip.read());
   handle('app:setTitle', (t) => {
     if (typeof t !== 'string') throw new TypeError('title must be a string');
     win.setTitle(t.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 200));
