@@ -326,7 +326,18 @@ class App {
     const pt = progressToast('Reading…', () => ac.abort());
     this.vp.setBusy(true); // the system wait cursor over the canvas until the drawing is shown (no hidden pointer)
     try {
-      const { doc, format, notes, warnings, conversion } = await loadDrawing(api, f.name, f.bytes, { onProgress: (x) => pt.set(x), signal: ac.signal, path: f.path ?? null });
+      // DWG conversion runs in main with no progress of its own: show the elapsed time (ODA can take minutes)
+      let clock = null;
+      const onStage = (stage) => {
+        clearInterval(clock); clock = null;
+        if (stage !== 'convert') { pt.text('Reading…'); return; }
+        const t0 = Date.now();
+        const tick = () => { const s = Math.round((Date.now() - t0) / 1000); pt.text(`Converting DWG… ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}${s >= 30 ? ' (large drawings can take a few minutes)' : ''}`); };
+        tick(); clock = setInterval(tick, 1000);
+      };
+      let loaded;
+      try { loaded = await loadDrawing(api, f.name, f.bytes, { onProgress: (x) => pt.set(x), signal: ac.signal, path: f.path ?? null, onStage }); } finally { clearInterval(clock); }
+      const { doc, format, notes, warnings, conversion } = loaded;
       toast(`Opening ${f.name} …`, 60000); // read: now the view is built
       await loadDrawingXrefs(api, doc, f.path ?? null); // before the scene is built: it is built once, with the xrefs
       const missing = await loadDrawingImages(api, doc, f.path ?? null);

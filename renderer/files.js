@@ -99,7 +99,7 @@ export function conversionSummary(c) {
  *  conversion (DWG only): {converter: 'LibreDWG'|'ODA', errorCount, log, objects, skipped} of this open.
  *  opts: {onProgress(fraction), signal} for the DXF read (see readDxfAsync); `path`: the granted file, which a DWG
  *  is then converted from without its bytes passing through the window (`bytes` may be null for a .dwg path). */
-export async function loadDrawing(api, name, bytes, { onProgress = null, signal = null, path = null } = {}) {
+export async function loadDrawing(api, name, bytes, { onProgress = null, signal = null, path = null, onStage = null } = {}) {
   const ext = extOf(name);
   let dxfBytes = bytes, format = 'dxf';
   const notes = [];
@@ -112,7 +112,9 @@ export async function loadDrawing(api, name, bytes, { onProgress = null, signal 
     if (!av.available) throw new Error(`The DWG converter is not available: ${av.reason ?? 'unknown reason'}. DXF files can still be opened.`);
     try {
       // dwg:open hands the DXF back as a URL the reader worker fetches (no big clone on this thread)
-      const res = api.dwgOpen ? await api.dwgOpen(path ?? bytes) : await api.dwgToDxf(bytes);
+      onStage?.('convert');
+      let res;
+      try { res = api.dwgOpen ? await api.dwgOpen(path ?? bytes) : await api.dwgToDxf(bytes); } finally { onStage?.('read'); }
       dxfBytes = res.url ? { url: res.url } : res.dxfBytes;
       warnings = Array.isArray(res.warnings) ? res.warnings : [];
       conv = { converter: res.converter === 'ODA' || res.engine === 'oda' ? 'ODA' : 'LibreDWG', errorCount: res.errorCount ?? 0, log: res.log ?? '', dwgSize: res.dwgSize ?? bytes?.byteLength ?? 0,

@@ -70,7 +70,7 @@ export function progressToast(text, onCancel) {
   t.replaceChildren(label, el('button', { class: 'toast-cancel', text: 'Cancel', onclick: onCancel }));
   t.classList.add('show', 'busy');
   clearTimeout(toastTimer);
-  return { set(f) { label.textContent = `${text} ${Math.round(f * 100)}%`; } };
+  return { set(f) { label.textContent = `${text} ${Math.round(f * 100)}%`; }, text(s) { label.textContent = s; } };
 }
 export function toast(text, ms = 4500) {
   const t = document.getElementById('toast');
