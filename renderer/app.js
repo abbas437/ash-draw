@@ -218,6 +218,7 @@ class App {
       layiso: need(() => { this.isoSaved = layIsolate(this.session, sel()); toast('Layers isolated (LAYUNISO restores)', 2500); }),
       layuniso: () => { if (layUnisolate(this.session, this.isoSaved)) { this.isoSaved = null; toast('Layers restored', 1500); } else toast('Nothing isolated.'); },
       layfrz: need(() => { const n = layFreeze(this.session, sel()); this.vp.setSelection([]); toast(`Frozen: ${n.join(', ')}`, 2500); }),
+      laymcur: need(() => { const e = this.doc.entities.find((x) => x.id === sel()[0]); if (!e) return; this.state.layer = e.layer; this.refreshPanels(); toast(`Current layer: ${e.layer}`, 2500); }),
       layon: () => layOn(this.session), laythw: () => layThaw(this.session),
     };
   }
