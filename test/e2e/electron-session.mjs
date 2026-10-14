@@ -139,19 +139,25 @@ try {
   expect('nothing new to autosave', again, again === 0);
   const files7 = await autosaveFiles();
   expect('autosave folder', JSON.stringify(files7), files7.length === 2 && files7[0].endsWith('.dxf') && files7[1].endsWith('.json'));
+  // the copy of a drawing opened from DWG: its bytes are DXF like every autosave (no DWG converter needed to recover it)
+  const plan = join(tmp, 'plan.dwg');
+  await win.evaluate(async (p) => { const { dxfBytesOf } = await import('/renderer/files.js'); await window.api.autosaveWrite('tab-dwgorigin0001', dxfBytesOf(window.app.doc), { originalPath: p, name: 'plan.dwg', format: 'dwg' }); }, plan);
+  expect('autosave folder with the DWG-origin copy', JSON.stringify(await autosaveFiles()), (await autosaveFiles()).length === 4);
   await crash();
 
-  step = 'run 8: the recovery dialog lists a.dxf; Recover opens it as a dirty "(recovered)" tab; the session skips a.dxf';
+  step = 'run 8: the recovery dialog lists a.dxf and plan.dwg; Recover opens them (the DWG-origin copy read as DXF) as dirty "(recovered)" tabs; the session skips a.dxf';
   win = await launch();
   await win.waitForSelector('#dlg[open] .autosave-recover', { timeout: 30000 });
   const rtitle = await win.locator('#dlg h2').textContent();
   expect('recovery dialog title', rtitle, rtitle === 'Recover unsaved drawings');
   const rrows = await win.locator('#dlg .autosave-recover li').evaluateAll((els) => els.map((e) => [e.querySelector('.file-name').textContent, e.querySelector('.file-folder').textContent, /^Autosaved \S/.test(e.querySelector('.file-note').textContent)]));
-  expect('recovery rows', JSON.stringify(rrows), JSON.stringify(rrows) === JSON.stringify([['a.dxf', a, true]]));
+  expect('recovery rows', JSON.stringify(rrows), JSON.stringify(rrows) === JSON.stringify([['plan.dwg', plan, true], ['a.dxf', a, true]])); // newest first
   await win.locator('#dlg .dlg-btns button', { hasText: 'Recover' }).click();
-  await waitTabs(win, ['a (recovered).dxf']);
+  await waitTabs(win, ['plan (recovered).dxf', 'a (recovered).dxf']);
   await win.waitForTimeout(1500); // the session restore runs after the recovery: it must not add a.dxf
-  expect('tabs after recovery', JSON.stringify(await tabs(win)), JSON.stringify(await tabs(win)) === '["a (recovered).dxf"]');
+  expect('tabs after recovery', JSON.stringify(await tabs(win)), JSON.stringify(await tabs(win)) === '["plan (recovered).dxf","a (recovered).dxf"]');
+  const recDwg = await win.evaluate(() => { const t = window.app.tabs[0]; return { n: t.doc.entities.length, dirty: t.session.dirty, path: t.file.path, format: t.file.format, from: t.recoveredFrom }; });
+  expect('recovered DWG-origin tab (read as DXF)', JSON.stringify(recDwg), recDwg.n === n0 + 1 && recDwg.dirty && recDwg.path === null && recDwg.format === 'dxf' && recDwg.from?.path === plan && recDwg.from?.name === 'plan.dwg');
   const rec = await win.evaluate(() => { const t = window.app.active; t.session.undo(); return { n: t.doc.entities.length, dirty: t.session.dirty, path: t.file.path, from: t.recoveredFrom, hasEdit: t.doc.entities.some((e) => e.type === 'LINE' && Math.abs(e.p2?.x - 123) < 1e-9 && Math.abs(e.p2?.y - 45) < 1e-9) }; });
   expect('recovered tab', JSON.stringify(rec), rec.n === n0 + 1 && rec.hasEdit && rec.dirty && rec.path === null && rec.from?.path === a && rec.from?.name === 'a.dxf');
 
@@ -159,7 +165,11 @@ try {
   const close = win.evaluate(() => window.app.closeTab());
   await win.locator('#dlg[open] .dlg-btns button', { hasText: "Don't save" }).click({ timeout: 10000 });
   expect('closeTab', '', (await close) === true);
-  expect('autosave folder after Don\'t save', JSON.stringify(await autosaveFiles()), (await autosaveFiles()).length === 0);
+  expect('autosave folder after Don\'t save', JSON.stringify(await autosaveFiles()), JSON.stringify(await autosaveFiles()) === '["tab-dwgorigin0001.dxf","tab-dwgorigin0001.json"]');
+  const close2 = win.evaluate(() => window.app.closeTab());
+  await win.locator('#dlg[open] .dlg-btns button', { hasText: "Don't save" }).click({ timeout: 10000 });
+  expect('closeTab (DWG-origin)', '', (await close2) === true);
+  expect('autosave folder empty', JSON.stringify(await autosaveFiles()), (await autosaveFiles()).length === 0);
   await win.evaluate(() => window.api.settingsSet('startup.mode', 'new'));
   await quit();
 

@@ -15,7 +15,7 @@ import { dimStyleManager, dimStyleNames, dimVarsOf, setCurrentDimStyle } from '.
 import { blockDoubleClick } from './tools-blocks.js';
 import { initSession } from './session.js';
 import { initAutosave } from './autosave.js';
-import { AUTOSAVE_CHOICES } from '../src/core/autosave.js';
+import { AUTOSAVE_CHOICES, shouldDiscardAutosave } from '../src/core/autosave.js';
 import { FindPanel } from './find.js';
 import { plotDialog } from './plot.js';
 import { initLayouts, restoreSpace, renderSpaceBar, layoutDoubleClick, exitMspace, renderVpScale, commitViewportView } from './layouts-ui.js';
@@ -249,13 +249,14 @@ class App {
   }
 
   // ---- new / open / save -------------------------------------------------------------------------
-  /** asks to save a drawing with unsaved changes (shown first); false = the user cancelled */
+  /** asks to save a drawing with unsaved changes (shown first). The choice: 'clean' (nothing to save), 'save' (saved -
+   *  a DWG that differs from the drawing leaves it unsaved), 'dont-save'; null = cancelled, or the save failed */
   async confirmDiscard(tab = this.active) {
-    if (!tab?.session.dirty) return true;
+    if (!tab?.session.dirty) return 'clean';
     if (tab !== this.active) this.switchTo(tab);
     const r = await confirmDialog('Unsaved changes', `Save changes to ${tab.file.name}?`, 'Save', "Don't save", 'Cancel');
-    if (r === 'yes') return this.save();
-    return r === 'no';
+    if (r === 'yes') return (await this.save()) ? 'save' : null;
+    return r === 'no' ? 'dont-save' : null;
   }
   /** show a drawing in a new tab; a blank, untouched Untitled tab is replaced instead */
   /** prepared: {scene, index} built ahead (prepareView) so showing the tab does no long synchronous work */
@@ -288,8 +289,10 @@ class App {
   cycleTab(step) { this.activateIndex(cycleIndex(this.tabs.length, this.tabs.indexOf(this.active), step)); }
   /** close a tab after the save prompt; closing the last tab leaves a new blank drawing. Returns false if cancelled. */
   async closeTab(tab = this.active) {
-    if (!(await this.confirmDiscard(tab))) return false;
-    this.autosave.discard(tab); // saved or "Don't save": its autosave copy goes
+    const choice = await this.confirmDiscard(tab);
+    if (!choice) return false;
+    // saved or "Don't save": its autosave copy goes (a save that left it unsaved keeps the copy for the next start)
+    if (shouldDiscardAutosave({ choice, dirtyAfter: tab.session.dirty })) await this.autosave.discard(tab);
     const i = this.tabs.indexOf(tab);
     if (i < 0) return true;
     if (this.active === tab) clearMeasureResults();
@@ -302,8 +305,15 @@ class App {
   }
   /** window close / quit: one save prompt per drawing with unsaved changes, then close */
   async closeAll() {
-    for (const tab of this.tabs.filter((t) => t.session.dirty)) if (!(await this.confirmDiscard(tab))) return false;
-    for (const tab of this.tabs) await this.autosave.discard(tab); // saved or "Don't save": no copy is offered next time
+    const choices = new Map();
+    for (const tab of this.tabs.filter((t) => t.session.dirty)) {
+      const choice = await this.confirmDiscard(tab);
+      if (!choice) return false;
+      choices.set(tab, choice);
+    }
+    this.autosave.stop(); // no autosave may start (and outlive the window) from here
+    // saved or "Don't save": no copy is offered next time (a save that left a drawing unsaved keeps its copy)
+    for (const tab of this.tabs) if (shouldDiscardAutosave({ choice: choices.get(tab) ?? 'clean', dirtyAfter: tab.session.dirty })) await this.autosave.discard(tab);
     this.closeConfirmed = true;
     api.closeWindow?.();
     return true;
@@ -572,6 +582,7 @@ class App {
     const dwgSaveRow = el('p', {}, el('label', {}, dwgSave, ` ${DWG_SAVE_PREF_LABEL}`));
     const applyDwgSave = () => { this.allowDwgSave = dwgSave.checked; api.settingsSet?.(DWG_SAVE_PREF_KEY, this.allowDwgSave)?.catch?.(() => {}); };
     const autoSel = el('select', { id: 'pref-autosave' }, AUTOSAVE_CHOICES.map((m) => el('option', { value: String(m), text: m ? `Every ${m} minutes` : 'Off' })));
+    await this.autosave.ready; // the saved interval, not the default shown before it has loaded
     autoSel.value = String(this.autosave.minutes);
     autoSel.disabled = !this.autosave.enabled;
     const autosaveRow = el('p', {}, el('label', { text: 'Autosave unsaved drawings (recovered after a crash): ' }), autoSel);
