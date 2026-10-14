@@ -49,6 +49,61 @@ try {
   });
   const t0 = await tabs(), n0 = t0.split(',').length;
 
+  step = 'viewport scale list on a selected paper viewport: 1:50, one undo step';
+  const lay1 = t0.split(',')[1];
+  await page.click(`#spacebar button[data-space="${lay1}"]`);
+  assert.equal(await page.locator('#vpscale').isHidden(), true, 'no list without a selected viewport');
+  const vpInfo = () => page.evaluate(() => {
+    const v = window.app.vp.mspace?.vp ?? window.app.vp.doc.entities.find((e) => e.type === 'VIEWPORT' && e.vpId !== 1 && e.height > 0);
+    return { id: v.id, height: v.height, viewHeight: v.viewHeight, cx: v.viewCenter.x, cy: v.viewCenter.y, locked: !!v.locked, units: window.app.active.doc.units };
+  });
+  const v0 = await vpInfo();
+  await page.evaluate((id) => window.app.vp.setSelection([id]), v0.id);
+  assert.equal(await page.locator('#vpscale').isVisible(), true, 'the list shows for one selected paper viewport');
+  const u0 = await page.evaluate(() => window.app.active.session.undoStack.length);
+  await page.locator('#vpscale').selectOption('100');
+  const mmPer = { 0: 1, 4: 1, 6: 1000 }[v0.units];
+  let v1 = await vpInfo();
+  assert.ok(Math.abs(v1.viewHeight - (v1.height * 100) / mmPer) < 1e-9 * v1.viewHeight, `1:100 viewHeight ${v1.viewHeight}`);
+  assert.equal(await page.locator('#vpscale').inputValue(), '100');
+  assert.equal(await page.evaluate(() => window.app.active.session.undoStack.length), u0 + 1, 'one undo step');
+  assert.deepEqual([v1.cx, v1.cy], [v0.cx, v0.cy], 'the view centre is kept');
+  await page.locator('#vpscale').selectOption('50');
+  v1 = await vpInfo();
+  assert.ok(Math.abs(v1.viewHeight - (v1.height * 50) / mmPer) < 1e-9 * v1.viewHeight, `1:50 viewHeight ${v1.viewHeight}`);
+  assert.equal(await page.locator('label input[data-prop="Scale"]').inputValue(), '1:50', 'Properties shows the same scale');
+  await typeCmd('u');
+  assert.equal((await vpInfo()).viewHeight, (v0.height * 100) / mmPer, 'one undo restores the previous scale');
+  await typeCmd('u');
+  assert.equal((await vpInfo()).viewHeight, v0.viewHeight, 'and the next one the original');
+  await page.evaluate((id) => window.app.vp.setSelection([id]), v0.id);
+  assert.equal(await page.locator('#vpscale').inputValue(), String(+((v0.viewHeight / v0.height) * mmPer).toPrecision(6)));
+
+  step = 'a locked viewport refuses a scale from the list';
+  await typeCmd('vplock');
+  assert.equal((await vpInfo()).locked, true);
+  await page.evaluate((id) => window.app.vp.setSelection([id]), v0.id);
+  const u1 = await page.evaluate(() => window.app.active.session.undoStack.length);
+  await page.locator('#vpscale').selectOption('250');
+  assert.equal((await vpInfo()).viewHeight, v0.viewHeight, 'unchanged');
+  assert.equal(await page.evaluate(() => window.app.active.session.undoStack.length), u1);
+  await page.waitForFunction(() => /locked/i.test(document.body.innerText), null, { timeout: 3000 });
+  await typeCmd('u');
+  assert.equal((await vpInfo()).locked, false);
+
+  step = 'scale list in MSPACE: one undo step, the model view follows';
+  await page.evaluate((id) => window.app.vp.setSelection([]), v0.id);
+  await typeCmd('ms');
+  assert.equal(await page.evaluate(() => !!window.app.vp.mspace), true);
+  const u2 = await page.evaluate(() => window.app.active.session.undoStack.length);
+  await page.locator('#vpscale').selectOption('20');
+  assert.ok(Math.abs((await vpInfo()).viewHeight - (v0.height * 20) / mmPer) < 1e-9 * v0.height * 20);
+  await typeCmd('ps');
+  assert.equal(await page.evaluate(() => window.app.active.session.undoStack.length), u2 + 1, 'leaving MSPACE records no second step');
+  await typeCmd('u');
+  assert.equal((await vpInfo()).viewHeight, v0.viewHeight);
+  await page.click('#spacebar button[data-space="Model"]');
+
   step = 'LAYOUT New';
   await typeCmd('lo'); await btn('New'); await nameAs('Sheet X');
   assert.equal(await tabs(), `${t0},Sheet X`);

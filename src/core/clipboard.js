@@ -4,7 +4,7 @@
 //   const text = fragmentDxf(doc, ids, base);           // COPYCLIP / COPYBASE: DXF text for the system clipboard
 //   const frag = readFragment(text);                    // null when the text is not a DXF
 //   pasteFragment(s, frag, { at, orig, asBlock });      // PASTECLIP / PASTEORIG / PASTEBLOCK, one undo step
-import { newDocument, getEntity } from './model.js';
+import { newDocument, getEntity, MM_PER_UNIT } from './model.js';
 import { writeDxf } from './dxfWrite.js';
 import { parseDxf } from './dxfRead.js';
 import { transformEntity } from './geom.js';
@@ -13,8 +13,7 @@ import { transformDimension } from './dims.js';
 const U = (s) => String(s ?? '').toUpperCase();
 const findCI = (m, name) => { if (m.has(name)) return name; const u = U(name); for (const k of m.keys()) if (U(k) === u) return k; return null; };
 
-/** millimetres per drawing unit for $INSUNITS codes; 0 (unitless) and unknown codes have none */
-const MM = { 1: 25.4, 2: 304.8, 3: 1609344, 4: 1, 5: 10, 6: 1000, 7: 1e6, 8: 25.4e-6, 9: 0.0254, 10: 914.4, 11: 1e-7, 12: 1e-6, 13: 1e-3, 14: 100, 15: 1e4, 16: 1e5, 17: 1e12, 18: 1.495978707e14, 19: 9.4607304725808e18, 20: 3.0856776e19 };
+const MM = MM_PER_UNIT;
 /** scale from fragment units to target units (1 when either is unitless or unknown) */
 export const unitScale = (from, to) => (MM[from] && MM[to] ? MM[from] / MM[to] : 1);
 

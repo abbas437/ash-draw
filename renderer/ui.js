@@ -297,7 +297,7 @@ function geometryFields(app, e) {
   const xy = (name, get) => [field(`${name} X`, get(e).x, (c, v) => { get(c).x = v; }), field(`${name} Y`, get(e).y, (c, v) => { get(c).y = v; })];
   switch (e.type) {
     case 'LINE': return [...xy('Start', (x) => x.p1), ...xy('End', (x) => x.p2)];
-    case 'VIEWPORT': return viewportFields(e, edit);
+    case 'VIEWPORT': return viewportFields(app, e);
     case 'CIRCLE': return [...xy('Center', (x) => x.c), field('Radius', e.r, (c, v) => { c.r = v; }, pos), field('Diameter', 2 * e.r, (c, v) => { c.r = v / 2; }, pos)];
     case 'ARC': return [...xy('Center', (x) => x.c), field('Radius', e.r, (c, v) => { c.r = v; }, pos),
       field('Start angle', e.a0, (c, v) => { c.a0 = v; }), field('End angle', e.a1, (c, v) => { c.a1 = v; })];

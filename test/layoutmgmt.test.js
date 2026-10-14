@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { newDocument } from '../src/core/model.js';
 import { Session } from '../src/core/edit.js';
-import { makeViewport } from '../src/core/layouts.js';
+import { makeViewport, STANDARD_SCALES, viewportPrintScale, viewHeightForScale } from '../src/core/layouts.js';
 import { saveView, findView } from '../src/core/views.js';
 import { addLayout, copyLayout, renameLayout, deleteLayout, moveLayout, setPageSetup, layoutsOf, layoutNameError } from '../src/core/layoutmgmt.js';
 import { readDxf } from '../src/core/dxfRead.js';
@@ -138,4 +138,17 @@ test('DXF round trip: 3 layouts after rename, delete and reorder keep names, tab
   assert.equal(back.layouts[1].plot.rotation, 1);
   assert.equal(back.layouts[1].plot.scaleDen, 2);
   assert.equal(findView(back, 'Detail').space, 'Sheet A');
+});
+
+test('viewport print scale 1:N is paper mm to model mm: mm, unitless, m and inch layouts; 250 is a standard scale', () => {
+  const vp = { height: 100, viewHeight: 5000 }, mm = { units: 1, scaleNum: 1, scaleDen: 1 };
+  assert.ok(STANDARD_SCALES.includes(250));
+  assert.equal(viewportPrintScale(vp, mm, 4), 50, 'mm drawing on a mm layout');
+  assert.equal(viewportPrintScale(vp, mm, 0), 50, 'unitless is taken as mm');
+  assert.equal(viewHeightForScale(vp, 50, mm, 6), 5, 'metres: 100 mm of paper at 1:50 shows 5 m');
+  assert.equal(viewportPrintScale({ height: 100, viewHeight: 5 }, mm, 6), 50);
+  const inch = { units: 0, scaleNum: 1, scaleDen: 1 };
+  assert.equal(viewHeightForScale({ height: 4 }, 50, inch, 1), 200, 'inch layout, inch drawing: 4 in of paper at 1:50 shows 200 in');
+  assert.ok(Math.abs(viewportPrintScale({ height: 4, viewHeight: 5.08 }, inch, 6) - 50) < 1e-9, 'inch layout, metre drawing');
+  for (const u of [0, 1, 4, 6]) for (const n of [1, 25, 250]) assert.ok(Math.abs(viewportPrintScale({ height: 7, viewHeight: viewHeightForScale({ height: 7 }, n, mm, u) }, mm, u) - n) < 1e-9);
 });

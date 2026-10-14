@@ -7,6 +7,8 @@
 //            units (0 in, 1 mm, 2 px), rotation (0..3), plotType (74), flags (70), window, imageOrigin, styleSheet, stdScale }
 //   entities: paper-space entities, including { type:'VIEWPORT', ... } (see readViewport).
 
+import { mmPerUnit } from './model.js';
+
 const VP_LOCKED = 16384, VP_OFF = 131072, VP_CLIP = 65536;
 
 /** scale denominator N of "1:N" for a viewport (model units per paper unit) */
@@ -168,7 +170,14 @@ export function viewportFromModelView(pv, vp, mv) {
 }
 
 /** standard plot scales "1:N" offered for viewports */
-export const STANDARD_SCALES = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000];
+export const STANDARD_SCALES = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000];
+
+/** printed scale N of "1:N" of a viewport: model millimetres per paper millimetre. `plot` is its layout's (paper mm per
+ *  layout unit: paperMmPerUnit, so inch layouts count), `units` the drawing's $INSUNITS (unitless taken as mm) */
+export const viewportPrintScale = (vp, plot, units) => (viewportScale(vp) * mmPerUnit(units)) / paperMmPerUnit(plot);
+
+/** the viewHeight that makes viewport `vp` print at 1:n (inverse of viewportPrintScale) */
+export const viewHeightForScale = (vp, n, plot, units) => (vp.height * n * paperMmPerUnit(plot)) / mmPerUnit(units);
 
 /** the topmost (last drawn) usable viewport containing paper point p, or null */
 export function viewportAt(entities, p) {

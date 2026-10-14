@@ -2,7 +2,7 @@
 // A layout is shown by pointing the tab's Session (and so the Viewport, picking and editing) at a
 // "space doc": the drawing seen through the layout's entity list (layers, blocks, ids stay shared).
 import { buildScene, docWithFrozen, fitView, screenToWorld, viewportToPaper } from '../src/core/render.js';
-import { makeViewport, viewportScale, modelViewThrough, viewportFromModelView, viewportAt, STANDARD_SCALES, isPaperViewport } from '../src/core/layouts.js';
+import { makeViewport, viewportScale, modelViewThrough, viewportFromModelView, viewportAt, STANDARD_SCALES, isPaperViewport, viewportPrintScale, viewHeightForScale } from '../src/core/layouts.js';
 import { recordViewportView, viewportView } from '../src/core/edit.js';
 import { Tool, TOOL_ALIASES } from './tools.js';
 import { el, modal, message, toast } from './ui.js';
@@ -265,12 +265,47 @@ function zoomViewportExtents(app) {
   vp.view = modelViewThrough(m.paperView, v); vp.requestRender(); vp.emit('view');
 }
 
-/** set the active (or selected) viewport to 1:n, keeping its view centre */
-export function setViewportScale(app, n) {
-  const m = app.vp.mspace;
-  if (!m || !(n > 0)) return;
-  m.vp.viewHeight = m.vp.height * n;
-  app.vp.view = modelViewThrough(m.paperView, m.vp); app.vp.requestRender(); app.vp.emit('view');
+/** the viewport a scale change applies to: the active one in MSPACE, else the one selected viewport in paper space */
+function scaleTarget(app) {
+  const vp = app.vp;
+  if (vp.mspace) return vp.mspace.vp;
+  if (!vp.layout || vp.selection.size !== 1) return null;
+  const v = vp.doc.entities.find((e) => vp.selection.has(e.id));
+  return v?.type === 'VIEWPORT' && !isPaperViewport(v) && v.height > 0 ? v : null;
+}
+
+/** "1:N" (paper mm : model mm) of viewport `v` on the shown layout */
+const printScale = (app, v) => +viewportPrintScale(v, app.vp.layout?.plot ?? { units: 1 }, app.active?.doc.units ?? 0).toPrecision(6);
+
+/** set viewport `v` to `viewHeight` (model units shown over its height), its view centre kept, as ONE undo step.
+ *  A locked viewport refuses. In MSPACE a zoom / pan before it is committed as its own step first, and the model view
+ *  follows without being written back again. Returns true when the viewport changed. */
+function setViewportHeight(app, v, viewHeight) {
+  if (!v || !(viewHeight > 0)) return false;
+  if (v.locked) { toast('Viewport is locked.'); return false; }
+  const vp = app.vp, m = vp.mspace, s = app.active.session;
+  if (m && v === m.vp) {
+    commitViewportView(app);
+    if (v.viewHeight === viewHeight) return false;
+    const sp = spaces(app.active), cur = s.doc;
+    s.doc = sp.docs[sp.cur]; // the viewport lives in the layout, not in the model doc the session shows in MSPACE
+    try { s.transact('Viewport scale', (tx) => tx.props(v, { viewHeight })); } finally { s.doc = cur; }
+    m.start = viewportView(v);
+    const w = modelViewThrough(m.paperView, v);
+    m.quiet = true;
+    vp.view = { ...vp.view, cx: w.cx, cy: w.cy, zoom: w.zoom }; vp.requestRender(); vp.emit('view');
+    m.quiet = false;
+    return true;
+  }
+  if (v.viewHeight === viewHeight) return false;
+  s.transact('Viewport scale', (tx) => tx.replace({ ...v, viewHeight }));
+  return true;
+}
+
+/** set the active (MSPACE) or the selected viewport to print at 1:n (paper mm : model mm) */
+export function setViewportScale(app, n, v = scaleTarget(app)) {
+  if (!v || !(n > 0)) return false;
+  return setViewportHeight(app, v, viewHeightForScale(v, n, app.vp.layout?.plot ?? { units: 1 }, app.active?.doc.units ?? 0));
 }
 
 /** double-click in a layout: inside a viewport enters it, on the paper outside viewports returns to paper space.
@@ -285,7 +320,8 @@ export function layoutDoubleClick(app, e) {
   return v ? enterMspace(app, v) : exitMspace(app);
 }
 
-/** status bar: the active viewport's scale with the standard scales to pick from (shown in MSPACE only) */
+/** status bar: the scale of the active viewport (MSPACE) or of the one selected viewport (paper space), with the
+ *  standard scales to pick from; a non-standard scale shows as "Custom 1:n" */
 export function renderVpScale(app) {
   let sel = document.getElementById('vpscale');
   if (!sel) {
@@ -293,7 +329,9 @@ export function renderVpScale(app) {
     sel.onchange = async () => {
       let n = Number(sel.value);
       if (sel.value === 'custom') {
-        const inp = el('input', { type: 'number', min: '0.000001', step: 'any', value: String(+viewportScale(app.vp.mspace.vp).toPrecision(6)), style: 'width:8em' });
+        const v = scaleTarget(app);
+        if (!v) return;
+        const inp = el('input', { type: 'number', min: '0.000001', step: 'any', value: String(printScale(app, v)), style: 'width:8em' });
         n = (await modal('Viewport scale', [el('label', {}, 'Scale 1 : ', inp)], [{ label: 'OK', value: 'ok', primary: true }, { label: 'Cancel', value: null }])) === 'ok' ? Number(inp.value) : NaN;
       }
       if (n > 0) setViewportScale(app, n);
@@ -301,12 +339,12 @@ export function renderVpScale(app) {
     };
     document.getElementById('units')?.before(sel);
   }
-  const m = app.vp.mspace;
-  sel.hidden = !m;
-  if (!m) return;
-  const n = +viewportScale(m.vp).toPrecision(6);
-  const list = STANDARD_SCALES.includes(n) ? STANDARD_SCALES : [...STANDARD_SCALES, n].sort((a, b) => a - b);
-  sel.replaceChildren(...list.map((k) => el('option', { value: String(k), text: `1:${k}` })), el('option', { value: 'custom', text: 'Custom…' }));
+  const v = scaleTarget(app);
+  sel.hidden = !v;
+  if (!v) return;
+  const n = printScale(app, v);
+  sel.replaceChildren(...STANDARD_SCALES.map((k) => el('option', { value: String(k), text: `1:${k}` })),
+    ...(STANDARD_SCALES.includes(n) ? [] : [el('option', { value: String(n), text: `Custom 1:${n}` })]), el('option', { value: 'custom', text: 'Custom…' }));
   sel.value = String(n);
 }
 
@@ -334,14 +372,15 @@ const mviewTool = (app) => new (class MViewTool extends Tool {
   }
 })(app);
 
-/** Properties rows for a selected VIEWPORT: scale as "1:N" (keeps the paper size, changes the model window) */
-export function viewportFields(e, edit) {
-  const fmt = (n) => `1:${+n.toFixed(4)}`;
-  const inp = el('input', { type: 'text', 'data-prop': 'Scale', value: fmt(viewportScale(e)) });
+/** Properties rows for a selected VIEWPORT: scale as "1:N", paper mm : model mm as in the status-bar list (keeps the
+ *  paper size, changes the model window; one undo step; a locked viewport refuses) */
+export function viewportFields(app, e) {
+  const fmt = () => `1:${printScale(app, e)}`;
+  const inp = el('input', { type: 'text', 'data-prop': 'Scale', value: fmt() });
   inp.onchange = () => {
     const m = /^\s*([\d.]+)\s*:\s*([\d.]+)\s*$/.exec(inp.value) ?? /^\s*()([\d.]+)\s*$/.exec(inp.value);
     const a = m ? Number(m[1] || 1) : NaN, b = m ? Number(m[2]) : NaN;
-    if (a > 0 && b > 0) edit((c) => { c.viewHeight = (c.height * b) / a; }); else inp.value = fmt(viewportScale(e));
+    if (!(a > 0 && b > 0) || !setViewportScale(app, b / a, e)) inp.value = fmt();
   };
   return [el('label', {}, 'Scale', inp)];
 }
@@ -364,8 +403,7 @@ export function initLayouts(app) {
   app.zoomPaperScale = (k) => {
     const m = vp.mspace;
     if (!m) { toast('nXP works inside a layout viewport (MS).'); return; }
-    if (m.vp.locked) { toast('Viewport is locked.'); return; }
-    setViewportScale(app, 1 / k);
+    setViewportHeight(app, m.vp, m.vp.height / k);
   };
   vp.on('view', () => { if (vp.mspace) { if (syncViewport(vp)) touchDrawing(app, 'viewPending'); renderVpScale(app); } });
   // undo/redo in MSPACE that changed the active viewport's view: show the restored view through it
