@@ -298,6 +298,11 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 #spacebar { display:flex; gap:2px; background:var(--bg); border-top:1px solid var(--line); min-height:24px; overflow-x:auto; }
 #spacebar button { border:0; border-right:1px solid var(--line); background:transparent; padding:2px 12px; font-size:12px; cursor:pointer; color:inherit; }
 #spacebar button.active { background:var(--canvas); font-weight:600; }
+#beditbar { display:flex; align-items:center; gap:6px; padding:3px 8px; background:#fff4d6; color:#3a2a00; border-top:2px solid #d9a400; font-size:12px; }
+#beditbar[hidden] { display:none; }
+#beditbar .bedit-title { font-weight:600; margin-right:auto; }
+#beditbar button { font-size:12px; padding:2px 10px; cursor:pointer; }
+#spacebar[hidden] { display:none; }
 #compare-panel { position:absolute; right:10px; top:10px; width:300px; max-height:calc(100% - 60px); display:flex; flex-direction:column; gap:6px; padding:0 8px 8px; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:4px; box-shadow:0 2px 8px var(--shadow); z-index:4; }
 #compare-panel[hidden] { display:none; }
 .cmp-counts { display:flex; flex-wrap:wrap; gap:4px 12px; }

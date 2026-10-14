@@ -145,10 +145,17 @@ export function syncAttribs(ins, blk) {
 /** ATTSYNC: every INSERT of block `name` (model space, every layout, nested in other blocks) synced as ONE undo step on
  *  session s. Xref content is left alone (it is reloaded from its file). Returns the number of INSERTs changed. */
 export function attSync(s, name) {
+  const doc = s.doc.modelDoc ?? s.doc;
+  if (!doc.blocks.get(name)) return 0;
+  return s.transact('ATTSYNC', (tx) => attSyncTx(tx, s, name));
+}
+
+/** ATTSYNC's changes recorded on an open transaction tx of session s (so BSAVE can redefine and sync in one undo step) */
+export function attSyncTx(tx, s, name) {
   const doc = s.doc.modelDoc ?? s.doc, blk = doc.blocks.get(name);
   if (!blk) return 0;
   const fix = (list, put) => { let n = 0; list.forEach((e, i) => { const c = e?.type === 'INSERT' && e.block === name && syncAttribs(e, blk); if (c) { put(i, c); n++; } }); return n; };
-  return s.transact('ATTSYNC', (tx) => {
+  {
     const lists = [...new Set([doc.entities, ...(doc.layouts ?? []).map((l) => l.entities)].filter(Boolean))];
     let n = 0;
     for (const list of lists) n += fix(list, (i, c) => (list === s.doc.entities ? tx.replace(c) : tx.set(list, i, c)));
@@ -159,5 +166,5 @@ export function attSync(s, name) {
       if (k) { tx.block(bn, { ...b, entities: ents }); n += k; }
     }
     return n;
-  });
+  }
 }
