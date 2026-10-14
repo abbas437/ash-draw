@@ -320,3 +320,4 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 .mt-edit .mt-raw { font-size:70%; color:#6b7280; background:#e5e7eb; }
 .mt-edit .mt-nbsp { background:rgba(59,130,246,.18); }
 .match-settings { display:grid; gap:4px; }
+.cmp-offset { color:var(--text); }
