@@ -189,8 +189,32 @@ export function tokenizeDxf(bytes, { decoder = null, onProgress = null } = {}) {
   const val = joined
     ? (i) => { const j = joined.get(i); return j !== undefined ? j : decode(vs[i], ve[i]); }
     : (i) => decode(vs[i], ve[i]);
-  return { codes, val, count, repaired };
+  // a numeric value read from its bytes without making a string: plain decimals of at most 16 digits whose value is an
+  // exact integer below 2^53 over a power of ten up to 1e22 (both exact doubles, so the division rounds like
+  // parseFloat); anything else (exponents, more digits, rejoined or non-ASCII lines) goes through parseFloat
+  const num = (i) => {
+    if (joined?.has(i)) return parseFloat(joined.get(i));
+    const e = ve[i];
+    let k = vs[i];
+    while (k < e && isWs(body[k])) k++;
+    const neg = body[k] === 45;
+    if (neg || body[k] === 43) k++;
+    let m = 0, digits = 0, frac = 0, c = 0;
+    while (k < e && (c = body[k]) >= 48 && c <= 57) { m = m * 10 + c - 48; digits++; k++; }
+    if (k < e && body[k] === 46) {
+      k++;
+      while (k < e && (c = body[k]) >= 48 && c <= 57) { m = m * 10 + c - 48; digits++; frac++; k++; }
+    }
+    while (k < e && isWs(body[k])) k++;
+    if (k === e && digits > 0 && digits <= 16 && m <= 9007199254740992 && frac <= 22) {
+      const v = frac ? m / POW10[frac] : m;
+      return neg ? -v : v;
+    }
+    return parseFloat(decode(vs[i], ve[i]));
+  };
+  return { codes, val, num, count, repaired };
 }
+const POW10 = Array.from({ length: 23 }, (_, k) => 10 ** k);
 const isStringCode = (c) => c < 10 || (c >= 100 && c <= 102) || c === 105 || (c >= 300 && c <= 369) || (c >= 390 && c <= 399) || (c >= 410 && c <= 419) || (c >= 430 && c <= 439) || (c >= 470 && c <= 481) || c === 999 || (c >= 1000 && c <= 1009);
 
 class Rec {
@@ -204,7 +228,12 @@ class Rec {
     for (let i = this.a + 1; i < this.b; i++) if (codes[i] === code) return isStringCode(code) ? decodeU(val(i)) : val(i);
     return undefined;
   }
-  num(code, d = 0) { const v = this.get(code); if (v === undefined) return d; const x = parseFloat(v); return Number.isFinite(x) ? x : d; }
+  num(code, d = 0) {
+    if (isStringCode(code)) { const v = this.get(code); if (v === undefined) return d; const x = parseFloat(v); return Number.isFinite(x) ? x : d; }
+    const { codes, num } = this.tk;
+    for (let i = this.a + 1; i < this.b; i++) if (codes[i] === code) { const x = num(i); return Number.isFinite(x) ? x : d; }
+    return d;
+  }
   int(code, d = 0) { const v = this.get(code); if (v === undefined) return d; const x = parseInt(v, 10); return Number.isFinite(x) ? x : d; }
   str(code, d = '') { const v = this.get(code); return v === undefined ? d : v; }
   has(code) { return this.get(code) !== undefined; }
@@ -388,12 +417,12 @@ function ocsToPlan(rec, e) {
 function buildLwpolyline(rec, o) {
   const verts = [];
   let cur = null;
-  const { codes, val } = rec.tk;
+  const { codes, val, num } = rec.tk;
   for (let i = rec.a + 1; i < rec.b; i++) {
     const c = codes[i];
-    if (c === 10) { cur = { x: parseFloat(val(i)), y: 0, bulge: 0 }; verts.push(cur); }
-    else if (c === 20 && cur) cur.y = parseFloat(val(i));
-    else if (c === 42 && cur) cur.bulge = parseFloat(val(i)) || 0;
+    if (c === 10) { cur = { x: num(i), y: 0, bulge: 0 }; verts.push(cur); }
+    else if (c === 20 && cur) cur.y = num(i);
+    else if (c === 42 && cur) cur.bulge = num(i) || 0;
   }
   const e = makePolyline(verts, (rec.int(70) & 1) === 1, o);
   const w = rec.num(43);
@@ -422,14 +451,14 @@ function buildSpline(rec, o) {
   const ctrl = [], fit = [];
   const knots = rec.allNum(40);
   const weights = rec.allNum(41);
-  const { codes, val } = rec.tk;
+  const { codes, val, num } = rec.tk;
   let cc = null, ff = null;
   for (let i = rec.a + 1; i < rec.b; i++) {
     const c = codes[i];
-    if (c === 10) { cc = { x: parseFloat(val(i)), y: 0 }; ctrl.push(cc); }
-    else if (c === 20 && cc) cc.y = parseFloat(val(i));
-    else if (c === 11) { ff = { x: parseFloat(val(i)), y: 0 }; fit.push(ff); }
-    else if (c === 21 && ff) ff.y = parseFloat(val(i));
+    if (c === 10) { cc = { x: num(i), y: 0 }; ctrl.push(cc); }
+    else if (c === 20 && cc) cc.y = num(i);
+    else if (c === 11) { ff = { x: num(i), y: 0 }; fit.push(ff); }
+    else if (c === 21 && ff) ff.y = num(i);
   }
   const flags = rec.int(70);
   return makeSpline({ ...o, degree: rec.int(71, 3), ctrl, knots, weights: weights.length === ctrl.length && weights.length ? weights : null, fit, closed: (flags & 1) === 1 });
@@ -498,7 +527,7 @@ function buildDimension(rec, o) {
   const skip = new Set([0, 5, 8, 62, 420, 6, 370, 48, 60, 67, 102]);
   const raw = [];
   let hasSub = false;
-  const { codes, val } = rec.tk;
+  const { codes, val, num } = rec.tk;
   let inGroup = false;
   for (let i = rec.a + 1; i < rec.b; i++) {
     const c = codes[i];
@@ -526,22 +555,22 @@ function buildDimension(rec, o) {
 
 function buildLeader(rec, o) {
   const pts = [];
-  const { codes, val } = rec.tk;
+  const { codes, val, num } = rec.tk;
   let cur = null;
   for (let i = rec.a + 1; i < rec.b; i++) {
-    if (codes[i] === 10) { cur = { x: parseFloat(val(i)), y: 0 }; pts.push(cur); }
-    else if (codes[i] === 20 && cur) cur.y = parseFloat(val(i));
+    if (codes[i] === 10) { cur = { x: num(i), y: 0 }; pts.push(cur); }
+    else if (codes[i] === 20 && cur) cur.y = num(i);
   }
   if (pts.length < 2) return null;
   return makeLeader(pts, { ...o, arrow: rec.int(71, 1) !== 0 });
 }
 
 function buildHatch(rec, o, doc) {
-  const { codes, val } = rec.tk;
+  const { codes, val, num } = rec.tk;
   let i = rec.a + 1;
   const end = rec.b;
   const seek = (code) => { while (i < end && codes[i] !== code) i++; return i < end; };
-  const f = (k) => parseFloat(val(k));
+  const f = (k) => num(k);
   const n = (k) => parseInt(val(k), 10);
   if (!seek(2)) return null;
   const pattern = val(i).trim() || 'SOLID';
@@ -641,10 +670,13 @@ function buildHatch(rec, o, doc) {
 /** XDATA of the applications this program keeps (see XDATA_APPS): { APP: [[code, value], ...] } or null */
 export const XDATA_APPS = ['ASH_MARKUP'];
 function readXData(rec) {
+  // runs for every object: scans the group codes and decodes only the 1001 names and the kept applications' values
+  const { codes, val } = rec.tk;
   let out = null, cur = null;
-  for (const [c, v] of rec.tags()) {
-    if (c === 1001) { cur = XDATA_APPS.includes(v) ? ((out ??= {})[v] = []) : null; continue; }
-    if (cur && c >= 1000 && c < 1072) cur.push([c, isStringCode(c) ? decodeU(v) : v]);
+  for (let i = rec.a + 1; i < rec.b; i++) {
+    const c = codes[i];
+    if (c === 1001) { const v = val(i); cur = XDATA_APPS.includes(v) ? ((out ??= {})[v] = []) : null; continue; }
+    if (cur && c >= 1000 && c < 1072) { const v = val(i); cur.push([c, isStringCode(c) ? decodeU(v) : v]); }
   }
   return out;
 }
@@ -819,7 +851,14 @@ export function parseDxf(text) {
   return parseTokens(tokenizeDxf(new TextEncoder().encode(text), { decoder: new TextDecoder('utf-8', { ignoreBOM: true }) }));
 }
 
+// The per-parse state above holds records, which hold the token arrays and the DXF bytes: it is dropped when a parse
+// ends (returned or thrown), so the reader does not keep a big drawing's bytes alive until the next parse.
 function parseTokens(tk, onProgress = null) {
+  try { return parseTokensInto(tk, onProgress); } finally {
+    mlStyles = new Map(); dimHandleName = () => undefined; clipObjs = new Map(); imageDefs = new Map();
+  }
+}
+function parseTokensInto(tk, onProgress) {
   const secs = sections(tk);
   if (!secs.ENTITIES && !secs.HEADER && !secs.TABLES) {
     const err = new Error('This file does not look like a DXF drawing (no HEADER, TABLES or ENTITIES section).');

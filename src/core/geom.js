@@ -123,36 +123,37 @@ function splinePoints(e, tol) {
   if (!(t1 > t0)) return ctrl.map((p) => ({ x: p.x, y: p.y }));
   const samples = Math.min(2000, Math.max(24, n * 16 * Math.max(1, Math.round(1 / Math.max(tol ? tol / 0.01 : 1, 0.25)))));
   const out = [];
+  const st = { k: degree, t: -Infinity, x: new Float64Array(degree + 1), y: new Float64Array(degree + 1), w: new Float64Array(degree + 1) };
   for (let s = 0; s <= samples; s++) {
     const t = s === samples ? t1 - 1e-12 : t0 + ((t1 - t0) * s) / samples;
-    out.push(deBoor(ctrl, knots, weights, degree, t));
+    out.push(deBoor(ctrl, knots, weights, degree, t, st));
   }
-  out[out.length - 1] = deBoor(ctrl, knots, weights, degree, t1 - 1e-12);
   return out;
 }
-function deBoor(ctrl, knots, weights, p, t) {
+/** point of the spline at t (de Boor). st: the span and t of the previous call (samples come in rising t, so the span
+ *  search goes on from there) and scratch arrays of degree + 1 */
+function deBoor(ctrl, knots, weights, p, t, st = { k: p, t: -Infinity, x: new Float64Array(p + 1), y: new Float64Array(p + 1), w: new Float64Array(p + 1) }) {
   const n = ctrl.length;
-  let k = p;
+  let k = t >= st.t ? st.k : p;
   while (k < n - 1 && t >= knots[k + 1]) k++;
-  const d = [];
+  st.k = k; st.t = t;
+  const dx = st.x, dy = st.y, dw = st.w;
   for (let j = 0; j <= p; j++) {
     const w = weights && weights[j + k - p] != null ? weights[j + k - p] : 1;
     const q = ctrl[j + k - p];
-    d.push({ x: q.x * w, y: q.y * w, w });
+    dx[j] = q.x * w; dy[j] = q.y * w; dw[j] = w;
   }
   for (let r = 1; r <= p; r++) {
     for (let j = p; j >= r; j--) {
       const den = knots[j + 1 + k - r] - knots[j + k - p];
       const a = den === 0 ? 0 : (t - knots[j + k - p]) / den;
-      d[j] = {
-        x: (1 - a) * d[j - 1].x + a * d[j].x,
-        y: (1 - a) * d[j - 1].y + a * d[j].y,
-        w: (1 - a) * d[j - 1].w + a * d[j].w,
-      };
+      dx[j] = (1 - a) * dx[j - 1] + a * dx[j];
+      dy[j] = (1 - a) * dy[j - 1] + a * dy[j];
+      dw[j] = (1 - a) * dw[j - 1] + a * dw[j];
     }
   }
-  const w = d[p].w || 1;
-  return { x: d[p].x / w, y: d[p].y / w };
+  const w = dw[p] || 1;
+  return { x: dx[p] / w, y: dy[p] / w };
 }
 // Fit-point splines are approximated by a centripetal Catmull-Rom curve through the fit points
 // (DXF stores tangents/knots for an exact fit; this approximation is visually close for display).
@@ -332,6 +333,12 @@ export function textExtent(e) {
 /** Axis-aligned bbox {minx,miny,maxx,maxy} or null. */
 export function bboxOf(e, doc = null) {
   if (isInfinite(e)) return null; // kept out of the extents, as AutoCAD does
+  if (e.type === 'LINE' && e.p1 && e.p2) { // the box tessellate's [p1, p2] gives (growBox), without the copies
+    const a = e.p1, c = e.p2, b = { minx: a.x, miny: a.y, maxx: a.x, maxy: a.y };
+    if (c.x < b.minx) b.minx = c.x; if (c.x > b.maxx) b.maxx = c.x;
+    if (c.y < b.miny) b.miny = c.y; if (c.y > b.maxy) b.maxy = c.y;
+    return b;
+  }
   if (e.type === 'TEXT') return boxOfPoints(textCorners(textFrame(e, doc)));
   if (e.type === 'MTEXT') {
     const { w, h } = textExtent(e);
@@ -553,10 +560,39 @@ export function decompose(m) {
   }
   return { rot, sx, sy };
 }
+/** deep copy of plain entity data, as structuredClone gives it (shared objects stay shared, holes stay holes); anything
+ *  that is not a plain object, array or primitive is handed to structuredClone. `skip`: a top-level key left out.
+ *  Several times faster than structuredClone on the small objects of a drawing (explode copies every block entity). */
+export function copyEntity(e, skip = null) {
+  let seen = null;
+  const copy = (v) => {
+    if (typeof v !== 'object' || v === null) return v;
+    if (seen.has(v)) return seen.get(v);
+    const proto = Object.getPrototypeOf(v);
+    const slow = (proto !== Object.prototype && proto !== Array.prototype && proto !== null)
+      || (proto === Array.prototype && Object.keys(v).length !== v.length); // holes or extra keys on an array: rare
+    if (slow) { const r = structuredClone(v); seen.set(v, r); return r; }
+    if (proto === Array.prototype) {
+      const a = new Array(v.length);
+      seen.set(v, a);
+      for (let i = 0; i < v.length; i++) a[i] = copy(v[i]);
+      return a;
+    }
+    const o = {}; // a null-prototype object comes out plain, as from structuredClone
+    seen.set(v, o);
+    for (const k in v) if (Object.hasOwn(v, k)) o[k] = copy(v[k]);
+    return o;
+  };
+  if (Object.getPrototypeOf(e) !== Object.prototype) { const c = structuredClone(e); if (skip) delete c[skip]; return c; }
+  const c = {};
+  seen = new Map([[e, c]]);
+  for (const k in e) if (k !== skip && Object.hasOwn(e, k)) c[k] = copy(e[k]);
+  return c;
+}
+
 /** Returns a transformed COPY (id kept). Throws Error{code:'SHEAR'} where the result cannot be represented. */
 export function transformEntity(e, m) {
-  const c = structuredClone(e);
-  delete c.parent;
+  const c = copyEntity(e, 'parent');
   const flip = det(m) < 0;
   const sim = isSimilarity(m);
   const s = matScale(m);
