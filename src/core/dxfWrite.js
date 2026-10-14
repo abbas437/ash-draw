@@ -21,6 +21,7 @@ import { mleaderTags, mleaderStyleTags, mleaderParts } from './mleader.js';
 import { viewportTags } from './layouts.js';
 import { imageTags, imageDefTags } from './image.js';
 import { oleDataWithCorners } from './ole.js';
+import { viewToDxf } from './views.js';
 import { drain, runSliced } from './slice.js';
 import { layerStateTags } from './layerstates.js';
 const encode = (s) => String(s ?? '').replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7e]/g, (c) => {
@@ -599,7 +600,12 @@ export function* writeDxfSteps(doc, opts = {}) {
   }
   out.p(0, 'ENDTAB');
 
-  table('VIEW', 0); out.p(0, 'ENDTAB');
+  { // named views (views.js)
+    const views = [...(doc.views?.values() ?? [])];
+    table('VIEW', views.length);
+    for (const v of views) { rec('VIEW', v.name, 'AcDbViewTableRecord', 'VIEW'); for (const [c, x] of viewToDxf(v, (a) => xdApps.add(a))) if (c === 1000 || c === 1001) out.s(c, x); else out.p(c, x); }
+    out.p(0, 'ENDTAB');
+  }
   table('UCS', 0); out.p(0, 'ENDTAB');
   const apps = ['ACAD', ...[...xdApps].filter((a) => a !== 'ACAD')];
   table('APPID', apps.length); for (const a of apps) { rec('APPID', a, 'AcDbRegAppTableRecord', 'APPID'); out.p(70, 0); } out.p(0, 'ENDTAB');

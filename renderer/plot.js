@@ -7,6 +7,7 @@ import { plotSettingsFrom, plotSettingsToStore, LAYOUT_PAPERS } from '../src/cor
 import { el, message, modal, toast } from './ui.js';
 import { exportPdfBytes, unitsPerMm, unicodeFonts } from './files.js';
 import { bitmapRgba } from './images.js';
+import { viewsIn, findView, restorable, viewBox } from '../src/core/views.js';
 
 const options = (pairs) => pairs.map((s) => { const [v, l] = s.split('|'); return el('option', { value: v, text: l }); });
 const fmt = (v) => String(+v.toPrecision(6));
@@ -82,7 +83,10 @@ export async function plotDialog(app, mode) {
   for (;;) {
     const size = el('select', { name: 'pageSize' }, options(['fit|Fit to drawing', 'A4|A4', 'A3|A3', 'A2|A2', 'A1|A1', 'A0|A0', 'Letter|Letter']));
     const ori = el('select', { name: 'orientation' }, options(['auto|Automatic', 'landscape|Landscape', 'portrait|Portrait']));
-    const what = el('select', { name: 'what' }, options(['extents|Extents', 'view|Current view', 'window|Window']));
+    const what = el('select', { name: 'what' }, options(['extents|Extents', 'view|Current view', 'window|Window', 'named|Named view']));
+    const named = viewsIn(app.doc, 'model').filter(restorable);
+    const viewSel = el('select', { name: 'namedView', disabled: !named.length }, named.length ? named.map((v) => el('option', { value: v.name, text: v.name })) : el('option', { value: '', text: '(no named views)' }));
+    if (named.some((v) => v.name === s.namedView)) viewSel.value = s.namedView;
     [size.value, ori.value, what.value] = [s.pageSize, s.orientation, s.what];
     const fit = el('input', { type: 'checkbox', name: 'fit', checked: s.fit });
     const n = el('input', { type: 'number', name: 'scale', min: '0.000001', step: 'any', value: String(s.n), style: 'width:7em' });
@@ -91,7 +95,7 @@ export async function plotDialog(app, mode) {
     const winText = s.window ? `Window: (${fmt(s.window.minx)}, ${fmt(s.window.miny)}) to (${fmt(s.window.maxx)}, ${fmt(s.window.maxy)})` : 'Window: not picked yet';
     const r = await modal(mode === 'print' ? 'Print' : 'Plot to PDF', [
       el('label', {}, 'Page size'), size, el('label', {}, 'Orientation'), ori,
-      el('label', {}, 'What to print'), what, el('p', { class: 'plot-window', text: winText }),
+      el('label', {}, 'What to print'), what, el('p', { class: 'plot-window', text: winText }), el('label', {}, 'Named view ', viewSel),
       el('label', {}, fit, ' Fit to paper'), el('label', {}, 'Scale (paper : drawing)  1 : ', n),
       el('label', {}, centre, ' Centre the plot'),
       el('label', {}, mono, MONO), el('label', {}, lw, ' Use lineweights'), el('label', {}, tp, ' Plot transparency'),
@@ -103,6 +107,8 @@ export async function plotDialog(app, mode) {
     Object.assign(s, { pageSize: size.value, orientation: ori.value, what: what.value, fit: fit.checked, centre: centre.checked, monochrome: cmp ? storedMono : mono.checked, lineweights: lw.checked, transparency: tp.checked });
     if (!s.fit && !(nv > 0)) { await message('Invalid scale', 'Enter a scale greater than zero, for example 1 : 50.'); continue; }
     if (nv > 0) s.n = nv;
+    s.namedView = viewSel.value || null; // this session only, like a picked window
+    if (s.what === 'named' && !findView(app.doc, s.namedView ?? '')) { await message('No named view', 'Choose a named view, or save one first with VIEW.'); continue; }
     if (r === 'pick' || (s.what === 'window' && !s.window)) {
       const w = await pickWindow(app);
       if (w) Object.assign(s, { window: w, what: 'window' });
@@ -111,7 +117,7 @@ export async function plotDialog(app, mode) {
     break;
   }
   remember(s);
-  const region = s.what === 'window' ? s.window : s.what === 'view' ? viewRect(app.vp) : null;
+  const region = s.what === 'window' ? s.window : s.what === 'view' ? viewRect(app.vp) : s.what === 'named' ? viewBox(findView(app.doc, s.namedView)) : null;
   try {
     const out = await exportPdfBytes(app.fileDoc, app.scene(), {
       pageSize: s.pageSize, orientation: s.orientation, monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency,
