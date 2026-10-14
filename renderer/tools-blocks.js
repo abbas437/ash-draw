@@ -2,7 +2,7 @@
 // Dialogs follow AutoCAD LT. tools.js owns the Tool / ModifyTool base classes and passes them to
 // createBlockTools (a factory, so this module does not import tools.js back).
 import {
-  blockNameError, makeBlock, makeAttdef, insertableBlocks, attdefsOf, instantiate, withAttribValues, blockContentView,
+  blockNameError, makeBlock, makeAttdef, insertableBlocks, attdefsOf, instantiate, withAttribValues, blockContentView, blocksWithAttdefs, attSync,
   ATT_INVISIBLE, ATT_CONSTANT, ATT_VERIFY, ATT_PRESET,
 } from '../src/core/blocks.js';
 import { getEntity } from '../src/core/model.js';
@@ -231,6 +231,37 @@ export function createBlockTools(h, { Tool, ModifyTool }) {
     }
   }
 
+  // ---- ATTSYNC: pick an INSERT or type the block name ("?" lists blocks with attributes); one undo step ----
+  class AttSyncTool extends Tool {
+    get prompt() { return 'ATTSYNC  select a block, or type its name (? = list)'; }
+    activate() {
+      super.activate();
+      const sel = this.vp.selectedEntities();
+      if (sel.length === 1 && sel[0].type === 'INSERT') this.run(sel[0].block);
+    }
+    run(name) {
+      const doc = this.h.doc.modelDoc ?? this.h.doc;
+      if (!attdefsOf(doc.blocks.get(name)).length) { this.h.toast(`ATTSYNC: block "${name}" has no attributes.`); return; }
+      const n = attSync(this.h.session, name);
+      this.h.toast(`ATTSYNC ${name}: ${n} block${n === 1 ? '' : 's'} updated`, 2500);
+      this.h.setTool('select');
+    }
+    click(p, ev) {
+      const hit = this.vp.pick(ev?.raw ?? p);
+      if (hit?.type === 'INSERT') this.run(hit.block); else this.h.toast('ATTSYNC: select a block reference.');
+    }
+    text(s) {
+      const t = s.trim(), doc = this.h.doc.modelDoc ?? this.h.doc;
+      if (!t) return false;
+      const names = blocksWithAttdefs(doc);
+      if (t === '?') { this.h.toast(names.length ? `Blocks with attributes: ${names.join(', ')}` : 'No block in this drawing has attributes.', 5000); return true; }
+      const name = [...doc.blocks.keys()].find((k) => k.toUpperCase() === t.toUpperCase());
+      if (!name) { this.h.toast(`ATTSYNC: no block named "${t}".`); return true; }
+      this.run(name);
+      return true;
+    }
+  }
+
   // ---- TEXTEDIT / DDEDIT / ED on a dimension: edit its text override ---------------------------------
   class DimTextEditTool extends Tool {
     get prompt() { return 'TEXTEDIT  select a dimension'; }
@@ -277,5 +308,5 @@ export function createBlockTools(h, { Tool, ModifyTool }) {
     }
   }
 
-  return { block: new BlockTool(h), attdef: new AttdefTool(h), insert: new InsertTool(h), eattedit: new AttEditTool(h), textedit: new DimTextEditTool(h), xattach: new XAttachTool(h) };
+  return { block: new BlockTool(h), attdef: new AttdefTool(h), insert: new InsertTool(h), eattedit: new AttEditTool(h), attsync: new AttSyncTool(h), textedit: new DimTextEditTool(h), xattach: new XAttachTool(h) };
 }

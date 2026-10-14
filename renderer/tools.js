@@ -701,7 +701,7 @@ export const TOOL_ALIASES = {
   mld: 'mleader', mleader: 'mleader', ma: 'matchprop', matchprop: 'matchprop', painter: 'matchprop',
   b: 'block', block: 'block', bmake: 'block', att: 'attdef', attdef: 'attdef', i: 'insert', insert: 'insert', ddinsert: 'insert',
   xa: 'xattach', xattach: 'xattach',
-  ate: 'eattedit', eattedit: 'eattedit', attedit: 'eattedit', ddatte: 'eattedit',
+  ate: 'eattedit', eattedit: 'eattedit', attedit: 'eattedit', ddatte: 'eattedit', attsync: 'attsync', battman: 'attsync',
   ed: 'textedit', ddedit: 'textedit', textedit: 'textedit',
   mkc: 'mkc', mkr: 'mkr', mkt: 'mkt',
   z: 'zoom', zoom: 'zoom', id: 'id', li: 'list', ls: 'list', list: 'list', lts: 'ltscale', ltscale: 'ltscale', zoomfactor: 'zoomfactor',
