@@ -561,7 +561,7 @@ class App {
     }
     const cfg = await api.dwgConfig();
     const av = await api.dwgAvailable().catch(() => null);
-    const mode = el('select', { id: 'pref-dwg-mode' }, [['auto', 'Automatic (ODA if installed, else built-in LibreDWG)'], ['oda', 'ODA File Converter'], ['libredwg', 'Built-in (LibreDWG)']].map(([v, t]) => el('option', { value: v, text: t })));
+    const mode = el('select', { id: 'pref-dwg-mode' }, [['auto', 'Automatic (built-in LibreDWG; ODA when it cannot read the file)'], ['oda', 'ODA File Converter'], ['libredwg', 'Built-in (LibreDWG)']].map(([v, t]) => el('option', { value: v, text: t })));
     mode.value = cfg.mode;
     const odaPath = el('input', { id: 'pref-oda-path', type: 'text', value: cfg.odaPath, placeholder: av?.oda?.source === 'auto' ? av.oda.path : 'Detected automatically in C:\\Program Files\\ODA', style: 'width:100%' });
     const browse = el('button', { type: 'button', text: 'Browse…', onclick: async () => { const p = await api.dwgBrowseOda(); if (p) odaPath.value = p; } });

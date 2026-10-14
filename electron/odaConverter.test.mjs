@@ -94,17 +94,17 @@ const service = (libre, cfg, exe, odaOk = true) => {
   return { svc, used };
 };
 
-test('fallback: Automatic uses ODA when installed, else LibreDWG; each falls back to the other', async () => {
+test('fallback: Automatic uses LibreDWG first and ODA when it fails; each falls back to the other', async () => {
   let lib = fakeLibre(false);
   let { svc, used } = service(lib, { mode: 'auto' }, '/x/ODAFileConverter.exe');
-  assert.equal((await svc.toDxf(dwg)).engine, 'oda'); // installed: ODA first
+  assert.equal((await svc.toDxf(dwg)).engine, 'oda'); // LibreDWG fails -> ODA
   assert.deepEqual(used, ['/x/ODAFileConverter.exe']);
   lib = fakeLibre(true);
   ({ svc, used } = service(lib, { mode: 'auto' }, '/x/ODAFileConverter.exe', false));
   const r = await svc.toDxf(dwg); // ODA fails -> LibreDWG
   assert.equal(r.engine, 'libredwg');
   assert.equal(lib.calls, 1);
-  assert.equal((await svc.available()).engine, 'oda');
+  assert.equal((await svc.available()).engine, 'libredwg'); // Automatic: the built-in converter is tried first
 });
 
 test('fallback: ODA missing and LibreDWG fails -> error with the install hint; Built-in never runs ODA', async () => {
@@ -117,7 +117,7 @@ test('fallback: ODA missing and LibreDWG fails -> error with the install hint; B
   await assert.rejects(b.svc.toDxf(dwg), /Install the free ODA File Converter[\s\S]*Preferences/);
   assert.deepEqual(b.used, []);
   const both = service(fakeLibre(false), { mode: 'auto' }, '/x/ODAFileConverter.exe', false);
-  await assert.rejects(both.svc.toDxf(dwg), /could not be converted \(ODA File Converter: ODA crashed; LibreDWG: ERROR/);
+  await assert.rejects(both.svc.toDxf(dwg), /could not be converted \(LibreDWG: ERROR[^;]*; ODA File Converter: ODA crashed/);
 });
 
 test('ODA path setting must name ODAFileConverter[.exe]; ODA mode without ODA is unavailable', async () => {
@@ -149,7 +149,7 @@ test('implausible LibreDWG output is a failed open: ODA tried next when installe
   const tinyLibre = { calls: 0, available: async () => ({ available: true, version: '0.13.3' }), async toDxf() { this.calls++; return { dxfBytes: new Uint8Array(1000), errorCount: 200_000, log: 'ERROR: bad [section]\nERROR: x\n', converter: 'LibreDWG' }; } };
   // ODA installed but failing first (Automatic): LibreDWG's empty result must not be shown either
   const both = service(tinyLibre, { mode: 'auto' }, '/x/ODAFileConverter.exe', false);
-  await assert.rejects(both.svc.toDxf(big), /could not be converted \(ODA File Converter: ODA crashed; LibreDWG: produced an incomplete drawing/);
+  await assert.rejects(both.svc.toDxf(big), /could not be converted \(LibreDWG: produced an incomplete drawing[^;]*; ODA File Converter: ODA crashed/);
   // ODA installed and working: it is used
   const ok = service(tinyLibre, { mode: 'auto' }, '/x/ODAFileConverter.exe');
   const r = await ok.svc.toDxf(new Uint8Array(10));

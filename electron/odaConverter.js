@@ -160,7 +160,7 @@ export function createOdaBridge(exe, opts = {}) {
 /**
  * Engine choice and fallback. `getConfig()` -> {mode: 'auto'|'oda'|'libredwg', odaPath?: string} read at every call;
  * `detectOda()` -> auto-detected executable or null; `makeOda(exe)` -> ODA bridge.
- * Automatic: ODA first when installed, else LibreDWG; when the first engine fails the other is tried.
+ * Automatic: built-in LibreDWG first, ODA (when installed) when LibreDWG fails or its output is implausible.
  */
 export function createDwgService({ libre, getConfig, detectOda, makeOda }) {
   async function oda() {
@@ -176,9 +176,12 @@ export function createDwgService({ libre, getConfig, detectOda, makeOda }) {
   async function engines() {
     const mode = modeOf();
     const o = mode === 'libredwg' ? null : await oda();
+    // Automatic: the built-in converter first (it opens a 66 MB drawing in about 20 s where ODA, with audit, took
+    // about 10 minutes on the user's PC); ODA takes over when it fails or its output is implausible (e.g. the
+    // LibreDWG Windows build on drawings with more than 256 MB of object data)
     const order = [];
-    if (o?.exe) order.push({ name: 'oda', bridge: makeOda(o.exe) });
     if (mode !== 'oda') order.push({ name: 'libredwg', bridge: libre });
+    if (o?.exe) order.push({ name: 'oda', bridge: makeOda(o.exe) });
     return { mode, oda: o, order };
   }
   return {
