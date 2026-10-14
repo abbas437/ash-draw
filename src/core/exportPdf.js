@@ -93,10 +93,11 @@ export async function exportPdf(doc, opts = {}) {
  * paper / fit, a model sheet pageSize / orientation / scale). Viewport scenes are built once per drawing and layer set.
  */
 export async function exportPdfPages(sheets, opts = {}) {
-  const pdf = await newPdf(), warnings = [], scenes = new Map();
+  const pdf = await newPdf(), warnings = [];
+  let cur = null, modelScene = null; // scene cache of the current drawing only: dropped when the next sheet is from another
   for (const { doc, layout = null, label = '' } of sheets) {
-    if (!scenes.has(doc)) scenes.set(doc, memoModelScene(doc));
-    const w = await addPdfPage(pdf, doc, { ...opts, layout, modelScene: opts.modelScene ?? scenes.get(doc), region: layout ? null : opts.region });
+    if (doc !== cur) { cur = doc; modelScene = memoModelScene(doc); }
+    const w = await addPdfPage(pdf, doc, { ...opts, layout, modelScene: opts.modelScene ?? modelScene, scene: layout ? opts.scene : opts.scene ?? modelScene([]), region: layout ? null : opts.region });
     warnings.push(...w.map((m) => (label ? `${label}: ${m}` : m)));
   }
   return { bytes: await pdf.save(), warnings };

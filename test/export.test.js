@@ -9,7 +9,7 @@ import { createCanvas, loadImage, Path2D } from '@napi-rs/canvas';
 import { fixture } from './helpers.js';
 import { readDxf } from '../src/core/dxfRead.js';
 import { newLayout } from '../src/core/layouts.js';
-import { newDocument, addEntity, makeXline, makeLine, makeCircle, makeArc, makeText } from '../src/core/model.js';
+import { newDocument, addEntity, addLayer, makeXline, makeLine, makeCircle, makeArc, makeText } from '../src/core/model.js';
 import { exportSvg } from '../src/core/exportSvg.js';
 import { exportPdf, exportPdfPages, plotLayout, plotScale, pageFit } from '../src/core/exportPdf.js';
 import { plotSettingsFrom, plotSettingsToStore, PLOT_DEFAULTS } from '../src/core/plotSettings.js';
@@ -239,4 +239,57 @@ test('plot settings: stored values are validated, defaults fill the rest, the pi
   const stored = plotSettingsToStore({ ...s, window: { minx: 0 } });
   assert.equal('window' in stored, false);
   assert.deepEqual(plotSettingsFrom(stored), s);
+});
+
+const pageText = async (bytes) => {
+  const pdf = await PDFDocument.load(bytes), c = pdf.getPage(0).node.Contents();
+  const streams = c instanceof PDFArray ? c.asArray().map((r) => pdf.context.lookup(r)) : [c];
+  return streams.map((st) => new TextDecoder().decode(decodePDFRawStream(st).decode())).join('\n');
+};
+
+test('layout on A3 (fit): the sheet is clipped first and every path point lies inside the 5 mm margins', async () => {
+  const doc = readDxf(fixture('layouts_r2000.dxf')), layout = doc.layouts[0];
+  const text = await pageText((await exportPdf(doc, { layout, paper: 'A3', fit: true })).bytes);
+  const pw = 1190.55, ph = 841.89, m = 5 * PT;
+  // page content opens with the sheet rectangle as a clip (q, path, W n) before anything is drawn
+  const clip = text.match(/^\s*q\s+([-\d.]+) ([-\d.]+) m\s+([-\d.]+) ([-\d.]+) l\s+([-\d.]+) ([-\d.]+) l\s+([-\d.]+) ([-\d.]+) l\s+h\s+W\s+n\b/);
+  assert.ok(clip, `no leading sheet clip in: ${text.slice(0, 200)}`);
+  const xs = [clip[1], clip[3], clip[5], clip[7]].map(Number), ys = [clip[2], clip[4], clip[6], clip[8]].map(Number);
+  // the clip is the whole sheet (420 x 297 mm) at the fit scale, centred: the very first clip, not a viewport's
+  const f = pageFit(420 * PT, 297 * PT, 'A3');
+  assert.ok(near(Math.min(...xs), f.ox, 0.05) && near(Math.max(...xs), f.ox + 420 * PT * f.scale, 0.05), `clip x ${xs} vs ${f.ox}`);
+  assert.ok(near(Math.min(...ys), f.oy, 0.05) && near(Math.max(...ys), f.oy + 297 * PT * f.scale, 0.05), `clip y ${ys} vs ${f.oy}`);
+  assert.ok(Math.min(...xs) >= m - 0.05 && Math.max(...xs) <= pw - m + 0.05 && Math.min(...ys) >= m - 0.05 && Math.max(...ys) <= ph - m + 0.05, 'clip inside the margins');
+  const pts = [...text.matchAll(/([-\d.]+) ([-\d.]+) [ml]\s/g)].map((q) => [+q[1], +q[2]]);
+  assert.ok(pts.length > 4, 'paths drawn');
+  for (const [x, y] of pts) assert.ok(x >= m - 0.05 && x <= pw - m + 0.05 && y >= m - 0.05 && y <= ph - m + 0.05, `point ${x},${y} outside the margins`);
+});
+
+test('layout PDF: each viewport draws the model without its own frozen layers (scene cache keyed by the frozen set)', async () => {
+  const doc = newDocument();
+  addLayer(doc, { name: 'A' }); addLayer(doc, { name: 'B' });
+  addEntity(doc, makeLine({ x: -20, y: 0 }, { x: 20, y: 0 }, { layer: 'A' }));
+  addEntity(doc, makeLine({ x: -20, y: 10 }, { x: 20, y: 10 }, { layer: 'B' }));
+  const lay = newLayout('Layout1', 1);
+  const vp = (id, cx, frozen) => ({ type: 'VIEWPORT', id, layer: '0', color: 256, vpId: id, on: true, c: { x: cx, y: 150 }, width: 100, height: 100, viewCenter: { x: 0, y: 0 }, viewHeight: 100, twist: 0, frozen });
+  lay.entities.push(vp(2, 100, ['A']), vp(3, 300, ['B']));
+  doc.layouts = [lay];
+  const text = await pageText((await exportPdf(doc, { layout: lay })).bytes);
+  const segs = [...text.matchAll(/([-\d.]+) ([-\d.]+) m\s+([-\d.]+) ([-\d.]+) l\s+S/g)].map((q) => ({ x: +q[1] / PT, y: +q[2] / PT, len: Math.abs(q[3] - q[1]) / PT }))
+    .filter((q) => Math.abs(q.len - 40) < 0.1);
+  const left = segs.filter((q) => q.x < 200), right = segs.filter((q) => q.x > 200);
+  // left viewport freezes A: only B (model y 10); right freezes B: only A (model y 0): 10 mm lower on the sheet
+  assert.equal(left.length, 1, JSON.stringify(segs)); assert.equal(right.length, 1, JSON.stringify(segs));
+  assert.ok(near(left[0].y - right[0].y, 10, 0.1), `left y ${left[0].y}, right y ${right[0].y}`);
+});
+
+test('PUBLISH monochrome: no stroking colour but black in any page of a coloured drawing', async () => {
+  const doc = readDxf(fixture('colors_r2000.dxf'));
+  const out = await exportPdfPages([{ doc, layout: null, label: 'Model' }], { paper: 'A3', pageSize: 'A3', orientation: 'auto', margin: 10, scale: null, centre: true, monochrome: true });
+  const text = await pageText(out.bytes);
+  const cols = [...text.matchAll(/([-\d.]+) ([-\d.]+) ([-\d.]+) RG/g)];
+  assert.ok(cols.length > 0, 'strokes drawn');
+  for (const c of cols) assert.deepEqual([+c[1], +c[2], +c[3]], [0, 0, 0], c[0]);
+  const colour = await pageText((await exportPdfPages([{ doc, layout: null, label: 'Model' }], { pageSize: 'A3', orientation: 'auto', margin: 10, scale: null, centre: true })).bytes);
+  assert.ok([...colour.matchAll(/([-\d.]+) ([-\d.]+) ([-\d.]+) RG/g)].some((c) => +c[1] || +c[2] || +c[3]), 'the coloured fixture has non-black strokes');
 });

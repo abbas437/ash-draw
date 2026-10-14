@@ -183,7 +183,7 @@ export async function publishDialog(app) {
       toast(`Published ${sheets.length} sheet${sheets.length > 1 ? 's' : ''}`, 1500);
       await app.saveBytes(out.bytes, 'pdf', 'PDF document');
       if (out.warnings.length) await message('PDF published with warnings', out.warnings.join('\n'));
-    } catch (err) { await message('Publish failed', err.message || String(err)); }
+    } catch (err) { toast('', 1); await message('Publish failed', err.message || String(err)); }
     return;
   }
 }
