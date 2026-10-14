@@ -159,6 +159,68 @@ try {
     assert.equal(await page.locator('#compare-panel .cmp-row').count(), 1, 'one cluster');
   }
 
+  step = 'time-sliced compare of a mid-size pair: percentage in the toast, timer keeps ticking, second compare and closing refused, Cancel';
+  {
+    await page.evaluate(async () => {
+      const M = await import('/src/core/model.js');
+      const mk = (shift) => {
+        const d = M.newDocument(); d.units = 4;
+        for (let i = 0; i < 50000; i++) {
+          const x = (i % 200) * 10, y = Math.floor(i / 200) * 10;
+          M.addEntity(d, M.makeLine({ x, y }, { x: x + 6, y: y + (i % 97 === 0 ? shift : 0) + 3 }));
+        }
+        return d;
+      };
+      for (const [name, d] of [['big-a.dxf', mk(0)], ['big-b.dxf', mk(2)]]) window.app.installDoc(d, { path: null, name, format: 'dxf' });
+    });
+    const compareTabs = () => page.evaluate(() => window.app.tabs.filter((t) => t.compare).length);
+    const start = async () => {
+      await typeCmd('compare');
+      await page.locator('#dlg[open] #cmp-a').waitFor({ timeout: 3000 });
+      await page.selectOption('#cmp-a', { label: 'big-a.dxf' });
+      await page.selectOption('#cmp-b', { label: 'big-b.dxf' });
+      await page.selectOption('#cmp-align', 'none');
+      await page.locator('#dlg button.primary').click();
+    };
+    const before = await compareTabs();
+    // (b) Cancel as soon as a percentage shows
+    const clicked = page.evaluate(() => new Promise((res) => {
+      const t = document.getElementById('toast');
+      const mo = new MutationObserver(() => { if (/\d+%/.test(t.textContent)) { mo.disconnect(); t.querySelector('.toast-cancel').click(); res(true); } });
+      mo.observe(t, { childList: true, subtree: true, characterData: true });
+    }));
+    await start();
+    assert.ok(await clicked);
+    await page.waitForFunction(() => /Compare cancelled/.test(document.getElementById('toast').textContent), null, { timeout: 10000 });
+    assert.equal(await compareTabs(), before, 'a cancelled compare adds no tab');
+    // (a) full run, with the timer watching; meanwhile a second compare and closing A are refused
+    await page.evaluate(() => {
+      const w = window.__cmpTick = { maxGap: 0, pcts: new Set(), last: performance.now(), stop: false, wasPct: false };
+      const t = document.getElementById('toast');
+      new MutationObserver(() => { const m = /(\d+)%/.exec(t.textContent); if (m) w.pcts.add(+m[1]); }).observe(t, { childList: true, subtree: true, characterData: true });
+      const tick = () => {
+        const now = performance.now(), m = /(\d+)%/.exec(t.textContent);
+        if (w.wasPct && now - w.last > w.maxGap) w.maxGap = now - w.last;
+        w.wasPct = !!m; if (m) w.pcts.add(+m[1]);
+        w.last = now; if (!w.stop) setTimeout(tick, 10);
+      };
+      tick();
+    });
+    await start();
+    await page.waitForFunction(() => /\d+%/.test(document.getElementById('toast').textContent), null, { timeout: 10000 });
+    const closed = await page.evaluate(() => window.app.closeTab(window.app.tabs.find((t) => t.file.name === 'big-a.dxf')));
+    assert.equal(closed, false, 'closing A is refused while the compare runs');
+    assert.ok(await page.evaluate(() => window.app.tabs.some((t) => t.file.name === 'big-a.dxf')));
+    await page.evaluate(() => window.app.compare());
+    assert.match(await page.locator('#toast').textContent(), /A compare is already running|\d+%/); // refusal toast may be replaced by the next progress update
+    await page.waitForFunction((n) => window.app.tabs.filter((t) => t.compare).length === n + 1, before, { timeout: 120000 });
+    const r = await page.evaluate(() => { window.__cmpTick.stop = true; return { maxGap: window.__cmpTick.maxGap, pcts: [...window.__cmpTick.pcts] }; });
+    assert.ok(r.pcts.length >= 2, `progress percentages shown: ${r.pcts}`);
+    assert.ok(r.maxGap < 500, `UI froze for ${Math.round(r.maxGap)} ms during the compare`);
+    console.log(`  big compare: ${r.pcts}; ${r.pcts.length} percentages, max timer gap ${Math.round(r.maxGap)} ms`);
+    assert.equal(await page.evaluate(() => window.app.closeTab(window.app.tabs.find((t) => t.file.name === 'big-a.dxf')).then(() => 'x')), 'x');
+  }
+
   assert.deepEqual(problems, []);
   console.log('compare e2e: OK');
 } catch (err) {

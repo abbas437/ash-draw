@@ -1206,6 +1206,7 @@ try {
   await page.locator('#dlg[open] #cmp-a').waitFor({ timeout: 3000 });
   assert.equal(await page.locator('#cmp-a option:checked').textContent(), 'rev-a.dxf');
   assert.equal(await page.locator('#cmp-b option:checked').textContent(), 'rev-b.dxf');
+  await page.fill('#cmp-gap', '20'); // the default group distance (1.5 m) would join this 340 mm sheet's changes into one group
   await page.locator('#dlg button.primary').click();
   await page.locator('#compare-panel:not([hidden])').waitFor({ timeout: 3000 });
   assert.match(await page.evaluate(() => window.app.active.file.name), /^Compare rev-a\.dxf vs rev-b\.dxf$/);
