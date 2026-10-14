@@ -5,6 +5,7 @@ import { INSUNITS, unitLabel, lengthPrecision, looksLikeMapMetres } from '../src
 import { setShowLegs, refreshMeasureResults, clearMeasureResults } from './tools-measure.js';
 import { parseCoordinate } from '../src/core/coords.js';
 import { PATTERN_NAMES } from '../src/core/patterns.js';
+import { loadPatFile, patternsDialog, loadSavedPatterns, refreshPatternSelect } from './patterns-ui.js';
 import { layIsolate, layUnisolate, layFreeze, layOn, layThaw } from '../src/core/layers.js';
 import { Viewport, CANVAS_BG } from './viewport.js';
 import { createDocState, findTabByPath, indexAfterClose, cycleIndex, isBlankTab } from './tabs.js';
@@ -117,6 +118,7 @@ class App {
     api.version?.().then((v) => { this.version = v; this.refreshWindowTitle(); }).catch(() => {});
     loadDraftingSettings(this).catch(() => {});
     api.settingsGet?.('measure.showLegs').then((v) => setShowLegs(v)).catch(() => {});
+    loadSavedPatterns(this, api).catch(() => {});
     api.onOpenFile?.((f) => this.openFromFile(f));
     // files given at start-up open first; then autosaved drawings are offered for recovery; then the previous session
     // is offered (or reopened, per startup.mode) - without the files just recovered
@@ -671,7 +673,8 @@ class App {
         ['Quick Access row', '', () => this.setToolLayout(setQuickRow(this.toolLayout, !this.toolLayout.quickRow)), () => this.toolLayout.quickRow], '-',
         ['Show markups', '', () => toggleMarkups(this), () => markupsShown(this.doc)], '-',
         ['External references…', 'XREF', () => xrefPanel(this)]]],
-      ['Format', [['Units…', 'UNITS', () => this.unitsDialog()], ['Drafting settings…', 'DSETTINGS', () => draftingSettings(this)], ['Purge…', 'PURGE', () => purgeDialog(this)]]],
+      ['Format', [['Units…', 'UNITS', () => this.unitsDialog()], ['Drafting settings…', 'DSETTINGS', () => draftingSettings(this)], ['Purge…', 'PURGE', () => purgeDialog(this)], '-',
+        ['Load patterns from .pat file…', '', () => this.loadPatterns()], ['Hatch patterns…', '', () => patternsDialog(this, api)]]],
       ['Dimension', [...TOOL_BUTTONS.find(([g]) => g === 'Dimension')[2].map(([id, label, alias]) => [label, alias, () => this.setTool(id)]), '-', ['Dimension style…', 'D', () => this.dimStyles()]]],
       ['Help', [['What this program can and cannot do', '', () => this.limitations()], ['Converter log…', '', () => this.converterLog()], ['About', '', () => this.about()]]],
     ];
@@ -707,6 +710,7 @@ class App {
     if (sel.dataset.names !== names.join('\n')) { sel.replaceChildren(...names.map((n) => el('option', { value: n, text: n }))); sel.dataset.names = names.join('\n'); }
     sel.value = names.find((n) => n.toLowerCase() === cur.toLowerCase()) ?? cur;
   }
+  async loadPatterns() { try { await loadPatFile(this, api); } catch (err) { await message('Load hatch patterns', err.message || String(err)); } }
   async dimStyles() { await dimStyleManager(this); this.refreshDimStyles(); }
 
   buildToolbar() {
@@ -720,7 +724,8 @@ class App {
     // stopImmediatePropagation on Shift+F10 / the menu key keeps bindKeys' plain F10 (Polar) from also firing. Do not move bindKeys() above it.
     initToolContextMenu(this);
     const pat = el('select', { title: 'Hatch pattern', onchange: (e) => { this.defaults.hatchPattern = e.target.value; } }, PATTERN_NAMES.map((n) => el('option', { value: n, text: n })));
-    pat.value = this.defaults.hatchPattern;
+    this.patternSel = pat;
+    refreshPatternSelect(this);
     const sc = el('input', { type: 'number', step: 'any', min: '0', value: '1', title: 'Hatch scale', style: 'width:100%', onchange: (e) => { const v = Number(e.target.value); if (v > 0) this.defaults.hatchScale = v; } });
     box.append(el('div', { class: 'tgroup', 'data-extra': 'hatch' }, el('div', { class: 'group g-draw', text: 'Hatch' }), el('div', { class: 'xbody' }, pat, sc), moreButton(el, 'Hatch', 'draw')));
     initToolBand(box, () => this.toolPlacement === 'top');

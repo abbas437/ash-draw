@@ -33,6 +33,7 @@ import { createMLeaderTools } from './tools-mleader.js';
 import { createMarkupTools } from './markup.js';
 import { createViewTools } from './tools-view.js';
 import { findBoundary } from '../src/core/boundary.js';
+import { isLoadedPattern, patternLines } from '../src/core/patterns.js';
 import { tessellate, transformEntity, translation, rotation, scaling, mirrorLine, dist, DEG } from '../src/core/geom.js';
 
 const num = (s) => { const v = Number(String(s).trim().replace(',', '.')); return Number.isFinite(v) && String(s).trim() !== '' ? v : null; };
@@ -433,7 +434,11 @@ class HatchTool extends Tool {
     const loops = findHatchBoundary(this.vp.doc, ev?.raw ?? p, this.vp);
     if (!loops) { this.h.toast('No closed boundary found around that point'); return; }
     const d = this.h.defaults;
-    this.add(makeHatch(loops, { ...this.props(), solid: d.hatchPattern === 'SOLID', pattern: d.hatchPattern, scale: d.hatchScale, angle: d.hatchAngle }));
+    const h = makeHatch(loops, { ...this.props(), solid: d.hatchPattern === 'SOLID', pattern: d.hatchPattern, scale: d.hatchScale, angle: d.hatchAngle });
+    // a pattern loaded from a .pat file goes into the hatch itself (as a DWG hatch carries it), so the drawing does not
+    // depend on this program's loaded list
+    if (isLoadedPattern(h.pattern)) h.patLines = patternLines(h.pattern, h.scale, h.angle);
+    this.add(h);
   }
 }
 

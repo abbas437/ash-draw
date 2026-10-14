@@ -9,6 +9,7 @@ import { SpatialIndex } from '../src/core/pick.js';
 import { runSliced } from '../src/core/slice.js';
 import { docAssembler } from '../src/core/docBatches.js';
 import { olePreviewOf } from '../src/core/ole.js';
+import { unknownPatterns } from '../src/core/patterns.js';
 import { bitmapRgba } from './images.js';
 
 export const OPEN_FILTERS = [
@@ -156,6 +157,8 @@ export async function loadDrawing(api, name, bytes, { onProgress = null, signal 
   const shown = oles.filter((x) => olePreviewOf(x).rgba).length, bare = oles.length - shown;
   if (shown) notes.push(`${shown} OLE object${shown === 1 ? '' : 's'} drawn from ${shown === 1 ? 'its' : 'their'} saved preview.`);
   if (bare) notes.push(`${bare} OLE object${bare === 1 ? '' : 's'} shown as frames (no preview picture it can show).`);
+  const unknown = unknownPatterns(doc);
+  if (unknown.length) notes.push(`Hatches drawn as ANSI31 (${unknown.map((n) => `unknown pattern ${n}`).join(', ')}). Load the pattern with Format > Load patterns from .pat file…`);
   if (sk.length) notes.push(`Not displayed (unsupported object types): ${sk.map(([k, v]) => `${v} ${k}`).join(', ')}.`);
   const conversion = conv && { converter: conv.converter, errorCount: conv.errorCount, log: conv.log, objects: objectsRead(doc), skipped: { ...(doc.skipped || {}) }, dwgHeader: conv.dwgHeader };
   return { doc, format, notes, warnings, conversion };
