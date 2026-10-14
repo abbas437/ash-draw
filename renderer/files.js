@@ -229,8 +229,20 @@ export function verificationMessage(v, { oda = false } = {}) {
 export async function exportSvgBytes(doc, scene, opts = {}) {
   return enc.encode(exportSvg(doc, { scene, unitsPerMm: unitsPerMm(doc), monochrome: !!opts.monochrome, background: opts.background ?? '#ffffff' }));
 }
+/** the bundled Unicode PDF fonts (Noto Sans, Noto Sans Arabic, Noto Sans Math subset; OFL-1.1), fetched once on first use */
+const UNICODE_FONTS = ['NotoSans-Regular.ttf', 'NotoSansArabic-Regular.ttf', 'NotoSansMath-Regular.ttf'];
+let unicodeFontBytes = null;
+export function unicodeFonts() {
+  unicodeFontBytes ??= Promise.all(UNICODE_FONTS.map(async (f) => {
+    const r = await fetch(new URL(`./assets/fonts/${f}`, import.meta.url));
+    if (!r.ok) throw new Error(`PDF font ${f} is missing`);
+    return new Uint8Array(await r.arrayBuffer());
+  })).catch((err) => { unicodeFontBytes = null; throw err; });
+  return unicodeFontBytes;
+}
+
 export async function exportPdfBytes(doc, scene, opts = {}) {
-  return exportPdf(doc, { scene, pageSize: opts.pageSize ?? 'A3', orientation: opts.orientation ?? 'auto', margin: opts.margin ?? 10, monochrome: !!opts.monochrome, lineweights: opts.lineweights !== false, scale: opts.scale ?? null, region: opts.region ?? null, centre: opts.centre !== false, unicodeFont: opts.unicodeFont ?? null, layout: opts.layout ?? null, modelScene: opts.modelScene ?? null, transparency: opts.transparency !== false, paper: opts.paper ?? 'layout', fit: opts.fit !== false });
+  return exportPdf(doc, { scene, pageSize: opts.pageSize ?? 'A3', orientation: opts.orientation ?? 'auto', margin: opts.margin ?? 10, monochrome: !!opts.monochrome, lineweights: opts.lineweights !== false, scale: opts.scale ?? null, region: opts.region ?? null, centre: opts.centre !== false, unicodeFonts: opts.unicodeFonts ?? unicodeFonts, layout: opts.layout ?? null, modelScene: opts.modelScene ?? null, transparency: opts.transparency !== false, paper: opts.paper ?? 'layout', fit: opts.fit !== false });
 }
 export async function exportPngBytes(doc, scene, { longSide = 3000, dark = false, lineweights = true } = {}) {
   const b = scene.bbox ?? { minx: 0, miny: 0, maxx: 1, maxy: 1 };

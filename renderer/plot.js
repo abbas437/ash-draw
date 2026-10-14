@@ -5,7 +5,7 @@ import { screenToWorld } from '../src/core/render.js';
 import { layoutPage } from '../src/core/layouts.js';
 import { plotSettingsFrom, plotSettingsToStore, LAYOUT_PAPERS } from '../src/core/plotSettings.js';
 import { el, message, modal, toast } from './ui.js';
-import { exportPdfBytes, unitsPerMm } from './files.js';
+import { exportPdfBytes, unitsPerMm, unicodeFonts } from './files.js';
 
 const options = (pairs) => pairs.map((s) => { const [v, l] = s.split('|'); return el('option', { value: v, text: l }); });
 const fmt = (v) => String(+v.toPrecision(6));
@@ -187,7 +187,7 @@ export async function publishDialog(app) {
       toast(`Publishing ${sheets.length} sheet${sheets.length > 1 ? 's' : ''}…`, 60000);
       const out = await exportPdfPages(sheets.map((x) => ({ doc: x.doc, layout: x.layout, label: x.label, region: !x.layout && s.publishArea === 'view' ? tabViewRect(app, x.tab) : null })), {
         paper: s.layoutPaper, fit: s.layoutFit, pageSize: s.layoutPaper === 'layout' ? 'A3' : s.layoutPaper, orientation: 'auto', margin: 10, scale: null, centre: true,
-        monochrome: s.monochrome, lineweights: s.lineweights, transparency: s.transparency,
+        monochrome: s.monochrome, lineweights: s.lineweights, transparency: s.transparency, unicodeFonts,
       });
       toast(`Published ${sheets.length} sheet${sheets.length > 1 ? 's' : ''}`, 1500);
       await app.saveBytes(out.bytes, 'pdf', 'PDF document');
