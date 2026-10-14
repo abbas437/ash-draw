@@ -9,6 +9,7 @@ import { SpatialIndex } from '../src/core/pick.js';
 import { runSliced } from '../src/core/slice.js';
 import { docAssembler } from '../src/core/docBatches.js';
 import { olePreviewOf } from '../src/core/ole.js';
+import { bitmapRgba } from './images.js';
 
 export const OPEN_FILTERS = [
   { name: 'Drawings (DWG, DXF)', extensions: ['dwg', 'dxf'] },
@@ -233,7 +234,7 @@ export async function exportSvgBytes(doc, scene, opts = {}) {
   return enc.encode(exportSvg(doc, { scene, unitsPerMm: unitsPerMm(doc), monochrome: !!opts.monochrome, background: opts.background ?? '#ffffff' }));
 }
 export async function exportPdfBytes(doc, scene, opts = {}) {
-  return exportPdf(doc, { scene, pageSize: opts.pageSize ?? 'A3', orientation: opts.orientation ?? 'auto', margin: opts.margin ?? 10, monochrome: !!opts.monochrome, lineweights: opts.lineweights !== false, scale: opts.scale ?? null, region: opts.region ?? null, centre: opts.centre !== false, unicodeFont: opts.unicodeFont ?? null, layout: opts.layout ?? null, modelScene: opts.modelScene ?? null, transparency: opts.transparency !== false, paper: opts.paper ?? 'layout', fit: opts.fit !== false });
+  return exportPdf(doc, { scene, pageSize: opts.pageSize ?? 'A3', orientation: opts.orientation ?? 'auto', margin: opts.margin ?? 10, monochrome: !!opts.monochrome, lineweights: opts.lineweights !== false, scale: opts.scale ?? null, region: opts.region ?? null, centre: opts.centre !== false, unicodeFont: opts.unicodeFont ?? null, layout: opts.layout ?? null, modelScene: opts.modelScene ?? null, transparency: opts.transparency !== false, paper: opts.paper ?? 'layout', fit: opts.fit !== false, imageRgba: bitmapRgba });
 }
 export async function exportPngBytes(doc, scene, { longSide = 3000, dark = false, lineweights = true } = {}) {
   const b = scene.bbox ?? { minx: 0, miny: 0, maxx: 1, maxy: 1 };

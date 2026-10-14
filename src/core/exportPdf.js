@@ -80,6 +80,9 @@ export const plotScale = (n, mmPerUnit = 1) => mmPerUnit / n;
  * units, clipped; default the drawing extents), monochrome, lineweights, unicodeFont (TTF/OTF bytes for text outside
  * WinAnsi), scene (prebuilt). A layout sheet (opts.layout): paper 'layout' (its own paper at 1:1, default) or a page size
  * name, with fit (true: scaled into the paper's margins, see pageFit; false: 1:1, centred).
+ * Raster pictures (OLE2FRAME previews, IMAGE entities) are embedded in colour (also when monochrome: AutoCAD plots
+ * raster images in colour); imageRgba(bitmap) -> {width, height, rgba} turns a loaded IMAGE bitmap (a browser
+ * ImageBitmap) into pixels - a bitmap that already is {width, height, rgba} needs no provider.
  */
 export async function exportPdf(doc, opts = {}) {
   const pdf = await newPdf();
@@ -119,6 +122,22 @@ function memoModelScene(doc) {
 
 /** fonts embedded in a PDF, shared by its pages */
 const FONTS = new WeakMap();
+/** raster pictures embedded in a PDF (pixel source object -> image XObject ref), shared by its pages */
+const PICTURES = new WeakMap();
+
+/** an RGBA picture as a PDF image XObject (Flate RGB, with a soft mask when any pixel is not opaque) */
+function embedRgba(pdf, { width, height, rgba }) {
+  const n = width * height, rgb = new Uint8Array(n * 3), a = new Uint8Array(n);
+  let alpha = false;
+  for (let i = 0; i < n; i++) {
+    rgb[i * 3] = rgba[i * 4]; rgb[i * 3 + 1] = rgba[i * 4 + 1]; rgb[i * 3 + 2] = rgba[i * 4 + 2];
+    if ((a[i] = rgba[i * 4 + 3]) !== 255) alpha = true;
+  }
+  const dict = (cs) => ({ Type: 'XObject', Subtype: 'Image', Width: width, Height: height, ColorSpace: cs, BitsPerComponent: 8 });
+  const d = dict('DeviceRGB');
+  if (alpha) d.SMask = pdf.context.register(pdf.context.flateStream(a, dict('DeviceGray')));
+  return pdf.context.register(pdf.context.flateStream(rgb, d));
+}
 
 /** draw one sheet (exportPdf options) on a new page of `pdf`; returns the warnings */
 async function addPdfPage(pdf, doc, opts) {
@@ -178,8 +197,7 @@ async function addPdfPage(pdf, doc, opts) {
   // transparency: one ExtGState (CA / ca) per opacity, set inside the item's graphics state
   const gsNames = new Map();
   const opacity = (style) => (opts.transparency === false ? 1 : style.alpha ?? 1);
-  const alphaState = (style) => {
-    const a = opacity(style);
+  const alphaState = (style, a = opacity(style)) => {
     if (a >= 1) return;
     let name = gsNames.get(a);
     if (!name) gsNames.set(a, (name = page.node.newExtGState('GSa', pdf.context.obj({ Type: 'ExtGState', CA: a, ca: a }))));
@@ -241,7 +259,24 @@ async function addPdfPage(pdf, doc, opts) {
     if (cull && it.bbox && (it.bbox.maxx < cull.minx || it.bbox.minx > cull.maxx || it.bbox.maxy < cull.miny || it.bbox.miny > cull.maxy)) continue;
     if (doc.layers.get(it.style?.layerName)?.plot === false) continue; // a non-plotting layer is shown, never plotted
     if (it.inf && !(it = infiniteItem(it, box))) continue;
-    if (it.kind === 'path') {
+    if (it.kind === 'image') {
+      // a raster picture (OLE preview or IMAGE): pixel (x, y from the top row) sits at p + u x + v (rows - y)
+      const im = it.image, bmp = im.ole ? im.ole : doc.images?.get(im.path)?.bitmap;
+      const src = im.ole ?? (bmp && (opts.imageRgba ? opts.imageRgba(bmp) : bmp));
+      if (!src?.rgba) continue;
+      if (!PICTURES.has(pdf)) PICTURES.set(pdf, new WeakMap());
+      const cache = PICTURES.get(pdf);
+      let ref = cache.get(bmp);
+      if (!ref) cache.set(bmp, (ref = embedRgba(pdf, src)));
+      ops.push(pushGraphicsState());
+      if (im.clipPts?.length >= 3) {
+        im.clipPts.forEach((q, i) => ops.push(i ? lineTo(X(q.x), Y(q.y)) : moveTo(X(q.x), Y(q.y))));
+        ops.push(closePath(), clip(), endPath());
+      }
+      alphaState(it.style, 1 - (im.fade || 0) / 100);
+      ops.push(concatTransformationMatrix(im.u.x * k * im.size.x, im.u.y * k * im.size.x, im.v.x * k * im.size.y, im.v.y * k * im.size.y, X(im.p.x), Y(im.p.y)));
+      ops.push(PDFOperator.of(PDFOperatorNames.DrawObject, [page.node.newXObject('Img', ref)]), popGraphicsState());
+    } else if (it.kind === 'path') {
       ops.push(pushGraphicsState()); strokeState(it.style, dashPt(dashUnits(doc, it.style)));
       pathOps(it.ops); ops.push(stroke(), popGraphicsState());
       if (it.arrow) {

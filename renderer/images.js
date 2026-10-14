@@ -29,3 +29,10 @@ export async function loadDrawingImages(api, doc, hostPath) {
   }
   return missing;
 }
+
+/** pixels of a loaded image bitmap -> { width, height, rgba } (PDF export embeds them) */
+export function bitmapRgba(bmp) {
+  const cv = new OffscreenCanvas(bmp.width, bmp.height), g = cv.getContext('2d', { willReadFrequently: true });
+  g.drawImage(bmp, 0, 0);
+  return { width: bmp.width, height: bmp.height, rgba: g.getImageData(0, 0, bmp.width, bmp.height).data };
+}
