@@ -1211,7 +1211,7 @@ try {
   await page.locator('#compare-panel:not([hidden])').waitFor({ timeout: 3000 });
   assert.match(await page.evaluate(() => window.app.active.file.name), /^Compare rev-a\.dxf vs rev-b\.dxf$/);
   const counts = await page.locator('#compare-panel .cmp-counts').textContent();
-  assert.match(counts, /Added 1/); assert.match(counts, /Removed 1/); assert.match(counts, /Changed 2/); assert.match(counts, /Unchanged 30/);
+  assert.match(counts, /Added 1/); assert.match(counts, /Removed 1/); assert.match(counts, /Changed \(shape\/position\) 1(?!\d)/); assert.match(counts, /Changed \(properties only\) 1(?!\d)/); assert.match(counts, /Unchanged 30/);
   // the strongest pixel of a colour family in a small window around a world point
   const colourAt = (x, y) => page.evaluate(([wx, wy]) => {
     const vp = window.app.vp; vp.showCross = false; vp.selection.clear(); vp.render();
@@ -1235,9 +1235,9 @@ try {
   const v1 = await page.evaluate(() => ({ ...window.app.vp.view, box: window.app.active.compare.r.clusters[0].mark }));
   assert.ok(v1.zoom > fitZoom * 2, `Next zooms in to a cluster (${v1.zoom} vs ${fitZoom})`);
   assert.ok(v1.cx >= v1.box.minx && v1.cx <= v1.box.maxx && v1.cy >= v1.box.miny && v1.cy <= v1.box.maxy, 'view centred on the cluster');
-  assert.match(await page.locator('#compare-panel .cmp-pos').textContent(), /^1 of 4$/);
+  assert.match(await page.locator('#compare-panel .cmp-pos').textContent(), /^1 of 3$/);
   await page.click('#cmp-next');
-  assert.match(await page.locator('#compare-panel .cmp-pos').textContent(), /^2 of 4$/);
+  assert.match(await page.locator('#compare-panel .cmp-pos').textContent(), /^2 of 3$/);
   await page.evaluate(() => window.app.activateIndex(window.app.tabs.findIndex((t) => t.file.name === 'rev-b.dxf')));
   assert.ok(await page.locator('#compare-panel').isHidden(), 'panel hidden on a drawing tab');
 
