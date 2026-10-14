@@ -6,12 +6,12 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { atomicWrite, saveDrawingFile } from './backup.js';
 import { createAutosaveStore } from './autosave.js';
-import { createDwgBridge, DWG_OUT_VERSIONS } from './dwgBridge.js';
+import { converterPath, createDwgBridge, DWG_OUT_VERSIONS } from './dwgBridge.js';
 import { cacheLimitBytes, createDwgCache, openCached } from './dwgCache.js';
 import { createHandoffStore } from './handoff.js';
 import { createClipboardBridge } from './clipboard.js';
 import { createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isOdaExeName, ODA_DOWNLOAD_URL, ODA_DWG_VERSIONS } from './odaConverter.js';
-import { foreignInstance, removeMarkerSync, warningText, writeMarker } from './instance.js';
+import { foreignCopyMessage, isForeignCopy, lockData } from './instance.js';
 import { saveDialogDefault } from './savePath.js';
 import { createSymbolLibrary } from './symbols.js';
 import { cleanSession, isPathString, pushRecent, startupModeOf } from './sessionLists.js';
@@ -40,7 +40,8 @@ protocol.registerSchemesAsPrivileged([
   { scheme: SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
 ]);
 
-if (!app.requestSingleInstanceLock()) {
+// The lock is per userData (the Portable build has its own); the data tells a running copy which exe was refused.
+if (!app.requestSingleInstanceLock(lockData({ exe: process.execPath, version: app.getVersion() }))) {
   app.quit();
   process.exit(0);
 }
@@ -127,8 +128,11 @@ function forwardFile(p) {
   else pendingFiles.push(file);
 }
 app.on('open-file', (e, p) => { e.preventDefault(); if (DRAWING_EXT.test(p)) forwardFile(p); });
-app.on('second-instance', (_e, argv, cwd) => {
-  for (const p of drawingArgs(argv, cwd)) forwardFile(p);
+app.on('second-instance', (_e, argv, cwd, additionalData) => {
+  const me = { exe: process.execPath, version: app.getVersion() };
+  if (isForeignCopy(additionalData, me)) { // another build sharing our settings: it quit, so say so (non-blocking)
+    dialog.showMessageBox({ type: 'info', title: 'ASH Draw Studio', message: foreignCopyMessage(additionalData, me), buttons: ['OK'] }).catch(() => {});
+  } else for (const p of drawingArgs(argv, cwd)) forwardFile(p);
   if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
 });
 for (const p of drawingArgs(process.argv)) forwardFile(p);
@@ -161,7 +165,6 @@ function saveSession() {
   writeJsonSync('session.json', { version: 1, ...s });
 }
 app.on('will-quit', saveSession);
-app.on('will-quit', () => removeMarkerSync(app.getPath('userData')));
 // Reopens the previous session: existing files are granted again and returned; deleted or moved ones in `missing`.
 async function restoreSession() {
   sessionOffer = null;
@@ -435,7 +438,9 @@ function registerIpc() {
       const p = grantedPath(src);
       settings ??= await loadJson('settings.json');
       const av = await dwg.available();
-      const converter = JSON.stringify([av.mode, av.libredwg?.version ?? null, av.oda?.available ? (av.oda.path ?? null) : null, av.oda?.version ?? null]);
+      const binStat = async (f) => { try { const st = await fs.stat(f); return [st.size, st.mtimeMs]; } catch { return null; } }; // the binary itself, not only its reported version
+      const converter = JSON.stringify([av.mode, av.libredwg?.version ?? null, await binStat(converterPath(libredwgDir, process.platform, 'dwg2dxf')),
+        av.oda?.available ? (av.oda.path ?? null) : null, av.oda?.version ?? null, av.oda?.available && av.oda.path ? await binStat(av.oda.path) : null]);
       const { dxfBytes, warnings, engine, converter: conv, errorCount, log, dwgSize, header, cached } = await openCached(dwgCache, p, { converter, read: readGranted, convert: (b) => dwg.toDxf(b) });
       return { url: handOff(dxfBytes), size: dxfBytes.byteLength, dwgSize, header, warnings, engine, converter: conv, errorCount, log, cached };
     }
@@ -462,13 +467,6 @@ function registerIpc() {
 
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
-  // Installed + portable copies share userData: warn (non-blocking) when a different exe is already using it.
-  try {
-    const dir = app.getPath('userData');
-    const other = await foreignInstance(dir, { exe: process.execPath });
-    await writeMarker(dir, { exe: process.execPath, version: app.getVersion() });
-    if (other) dialog.showMessageBox({ type: 'warning', title: 'ASH Draw Studio', message: warningText(other), buttons: ['OK'] }).catch(() => {});
-  } catch { /* the marker is advisory only */ }
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   protocol.handle(SCHEME, serveAppFile);

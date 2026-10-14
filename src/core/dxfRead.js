@@ -200,13 +200,13 @@ export function tokenizeDxf(bytes, { decoder = null, onProgress = null } = {}) {
     const neg = body[k] === 45;
     if (neg || body[k] === 43) k++;
     let m = 0, digits = 0, frac = 0, c = 0;
-    while (k < e && (c = body[k]) >= 48 && c <= 57) { m = m * 10 + c - 48; digits++; k++; }
+    while (k < e && (c = body[k]) >= 48 && c <= 57) { m = m * 10 + (c - 48); digits++; k++; }
     if (k < e && body[k] === 46) {
       k++;
-      while (k < e && (c = body[k]) >= 48 && c <= 57) { m = m * 10 + c - 48; digits++; frac++; k++; }
+      while (k < e && (c = body[k]) >= 48 && c <= 57) { m = m * 10 + (c - 48); digits++; frac++; k++; }
     }
     while (k < e && isWs(body[k])) k++;
-    if (k === e && digits > 0 && digits <= 16 && m <= 9007199254740992 && frac <= 22) {
+    if (k === e && digits > 0 && digits <= 16 && m < 9007199254740992 && frac <= 22) {
       const v = frac ? m / POW10[frac] : m;
       return neg ? -v : v;
     }

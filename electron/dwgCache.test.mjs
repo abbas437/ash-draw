@@ -98,3 +98,48 @@ test('the limit setting; keys are hashes only', async () => {
   assert.equal(cacheLimitBytes('5'), DEFAULT_CACHE_MB * 1048576);
   await assert.rejects(createDwgCache({ dir: () => '/x' }).get('../evil'), TypeError);
 });
+
+test('limit 0 (cache off): nothing is stored and an existing entry is not served', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ash-dwgcache-'));
+  try {
+    let limit = 1 << 20;
+    const cache = createDwgCache({ dir: () => path.join(root, 'c'), limitBytes: () => limit });
+    const { p, calls, convert, read } = await dwgFile(root);
+    await (await openCached(cache, p, { converter: 'L1', read, convert })).stored;
+    limit = 0;
+    const r = await openCached(cache, p, { converter: 'L1', read, convert });
+    assert.equal(r.cached, false, 'the entry on disk is not served while the cache is off');
+    assert.equal(calls.length, 2);
+    assert.equal(await r.stored, false);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('a .dxf without its .json and an old .tmp are deleted; other files and fresh .tmp stay', async () => withCache(async ({ cache, dir }) => {
+  await fs.mkdir(dir, { recursive: true });
+  const k = (c) => c.repeat(64);
+  const orphan = path.join(dir, `${k('a')}.dxf`);
+  const oldTmp = path.join(dir, `.${k('b')}.json.123-abcd1234.tmp`);
+  const freshTmp = path.join(dir, `.${k('c')}.dxf.123-abcd1234.tmp`);
+  const foreign = path.join(dir, 'notes.dxf');
+  for (const f of [orphan, oldTmp, freshTmp, foreign]) await fs.writeFile(f, 'x');
+  const old = new Date(Date.now() - 2 * 3600_000);
+  await fs.utimes(oldTmp, old, old);
+  assert.deepEqual(await cache.info(), { entries: 0, bytes: 0 });
+  const left = (await fs.readdir(dir)).sort();
+  assert.deepEqual(left, [path.basename(freshTmp), 'notes.dxf'].sort());
+}));
+
+test('a DWG that changes while it is read is converted but not cached', async () => withCache(async ({ cache, root }) => {
+  const { p, convert } = await dwgFile(root);
+  const read = async (q) => { const b = new Uint8Array(await fs.readFile(q)); const t = new Date(Date.now() + 90_000); await fs.utimes(q, t, t); return b; };
+  const r = await openCached(cache, p, { converter: 'L1', read, convert });
+  assert.equal(r.cached, false);
+  assert.equal(await r.stored, false);
+  assert.equal((await cache.info()).entries, 0);
+}));
+
+test('inode and change time are part of the key', () => {
+  const base = { path: '/a.dwg', size: 1, mtimeMs: 5, converter: 'L1' };
+  assert.notEqual(cacheKey({ ...base, ino: 1, ctimeMs: 7 }), cacheKey({ ...base, ino: 2, ctimeMs: 7 }));
+  assert.notEqual(cacheKey({ ...base, ino: 1, ctimeMs: 7 }), cacheKey({ ...base, ino: 1, ctimeMs: 8 }));
+});

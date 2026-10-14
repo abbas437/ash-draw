@@ -12,6 +12,7 @@ import { atomicWrite } from './backup.js';
 export const DEFAULT_CACHE_MB = 2048;
 export const MAX_CACHE_MB = 100 * 1024;
 const KEY = /^[0-9a-f]{64}$/;
+const STALE_TMP_MS = 60 * 60 * 1000; // a temporary file older than this is a crash leftover
 const EOF_TAIL = 64; // a complete DXF ends with "0\nEOF" (and maybe a line break) within its last bytes
 
 /** the limit in bytes from a setting in MB: a whole number 0..MAX_CACHE_MB (0 turns the cache off), else the default */
@@ -20,9 +21,9 @@ export function cacheLimitBytes(mb) {
   return n * 1024 * 1024;
 }
 
-/** the cache key of a DWG: {path (absolute), size, mtimeMs, converter: string naming the converter and its version} */
-export function cacheKey({ path: p, size, mtimeMs, converter }) {
-  return createHash('sha256').update(JSON.stringify([path.resolve(p), size, mtimeMs, String(converter)])).digest('hex');
+/** the cache key of a DWG: {path (absolute), size, mtimeMs, ino, ctimeMs, converter: string naming the converter, its version and binary} */
+export function cacheKey({ path: p, size, mtimeMs, ino, ctimeMs, converter }) {
+  return createHash('sha256').update(JSON.stringify([path.resolve(p), size, mtimeMs, ino ?? null, ctimeMs ?? null, String(converter)])).digest('hex');
 }
 
 const looksComplete = (bytes) => /\bEOF\s*$/.test(Buffer.from(bytes.subarray(Math.max(0, bytes.byteLength - EOF_TAIL))).toString('latin1'));
@@ -42,7 +43,18 @@ export function createDwgCache({ dir, limitBytes = () => cacheLimitBytes(DEFAULT
     let names;
     try { names = await fs.readdir(dir()); } catch (err) { if (err.code === 'ENOENT') return []; throw err; }
     const out = [];
+    const present = new Set(names);
     for (const n of names) {
+      const own = /^(\.?)[0-9a-f]{64}\.(dxf|json)(\..+\.tmp)?$/.test(n);
+      if (!own) continue; // only this cache's own files
+      if (n.endsWith('.tmp')) { // an interrupted atomic write
+        try { const st = await fs.stat(path.join(dir(), n)); if (Date.now() - st.mtimeMs > STALE_TMP_MS) await fs.rm(path.join(dir(), n), { force: true }); } catch { /* gone */ }
+        continue;
+      }
+      if (/^[0-9a-f]{64}\.dxf$/.test(n) && !present.has(`${n.slice(0, 64)}.json`)) { // the drawing without its description
+        await fs.rm(path.join(dir(), n), { force: true });
+        continue;
+      }
       const m = /^([0-9a-f]{64})\.json$/.exec(n);
       if (!m) continue;
       const f = files(m[1]);
@@ -66,6 +78,8 @@ export function createDwgCache({ dir, limitBytes = () => cacheLimitBytes(DEFAULT
 
   return {
     /** {dxfBytes, meta} of a complete entry (its use time refreshed), or null; a damaged entry is deleted */
+    /** whether the cache is on (a limit above 0) */
+    enabled: () => limitBytes() > 0,
     get: (key) => serial(async () => {
       const f = files(key);
       let meta, dxfBytes;
@@ -122,8 +136,10 @@ export function createDwgCache({ dir, limitBytes = () => cacheLimitBytes(DEFAULT
  */
 export async function openCached(cache, p, { converter, read, convert, stat = fs.stat }) {
   const st = await stat(p);
-  const key = cacheKey({ path: p, size: st.size, mtimeMs: st.mtimeMs, converter });
-  const hit = await cache.get(key).catch(() => null);
+  const stamp = (s) => [s.size, s.mtimeMs, s.ino, s.ctimeMs].join(':');
+  const key = cacheKey({ path: p, size: st.size, mtimeMs: st.mtimeMs, ino: st.ino, ctimeMs: st.ctimeMs, converter });
+  const on = cache.enabled();
+  const hit = on ? await cache.get(key).catch(() => null) : null;
   if (hit) {
     const { dxfSize, ...meta } = hit.meta;
     return { ...meta, dxfBytes: hit.dxfBytes, cached: true };
@@ -134,6 +150,8 @@ export async function openCached(cache, p, { converter, read, convert, stat = fs
     dwgSize: dwgBytes.byteLength, header: Buffer.from(dwgBytes.subarray(0, 6)).toString('latin1'),
     ...(r.warnings ? { warnings: r.warnings } : {}), engine: r.engine, converter: r.converter, errorCount: r.errorCount ?? 0, log: r.log ?? '',
   };
-  const stored = cache.put(key, r.dxfBytes, meta).catch(() => false);
+  // the DWG changed while it was read: the key describes a file we may not have converted, so store nothing
+  const unchanged = on && stamp(await stat(p).catch(() => ({}))) === stamp(st);
+  const stored = unchanged ? cache.put(key, r.dxfBytes, meta).catch(() => false) : Promise.resolve(false);
   return { ...meta, dxfBytes: r.dxfBytes, cached: false, stored };
 }
