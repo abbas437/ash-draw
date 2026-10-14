@@ -391,6 +391,11 @@ export function* docExtentsSteps(doc) {
 /** INSERT/DIMENSION -> transformed copies of the block entities (one level; nested INSERTs stay INSERTs).
  *  LWPOLYLINE -> LINE/ARC entities. */
 export function explode(e, doc) {
+  return drain(explodeSteps(e, doc));
+}
+
+/** step generator behind explode: yields about every 512 entities of a block (a huge block inserted once) */
+export function* explodeSteps(e, doc) {
   if (e.type === 'LWPOLYLINE') {
     const out = [];
     const v = e.vertices;
@@ -448,6 +453,7 @@ export function explode(e, doc) {
         // BYBLOCK / layer "0" inheritance is resolved by the renderer through `parent`.
         t.parent = e;
         out.push(t);
+        if ((out.length & 511) === 0) yield;
       }
     }
   }

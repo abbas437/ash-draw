@@ -235,3 +235,124 @@ test('compare align auto, piecewise: a big background block left in place while 
   const r1 = compareDocs(a, b, { align: 'auto', tol: 1, piecewise: false });
   assert.equal(r1.same.length, base.length);
 });
+
+// ---- change clusters: what a reviewer marks separately ----
+import { defaultClusterGap } from '../src/core/compare.js';
+/** a mm drawing: a frame w x h metres (unchanged) plus the given entities */
+function sheet(w, h, ents = []) {
+  const d = newDocument(); d.units = 4;
+  const W = w * 1000, H = h * 1000;
+  for (const [p, q] of [[[0, 0], [W, 0]], [[W, 0], [W, H]], [[W, H], [0, H]], [[0, H], [0, 0]]]) addEntity(d, makeLine({ x: p[0], y: p[1] }, { x: q[0], y: q[1] }));
+  for (const e of ents) addEntity(d, structuredClone(e));
+  return d;
+}
+const edits = (x, y) => [makeLine({ x, y }, { x: x + 800, y }), makeLine({ x, y: y + 300 }, { x: x + 800, y: y + 300 }), makeCircle({ x: x + 400, y: y + 150 }, 100)];
+
+test('clusters: two edit groups 10 m apart on a 600 m sheet are two clusters (gap 1.5 m by default in mm)', () => {
+  assert.equal(defaultClusterGap(4), 1500); assert.equal(defaultClusterGap(6), 1.5);
+  const r = compareDocs(sheet(600, 300), sheet(600, 300, [...edits(100000, 100000), ...edits(110800, 100000)]), { tol: 1 });
+  assert.equal(r.added.length, 6);
+  assert.equal(r.clusters.length, 2);
+  assert.deepEqual(r.clusters.map((c) => c.added), [3, 3]);
+  // a larger group distance joins them
+  assert.equal(compareDocs(sheet(600, 300), sheet(600, 300, [...edits(100000, 100000), ...edits(110800, 100000)]), { tol: 1, clusterGap: 12000 }).clusters.length, 1);
+});
+
+test('clusters: one long edit along a 60 m duct is cut into boxes of at most 10 group distances (15 m), whatever the sheet', () => {
+  const duct = [];
+  for (let i = 0; i < 60; i++) duct.push(makeLine({ x: 30000 + i * 1000, y: 50000 }, { x: 31000 + i * 1000, y: 50000 }), makeLine({ x: 30000 + i * 1000, y: 50600 }, { x: 31000 + i * 1000, y: 50600 }));
+  for (const [w, h] of [[120, 100], [600, 300]]) {
+    const r = compareDocs(sheet(w, h), sheet(w, h, duct), { tol: 1 });
+    assert.equal(r.added.length, 120);
+    assert.ok(r.clusters.length >= 4 && r.clusters.length <= 5, `${r.clusters.length} clusters on a ${w} m sheet`);
+    for (const c of r.clusters) assert.ok(c.box.maxx - c.box.minx <= 15000 + 1e-6, JSON.stringify(c.box));
+    assert.equal(r.clusters.reduce((n, c) => n + c.added, 0), 120);
+    assert.deepEqual(r.clusters.map((c) => c.box.minx), [...r.clusters.map((c) => c.box.minx)].sort((p, q) => p - q), 'one row: left to right');
+  }
+  // the limit follows the group distance: at 3 m, boxes of up to 30 m
+  const r3 = compareDocs(sheet(120, 100), sheet(120, 100, duct), { tol: 1, clusterGap: 3000 });
+  assert.equal(r3.clusters.length, 2);
+  for (const c of r3.clusters) assert.ok(c.box.maxx - c.box.minx <= 30000 + 1e-6, JSON.stringify(c.box));
+});
+
+test('clusters: a single change longer than the limit is a cluster of its own; the edits it passes stay separate', () => {
+  const long = makeLine({ x: 10000, y: 20000 }, { x: 50000, y: 20000 }); // 40 m > 15 m
+  const r = compareDocs(sheet(100, 50), sheet(100, 50, [long, ...edits(15000, 20500), ...edits(40000, 20500)]), { tol: 1 });
+  assert.equal(r.added.length, 7);
+  assert.deepEqual(r.clusters.map((c) => c.added).sort(), [1, 3, 3]);
+  assert.ok(r.clusters.some((c) => c.added === 1 && c.box.maxx - c.box.minx === 40000));
+  // a group distance large enough for the line to fit (limit 120 m): one cluster
+  assert.equal(compareDocs(sheet(100, 50), sheet(100, 50, [long, ...edits(15000, 20500), ...edits(40000, 20500)]), { tol: 1, clusterGap: 12000 }).clusters.length, 1);
+});
+
+test('clusters: reading order is rows from the top, left to right in a row', () => {
+  // top row: left (10, 50 m) and right (60, 48.5 m); bottom row: left (10, 20 m) and right (60, 21 m: higher than its left)
+  const at = [[60, 21], [10, 20], [60, 48.5], [10, 50]];
+  const r = compareDocs(sheet(100, 80), sheet(100, 80, at.map(([x, y]) => makeCircle({ x: x * 1000, y: y * 1000 }, 300))), { tol: 1 });
+  assert.deepEqual(r.clusters.map((c) => [Math.round((c.box.minx + 300) / 1000), Math.round((c.box.miny + 300) / 1000 * 10) / 10]), [[10, 50], [60, 48.5], [10, 20], [60, 21]]);
+});
+
+test('clusters: at most 200; the smallest are merged into their neighbours', () => {
+  const dots = [];
+  for (let i = 0; i < 300; i++) dots.push(makeCircle({ x: 5000 + (i % 20) * 3000, y: 5000 + Math.floor(i / 20) * 3000 }, 100));
+  const r = compareDocs(sheet(100, 100), sheet(100, 100, dots), { tol: 1 });
+  assert.equal(r.clusters.length, 200);
+  assert.equal(r.clusters.reduce((n, c) => n + c.added, 0), 300);
+});
+
+test('compare ignoreLayers: pieces on an ignored layer (or drawn by an INSERT on it) are left out', () => {
+  const mk = (rev) => {
+    const d = sheet(50, 50, [makeCircle({ x: 1000, y: 1000 }, 200)]);
+    addBlock(d, 'REVTAB', { x: 0, y: 0 }, [makeText({ x: 0, y: 0 }, 250, `REV ${rev}`)]);
+    addEntity(d, makeInsert('REVTAB', { x: 40000, y: 2000 }, { layer: 'Rev-Table' }));
+    addEntity(d, makeText({ x: 40000, y: 5000 }, 250, `DATE ${rev}`, { layer: 'REV-TABLE' }));
+    return d;
+  };
+  const all = compareDocs(mk('00'), mk('01'), { tol: 1 });
+  assert.ok(all.added.length + all.changed.length > 0);
+  const r = compareDocs(mk('00'), mk('01'), { tol: 1, ignoreLayers: ['rev-table'] });
+  assert.equal(r.added.length + r.removed.length + r.changed.length, 0);
+  assert.equal(r.same.length, 5);
+  assert.equal(r.clusters.length, 0);
+});
+
+// ---- time slicing: compareSteps / buildCompareSteps ----
+import { compareSteps, buildCompareSteps } from '../src/core/compare.js';
+import { drain, runSliced } from '../src/core/slice.js';
+
+test('compareSteps: a 50k-piece pair yields often, rising progress, the same result as compareDocs; buildCompareSteps too', async () => {
+  const base = common(50000), mv = translation(700, -300);
+  const extra = [makeCircle({ x: 5000, y: 0 }, 5), makeLine({ x: 5000, y: 100 }, { x: 5100, y: 100 })];
+  const a = docOf([...base, extra[0]]), b = docOf([...shuffle(base.map((e) => transformEntity(e, mv))), transformEntity(extra[1], mv)]);
+  const opts = { align: 'auto', tol: 1e-3, rotations: [0, 90] };
+  const sync = compareDocs(a, b, opts);
+  let yields = 0, last = 0, rising = true;
+  const gen = compareSteps(a, b, opts);
+  let r;
+  while (!(r = gen.next()).done) { yields++; if (r.value < last - 1e-12 || r.value > 1) rising = false; last = r.value; }
+  assert.ok(yields >= 200, `${yields} yields`);
+  assert.ok(rising, 'progress rises within 0..1');
+  const sliced = r.value;
+  assert.deepEqual([sliced.same.length, sliced.added.length, sliced.removed.length, sliced.changed.length], [50000, 1, 1, 0]);
+  const sum = (x) => JSON.stringify({ n: [x.same.length, x.added.length, x.removed.length, x.changed.length], m: x.offset.m, cl: x.clusters });
+  assert.equal(sum(sliced), sum(sync));
+  let byields = 0;
+  const g2 = buildCompareSteps(a, b, sliced);
+  while (!(r = g2.next()).done) byields++;
+  assert.ok(byields >= 50, `${byields} build yields`);
+  assert.equal(r.value.entities.length, buildCompareDoc(a, b, sync).entities.length);
+  assert.equal(drain(compareSteps(a, b, opts)).same.length, 50000);
+});
+
+test('compareSteps under runSliced: an aborted signal rejects with CANCELLED and stops the steps', async () => {
+  const base = common(20000);
+  const a = docOf(base), b = docOf(shuffle(base));
+  const ac = new AbortController();
+  let n = 0, after = 0;
+  const gen = compareSteps(a, b, { align: 'auto', tol: 1e-3 });
+  const counted = { next: () => { if (ac.signal.aborted) after++; return gen.next(); }, return: (v) => gen.return(v) };
+  await assert.rejects(runSliced(counted, { budgetMs: 0, signal: ac.signal, onProgress: () => { if (++n === 5) ac.abort(); }, cancelMessage: 'Compare was cancelled.' }),
+    (err) => err.code === 'CANCELLED' && /Compare was cancelled/.test(err.message));
+  assert.equal(after, 0, 'no step after the abort');
+  assert.equal(gen.next().done, true, 'the generator is closed');
+});

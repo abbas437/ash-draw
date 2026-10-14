@@ -19,7 +19,7 @@ import { AUTOSAVE_CHOICES, shouldDiscardAutosave } from '../src/core/autosave.js
 import { FindPanel } from './find.js';
 import { plotDialog, publishDialog } from './plot.js';
 import { initLayouts, restoreSpace, renderSpaceBar, layoutDoubleClick, exitMspace, renderVpScale, commitViewportView } from './layouts-ui.js';
-import { ComparePanel, runCompare } from './compare.js';
+import { ComparePanel, runCompare, compareUses } from './compare.js';
 import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
 import { loadDrawingXrefs, xrefPanel } from './xref-panel.js';
 import { TOOL_BUTTONS, buildToolPanel, iconButton, quickCommand, canvasDarkFrom, labelsFrom, placementFrom, PLACEMENTS, collapsedFrom, applyCollapsed, toolTitle, moreButton, fitToolBand, initToolBand } from './tool-panel.js';
@@ -298,6 +298,7 @@ class App {
   cycleTab(step) { this.activateIndex(cycleIndex(this.tabs.length, this.tabs.indexOf(this.active), step)); }
   /** close a tab after the save prompt; closing the last tab leaves a new blank drawing. Returns false if cancelled. */
   async closeTab(tab = this.active) {
+    if (tab && compareUses(tab.doc)) { toast('A compare is running on this drawing: wait for it or cancel it first.'); return false; }
     const choice = await this.confirmDiscard(tab);
     if (!choice) return false;
     // saved or "Don't save": its autosave copy goes (a save that left it unsaved keeps the copy for the next start)
