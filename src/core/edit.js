@@ -71,12 +71,13 @@ class Tx {
     this.ops.push({ k: 'header', target, before, after: readHeader(target), rebuild: before.ltscale !== readHeader(target).ltscale }); // labels only, unless $LTSCALE changed
     if (before.ltscale !== readHeader(target).ltscale) this.structure = true; // linetype patterns are built into the scene
   }
-  /** set obj[key] to value, or a Map entry (value undefined deletes): named tables, entity lists of other owners */
-  set(obj, key, value) {
+  /** set obj[key] to value, or a Map entry (value undefined deletes): named tables, entity lists of other owners;
+   *  rebuild false: nothing drawn depends on it (named views), so no scene rebuild on do / undo / redo */
+  set(obj, key, value, rebuild = true) {
     const before = obj instanceof Map ? obj.get(key) : obj[key];
     const idx = putKey(obj, key, value);
-    this.ops.push({ k: 'set', obj, key, before, after: value, idx });
-    this.structure = true;
+    this.ops.push({ k: 'set', obj, key, before, after: value, idx, ...(rebuild ? {} : { quiet: true }) });
+    if (rebuild) this.structure = true;
   }
   /** assign plain properties of `obj` in place (a viewport's view): no scene rebuild, a redraw reads them */
   props(obj, vals) {
@@ -217,7 +218,7 @@ export class Session {
     let structure = false;
     for (const op of [...step.ops].reverse()) {
       applyInverse(step.doc ?? this.doc, op);
-      if (op.k === 'layer' || op.k === 'dimstyle' || op.k === 'block' || op.k === 'set' || op.rebuild) structure = true; else collectIds(op, ids);
+      if (op.k === 'layer' || op.k === 'dimstyle' || op.k === 'block' || (op.k === 'set' && !op.quiet) || op.rebuild) structure = true; else collectIds(op, ids);
     }
     this.redoStack.push(step);
     this.revision--;
@@ -232,7 +233,7 @@ export class Session {
     let structure = false;
     for (const op of step.ops) {
       applyForward(step.doc ?? this.doc, op);
-      if (op.k === 'layer' || op.k === 'dimstyle' || op.k === 'block' || op.k === 'set' || op.rebuild) structure = true; else collectIds(op, ids);
+      if (op.k === 'layer' || op.k === 'dimstyle' || op.k === 'block' || (op.k === 'set' && !op.quiet) || op.rebuild) structure = true; else collectIds(op, ids);
     }
     this.undoStack.push(step);
     this.revision++;

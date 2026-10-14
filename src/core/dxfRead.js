@@ -24,6 +24,7 @@ import { mlineFromTags, mlineStyleFromTags } from './mline.js';
 import { parseLayoutObject, readViewport, markPaperViewport } from './layouts.js';
 import { imageDefFromTags, imageFromTags } from './image.js';
 import { oleFrameCorners } from './ole.js';
+import { viewFromDxf, viewKey } from './views.js';
 
 const DEG = Math.PI / 180;
 
@@ -836,6 +837,7 @@ function parseTokens(tk, onProgress = null) {
 
   // TABLES
   dimHandleName = () => undefined;
+  const viewRecs = []; // VIEW table records, read once the layouts are known (a paper-space view belongs to one)
   if (secs.TABLES) {
     const dimRecs = [], styleH = new Map();
     let vportSeen = false;
@@ -846,6 +848,7 @@ function parseTokens(tk, onProgress = null) {
         if (h && rec.str(2).startsWith('*')) dynRefs.push([rec.str(2), h]);
       }
       if (rec.type === 'STYLE') styleH.set(rec.str(5), rec.str(2));
+      if (rec.type === 'VIEW') viewRecs.push(rec.tags());
       if (rec.type === 'VPORT' && !vportSeen && rec.str(2).toLowerCase() === '*active') { vportSeen = true; const av = readActiveView(rec); if (av) doc.activeView = av; }
       if (rec.type === 'LAYER') {
         const name = rec.str(2);
@@ -969,6 +972,7 @@ function parseTokens(tk, onProgress = null) {
   layouts.sort((a, b) => a.tab - b.tab);
   for (const lo of layouts) markPaperViewport(lo.entities);
   doc.layouts = layouts;
+  for (const t of viewRecs) { const v = viewFromDxf(t, layouts); if (v) (doc.views ??= new Map()).set(viewKey(v.name), v); }
   // draw order: each table's owner is the block record of a space or block definition
   for (const t of sortents) {
     const name = blockRecH.get(t.owner);
