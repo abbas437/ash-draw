@@ -201,7 +201,7 @@ export function layoutMText(model, { width = 0, attach = 1, lineSpacing = 1, mea
   const total = lines.length ? lines.at(-1).y + 0.25 * lines.at(-1).h : 0;
   const dy = row === 0 ? 0 : row === 1 ? -total / 2 : -total;
   const glyphs = [], rules = [];
-  for (const l of lines) {
+  for (const [li, l] of lines.entries()) {
     l.y += dy;
     const a = l.align ?? col;
     let x = x0 + l.ind + (a === 1 ? (boxW - l.ind - l.w) / 2 : a === 2 ? boxW - l.ind - l.w : 0);
@@ -210,7 +210,7 @@ export function layoutMText(model, { width = 0, attach = 1, lineSpacing = 1, mea
       const pr = p.props;
       const shift = pr.valign === 1 ? -(l.h - pr.h) * 0.45 : pr.valign === 2 ? -(l.h - pr.h) * 0.9 : 0;
       const by = l.y + shift;
-      const g = { font: pr.font, bold: pr.bold, italic: pr.italic, color: pr.color, oblique: pr.oblique, wf: pr.wf, track: pr.track, stroke: !!pr.stroke };
+      const g = { li, font: pr.font, bold: pr.bold, italic: pr.italic, color: pr.color, oblique: pr.oblique, wf: pr.wf, track: pr.track, stroke: !!pr.stroke };
       if (p.stack) {
         const st = p.stack, sp = p.sp, w = p.w;
         if (st.type === '#') {

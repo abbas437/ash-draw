@@ -12,6 +12,7 @@ import { layoutPage, viewportScale, isPaperViewport } from './layouts.js';
 import {
   walkOps, colorRgb, lineweightMm, dashUnits, hatchFamilies, layoutText, markerSize, arrowTriangle, runRgb, mtextItemLayout,
 } from './exportSvg.js';
+import { textShaper, textOps, hasRtl, bidiLevels, visualOrder } from './pdfText.js';
 
 const PT_PER_MM = 72 / 25.4;
 const MAX_PAGE_PT = 14400;          // PDF 1.x user-unit page size limit (200 inch)
@@ -77,8 +78,9 @@ export const plotScale = (n, mmPerUnit = 1) => mmPerUnit / n;
  * exportPdf(doc, opts) -> Promise<{bytes:Uint8Array, warnings:string[]}> (one page, vector).
  * opts: pageSize 'fit'|'A4'|'A3'|'A2'|'A1'|'A0'|'Letter' ('fit'), orientation 'auto'|'landscape'|'portrait',
  * margin (mm, 10), scale (null = fit to page | page mm per drawing unit), centre (true), region (area to plot in drawing
- * units, clipped; default the drawing extents), monochrome, lineweights, unicodeFont (TTF/OTF bytes for text outside
- * WinAnsi), scene (prebuilt). A layout sheet (opts.layout): paper 'layout' (its own paper at 1:1, default) or a page size
+ * units, clipped; default the drawing extents), monochrome, lineweights, unicodeFonts (TTF/OTF bytes for text outside
+ * WinAnsi, in fallback order: an array, or an async function returning one, called only when such text is plotted;
+ * unicodeFont: a single font), scene (prebuilt). A layout sheet (opts.layout): paper 'layout' (its own paper at 1:1, default) or a page size
  * name, with fit (true: scaled into the paper's margins, see pageFit; false: 1:1, centred).
  */
 export async function exportPdf(doc, opts = {}) {
@@ -123,6 +125,7 @@ const FONTS = new WeakMap();
 /** draw one sheet (exportPdf options) on a new page of `pdf`; returns the warnings */
 async function addPdfPage(pdf, doc, opts) {
   const { monochrome = false, lineweights = true, unicodeFont = null, layout = null } = opts;
+  const uniSource = opts.unicodeFonts ?? (unicodeFont ? [unicodeFont] : null);
   const region = layout ? null : opts.region ?? null;
   // a layout plots at 1:1 on its own paper: its entities, then each viewport's model view clipped to the viewport
   const paperDoc = layout ? Object.create(doc, { entities: { value: layout.entities } }) : doc;
@@ -148,7 +151,7 @@ async function addPdfPage(pdf, doc, opts) {
   // a window or view plots only what lies inside it; a sheet on other paper only the sheet
   const cb = clipBox;
   if (cb) page.pushOperators(pushGraphicsState(), moveTo(X(cb.minx), Y(cb.miny)), lineTo(X(cb.maxx), Y(cb.miny)), lineTo(X(cb.maxx), Y(cb.maxy)), lineTo(X(cb.minx), Y(cb.maxy)), closePath(), clip(), endPath());
-  if (!FONTS.has(pdf)) FONTS.set(pdf, { HELV: { '00': await pdf.embedFont(StandardFonts.Helvetica) }, uni: null });
+  if (!FONTS.has(pdf)) FONTS.set(pdf, { HELV: { '00': await pdf.embedFont(StandardFonts.Helvetica) }, uni: null, shape: null });
   const fonts = FONTS.get(pdf), helv = fonts.HELV['00'];
   const helvChars = new Set(helv.getCharacterSet());
   let missing = 0;
@@ -195,24 +198,42 @@ async function addPdfPage(pdf, doc, opts) {
   const fillState = (style) => { alphaState(style); const [r, g, b] = colOf(style); ops.push(setFillingRgbColor(r, g, b)); };
   let msize;
 
-  /** one font per text item: Helvetica when every character is WinAnsi, else the Unicode font, else '?' substitutes */
-  const fontFor = async (lines) => {
-    if (lines.every((l) => [...l].every((ch) => helvChars.has(ch.codePointAt(0))))) return { font: helv, lines };
-    if (unicodeFont) {
-      if (!fonts.uni) {
-        const fontkit = (await import('@pdf-lib/fontkit')).default;
-        pdf.registerFontkit(fontkit);
-        fonts.uni = await pdf.embedFont(unicodeFont, { subset: true });
+  // text outside WinAnsi: the Unicode fonts are loaded and embedded (subset) the first time a sheet needs one, then
+  // every such line is bidi-ordered, split by font coverage and shaped (pdfText.js); no font for a character -> '?'
+  const needsUni = (t) => [...t].some((ch) => !helvChars.has(ch.codePointAt(0)));
+  const loadUni = async () => {
+    if (!fonts.shape) {
+      // a font that cannot be loaded or embedded is left out: its characters plot as '?' and a warning says so
+      let src = null;
+      try { src = typeof uniSource === 'function' ? await uniSource() : uniSource; } catch { fonts.loadFailed = true; }
+      if (src?.failed?.length) fonts.loadFailed = true;
+      if (src?.length) pdf.registerFontkit((await import('@pdf-lib/fontkit')).default);
+      fonts.uni = [];
+      for (const b of src ?? []) {
+        try {
+          const f = await pdf.embedFont(b, { subset: true });
+          // the ToUnicode map gets no entry for a glyph without a code point (a mark: it would be an empty <>)
+          const e = f.embedder, make = e.embedUnicodeCmap;
+          e.embedUnicodeCmap = function (ctx) {
+            const gc = this.glyphCache;
+            this.glyphCache = { access: () => gc.access().filter((g) => g?.codePoints.length) };
+            try { return make.call(this, ctx); } finally { this.glyphCache = gc; }
+          };
+          fonts.uni.push(f);
+        } catch { fonts.loadFailed = true; }
       }
-      return { font: fonts.uni, lines };
+      fonts.shape = textShaper(helv, fonts.uni);
     }
-    return {
-      font: helv,
-      lines: lines.map((l) => [...l].map((ch) => (helvChars.has(ch.codePointAt(0)) ? ch : (missing++, '?'))).join('')),
-    };
+    return fonts.shape;
+  };
+  /** draw shaped text (a shape() result) at (x, y) of a frame (cm a b c d e f) in the given fill colour */
+  const shapedText = (sh, frame, size, x, y, rgbCol, style) => {
+    missing += sh.miss;
+    ops.push(pushGraphicsState(), concatTransformationMatrix(...frame));
+    alphaState(style); ops.push(setFillingRgbColor(...rgbCol), ...textOps(page, sh, size, x, y), popGraphicsState());
   };
 
-  // MTEXT runs: Helvetica in its bold / oblique variants (embedded on first use), the Unicode font for other scripts
+  // MTEXT runs: Helvetica in its bold / oblique variants (embedded on first use), shaped Unicode text for other scripts
   const HELV = fonts.HELV;
   const HELV_NAME = { '10': StandardFonts.HelveticaBold, '01': StandardFonts.HelveticaOblique, '11': StandardFonts.HelveticaBoldOblique };
   const variant = (p) => `${p.bold ? 1 : 0}${p.italic ? 1 : 0}`;
@@ -222,16 +243,42 @@ async function addPdfPage(pdf, doc, opts) {
         if (!r.props) continue;
         const key = variant(r.props);
         if (!HELV[key]) HELV[key] = await pdf.embedFont(HELV_NAME[key]);
-        const t = r.stack ? r.stack.a + r.stack.b : r.text;
-        if (unicodeFont && [...t].some((ch) => !helvChars.has(ch.codePointAt(0)))) await fontFor([t]);
+        if (needsUni(r.stack ? r.stack.a + r.stack.b : r.text)) await loadUni();
       }
     }
   };
-  const runFont = (t, p, count = false) => {
-    if ([...t].every((ch) => helvChars.has(ch.codePointAt(0)))) return { font: HELV[variant(p)], text: t };
-    if (fonts.uni) return { font: fonts.uni, text: t };
-    return { font: HELV[variant(p)], text: [...t].map((ch) => (helvChars.has(ch.codePointAt(0)) ? ch : (count && missing++, '?'))).join('') };
+  const runWidth = (t, p) => (needsUni(t) ? fonts.shape(t).width * p.h : HELV[variant(p)].widthOfTextAtSize(t, p.h));
+  /**
+   * an MTEXT line holding right-to-left text: its words / spaces (laid out in logical order) split at bidi level changes
+   * and put in visual order from the line's left end; each piece then shapes at its level
+   */
+  const reorderLines = (glyphs) => {
+    const byLine = new Map();
+    for (const g of glyphs) if (g.li != null) (byLine.get(g.li) ?? byLine.set(g.li, []).get(g.li)).push(g);
+    const moved = new Map();
+    for (const group of byLine.values()) {
+      if (!group.some((g) => hasRtl(g.text)) || group.some((g) => g.w == null)) continue; // stacks keep their place
+      const levels = bidiLevels(group.map((g) => g.text).join(''));
+      const pieces = [];
+      let i = 0;
+      for (const g of group) {
+        for (let a = 0; a < g.text.length;) {
+          let b = a + 1;
+          while (b < g.text.length && levels[i + b] === levels[i + a]) b++;
+          const text = g.text.slice(a, b), level = levels[i + a];
+          pieces.push({ ...g, text, level, w: loadedShape(text, level, g).width * g.h * (g.wf || 1) * (g.track || 1) });
+          a = b;
+        }
+        i += g.text.length;
+      }
+      let x = Math.min(...group.map((g) => g.x));
+      for (const p of visualOrder(pieces)) { p.x = x; x += p.w; }
+      moved.set(group[0], pieces);
+      for (const g of group.slice(1)) moved.set(g, []);
+    }
+    return moved.size ? glyphs.flatMap((g) => moved.get(g) ?? [g]) : glyphs;
   };
+  const loadedShape = (t, level, p) => fonts.shape(t, level, HELV[variant(p)]);
 
   // box: the world window plotted, to which XLINE / RAY items are clipped (AutoCAD plots their visible part)
   const drawItems = async (scn, box, cull = null) => {
@@ -277,16 +324,22 @@ async function addPdfPage(pdf, doc, opts) {
       ops.push(moveTo(X(it.p.x - s), Y(it.p.y)), lineTo(X(it.p.x + s), Y(it.p.y)), moveTo(X(it.p.x), Y(it.p.y - s)), lineTo(X(it.p.x), Y(it.p.y + s)), stroke(), popGraphicsState());
     } else if (it.kind === 'text' && it.mt) {
       await prepareMText(it.mt);
-      const lay = mtextItemLayout(it, (t, p) => { const f = runFont(t, p); return f.font.widthOfTextAtSize(f.text, p.h); });
+      const lay = mtextItemLayout(it, runWidth);
+      const glyphs = fonts.shape ? reorderLines(lay.glyphs) : lay.glyphs;
       const c = Math.cos(it.rot), s = Math.sin(it.rot);
       const rc = (col) => runRgb(col, it.style, { monochrome }).map((v) => v / 255);
       page.pushOperators(...ops.splice(0), pushGraphicsState(), concatTransformationMatrix(c, s, -s, c, X(it.p.x), Y(it.p.y)));
       // layout is in drawing units, y down; the text frame is in page points, y up
-      for (const g of lay.glyphs) {
-        const f = runFont(g.text, g, true);
-        if (!f.text) continue;
-        page.pushOperators(pushGraphicsState(), concatTransformationMatrix(g.wf || 1, 0, Math.tan((g.oblique || 0) * Math.PI / 180), 1, g.x * k, -g.y * k));
-        page.drawText(f.text, { x: 0, y: 0, size: g.h * k, font: f.font, color: rgb(...rc(g.color)), opacity: opacity(it.style) });
+      for (const g of glyphs) {
+        if (!g.text) continue;
+        const frame = [g.wf || 1, 0, Math.tan((g.oblique || 0) * Math.PI / 180), 1, g.x * k, -g.y * k];
+        if (g.level != null || needsUni(g.text)) {
+          shapedText(fonts.shape(g.text, g.level ?? null, HELV[variant(g)]), frame, g.h * k, 0, 0, rc(g.color), it.style);
+          page.pushOperators(...ops.splice(0));
+          continue;
+        }
+        page.pushOperators(pushGraphicsState(), concatTransformationMatrix(...frame));
+        page.drawText(g.text, { x: 0, y: 0, size: g.h * k, font: HELV[variant(g)], color: rgb(...rc(g.color)), opacity: opacity(it.style) });
         page.pushOperators(popGraphicsState());
       }
       for (const r of lay.rules) {
@@ -296,10 +349,17 @@ async function addPdfPage(pdf, doc, opts) {
       }
       page.pushOperators(popGraphicsState());
     } else if (it.kind === 'text') {
-      const { font, lines } = await fontFor(it.lines.map((l) => l.replace(/\t/g, ' ')));
-      const lay = layoutText({ ...it, lines }, (t) => font.widthOfTextAtSize(t, it.h));
+      const lines = it.lines.map((l) => l.replace(/\t/g, ' '));
       const [r, g, b] = colOf(it.style);
       const c = Math.cos(it.rot), s = Math.sin(it.rot), wf = it.wf || 1;
+      if (lines.some(needsUni)) {
+        // shaped: aligned (left / centre / right / fit) by the shaped width
+        const shape = await loadUni();
+        const lay = layoutText({ ...it, lines }, (t) => shape(t).width * it.h);
+        for (const l of lay.lines) if (l.text) shapedText(shape(l.text), [wf * c, wf * s, -s, c, X(it.p.x), Y(it.p.y)], it.h * k, l.x * k, -l.y * k, [r, g, b], it.style);
+        continue;
+      }
+      const font = helv, lay = layoutText({ ...it, lines }, (t) => font.widthOfTextAtSize(t, it.h));
       page.pushOperators(...ops.splice(0));
       for (const l of lay.lines) {
         if (!l.text) continue;
@@ -331,6 +391,6 @@ async function addPdfPage(pdf, doc, opts) {
   await drawItems(scene, bb, layout ? null : region);
   if (ops.length) page.pushOperators(...ops.splice(0));
   if (cb) page.pushOperators(popGraphicsState());
-  if (missing) warnings.push(`${missing} text characters could not be drawn (no Unicode font)`);
+  if (missing) warnings.push(`${missing} text characters could not be drawn (${fonts.loadFailed ? 'the Unicode font could not be loaded' : 'no Unicode font'})`);
   return warnings;
 }
