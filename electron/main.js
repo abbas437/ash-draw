@@ -11,6 +11,7 @@ import { cacheLimitBytes, createDwgCache, openCached } from './dwgCache.js';
 import { createHandoffStore } from './handoff.js';
 import { createClipboardBridge } from './clipboard.js';
 import { createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isOdaExeName, ODA_DOWNLOAD_URL, ODA_DWG_VERSIONS } from './odaConverter.js';
+import { foreignInstance, removeMarkerSync, warningText, writeMarker } from './instance.js';
 import { saveDialogDefault } from './savePath.js';
 import { createSymbolLibrary } from './symbols.js';
 import { cleanSession, isPathString, pushRecent, startupModeOf } from './sessionLists.js';
@@ -160,6 +161,7 @@ function saveSession() {
   writeJsonSync('session.json', { version: 1, ...s });
 }
 app.on('will-quit', saveSession);
+app.on('will-quit', () => removeMarkerSync(app.getPath('userData')));
 // Reopens the previous session: existing files are granted again and returned; deleted or moved ones in `missing`.
 async function restoreSession() {
   sessionOffer = null;
@@ -460,6 +462,13 @@ function registerIpc() {
 
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
+  // Installed + portable copies share userData: warn (non-blocking) when a different exe is already using it.
+  try {
+    const dir = app.getPath('userData');
+    const other = await foreignInstance(dir, { exe: process.execPath });
+    await writeMarker(dir, { exe: process.execPath, version: app.getVersion() });
+    if (other) dialog.showMessageBox({ type: 'warning', title: 'ASH Draw Studio', message: warningText(other), buttons: ['OK'] }).catch(() => {});
+  } catch { /* the marker is advisory only */ }
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   protocol.handle(SCHEME, serveAppFile);

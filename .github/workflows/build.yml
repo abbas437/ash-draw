@@ -139,8 +139,8 @@ jobs:
         working-directory: dist
         run: |
           shopt -s nullglob
-          files=(ASH-Draw-Studio-Setup-*.exe ASH-Draw-Studio-Portable-*.exe)
-          if [ "${#files[@]}" -ne 2 ]; then echo "expected 2 .exe files, found ${#files[@]}"; exit 1; fi
+          files=(ASH-Draw-Studio-Setup-*.exe ASH-Draw-Studio-Portable-*.exe ASH-Draw-Studio-*-win-x64.zip)
+          if [ "${#files[@]}" -ne 3 ]; then echo "expected 3 files (Setup, Portable, zip), found ${#files[@]}"; exit 1; fi
           sha256sum "${files[@]}" | sed 's/ \*/  /' > SHA256SUMS.txt
           cat SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
@@ -149,6 +149,7 @@ jobs:
           path: |
             dist/ASH-Draw-Studio-Setup-*.exe
             dist/ASH-Draw-Studio-Portable-*.exe
+            dist/ASH-Draw-Studio-*-win-x64.zip
             dist/SHA256SUMS.txt
             dist/libredwg-*.tar.xz
             dist/libredwg-*.patch
@@ -163,6 +164,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             dist/ASH-Draw-Studio-Setup-*.exe \
             dist/ASH-Draw-Studio-Portable-*.exe \
+            dist/ASH-Draw-Studio-*-win-x64.zip \
             dist/SHA256SUMS.txt \
             dist/libredwg-*.tar.xz \
             dist/libredwg-*.patch \
@@ -181,6 +183,7 @@ jobs:
           gh release create "$VERSION" --target "$GITHUB_SHA" $PRE \
             dist/ASH-Draw-Studio-Setup-*.exe \
             dist/ASH-Draw-Studio-Portable-*.exe \
+            dist/ASH-Draw-Studio-*-win-x64.zip \
             dist/SHA256SUMS.txt \
             dist/libredwg-*.tar.xz \
             dist/libredwg-*.patch \
