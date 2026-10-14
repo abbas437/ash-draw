@@ -2,7 +2,7 @@
 //
 //   xlsxBytes([{ name: 'Symbols', rows: [['Symbol', 'Count'], ['VAV', 3]], colWidths: [30, 10] }]);  // Uint8Array
 //
-// The first row of each sheet is bold (the header). Strings are inline (t="inlineStr": no sharedStrings part); the
+// The first row of each sheet is bold (the header); a sheet's boldRows: [indices] overrides which rows. Strings are inline (t="inlineStr": no sharedStrings part); the
 // zip is stored (no compression) with CRC-32s.
 
 const enc = new TextEncoder();
@@ -14,18 +14,21 @@ const XML = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
 export const colName = (i) => { let s = ''; for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + ((n - 1) % 26)) + s; return s; };
 /** a sheet name Excel accepts: none of []:*?/\ , at most 31 characters, unique */
 const sheetName = (n, used) => {
-  const b = String(n ?? '').replace(/[[\]:*?/\\]/g, '_').trim().slice(0, 31) || 'Sheet';
+  let b = String(n ?? '').replace(/[^\t\n\r -\ud7ff\ue000-\ufffd\u{10000}-\u{10FFFF}]/gu, '').replace(/[[\]:*?/\\]/g, '_').trim()
+    .replace(/^'+|'+$/g, '').trim().slice(0, 31).replace(/^'+|'+$/g, '') || 'Sheet';
+  if (b.toUpperCase() === 'HISTORY') b = 'History_1'; // Excel reserves the name
   let s = b;
   for (let i = 2; used.has(s.toUpperCase()); i++) s = `${b.slice(0, 31 - String(i).length - 1)}_${i}`;
   used.add(s.toUpperCase());
   return s;
 };
 
-function sheetXml({ rows = [], colWidths = null }) {
+function sheetXml({ rows = [], colWidths = null, boldRows = [0] }) {
+  const bold = new Set(boldRows);
   const cols = colWidths?.length ? `<cols>${colWidths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${Number(w) || 10}" customWidth="1"/>`).join('')}</cols>` : '';
   const body = rows.map((r, ri) => `<row r="${ri + 1}">${r.map((v, ci) => {
     if (v == null || v === '') return '';
-    const ref = `${colName(ci)}${ri + 1}`, s = ri === 0 ? ' s="1"' : '';
+    const ref = `${colName(ci)}${ri + 1}`, s = bold.has(ri) ? ' s="1"' : '';
     if (typeof v === 'number' && Number.isFinite(v)) return `<c r="${ref}"${s}><v>${v}</v></c>`;
     return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${esc(v)}</t></is></c>`;
   }).join('')}</row>`).join('');
@@ -97,5 +100,5 @@ export function zipStored(files) {
   return out;
 }
 
-/** .xlsx bytes of sheets [{ name, rows: [[string | number…]…], colWidths? }] */
+/** .xlsx bytes of sheets [{ name, rows: [[string | number…]…], colWidths?, boldRows? (default [0]) }] */
 export const xlsxBytes = (sheets) => zipStored(xlsxParts(sheets));

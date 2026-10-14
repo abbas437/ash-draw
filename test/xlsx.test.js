@@ -61,3 +61,16 @@ test('xlsxBytes: python zipfile reads it (CRC test) and every part is well-forme
     assert.deepEqual(out, ['Symbol|Count|Layers|Grille <600> & "x"|A; B|Badchar', '3|1.5', 'Symbol count|Symbol count_2']);
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 });
+
+test('sheet names: XML-invalid characters stripped, edge apostrophes trimmed, History renamed, before the empty/duplicate checks', () => {
+  const names = (ns) => [...new TextDecoder().decode(unzip(xlsxBytes(ns.map((name) => ({ name, rows: [] }))))['xl/workbook.xml'].data).matchAll(/<sheet name="([^"]*)"/g)].map((m) => m[1]);
+  assert.deepEqual(names(['A\u0001B', "'Q1'", 'history', 'HISTORY', '\u0002', "''"]), ['AB', 'Q1', 'History_1', 'History_1_2', 'Sheet', 'Sheet_2']);
+});
+
+test('symcountSheet: the Symbol header cell is bold as well as the title row', async () => {
+  const { symcountSheet } = await import('../src/core/symcount.js');
+  const z = unzip(xlsxBytes([symcountSheet([{ name: 'VAV', count: 2, layers: ['A'] }], 2, 'Symbol count - x')]));
+  const sheet = new TextDecoder().decode(z['xl/worksheets/sheet1.xml'].data);
+  assert.match(sheet, /<c r="A2" s="1" t="inlineStr"><is><t xml:space="preserve">Symbol<\/t>/);
+  assert.match(sheet, /<c r="A3" t="inlineStr"><is><t xml:space="preserve">VAV<\/t>/); // data rows stay regular
+});

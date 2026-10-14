@@ -2,7 +2,8 @@
 // inserted in the selection or the current space, as a dialog with Excel / CSV export and a symbol schedule placed in
 // the drawing (lines, text and one INSERT per symbol on layer SYMBOL-SCHEDULE, one undo step). Counting is in
 // src/core/symcount.js.
-import { countSymbols, symcountCsv } from '../src/core/symcount.js';
+import { countSymbols, symcountCsv, symcountSheet } from '../src/core/symcount.js';
+export { symcountSheet };
 import { xlsxBytes } from '../src/core/xlsx.js';
 import { unitScale } from '../src/core/clipboard.js';
 import { bboxOf, unionBox } from '../src/core/geom.js';
@@ -20,14 +21,8 @@ const drawingName = (app) => String(app.file?.name ?? 'drawing').replace(/\.[^.]
 function countScope(app) {
   const ids = app.vp.selection;
   if (ids.size) return { entities: app.doc.entities.filter((e) => ids.has(e.id)), label: `${ids.size} selected object${ids.size === 1 ? '' : 's'}` };
-  const space = app.active?.spaces?.cur ?? 'Model';
+  const space = app.vp.mspace ? 'Model' : (app.active?.spaces?.cur ?? 'Model'); // MSPACE in a layout viewport edits model space
   return { space, label: U(space) === 'MODEL' ? 'Model space' : `Layout ${space}` };
-}
-
-/** the sheet of the .xlsx: title row (drawing, date), header, one row per symbol, total */
-export function symcountSheet(rows, total, title) {
-  return { name: 'Symbol count', colWidths: [36, 10, 36],
-    rows: [[title], ['Symbol', 'Count', 'Layers'], ...rows.map((r) => [r.name, r.count, r.layers.join('; ')]), ['Total', total]] };
 }
 
 /** default text height of the placed schedule: 2.5 mm on paper at the Symbols panel's drawing scale, in drawing units */
@@ -35,8 +30,8 @@ export const scheduleTextHeight = (units, drawingScale = 1) => 2.5 * (drawingSca
 
 /** the schedule's entities with its top-left corner at `at`: grid LINEs, TEXT (title, header, cells) and one INSERT of
  *  each symbol scaled to about 80 % of the row height, centred in the picture cell (none without a block extent) */
-export function scheduleEntities(doc, rows, total, at, th) {
-  const rh = 2.4 * th, pad = 0.5 * th, layer = SCHEDULE_LAYER, o = { layer };
+export function scheduleEntities(doc, rows, total, at, th, layer = SCHEDULE_LAYER) {
+  const rh = 2.4 * th, pad = 0.5 * th, o = { layer };
   const wPic = 1.6 * rh, wQty = 5 * th;
   const wDesc = Math.max(12 * th, ...rows.map((r) => String(r.name).length * 0.6 * th + 2 * pad));
   const W = wPic + wDesc + wQty, xs = [at.x, at.x + wPic, at.x + wPic + wDesc, at.x + W];
@@ -75,9 +70,10 @@ function picture(doc, name, c, w, h, layer) {
 
 /** place the schedule at `at` as one undo step; returns the added entities */
 export function placeSchedule(s, doc, rows, total, at, th) {
-  const ents = scheduleEntities(doc, rows, total, at, th);
+  const existing = [...s.doc.layers.keys()].find((k) => U(k) === SCHEDULE_LAYER); // keep the drawing's own spelling
+  const ents = scheduleEntities(doc, rows, total, at, th, existing ?? SCHEDULE_LAYER);
   return s.transact('Symbol schedule', (tx) => {
-    if (![...s.doc.layers.keys()].some((k) => U(k) === SCHEDULE_LAYER)) tx.layer(SCHEDULE_LAYER, { color: 7 });
+    if (existing == null) tx.layer(SCHEDULE_LAYER, { color: 7 });
     return ents.map((e) => tx.add(e));
   });
 }
@@ -88,7 +84,8 @@ export async function symcountDialog(app) {
   const nested = el('input', { type: 'checkbox', id: 'symc-nested' });
   const table = el('table', { class: 'symc-table' }), totalLine = el('div', { class: 'symc-total', role: 'status' });
   const thIn = el('input', { id: 'symc-th', type: 'number', step: 'any', min: '0', style: 'width:7em', title: 'Text height of the schedule placed in the drawing (drawing units)' });
-  thIn.value = String(+scheduleTextHeight(doc.units, app.symbolsPanel?.drawingScale ?? 1).toPrecision(6));
+  const drawingScale = () => (app.vp.layout && !app.vp.mspace ? 1 : app.symbolsPanel?.drawingScale ?? 1); // paper space is already at plot scale
+  thIn.value = String(+scheduleTextHeight(doc.units, drawingScale()).toPrecision(6));
   thIn.addEventListener('keydown', (e) => e.stopPropagation());
   let res;
   const recount = () => {
@@ -115,7 +112,7 @@ export async function symcountDialog(app) {
   [{ label: 'Place in drawing', value: 'place', primary: true }, { label: 'Close', value: null }]);
   if (r !== 'place') return;
   if (!res.rows.length) { toast('Nothing to place: no symbols found.'); return; }
-  const th = Number(thIn.value) > 0 ? Number(thIn.value) : scheduleTextHeight(doc.units, app.symbolsPanel?.drawingScale ?? 1);
+  const th = Number(thIn.value) > 0 ? Number(thIn.value) : scheduleTextHeight(doc.units, drawingScale());
   const { rows, total } = res;
   pickPoint(app, 'SYMCOUNT  Specify top-left corner of the schedule:', (at) => {
     const added = placeSchedule(app.session, doc, rows, total, at, th);

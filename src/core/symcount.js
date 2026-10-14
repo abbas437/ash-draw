@@ -13,7 +13,7 @@ const findCI = (m, n) => { if (m.has(n)) return n; const u = U(n); for (const k 
 const cellsOf = (e) => Math.max(1, Math.trunc(e.rows ?? 1) || 1) * Math.max(1, Math.trunc(e.cols ?? 1) || 1);
 /** the block definition an INSERT refers to, or null when it is not a countable symbol */
 function symbolBlock(doc, e) {
-  if (e?.type !== 'INSERT' || !e.block || /^[*$]/.test(e.block)) return null;
+  if (e?.type !== 'INSERT' || !e.block || /^\*/.test(e.block)) return null;
   const k = findCI(doc.blocks ?? new Map(), e.block);
   const b = k == null ? null : doc.blocks.get(k);
   if (b && (b.xref || b.xrefDep)) return null;
@@ -56,4 +56,10 @@ export function countSymbols(doc, { entities = null, nested = false, space = 'mo
 export function symcountCsv(rows) {
   const q = (v) => { const t = String(v ?? ''); return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
   return ['Symbol,Count,Layers', ...rows.map((r) => [r.name, r.count, r.layers.join('; ')].map(q).join(','))].join('\r\n') + '\r\n';
+}
+
+/** the sheet of the .xlsx: title row (drawing, date), header, one row per symbol, total */
+export function symcountSheet(rows, total, title) {
+  return { name: 'Symbol count', colWidths: [36, 10, 36], boldRows: [0, 1],
+    rows: [[title], ['Symbol', 'Count', 'Layers'], ...rows.map((r) => [r.name, r.count, r.layers.join('; ')]), ['Total', total]] };
 }
