@@ -57,7 +57,7 @@ test('xlsxBytes: python zipfile reads it (CRC test) and every part is well-forme
     const file = path.join(dir, 'count.xlsx');
     await fs.writeFile(file, xlsxBytes([SHEET, { name: 'Symbol count', rows: [['Second']] }]));
     const py = 'import sys, zipfile, xml.dom.minidom as m\nz = zipfile.ZipFile(sys.argv[1])\nassert z.testzip() is None\nfor n in z.namelist(): m.parseString(z.read(n))\nd = m.parseString(z.read("xl/worksheets/sheet1.xml"))\nprint("|".join(t.firstChild.data if t.firstChild else "" for t in d.getElementsByTagName("t")))\nprint("|".join(v.firstChild.data for v in d.getElementsByTagName("v")))\nprint("|".join(s.getAttribute("name") for s in m.parseString(z.read("xl/workbook.xml")).getElementsByTagName("sheet")))';
-    const out = execFileSync('python3', ['-I', '-c', py, file], { encoding: 'utf8' }).trim().split('\n');
+    const out = execFileSync('python3', ['-I', '-c', py, file], { encoding: 'utf8' }).trim().split(/\r?\n/);
     assert.deepEqual(out, ['Symbol|Count|Layers|Grille <600> & "x"|A; B|Badchar', '3|1.5', 'Symbol count|Symbol count_2']);
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 });
