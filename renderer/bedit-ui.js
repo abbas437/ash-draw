@@ -2,7 +2,7 @@
 // The editor shows a working copy of one block definition (src/core/bedit.js) with its own Session in the Viewport, so
 // every draw / modify tool and undo work on the copy. tab.bedit holds the open editor; the Model / layout tabs are
 // hidden meanwhile. BSAVE writes the copy back as one undo step of the drawing.
-import { openBlockEdit, blockEditError, editableBlocks, blockEditDirty, saveBlockEdit, setBlockBase } from '../src/core/bedit.js';
+import { openBlockEdit, blockEditError, editableBlocks, blockEditDirty, saveBlockEdit, setBlockBase, discardBlockEdit, refusedInEditor } from '../src/core/bedit.js';
 import { Tool, TOOL_ALIASES } from './tools.js';
 import { setSpace } from './layouts-ui.js';
 import { el, modal, popMenu, toast } from './ui.js';
@@ -33,7 +33,7 @@ export function openBlockEditor(app, name) {
   const prevSpace = tab.spaces?.cur ?? 'Model';
   if (prevSpace !== 'Model') setSpace(app, 'Model'); // the editor shows block space, like model space
   const vp = app.vp;
-  const edit = openBlockEdit(tab.doc, name);
+  const edit = openBlockEdit(tab.doc, name, tab.session);
   tab.bedit = { edit, prevSpace, view: { cx: vp.view.cx, cy: vp.view.cy, zoom: vp.view.zoom } };
   vp.setSession(edit.session, { fit: true });
   app.refreshPanels(); app.refreshStatus();
@@ -59,6 +59,7 @@ function leave(app, save) {
   if (!be) return false;
   if (save && blockEditDirty(be.edit) && !saveBlockEditor(app)) return false;
   if (app.toolId) app.setTool('select');
+  discardBlockEdit(be.edit);
   tab.bedit = null;
   app.vp.setSession(tab.session, { fit: false, view: be.view });
   app.vp.emit('structure'); // the definition may have changed while the drawing's session was not shown
@@ -78,11 +79,10 @@ export async function closeBlockEditor(app) {
   return leave(app, r === 'save');
 }
 
-/** commands that change other blocks or the whole drawing are refused while the editor is open (tool ids and typed names) */
-const NOT_IN_EDITOR = new Set(['bedit', 'attsync', 'purge', 'pu', 'layout', 'pagesetup']);
-/** true (with a toast) when `name` is such a command and the block editor of the shown drawing is open */
+/** true (with a toast) when `name` is a command refused in the editor (refusedInEditor) and the block editor of the shown
+ *  drawing is open */
 export function blockedByEditor(app, name) {
-  if (!app.active?.bedit || !NOT_IN_EDITOR.has(String(name).toLowerCase())) return false;
+  if (!app.active?.bedit || !refusedInEditor(name)) return false;
   toast('Close the block editor first (BCLOSE).');
   return true;
 }

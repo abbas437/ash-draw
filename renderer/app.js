@@ -405,6 +405,7 @@ class App {
   /** Format > Units… (UNITS): how lengths are labelled - drawing units ($INSUNITS) and precision ($LUPREC) - as one
    *  undoable change of the whole drawing. `preset` preselects a unit (the map-grid hint offers Metres). */
   async unitsDialog(preset = null) {
+    if (blockedByEditor(this, 'units')) return;
     const doc = this.fileDoc;
     const units = el('select', { id: 'units-select' }, INSUNITS.map(([c, name, l]) => el('option', { value: String(c), text: l ? `${name} (${l})` : name })));
     units.value = String(preset ?? doc.units ?? 0);

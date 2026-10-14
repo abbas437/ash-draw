@@ -31,8 +31,10 @@ export function findBlockName(doc, t) {
 }
 
 /** Open block `name` for editing. Returns { name, block, doc, session, state }: state.base is the base point (block
- *  coordinates), changed with setBlockBase. Throws (code NOT_EDITABLE) with the reason for blocks that cannot be edited. */
-export function openBlockEdit(doc, name) {
+ *  coordinates), changed with setBlockBase. Throws (code NOT_EDITABLE) with the reason for blocks that cannot be edited.
+ *  `s` is the drawing's session: table changes made in the editor (a new layer, a dimension style, ...) are drawing
+ *  changes, applied through `s` as its own undo steps (AutoCAD: layers made in the block editor are drawing layers). */
+export function openBlockEdit(doc, name, s = null) {
   const root = doc.modelDoc ?? doc, err = blockEditError(root, name);
   if (err) throw Object.assign(new Error(err), { code: 'NOT_EDITABLE' });
   const block = root.blocks.get(name);
@@ -44,7 +46,8 @@ export function openBlockEdit(doc, name) {
     dimStyles: { get: () => root.dimStyles, set: (v) => { root.dimStyles = v; } },
     modelDoc: { value: root }, blockEdit: { value: state },
   });
-  return { name, block, doc: edoc, session: new Session(edoc), state };
+  const known = new Set(root.blocks.keys());
+  return { name, block, doc: edoc, session: new Session(edoc, { tableSession: s, local: [state] }), state, known };
 }
 
 /** BASE inside the editor (one undo step of the editor): the geometry stays where it is in block space and the new base
@@ -52,6 +55,20 @@ export function openBlockEdit(doc, name) {
 export function setBlockBase(edit, p) {
   edit.session.transact('BASE', (tx) => tx.set(edit.state, 'base', { x: p.x, y: p.y }));
 }
+
+/** Leaving the editor (after BSAVE, or Discard): a dimension drawn in the editor generates its *D block straight into the
+ *  drawing's blocks (no undo step, as everywhere), so the *D blocks made since the editor opened that no saved definition
+ *  uses are removed. Returns their names. */
+export function discardBlockEdit(edit) {
+  const blocks = edit.doc.modelDoc.blocks, gone = [];
+  for (const n of [...blocks.keys()]) if (/^\*D\d+$/i.test(n) && !edit.known.has(n)) { blocks.delete(n); gone.push(n); }
+  return gone;
+}
+
+/** commands that change other blocks or the whole drawing in ways the editor cannot keep apart (typed names and tool
+ *  ids): refused while the block editor is open */
+const NOT_IN_EDITOR = new Set(['bedit', 'attsync', 'purge', 'pu', 'layout', 'pagesetup', 'block', 'b', '-b', 'bmake', 'units', 'un']);
+export const refusedInEditor = (name) => NOT_IN_EDITOR.has(String(name).toLowerCase());
 
 /** changes in the editor not yet saved */
 export const blockEditDirty = (edit) => edit.session.dirty;
@@ -89,6 +106,7 @@ export function saveBlockEdit(s, edit) {
   const resync = attSig(old.entities, old.base) !== attSig(entities, base);
   const synced = s.transact(`BEDIT ${edit.name}`, (tx) => { tx.block(edit.name, blk); return resync ? attSyncTx(tx, s, edit.name) : 0; });
   edit.block = blk;
+  for (const e of entities) if (e.type === 'DIMENSION' && e.block) edit.known.add(e.block);
   edit.session.markSaved();
   return { synced };
 }

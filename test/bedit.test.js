@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { newDocument, addEntity, addBlock, makeLine, makeCircle } from '../src/core/model.js';
 import { makeAttdef, instantiate, insertMatrix } from '../src/core/blocks.js';
-import { Session, addEntities, moveEntities } from '../src/core/edit.js';
+import { Session, addEntities, moveEntities, setDrawingUnits } from '../src/core/edit.js';
 import { apply as applyMatrix } from '../src/core/geom.js';
-import { blockEditError, editableBlocks, findBlockName, openBlockEdit, setBlockBase, blockEditDirty, saveBlockEdit } from '../src/core/bedit.js';
+import { blockEditError, editableBlocks, findBlockName, openBlockEdit, setBlockBase, blockEditDirty, saveBlockEdit, discardBlockEdit, refusedInEditor } from '../src/core/bedit.js';
+import { createDimension } from '../src/core/dims.js';
 import { readDxf } from '../src/core/dxfRead.js';
 import { writeDxf } from '../src/core/dxfWrite.js';
 
@@ -172,4 +173,54 @@ test('a saved definition is written to DXF and reads back', () => {
   assert.equal(blk.entities[2].attdef.tag, 'TAG');
   assert.deepEqual(blk.entities[1].c, { x: 5, y: 5 });
   assert.ok(back.entities.filter((e) => e.type === 'INSERT').every((e) => e.attribs?.[0]?.text === 'T-1'));
+});
+
+test('a layer made in the editor is a drawing change: it stays after Discard, the drawing is dirty and its undo removes it', () => {
+  const { doc, s } = setup();
+  const ed = openBlockEdit(doc, 'BOX', s);
+  ed.session.transact('Layer', (tx) => tx.layer('NEW', { color: 3 }));
+  addEntities(ed.session, [makeCircle({ x: 5, y: 5 }, 2)]);
+  discardBlockEdit(ed);
+  assert.equal(doc.layers.get('NEW')?.color, 3, 'the layer is in the drawing');
+  assert.equal(doc.blocks.get('BOX').entities.length, 1, 'the discarded geometry is not');
+  assert.equal(s.dirty, true, 'the drawing is dirty');
+  assert.equal(s.undoLabel, 'Layer');
+  assert.equal(ed.session.undoStack.length, 1, 'the editor journal holds the circle only');
+  s.undo();
+  assert.equal(doc.layers.has('NEW'), false, 'the drawing undo removes the layer');
+  s.redo();
+  assert.equal(doc.layers.has('NEW'), true);
+});
+
+test('drawing units set through the editor session land on the drawing, not the working copy', () => {
+  const { doc, s } = setup();
+  const ed = openBlockEdit(doc, 'BOX', s);
+  setDrawingUnits(ed.session, { units: 6, luprec: 2 });
+  assert.equal(Object.hasOwn(ed.doc, 'units'), false, 'nothing written onto the working copy');
+  assert.equal(doc.units, 6);
+  assert.equal(s.undoLabel, 'Units');
+});
+
+test('UNITS and BLOCK are refused in the editor', () => {
+  for (const c of ['units', 'UN', 'block', 'b', '-b', 'bedit', 'purge']) assert.equal(refusedInEditor(c), true, c);
+  for (const c of ['line', 'insert', 'bsave', 'bclose', 'la']) assert.equal(refusedInEditor(c), false, c);
+});
+
+test('Discard after drawing a dimension leaves no orphan *D block; a saved one keeps its block', () => {
+  const def = (y) => ({ kind: 'linear', p1: { x: 0, y }, p2: { x: 10, y }, at: { x: 5, y: y + 2 }, angle: 0 });
+  const { doc, s } = setup();
+  const before = [...doc.blocks.keys()];
+  let ed = openBlockEdit(doc, 'BOX', s);
+  const d = createDimension(ed.doc, def(0), 'Standard');
+  assert.ok(doc.blocks.has(d.block), 'the dimension block is made in the drawing');
+  assert.deepEqual(discardBlockEdit(ed), [d.block]);
+  assert.deepEqual([...doc.blocks.keys()], before, 'no orphan *D block after Discard');
+
+  ed = openBlockEdit(doc, 'BOX', s);
+  const kept = createDimension(ed.doc, def(0), 'Standard');
+  saveBlockEdit(s, ed);
+  const dropped = createDimension(ed.doc, def(5), 'Standard'); // drawn after the save, then the editor is closed without saving
+  discardBlockEdit(ed);
+  assert.ok(doc.blocks.has(kept.block), 'the saved definition keeps its dimension block');
+  assert.equal(doc.blocks.has(dropped.block), false);
 });

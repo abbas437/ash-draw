@@ -17,8 +17,11 @@ import { transformDimension, rebuildDimension } from './dims.js';
 const UNDO_LIMIT = 500;
 
 class Tx {
-  constructor(session) { this.s = session; this.ops = []; this.ids = new Set(); this.structure = false; }
+  /** tt: the drawing session's Tx that takes this step's table changes (a block editor session; see Session) */
+  constructor(session, tt = null) { this.s = session; this.tt = tt; this.ops = []; this.ids = new Set(); this.structure = false; }
   get doc() { return this.s.doc; }
+  /** the drawing a routed table change applies to (the working copy's own properties are its entities and nextId) */
+  get root() { return this.doc.modelDoc ?? this.tt.doc; }
   /** add an entity (gets a fresh id when e.id is 0) */
   add(e) {
     addEntity(this.doc, e);
@@ -49,6 +52,7 @@ class Tx {
   }
   /** define (block object) or delete (null) the block definition `name` in doc.blocks */
   block(name, blk) {
+    if (this.tt) { this.tt.block(name, blk); return; }
     const before = this.doc.blocks.get(name) ?? null;
     const idx = blk ? -1 : mapDelete(this.doc.blocks, name);
     if (blk) this.doc.blocks.set(name, blk);
@@ -57,6 +61,7 @@ class Tx {
   }
   /** set (style object) or delete (null) the dimension style `name` in doc.dimStyles */
   dimStyle(name, style) {
+    if (this.tt) { this.tt.dimStyle(name, style); return; }
     const m = (this.doc.dimStyles ??= new Map());
     const before = m.get(name) ?? null;
     const idx = style ? -1 : mapDelete(m, name);
@@ -66,6 +71,7 @@ class Tx {
   }
   /** set drawing header values on `target` (the whole drawing; default the session's): units ($INSUNITS), luprec ($LUPREC) */
   header(vals, target = this.doc) {
+    if (this.tt) { this.tt.header(vals, target === this.doc ? this.root : target); return; }
     const before = readHeader(target);
     writeHeader(target, vals);
     this.ops.push({ k: 'header', target, before, after: readHeader(target), rebuild: before.ltscale !== readHeader(target).ltscale }); // labels only, unless $LTSCALE changed
@@ -74,6 +80,7 @@ class Tx {
   /** set obj[key] to value, or a Map entry (value undefined deletes): named tables, entity lists of other owners;
    *  rebuild false: nothing drawn depends on it (named views), so no scene rebuild on do / undo / redo */
   set(obj, key, value, rebuild = true) {
+    if (this.tt && obj !== this.doc.entities && !this.s.local.has(obj)) { this.tt.set(obj === this.doc ? this.root : obj, key, value, rebuild); return; }
     const before = obj instanceof Map ? obj.get(key) : obj[key];
     const idx = putKey(obj, key, value);
     this.ops.push({ k: 'set', obj, key, before, after: value, idx, ...(rebuild ? {} : { quiet: true }) });
@@ -95,6 +102,7 @@ class Tx {
   }
   /** create or change a layer: props merged into the existing layer; null deletes it */
   layer(name, props) {
+    if (this.tt) { this.tt.layer(name, props); return; }
     const before = getLayer(this.doc, name);
     const snap = before ? { ...before } : null;
     let idx = -1;
@@ -171,8 +179,14 @@ function applyForward(doc, op) {
 }
 
 export class Session {
-  constructor(doc) {
+  /** opts.tableSession: the drawing's session, for a session on a working copy that shares the drawing's tables (the block
+   *  editor). Table changes (layers, blocks, dimension styles, header, Tx.set on anything but this doc's entities and
+   *  opts.local objects) then apply through tableSession as its own undo step with the same label, so they are drawing
+   *  changes: the drawing is dirty and can undo them, and they stay when the working copy is discarded. */
+  constructor(doc, { tableSession = null, local = [] } = {}) {
     this.doc = doc;
+    this.tableSession = tableSession;
+    this.local = new Set(local);
     this.undoStack = [];
     this.redoStack = [];
     this.onChange = null;
@@ -195,7 +209,12 @@ export class Session {
 
   /** run fn(tx) as one undoable step. Returns fn's result. An empty transaction is not recorded. */
   transact(label, fn) {
-    const tx = new Tx(this);
+    if (this.tableSession) return this.tableSession.transact(label, (tt) => this._transact(label, fn, tt));
+    return this._transact(label, fn, null);
+  }
+
+  _transact(label, fn, tt) {
+    const tx = new Tx(this, tt);
     let result;
     try { result = fn(tx); } catch (err) {
       for (const op of [...tx.ops].reverse()) applyInverse(this.doc, op); // roll back a half-done step
@@ -206,8 +225,8 @@ export class Session {
       if (this.undoStack.length > UNDO_LIMIT) this.undoStack.shift();
       this.redoStack = [];
       this.revision++;
-      this._emit({ ids: [...tx.ids], structure: tx.structure, kind: 'do', label, doc: this.doc });
-    }
+      this._emit({ ids: [...tx.ids], structure: tx.structure || !!tt?.ops.length, kind: 'do', label, doc: this.doc });
+    } else if (tt?.ops.length) this._emit({ ids: [], structure: true, kind: 'do', label, doc: this.doc }); // a drawing change only: redraw
     return result;
   }
 
