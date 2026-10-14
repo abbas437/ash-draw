@@ -172,12 +172,16 @@ export function viewportFromModelView(pv, vp, mv) {
 /** standard plot scales "1:N" offered for viewports */
 export const STANDARD_SCALES = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000];
 
-/** printed scale N of "1:N" of a viewport: model millimetres per paper millimetre. `plot` is its layout's (paper mm per
- *  layout unit: paperMmPerUnit, so inch layouts count), `units` the drawing's $INSUNITS (unitless taken as mm) */
-export const viewportPrintScale = (vp, plot, units) => (viewportScale(vp) * mmPerUnit(units)) / paperMmPerUnit(plot);
+/** paper millimetres per layout unit as a viewport scale counts them: the layout's paper units alone (25.4 for an inch
+ *  layout, else 1). Like AutoCAD, a viewport's 1:N ignores the page setup's plot scale (unlike paperMmPerUnit). */
+const layoutMmPerUnit = (plot) => (plot.units === 0 ? 25.4 : 1);
+
+/** printed scale N of "1:N" of a viewport: model millimetres per layout millimetre. `plot` is its layout's (only its
+ *  paper units count, see layoutMmPerUnit), `units` the drawing's $INSUNITS (unitless taken as mm) */
+export const viewportPrintScale = (vp, plot, units) => (viewportScale(vp) * mmPerUnit(units)) / layoutMmPerUnit(plot);
 
 /** the viewHeight that makes viewport `vp` print at 1:n (inverse of viewportPrintScale) */
-export const viewHeightForScale = (vp, n, plot, units) => (vp.height * n * paperMmPerUnit(plot)) / mmPerUnit(units);
+export const viewHeightForScale = (vp, n, plot, units) => (vp.height * n * layoutMmPerUnit(plot)) / mmPerUnit(units);
 
 /** the topmost (last drawn) usable viewport containing paper point p, or null */
 export function viewportAt(entities, p) {
