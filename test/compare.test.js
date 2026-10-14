@@ -30,7 +30,9 @@ test('compare: one added, one removed, moved text and recoloured line changed, 1
   assert.equal(r.removed.length, 1); assert.equal(r.removed[0].type, 'CIRCLE');
   assert.equal(r.changed.length, 2);
   assert.deepEqual(r.changed.map((p) => p.a.type).sort(), ['LINE', 'TEXT']);
-  assert.equal(r.clusters.reduce((n, c) => n + c.added + c.removed + c.changed, 0), 4);
+  assert.equal(r.changedGeometry.length, 1); assert.equal(r.changedGeometry[0].a.type, 'TEXT');
+  assert.deepEqual(r.changedProps.map((p) => [p.a.type, p.why, p.props.join()]), [['LINE', 'props', 'color']]);
+  assert.equal(r.clusters.reduce((n, c) => n + c.added + c.removed + c.changed, 0), 3); // the recoloured line is not clustered
 });
 
 test('compare: tolerance is respected', () => {
@@ -67,8 +69,9 @@ test('compare doc: colours by status and a dotted rectangle per cluster', () => 
   assert.equal(on('same').length, 1000);
   assert.equal(on('added').length, 1);
   assert.equal(on('removed').length, 1);
-  assert.equal(on('changed').length, 2); // B's version of each changed object
-  assert.equal(on('changedA').length, 2); // and A's, on its own layer (for the Overlay / A only / B only views)
+  assert.equal(on('changed').length, 1); // B's version of each changed object
+  assert.equal(on('props').length, 1); // the recoloured line, on its own layer
+  assert.equal(on('changedA').length, 1); // and A's, on its own layer (for the Overlay / A only / B only views)
   assert.equal(on('marks').length, r.clusters.length);
   assert.ok(on('marks').every((e) => e.type === 'LWPOLYLINE' && e.linetype === 'COMPARE_DOT'));
   assert.equal(d.layers.get(COMPARE_LAYERS.added.name).color, 3);
@@ -466,4 +469,39 @@ test('compare fix: a layer frozen or off in B, or a BYLAYER colour changed in th
 
 test('compare fix: identity keys do not collide (MTEXT "TAG" on layer "1X" vs "TAG1" on "X")', () => {
   assert.equal(compareDocs(docOf([makeMText({ x: 0, y: 0 }, 250, 'TAG', { layer: '1X', width: 5000 })]), docOf([makeMText({ x: 0, y: 0 }, 250, 'TAG1', { layer: 'X', width: 5000 })]), { tol: 1 }).same.length, 0);
+});
+
+// ---- changed (shape/position) vs changed (properties only) ----------------------------------------
+import { reclusterCompare } from '../src/core/compare.js';
+
+/** A and B: one moved line, three lines on layer DUCT whose colour is 2 in A and 5 in B (layer table only) */
+function propsPair() {
+  const mk = (color, dy) => {
+    const d = newDocument(); d.units = 4;
+    addLayer(d, { name: 'DUCT', color });
+    addEntity(d, makeLine({ x: 0, y: dy }, { x: 1000, y: dy }));
+    for (const x of [20000, 40000, 60000]) addEntity(d, makeLine({ x, y: 0 }, { x: x + 800, y: 0 }, { layer: 'DUCT' }));
+    return d;
+  };
+  return [mk(2, 0), mk(5, 100)];
+}
+
+test('compare: a moved line is changedGeometry, lines whose layer colour changed are changedProps (with the property names)', () => {
+  const [a, b] = propsPair();
+  const r = compareDocs(a, b);
+  assert.equal(r.changedGeometry.length, 1);
+  assert.equal(r.changedProps.length, 3);
+  assert.equal(r.changed.length, 4); // the union
+  assert.equal(r.added.length + r.removed.length, 0);
+  assert.ok(r.changedProps.every((p) => p.why === 'props' && p.props.join() === 'color'));
+  assert.equal(r.clusters.length, 1); // property-only changes are not clustered by default
+  const withProps = compareDocs(a, b, { clusterProps: true });
+  assert.ok(withProps.clusters.length >= 2);
+  assert.deepEqual(reclusterCompare(a, b, r, true).map((c) => c.changed), withProps.clusters.map((c) => c.changed)); // recluster = same result, no new compare
+  assert.equal(reclusterCompare(a, b, r, false).length, 1);
+  // the compare drawing: property-only changes on their own layer COMPARE-PROPS, B's version only
+  const d = buildCompareDoc(a, b, r);
+  assert.equal(d.entities.filter((e) => e.layer === COMPARE_LAYERS.props.name).length, 3);
+  assert.equal(d.entities.filter((e) => e.layer === COMPARE_LAYERS.changed.name).length, 1);
+  assert.equal(d.layers.get(COMPARE_LAYERS.props.name).color, 4);
 });

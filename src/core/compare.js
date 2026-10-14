@@ -379,12 +379,13 @@ function checkPoints(e, doc, out) {
 
 /** colour / linetype / lineweight as drawn: BYLAYER resolved through `doc`'s layer table (BYBLOCK was resolved when the
  *  piece was expanded from its INSERT) */
+const PROP_NAMES = ['layer', 'color', 'linetype', 'lineweight', 'ltscale', 'hidden'];
 function effectiveProps(e, doc, hid) {
   const L = layerOf(doc, e.layer);
   const color = e.color === 256 ? (L?.color ?? 7) : e.color;
   const lt = String(e.linetype ?? 'BYLAYER').toUpperCase() === 'BYLAYER' ? (L?.linetype ?? 'CONTINUOUS') : e.linetype;
   const lw = e.lineweight === -1 ? (L?.lineweight ?? -3) : e.lineweight;
-  return JSON.stringify([e.layer, color, String(lt).toUpperCase(), lw, e.ltscale ?? 1, hid ? 1 : 0]);
+  return [e.layer, color, String(lt).toUpperCase(), lw, e.ltscale ?? 1, hid ? 1 : 0];
 }
 
 /** feature of one entity: strings (identity), points (x,y pairs: defining points, then drawn check points), scalars
@@ -425,13 +426,27 @@ function feature(e, doc, hid = false) {
   for (let i = 0; i < pts.length; i += 2) { if (pts[i] < minx) minx = pts[i]; if (pts[i] > maxx) maxx = pts[i]; if (pts[i + 1] < miny) miny = pts[i + 1]; if (pts[i + 1] > maxy) maxy = pts[i + 1]; }
   const size = Math.max(1, pts.length > 2 ? Math.hypot(maxx - minx, maxy - miny) : 0, 2 * Math.abs(e.r || 0), Math.abs(e.height || 0));
   for (const v of rel) sc.push(v * size);
-  const props = effectiveProps(e, doc, hid);
+  const pa = effectiveProps(e, doc, hid);
+  const props = JSON.stringify(pa);
   const s = JSON.stringify([e.type, str]);
-  return { e, s, props, hid, pts, sc, ax: pts.length ? pts[0] : 0, ay: pts.length ? pts[1] : 0 };
+  return { e, s, props, pa, hid, pts, sc, ax: pts.length ? pts[0] : 0, ay: pts.length ? pts[1] : 0 };
 }
 
 /** identity strings and properties equal (the grid keys only narrow the search) */
 const sameIdentity = (a, b) => a.s === b.s && a.props === b.props;
+
+/** a changed pair; why 'layer hidden' when only one side's layer is hidden, why 'props' (+ props: the differing property
+ *  names) when strings and geometry are identical within tol and only colour / linetype / lineweight / layer name differ */
+function changedPair(f, g, tol, why) {
+  const p = { a: f.e, b: g.e };
+  if (why) p.why = why;
+  else if (f.hid !== g.hid) p.why = 'layer hidden';
+  else if (f.s === g.s && within(f, g, tol)) {
+    const props = PROP_NAMES.filter((n, k) => f.pa[k] !== g.pa[k]);
+    if (props.length) { p.why = 'props'; p.props = props; }
+  }
+  return p;
+}
 
 function within(a, b, tol, dx = 0, dy = 0) {
   if (a.pts.length !== b.pts.length || a.sc.length !== b.sc.length) return false;
@@ -629,7 +644,7 @@ export function* compareSteps(a, b, opts = {}) {
   if (shared) {
     for (const i of restA()) {
       const j = hb.get(`${fa[i].e.type}|${fa[i].e.handle}`);
-      if (j !== undefined && !usedB[j]) { usedA[i] = usedB[j] = 1; changed.push({ a: fa[i].e, b: fb[j].e }); }
+      if (j !== undefined && !usedB[j]) { usedA[i] = usedB[j] = 1; changed.push(changedPair(fa[i], fb[j], tol)); }
     }
   }
 
@@ -679,7 +694,7 @@ export function* compareSteps(a, b, opts = {}) {
   for (const c of cand) {
     if (usedA[c.i] || usedB[c.j]) continue;
     usedA[c.i] = usedB[c.j] = 1;
-    changed.push(fa[c.i].hid !== fb[c.j].hid ? { a: fa[c.i].e, b: fb[c.j].e, why: 'layer hidden' } : { a: fa[c.i].e, b: fb[c.j].e });
+    changed.push(changedPair(fa[c.i], fb[c.j], tol));
   }
 
   // 3. a moved group's "same" pairs matched only through its own transform: A's original at the global position
@@ -699,15 +714,38 @@ export function* compareSteps(a, b, opts = {}) {
   }
   const removed = fa.filter((f, i) => !usedA[i]).map((f) => f.e);
   const added = fb.filter((f, j) => !usedB[j]).map((f) => f.e);
-  // the changes of each moved group form one cluster, first; clusterSteps gets the others
-  const movedOf = (e) => { const k = groupA.get(e); return k !== undefined && realigned[k].moved ? k : -1; };
-  const gcl = realigned.map((g) => ({ box: g.box, added: 0, removed: 0, changed: 0, moved: g.name }));
-  const outRemoved = removed.filter((e) => { const k = movedOf(e); if (k < 0) return true; gcl[k].removed++; return false; });
-  const outChanged = changed.filter((p) => { const k = movedOf(p.a); if (k < 0) return true; gcl[k].changed++; return false; });
-  const rest = yield* phase(clusterSteps(a, b, { added, removed: outRemoved, changed: outChanged }, opts.clusterGap ?? defaultClusterGap(b.units || a.units)), P.match, 1);
-  const clusters = [...gcl.filter((c) => c.box && c.removed + c.changed), ...rest];
+  // changes of pieces that only differ in properties are drawn apart and, by default, not listed as clusters
+  const changedGeometry = changed.filter((p) => p.why !== 'props'), changedProps = changed.filter((p) => p.why === 'props');
+  const r = { added, removed, changed, changedGeometry, changedProps, same, clusters: [], ignored, offset, realigned, topM, topOf };
+  const groups = realigned.map((g) => ({ box: g.box, name: g.name }));
   for (const g of realigned) delete g.box;
-  return { added, removed, changed, same, clusters, ignored, offset, realigned, topM, topOf };
+  Object.defineProperty(r, 'clusterCtx', { value: { groups, gap: opts.clusterGap ?? defaultClusterGap(b.units || a.units), groupA, realigned } }); // for reclusterCompare
+  r.clusters = yield* phase(clusterResultSteps(a, b, r, !!opts.clusterProps), P.match, 1);
+  return r;
+}
+
+/** step generator: the clusters of result `r` = those of each moved group (first) + clusterSteps of the rest; the changes
+ *  clustered are added + removed + changedGeometry (+ changedProps when clusterProps) */
+function* clusterResultSteps(a, b, r, clusterProps) {
+  const { groups, gap, groupA, realigned } = r.clusterCtx;
+  const movedOf = (e) => { const k = groupA.get(e); return k !== undefined && realigned[k].moved ? k : -1; };
+  const gcl = groups.map((g) => ({ box: g.box, added: 0, removed: 0, changed: 0, moved: g.name }));
+  const outRemoved = r.removed.filter((e) => { const k = movedOf(e); if (k < 0) return true; gcl[k].removed++; return false; });
+  const outChanged = (clusterProps ? r.changed : r.changedGeometry).filter((p) => { const k = movedOf(p.a); if (k < 0) return true; gcl[k].changed++; return false; });
+  const rest = yield* clusterSteps(a, b, { added: r.added, removed: outRemoved, changed: outChanged }, gap);
+  return [...gcl.filter((c) => c.box && c.removed + c.changed), ...rest];
+}
+
+/** the clusters of an earlier compareDocs result again, with or without the property-only changes (no new compare);
+ *  returns the new clusters (r.clusters is left as it is) */
+export function reclusterCompare(a, b, r, clusterProps) {
+  return drain(clusterResultSteps(a, b, r, !!clusterProps));
+}
+
+/** the dotted rectangle of a cluster (also c.mark, set by buildCompareDoc): its box grown by 15 % */
+export function clusterMark(c) {
+  const w = c.box.maxx - c.box.minx, h = c.box.maxy - c.box.miny, pad = Math.max(w, h, 1e-3) * 0.15 + 1e-3;
+  return { minx: c.box.minx - pad, miny: c.box.miny - pad, maxx: c.box.maxx + pad, maxy: c.box.maxy + pad };
 }
 
 const CLUSTER_SPAN = 10;     // a cluster wider or taller than this many group distances is cut into smaller ones
@@ -829,15 +867,16 @@ export const COMPARE_LAYERS = {
   removed: { name: 'COMPARE-REMOVED', color: 1 },       // in A only: red
   changed: { name: 'COMPARE-CHANGED', color: 40 },      // changed, B's version: amber
   changedA: { name: 'COMPARE-CHANGED-A', color: 40 },   // changed, A's version: amber
+  props: { name: 'COMPARE-PROPS', color: 4, linetype: 'COMPARE_DASH', lineweight: 0 }, // changed in colour / linetype / lineweight / layer only (B's version): cyan, dashed, thin
   marks: { name: 'COMPARE-MARKS', color: 6 },           // dotted rectangles around change clusters (no revision clouds)
 };
 
 /** the compare tab's views: colour of each compare layer, null = layer hidden */
 export const COMPARE_VIEWS = {
-  differences: { same: 8, added: 3, removed: 1, changed: 40, changedA: 40, marks: 6 },
-  overlay: { same: 7, added: 3, removed: 1, changed: 3, changedA: 1, marks: 6 },   // A red, B green, both: white
-  a: { same: 7, added: null, removed: 1, changed: null, changedA: 1, marks: 6 },    // drawing A only (its own parts red)
-  b: { same: 7, added: 3, removed: null, changed: 3, changedA: null, marks: 6 },    // drawing B only (its own parts green)
+  differences: { same: 8, added: 3, removed: 1, changed: 40, changedA: 40, props: 4, marks: 6 },
+  overlay: { same: 7, added: 3, removed: 1, changed: 3, changedA: 1, props: 4, marks: 6 },   // A red, B green, both: white
+  a: { same: 7, added: null, removed: 1, changed: null, changedA: 1, props: 1, marks: 6 },    // drawing A only (its own parts red)
+  b: { same: 7, added: 3, removed: null, changed: 3, changedA: null, props: 3, marks: 6 },    // drawing B only (its own parts green)
 };
 
 /** switch a compare drawing to one of COMPARE_VIEWS (layer colours and visibility; the scene must be rebuilt) */
@@ -874,7 +913,9 @@ export function buildCompareDoc(a, b, r) {
 export function* buildCompareSteps(a, b, r) {
   const doc = newDocument();
   doc.units = b.units || a.units;
-  for (const L of Object.values(COMPARE_LAYERS)) addLayer(doc, { name: L.name, color: L.color });
+  const mm = defaultTolerance(doc.units);
+  doc.linetypes.set('COMPARE_DASH', { name: 'COMPARE_DASH', description: 'Compare property changes __ __', pattern: [40 * mm, -20 * mm] });
+  for (const L of Object.values(COMPARE_LAYERS)) addLayer(doc, { name: L.name, color: L.color, ...(L.linetype ? { linetype: L.linetype, lineweight: L.lineweight } : {}) });
   for (const src of [a, b]) {
     for (const [k, v] of src.linetypes) if (!doc.linetypes.has(k)) doc.linetypes.set(k, v);
     for (const [k, v] of src.textStyles) if (!doc.textStyles.has(k)) doc.textStyles.set(k, v);
@@ -928,16 +969,15 @@ export function* buildCompareSteps(a, b, r) {
   const tick = () => (++n & 255) === 0;
   for (const t of sameB) { put(t, 'same'); if (tick()) yield n / total; }
   for (const p of r.same) { if (piecewise(p.b, sameB)) put(p.b, 'same'); if (tick()) yield n / total; }
-  for (const p of r.changed) { put(p.a, 'changedA'); put(p.b, 'changed'); if (tick()) yield n / total; }
+  for (const p of r.changed) { if (p.why === 'props') put(p.b, 'props'); else { put(p.a, 'changedA'); put(p.b, 'changed'); } if (tick()) yield n / total; }
   for (const t of topsA) { put(t, 'removed', rename); if (tick()) yield n / total; }
   for (const e of r.removed) { if (piecewise(e, removedA)) put(e, 'removed'); if (tick()) yield n / total; }
   for (const t of addedB) { put(t, 'added'); if (tick()) yield n / total; }
   for (const e of r.added) { if (piecewise(e, addedB)) put(e, 'added'); if (tick()) yield n / total; }
   doc.linetypes.set('COMPARE_DOT', { name: 'COMPARE_DOT', description: 'Compare marks . . .', pattern: [1, -1] });
   for (const c of r.clusters) {
-    const w = c.box.maxx - c.box.minx, h = c.box.maxy - c.box.miny, pad = Math.max(w, h, 1e-3) * 0.15 + 1e-3;
-    const x0 = c.box.minx - pad, y0 = c.box.miny - pad, x1 = c.box.maxx + pad, y1 = c.box.maxy + pad;
-    c.mark = { minx: x0, miny: y0, maxx: x1, maxy: y1 };
+    c.mark = clusterMark(c);
+    const { minx: x0, miny: y0, maxx: x1, maxy: y1 } = c.mark;
     addEntity(doc, {
       id: 0, type: 'LWPOLYLINE', layer: COMPARE_LAYERS.marks.name, color: 256, linetype: 'COMPARE_DOT', lineweight: -1,
       ltscale: Math.max(x1 - x0, y1 - y0) / 60, closed: true,
