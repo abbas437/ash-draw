@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Real Electron app, fresh portable data dir: last-session restore, missing files, start-up modes, recent files,
-// and main ignoring a session entry whose path was never granted. Launched like electron.mjs.
+// main ignoring a session entry whose path was never granted, and autosave crash recovery. Launched like electron.mjs.
 import { existsSync, readFileSync } from 'node:fs';
-import { copyFile, mkdtemp, rm, unlink } from 'node:fs/promises';
+import { copyFile, mkdtemp, readdir, rm, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
@@ -36,6 +36,16 @@ async function launch(...files) {
   return win;
 }
 async function quit() { await app.close(); app = null; }
+/** a crash: the Electron main process is killed, so no close prompt, no clean-up and no session.json write run */
+async function crash() {
+  const proc = app.process();
+  const exited = new Promise((r) => proc.once('exit', r));
+  proc.kill('SIGKILL');
+  await exited;
+  await app.close().catch(() => {});
+  app = null;
+}
+const autosaveFiles = () => readdir(join(dataDir, 'autosave')).then((n) => n.sort(), () => []);
 const tabs = (win) => win.evaluate(() => window.app.tabs.map((t) => t.file.name));
 const waitTabs = (win, names) => win.waitForFunction((n) => JSON.stringify(window.app.tabs.map((t) => t.file.name)) === JSON.stringify(n), names, { timeout: 30000 });
 
@@ -108,6 +118,49 @@ try {
   await win.waitForTimeout(1500);
   expect('tabs', JSON.stringify(await tabs(win)), JSON.stringify(await tabs(win)) === '["Untitled.dxf"]');
   expect('no offer', '', (await win.locator('.session-offer').count()) === 0);
+  await quit();
+
+  step = 'run 6: a.dxf is the saved session (startup.mode restore)';
+  win = await launch(a);
+  await waitTabs(win, ['a.dxf']);
+  await win.evaluate(() => window.api.settingsSet('startup.mode', 'restore'));
+  await win.waitForTimeout(500);
+  await quit();
+  expect('session after run 6', JSON.stringify(readJson('session.json')), JSON.stringify(readJson('session.json').files) === JSON.stringify([a]));
+
+  step = 'run 7: the session reopens a.dxf; an edit is autosaved; then the app crashes';
+  win = await launch();
+  await waitTabs(win, ['a.dxf']);
+  const n0 = await win.evaluate(() => window.app.doc.entities.length);
+  await win.evaluate(async () => { const { makeLine } = await import('/src/core/model.js'); window.app.session.transact('e2e line', (tx) => tx.add(makeLine({ x: 0, y: 0 }, { x: 123, y: 45 }, { layer: '0' }))); });
+  const written = await win.evaluate(() => window.app.autosaveNow());
+  expect('autosaves written', written, written === 1);
+  const again = await win.evaluate(() => window.app.autosaveNow());
+  expect('nothing new to autosave', again, again === 0);
+  const files7 = await autosaveFiles();
+  expect('autosave folder', JSON.stringify(files7), files7.length === 2 && files7[0].endsWith('.dxf') && files7[1].endsWith('.json'));
+  await crash();
+
+  step = 'run 8: the recovery dialog lists a.dxf; Recover opens it as a dirty "(recovered)" tab; the session skips a.dxf';
+  win = await launch();
+  await win.waitForSelector('#dlg[open] .autosave-recover', { timeout: 30000 });
+  const rtitle = await win.locator('#dlg h2').textContent();
+  expect('recovery dialog title', rtitle, rtitle === 'Recover unsaved drawings');
+  const rrows = await win.locator('#dlg .autosave-recover li').evaluateAll((els) => els.map((e) => [e.querySelector('.file-name').textContent, e.querySelector('.file-folder').textContent, /^Autosaved \S/.test(e.querySelector('.file-note').textContent)]));
+  expect('recovery rows', JSON.stringify(rrows), JSON.stringify(rrows) === JSON.stringify([['a.dxf', a, true]]));
+  await win.locator('#dlg .dlg-btns button', { hasText: 'Recover' }).click();
+  await waitTabs(win, ['a (recovered).dxf']);
+  await win.waitForTimeout(1500); // the session restore runs after the recovery: it must not add a.dxf
+  expect('tabs after recovery', JSON.stringify(await tabs(win)), JSON.stringify(await tabs(win)) === '["a (recovered).dxf"]');
+  const rec = await win.evaluate(() => { const t = window.app.active; t.session.undo(); return { n: t.doc.entities.length, dirty: t.session.dirty, path: t.file.path, from: t.recoveredFrom, hasEdit: t.doc.entities.some((e) => e.type === 'LINE' && Math.abs(e.p2?.x - 123) < 1e-9 && Math.abs(e.p2?.y - 45) < 1e-9) }; });
+  expect('recovered tab', JSON.stringify(rec), rec.n === n0 + 1 && rec.hasEdit && rec.dirty && rec.path === null && rec.from?.path === a && rec.from?.name === 'a.dxf');
+
+  step = "run 8: closing the recovered tab with \"Don't save\" removes its autosave copy";
+  const close = win.evaluate(() => window.app.closeTab());
+  await win.locator('#dlg[open] .dlg-btns button', { hasText: "Don't save" }).click({ timeout: 10000 });
+  expect('closeTab', '', (await close) === true);
+  expect('autosave folder after Don\'t save', JSON.stringify(await autosaveFiles()), (await autosaveFiles()).length === 0);
+  await win.evaluate(() => window.api.settingsSet('startup.mode', 'new'));
   await quit();
 
   step = 'no renderer errors';

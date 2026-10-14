@@ -19,13 +19,19 @@ export function createDocState(doc, file) {
   };
 }
 
-const pathKey = (p) => (/^[A-Za-z]:[\\/]|^\\\\/.test(p) ? p.replace(/\//g, '\\').toLowerCase() : p);
+export const pathKey = (p) => (/^[A-Za-z]:[\\/]|^\\\\/.test(p) ? p.replace(/\//g, '\\').toLowerCase() : p);
 
 /** the tab showing the file at `path`, if any (Windows paths compare case-insensitively) */
 export function findTabByPath(tabs, path) {
   if (!path) return null;
   const k = pathKey(path);
   return tabs.find((t) => t.file.path && pathKey(t.file.path) === k) ?? null;
+}
+
+/** the session's `files` ({path, name}) minus those already open as recovered drawings (tab.recoveredFrom.path) */
+export function withoutRecovered(files, tabs) {
+  const rec = new Set(tabs.filter((t) => t.recoveredFrom?.path).map((t) => pathKey(t.recoveredFrom.path)));
+  return files.filter((f) => !f.path || !rec.has(pathKey(f.path)));
 }
 
 /** index of the tab to show after closing tab `closing` of `count`, when tab `active` was shown (-1 when none remain) */
