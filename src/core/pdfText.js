@@ -5,16 +5,13 @@
 //
 // Paragraph direction is left-to-right, as the drawing canvas lays text out: an Arabic run reads right to left inside
 // the line and numbers inside it stay left to right ("غرفة 123" plots as "123" to the left of the Arabic word).
-import bidiFactory from 'bidi-js';
 import {
   PDFOperator, PDFOperatorNames, PDFHexString, PDFName, beginText, endText, setFontAndSize, setTextMatrix,
 } from 'pdf-lib';
 
-let bidi = null;
-const BIDI = () => (bidi ??= bidiFactory());
-/** right-to-left scripts (Hebrew, Arabic, Syriac, Thaana, NKo and their presentation forms) */
-const RTL = /[֐-ࣿיִ-﷿ﹰ-﻿]/;
-export const hasRtl = (t) => RTL.test(t);
+import { BIDI, hasRtl, bidiLevels, visualOrder } from './bidiText.js';
+export { hasRtl, bidiLevels, visualOrder };
+
 /** marks, format characters and spaces stay in the font of the character before them (keeps a shaping run whole) */
 const STICKY = /^[\p{M}\p{Cf}\s]$/u;
 
@@ -79,25 +76,6 @@ export function textShaper(helv, uniFonts) {
     cache.set(key, out);
     return out;
   };
-}
-
-/** the bidi embedding levels (per UTF-16 unit) of a left-to-right paragraph line */
-export const bidiLevels = (text) => BIDI().getEmbeddingLevels(text, 'ltr').levels;
-
-/** UAX #9 L2: items ({level}) in logical order -> visual order (reverse every run at or above each level, highest first) */
-export function visualOrder(items) {
-  const out = items.slice();
-  const maxL = Math.max(0, ...out.map((s) => s.level));
-  for (let L = maxL; L >= 1; L--) {
-    for (let i = 0; i < out.length;) {
-      if (out[i].level < L) { i++; continue; }
-      let j = i;
-      while (j < out.length && out[j].level >= L) j++;
-      out.splice(i, j - i, ...out.slice(i, j).reverse());
-      i = j;
-    }
-  }
-  return out;
 }
 
 const hex = (id) => id.toString(16).toUpperCase().padStart(4, '0');

@@ -13,6 +13,7 @@ import { imageCorners, imageClipWorld, wipeoutRing } from './image.js';
 import { olePreviewOf } from './ole.js';
 import { resolveColor, runColor } from './aci.js';
 import { parseMText, layoutMText } from './mtext.js';
+import { reorderLines } from './bidiText.js';
 import {
   DEG, compose, translation, rotation, scaling, apply, isSimilarity, matScale, transformEntity, bulgeToArc,
   ccwSweep, tessellate, ellipsePoint, unionBox, growBox, dimensionContent, applyVec, clipInfinite,
@@ -1228,6 +1229,7 @@ function drawText(ctx, it, x, y, z, color) {
   ctx.scale(it.wf, 1);
   ctx.font = `${px}px "${it.font}", Arial, "Segoe UI", sans-serif`;
   ctx.fillStyle = color;
+  ctx.direction = 'ltr'; // paragraph direction of a TEXT line is the same as the PDF's, whatever the page's dir
   let lines = it.lines;
   if (it.mtext && it.boxW > 0) lines = wrapLines(ctx, lines, it.boxW * z / it.wf);
   const n = lines.length;
@@ -1256,8 +1258,18 @@ export function mtextLayout(ctx, it) {
   if (it.lay) return it.lay;   // MTEXT with stroke (SHX) runs: fixed layout from buildScene
   if (it._lay) return it._lay;
   const REF = 100;
+  ctx.direction = 'ltr';
   const measure = (t, p) => { ctx.font = mtextFont(p, REF, it.font); return ctx.measureText(t).width * p.h / REF; };
-  it._lay = layoutMText(it.mt, { width: it.boxW, attach: it.attach, lineSpacing: it.lineSpacing, measure });
+  const lay = layoutMText(it.mt, { width: it.boxW, attach: it.attach, lineSpacing: it.lineSpacing, measure });
+  // lines with right-to-left text: words in visual order (as the PDF export), each piece measured at its own direction;
+  // the line's width and the block's box are unchanged, so selection and hit boxes still fit
+  const glyphs = reorderLines(lay.glyphs, (t, level, g) => {
+    ctx.font = mtextFont(g, REF, it.font); ctx.direction = level & 1 ? 'rtl' : 'ltr';
+    const w = ctx.measureText(t).width * g.h / REF * (g.wf || 1) * (g.track || 1);
+    ctx.direction = 'ltr';
+    return w;
+  });
+  it._lay = glyphs === lay.glyphs ? lay : { ...lay, glyphs };
   return it._lay;
 }
 
@@ -1268,6 +1280,7 @@ function drawMText(ctx, it, x, y, z, color, dark) {
   ctx.translate(x, y);
   ctx.rotate(-it.rot);
   ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+  ctx.direction = 'ltr';
   for (const g of lay.glyphs) {
     const px = g.h * z;
     ctx.fillStyle = colOf(g.color);
@@ -1278,6 +1291,7 @@ function drawMText(ctx, it, x, y, z, color, dark) {
     ctx.scale(g.wf || 1, 1);
     ctx.font = mtextFont(g, px, it.font);
     if (g.track && g.track !== 1) ctx.letterSpacing = `${(g.track - 1) * px * 0.6}px`;
+    ctx.direction = g.level & 1 ? 'rtl' : 'ltr'; // an Arabic piece is drawn whole, in its own direction, so the letters join
     ctx.fillText(g.text, 0, 0);
     ctx.restore();
   }

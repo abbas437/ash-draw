@@ -12,7 +12,8 @@ import { layoutPage, viewportScale, isPaperViewport } from './layouts.js';
 import {
   walkOps, colorRgb, lineweightMm, dashUnits, hatchFamilies, layoutText, markerSize, arrowTriangle, runRgb, mtextItemLayout,
 } from './exportSvg.js';
-import { textShaper, textOps, hasRtl, bidiLevels, visualOrder } from './pdfText.js';
+import { textShaper, textOps } from './pdfText.js';
+import { reorderLines } from './bidiText.js';
 
 const PT_PER_MM = 72 / 25.4;
 const MAX_PAGE_PT = 14400;          // PDF 1.x user-unit page size limit (200 inch)
@@ -266,36 +267,8 @@ async function addPdfPage(pdf, doc, opts) {
     }
   };
   const runWidth = (t, p) => (needsUni(t) ? fonts.shape(t).width * p.h : HELV[variant(p)].widthOfTextAtSize(t, p.h));
-  /**
-   * an MTEXT line holding right-to-left text: its words / spaces (laid out in logical order) split at bidi level changes
-   * and put in visual order from the line's left end; each piece then shapes at its level
-   */
-  const reorderLines = (glyphs) => {
-    const byLine = new Map();
-    for (const g of glyphs) if (g.li != null) (byLine.get(g.li) ?? byLine.set(g.li, []).get(g.li)).push(g);
-    const moved = new Map();
-    for (const group of byLine.values()) {
-      if (!group.some((g) => hasRtl(g.text)) || group.some((g) => g.w == null)) continue; // stacks keep their place
-      const levels = bidiLevels(group.map((g) => g.text).join(''));
-      const pieces = [];
-      let i = 0;
-      for (const g of group) {
-        for (let a = 0; a < g.text.length;) {
-          let b = a + 1;
-          while (b < g.text.length && levels[i + b] === levels[i + a]) b++;
-          const text = g.text.slice(a, b), level = levels[i + a];
-          pieces.push({ ...g, text, level, w: loadedShape(text, level, g).width * g.h * (g.wf || 1) * (g.track || 1) });
-          a = b;
-        }
-        i += g.text.length;
-      }
-      let x = Math.min(...group.map((g) => g.x));
-      for (const p of visualOrder(pieces)) { p.x = x; x += p.w; }
-      moved.set(group[0], pieces);
-      for (const g of group.slice(1)) moved.set(g, []);
-    }
-    return moved.size ? glyphs.flatMap((g) => moved.get(g) ?? [g]) : glyphs;
-  };
+  // lines holding right-to-left text go in visual order (shared with the screen: bidiText.js); each piece shapes at its level
+  const reorderPdfLines = (glyphs) => reorderLines(glyphs, (text, level, g) => loadedShape(text, level, g).width * g.h * (g.wf || 1) * (g.track || 1));
   const loadedShape = (t, level, p) => fonts.shape(t, level, HELV[variant(p)]);
 
   // box: the world window plotted, to which XLINE / RAY items are clipped (AutoCAD plots their visible part)
@@ -363,7 +336,7 @@ async function addPdfPage(pdf, doc, opts) {
     } else if (it.kind === 'text' && it.mt) {
       await prepareMText(it.mt);
       const lay = mtextItemLayout(it, runWidth);
-      const glyphs = fonts.shape ? reorderLines(lay.glyphs) : lay.glyphs;
+      const glyphs = fonts.shape ? reorderPdfLines(lay.glyphs) : lay.glyphs;
       const c = Math.cos(it.rot), s = Math.sin(it.rot);
       const rc = (col) => runRgb(col, it.style, { monochrome }).map((v) => v / 255);
       page.pushOperators(...ops.splice(0), pushGraphicsState(), concatTransformationMatrix(c, s, -s, c, X(it.p.x), Y(it.p.y)));
