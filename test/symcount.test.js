@@ -145,3 +145,24 @@ test('scheduleEntities: the picture is drawn from the row block, not looked up b
   const ins = scheduleEntities(d, rows, total, { x: 0, y: 0 }, 1).filter((e) => e.type === 'INSERT');
   assert.deepEqual(ins.map((e) => e.block), ['*U7']);
 });
+
+test('scheduleEntities: columns are as wide as the drawn text (SHX STANDARD style), so names and counts never overlap', async () => {
+  globalThis.window ??= { api: {} };
+  const { scheduleEntities } = await import('../renderer/symcount-ui.js');
+  const { textFrame } = await import('../src/core/textMetrics.js');
+  const d = newDocument();
+  d.textStyles.set('STANDARD', { name: 'STANDARD', font: 'romans.shx', fontFile: 'romans.shx' }); // stroke font: wider than 0.6 h per character
+  const long = 'M_Supply Diffuser - Rectangular Face Rectangular Neck - 300x300 - 150x150-V3-GF_L _0_60_ Copy 1';
+  for (const n of [long, 'WWWWWWWWWWWWWWWWWWWW', 'RCD']) addBlock(d, n, { x: 0, y: 0 }, [makeLine({ x: 0, y: 0 }, { x: 1, y: 1 })]);
+  for (let i = 0; i < 12345; i++) addEntity(d, makeInsert('RCD', { x: i, y: 0 }));
+  addEntity(d, makeInsert(long, { x: 0, y: 5 })); addEntity(d, makeInsert('WWWWWWWWWWWWWWWWWWWW', { x: 0, y: 6 }));
+  const { rows, total } = countSymbols(d);
+  const ents = scheduleEntities(d, rows, total, { x: 0, y: 0 }, 2.5);
+  const right = Math.max(...ents.filter((e) => e.type === 'LINE').map((e) => Math.max(e.p1.x, e.p2.x)));
+  const vx = [...new Set(ents.filter((e) => e.type === 'LINE' && e.p1.x === e.p2.x).map((e) => e.p1.x))].sort((a, b) => a - b); // column lines
+  for (const t of ents.filter((e) => e.type === 'TEXT')) {
+    const f = textFrame(t, d), x0 = f.o.x, x1 = x0 + f.w;
+    const colEnd = t.text === 'SYMBOL SCHEDULE' ? right : vx.find((x) => x > x0 + 1e-9) ?? right; // the title row has no column lines
+    assert.ok(x1 <= colEnd + 1e-9, `"${t.text}" ends at ${x1.toFixed(2)}, past its column edge ${colEnd.toFixed(2)}`);
+  }
+});

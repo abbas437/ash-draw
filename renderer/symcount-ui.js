@@ -8,6 +8,7 @@ import { xlsxBytes } from '../src/core/xlsx.js';
 import { unitScale } from '../src/core/clipboard.js';
 import { bboxOf, unionBox } from '../src/core/geom.js';
 import { makeLine, makeText, makeInsert } from '../src/core/model.js';
+import { textFrame } from '../src/core/textMetrics.js';
 import { savePathIn } from './files.js';
 import { pickPoint } from './clipboard-ui.js';
 import { el, modal, toast } from './ui.js';
@@ -32,8 +33,12 @@ export const scheduleTextHeight = (units, drawingScale = 1) => 2.5 * (drawingSca
  *  each symbol scaled to about 80 % of the row height, centred in the picture cell (none without a block extent) */
 export function scheduleEntities(doc, rows, total, at, th, layer = SCHEDULE_LAYER) {
   const rh = 2.4 * th, pad = 0.5 * th, o = { layer };
-  const wPic = 1.6 * rh, wQty = 5 * th;
-  const wDesc = Math.max(12 * th, ...rows.map((r) => String(r.name).length * 0.6 * th + 2 * pad));
+  // column widths from the text as it is drawn (the drawing's STANDARD style: SHX stroke font or TrueType), not a guess
+  const tw = (str, h = th) => textFrame(makeText({ x: 0, y: 0 }, h, String(str), o), doc).w;
+  const titleH = Math.min(1.2 * th, rh * 0.6), wPic = Math.max(1.6 * rh, tw('Symbol') + 2 * pad);
+  const wQty = Math.max(5 * th, tw('Qty') + 2 * pad, tw(total) + 2 * pad, ...rows.map((r) => tw(r.count) + 2 * pad));
+  let wDesc = Math.max(12 * th, tw('Description') + 2 * pad, ...rows.map((r) => tw(r.name) + 2 * pad));
+  wDesc = Math.max(wDesc, tw('SYMBOL SCHEDULE', titleH) + 2 * pad - wPic - wQty);
   const W = wPic + wDesc + wQty, xs = [at.x, at.x + wPic, at.x + wPic + wDesc, at.x + W];
   const n = rows.length + 3; // title, header, symbols, total
   const yAt = (i) => at.y - i * rh, bottom = yAt(n);
@@ -42,7 +47,7 @@ export function scheduleEntities(doc, rows, total, at, th, layer = SCHEDULE_LAYE
   out.push(makeLine({ x: at.x, y: yAt(0) }, { x: at.x, y: bottom }, o), makeLine({ x: at.x + W, y: yAt(0) }, { x: at.x + W, y: bottom }, o));
   for (const x of xs.slice(1, 3)) out.push(makeLine({ x, y: yAt(1) }, { x, y: bottom }, o));
   const text = (col, i, s, h = th) => out.push(makeText({ x: xs[col] + pad, y: yAt(i + 1) + (rh - h) / 2 }, h, String(s), o));
-  text(0, 0, 'SYMBOL SCHEDULE', Math.min(1.2 * th, rh * 0.6));
+  text(0, 0, 'SYMBOL SCHEDULE', titleH);
   text(0, 1, 'Symbol'); text(1, 1, 'Description'); text(2, 1, 'Qty');
   rows.forEach((r, k) => {
     const i = k + 2;
