@@ -15,7 +15,7 @@ import { dimStyleManager, dimStyleNames, dimVarsOf, setCurrentDimStyle } from '.
 import { blockDoubleClick } from './tools-blocks.js';
 import { initSession } from './session.js';
 import { FindPanel } from './find.js';
-import { plotDialog } from './plot.js';
+import { plotDialog, publishDialog } from './plot.js';
 import { initLayouts, restoreSpace, renderSpaceBar, layoutDoubleClick, exitMspace, renderVpScale, commitViewportView } from './layouts-ui.js';
 import { ComparePanel, runCompare } from './compare.js';
 import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
@@ -189,7 +189,7 @@ class App {
     if (t.text?.(s)) { this.refreshPrompt(); return; }
     const low = s.toLowerCase();
     if (TOOL_ALIASES[low]) { this.setTool(TOOL_ALIASES[low]); return; }
-    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => { this.viewHistory.breakGesture(this.viewKey()); this.vp.zoomExtents(); }, all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), find: () => this.find.open(), compare: () => this.compare(), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), units: () => this.unitsDialog(), un: () => this.unitsDialog(), ddunits: () => this.unitsDialog(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), qselect: () => qselectDialog(this), selectsimilar: () => selectSimilarCommand(this), purge: () => purgeDialog(this), pu: () => purgeDialog(this), ...this.panelCommands(), ...this.layerCommands(), ...this.layoutCommands };
+    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => { this.viewHistory.breakGesture(this.viewKey()); this.vp.zoomExtents(); }, all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), publish: () => this.publish(), find: () => this.find.open(), compare: () => this.compare(), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), units: () => this.unitsDialog(), un: () => this.unitsDialog(), ddunits: () => this.unitsDialog(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), qselect: () => qselectDialog(this), selectsimilar: () => selectSimilarCommand(this), purge: () => purgeDialog(this), pu: () => purgeDialog(this), ...this.panelCommands(), ...this.layerCommands(), ...this.layoutCommands };
     if (sys[low]) { sys[low](); return; }
     const last = this.vp.lastPoint ?? { x: 0, y: 0 };
     const dir = this.vp.lastPoint ? { x: this.vp.cursor.x - last.x, y: this.vp.cursor.y - last.y } : null;
@@ -537,6 +537,8 @@ class App {
   /** Plot to PDF (the Print dialog with a Save button) */
   exportPdf() { return plotDialog(this, 'pdf'); }
   print() { return plotDialog(this, 'print'); }
+  /** File > Publish to PDF… (PUBLISH): sheets of all open drawings in one PDF */
+  publish() { return publishDialog(this); }
   /** File > Compare… (COMPARE): differences between two drawings, shown in a new tab */
   compare() { return runCompare(this).catch((err) => message('Compare failed', err.message || String(err))); }
   async exportSvg() {
@@ -610,7 +612,7 @@ class App {
     const vp = this.vp;
     const M = [
       ['File', [['New', 'Ctrl+N', () => this.newDrawing()], ['Open…', 'Ctrl+O', () => this.open()], ['Recent files…', '', () => this.sessionStore.showRecent().catch((err) => message('Could not open the file', err.message || String(err)))], ['Close', 'Ctrl+W', () => this.closeTab()], '-', ['Compare…', 'COMPARE', () => this.compare()], '-', ['Save', 'Ctrl+S', () => this.save()], ['Save as DXF…', '', () => this.saveAs('dxf')], [() => (this.odaWrite ? 'Save as DWG…' : 'Save as DWG… (experimental)'), '', () => this.saveAs('dwg'), null, () => this.allowDwgSave || this.odaWrite], '-',
-        ['Print…', 'Ctrl+P', () => this.print()], ['Plot to PDF…', '', () => this.exportPdf()], ['Export SVG…', '', () => this.exportSvg()], ['Export PNG image…', '', () => this.exportPng()]]],
+        ['Print…', 'Ctrl+P', () => this.print()], ['Plot to PDF…', '', () => this.exportPdf()], ['Publish to PDF…', 'PUBLISH', () => this.publish()], ['Export SVG…', '', () => this.exportSvg()], ['Export PNG image…', '', () => this.exportPng()]]],
       ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Paste', 'Ctrl+V', () => this.paste()], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()], ['Quick Select…', 'QSELECT', () => qselectDialog(this)], ['Select Similar', 'SELECTSIMILAR', () => selectSimilarCommand(this)], ['Find and replace…', 'Ctrl+F', () => this.find.open()], '-', ['Preferences…', '', () => this.preferences()]]],
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-',
         ['Command history', 'F2', () => this.toggleHistory(), () => this.histView.open],

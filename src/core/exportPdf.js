@@ -18,7 +18,25 @@ const MAX_PAGE_PT = 14400;          // PDF 1.x user-unit page size limit (200 in
 const MIN_LW_PT = 0.25;
 const fillEvenOdd = () => PDFOperator.of(PDFOperatorNames.FillEvenOdd);
 const fillEvenOddAndStroke = () => PDFOperator.of(PDFOperatorNames.FillEvenOddAndStroke);
-const SIZES = { A4: PageSizes.A4, A3: PageSizes.A3, A2: PageSizes.A2, A1: PageSizes.A1, A0: PageSizes.A0, Letter: PageSizes.Letter };
+const SIZES = { A4: PageSizes.A4, A3: PageSizes.A3, A2: PageSizes.A2, A1: PageSizes.A1, A0: PageSizes.A0, Letter: PageSizes.Letter, Tabloid: PageSizes.Tabloid };
+/** printable margin (mm) round a layout sheet fitted to another paper */
+export const LAYOUT_FIT_MARGIN_MM = 5;
+
+/**
+ * pageFit(sheetW, sheetH, paper, {fit, margin}) -> {pw, ph, scale, ox, oy, orientation, fits}: a layout sheet of
+ * sheetW x sheetH points put on `paper` (a page size name; landscape when the sheet is wider than tall, else portrait).
+ * fit: scaled to the paper inside `margin` mm (larger or smaller), else 1:1. Centred: page = (ox, oy) + scale * sheet,
+ * with the sheet's lower-left corner at sheet (0, 0). fits: the whole sheet lies inside the margins.
+ */
+export function pageFit(sheetW, sheetH, paper, { fit = true, margin = LAYOUT_FIT_MARGIN_MM } = {}) {
+  if (!SIZES[paper]) throw new Error(`Unknown page size: ${paper}`);
+  const [a, b] = SIZES[paper], land = sheetW > sheetH;
+  const [pw, ph] = land ? [Math.max(a, b), Math.min(a, b)] : [Math.min(a, b), Math.max(a, b)];
+  const m = margin * PT_PER_MM, w = Math.max(sheetW, 1e-9), h = Math.max(sheetH, 1e-9);
+  const scale = fit ? Math.min((pw - 2 * m) / w, (ph - 2 * m) / h) : 1;
+  const fits = w * scale <= pw - 2 * m + 1e-6 && h * scale <= ph - 2 * m + 1e-6;
+  return { pw, ph, scale, ox: (pw - w * scale) / 2, oy: (ph - h * scale) / 2, orientation: land ? 'landscape' : 'portrait', fits };
+}
 
 /**
  * plotLayout(region, opts) -> {pw, ph, k, ox, oy, warnings}: page size (points) and the drawing -> page transform
@@ -60,31 +78,79 @@ export const plotScale = (n, mmPerUnit = 1) => mmPerUnit / n;
  * opts: pageSize 'fit'|'A4'|'A3'|'A2'|'A1'|'A0'|'Letter' ('fit'), orientation 'auto'|'landscape'|'portrait',
  * margin (mm, 10), scale (null = fit to page | page mm per drawing unit), centre (true), region (area to plot in drawing
  * units, clipped; default the drawing extents), monochrome, lineweights, unicodeFont (TTF/OTF bytes for text outside
- * WinAnsi), scene (prebuilt).
+ * WinAnsi), scene (prebuilt). A layout sheet (opts.layout): paper 'layout' (its own paper at 1:1, default) or a page size
+ * name, with fit (true: scaled into the paper's margins, see pageFit; false: 1:1, centred).
  */
 export async function exportPdf(doc, opts = {}) {
+  const pdf = await newPdf();
+  const warnings = await addPdfPage(pdf, doc, opts);
+  return { bytes: await pdf.save(), warnings };
+}
+
+/**
+ * exportPdfPages(sheets, opts) -> Promise<{bytes, warnings}>: one PDF, one page per sheet in order (PUBLISH).
+ * sheets: [{doc, layout (null = model space), label}]; opts as exportPdf, applied to every sheet (a layout sheet uses
+ * paper / fit, a model sheet pageSize / orientation / scale). Viewport scenes are built once per drawing and layer set.
+ */
+export async function exportPdfPages(sheets, opts = {}) {
+  const pdf = await newPdf(), warnings = [];
+  let cur = null, modelScene = null; // scene cache of the current drawing only: dropped when the next sheet is from another
+  for (const { doc, layout = null, label = '' } of sheets) {
+    if (doc !== cur) { cur = doc; modelScene = memoModelScene(doc); }
+    const w = await addPdfPage(pdf, doc, { ...opts, layout, modelScene: opts.modelScene ?? modelScene, scene: layout ? opts.scene : opts.scene ?? modelScene([]), region: layout ? null : opts.region });
+    warnings.push(...w.map((m) => (label ? `${label}: ${m}` : m)));
+  }
+  return { bytes: await pdf.save(), warnings };
+}
+
+async function newPdf() {
+  const pdf = await PDFDocument.create();
+  pdf.setTitle('ASH Draw Studio drawing');
+  pdf.setCreator('ASH Draw Studio');
+  return pdf;
+}
+
+/** (frozen layers) -> model scene, built once per layer set */
+function memoModelScene(doc) {
+  const m = new Map();
+  return (fr) => { const key = fr.join('\u0001'); if (!m.has(key)) m.set(key, buildScene(docWithFrozen(doc, fr))); return m.get(key); };
+}
+
+/** fonts embedded in a PDF, shared by its pages */
+const FONTS = new WeakMap();
+
+/** draw one sheet (exportPdf options) on a new page of `pdf`; returns the warnings */
+async function addPdfPage(pdf, doc, opts) {
   const { monochrome = false, lineweights = true, unicodeFont = null, layout = null } = opts;
   const region = layout ? null : opts.region ?? null;
   // a layout plots at 1:1 on its own paper: its entities, then each viewport's model view clipped to the viewport
   const paperDoc = layout ? Object.create(doc, { entities: { value: layout.entities } }) : doc;
   const scene = (layout ? opts.paperScene : opts.scene) || buildScene(paperDoc);
   const bb = region || scene.bbox || { minx: 0, miny: 0, maxx: 100, maxy: 100 };
-  let pw, ph, k, ox, oy, warnings;
+  let pw, ph, k, ox, oy, warnings, clipBox = region;
   if (layout) {
+    // 1:1 on the layout's own paper, or the sheet put on another paper (fitted or 1:1, centred): one scale + offset
+    // applied to every layout coordinate; line weights stay their plotted width (AutoCAD: lineweights not scaled)
     const lp = layoutPage(layout);
-    ({ pw, ph, k } = lp); ox = -lp.sheet.minx * k; oy = -lp.sheet.miny * k; warnings = [];
+    let s = 1, dx = 0, dy = 0;
+    ({ pw, ph, k } = lp); warnings = [];
+    if (opts.paper && opts.paper !== 'layout') {
+      const f = pageFit(lp.pw, lp.ph, opts.paper, { fit: opts.fit !== false });
+      ({ pw, ph } = f); s = f.scale; dx = f.ox; dy = f.oy; clipBox = lp.sheet;
+      if (!f.fits) warnings.push(`${layout.name}: the sheet is larger than ${opts.paper} at 1:1; its edges are cut off`);
+    }
+    k *= s; ox = dx - lp.sheet.minx * k; oy = dy - lp.sheet.miny * k;
   } else ({ pw, ph, k, ox, oy, warnings } = plotLayout(bb, opts));
   const X = (x) => ox + x * k, Y = (y) => oy + y * k;
 
-  const pdf = await PDFDocument.create();
-  pdf.setTitle('ASH Draw Studio drawing');
-  pdf.setCreator('ASH Draw Studio');
   const page = pdf.addPage([pw, ph]);
-  // a window or view plots only what lies inside it
-  if (region) page.pushOperators(pushGraphicsState(), moveTo(X(bb.minx), Y(bb.miny)), lineTo(X(bb.maxx), Y(bb.miny)), lineTo(X(bb.maxx), Y(bb.maxy)), lineTo(X(bb.minx), Y(bb.maxy)), closePath(), clip(), endPath());
-  const helv = await pdf.embedFont(StandardFonts.Helvetica);
+  // a window or view plots only what lies inside it; a sheet on other paper only the sheet
+  const cb = clipBox;
+  if (cb) page.pushOperators(pushGraphicsState(), moveTo(X(cb.minx), Y(cb.miny)), lineTo(X(cb.maxx), Y(cb.miny)), lineTo(X(cb.maxx), Y(cb.maxy)), lineTo(X(cb.minx), Y(cb.maxy)), closePath(), clip(), endPath());
+  if (!FONTS.has(pdf)) FONTS.set(pdf, { HELV: { '00': await pdf.embedFont(StandardFonts.Helvetica) }, uni: null });
+  const fonts = FONTS.get(pdf), helv = fonts.HELV['00'];
   const helvChars = new Set(helv.getCharacterSet());
-  let uniFont = null, missing = 0;
+  let missing = 0;
 
   const colOf = (style) => colorRgb(style, { monochrome }).map((v) => v / 255);
   const lwPt = (style) => Math.max(lineweightMm(style, lineweights) * PT_PER_MM, MIN_LW_PT);
@@ -132,12 +198,12 @@ export async function exportPdf(doc, opts = {}) {
   const fontFor = async (lines) => {
     if (lines.every((l) => [...l].every((ch) => helvChars.has(ch.codePointAt(0))))) return { font: helv, lines };
     if (unicodeFont) {
-      if (!uniFont) {
+      if (!fonts.uni) {
         const fontkit = (await import('@pdf-lib/fontkit')).default;
         pdf.registerFontkit(fontkit);
-        uniFont = await pdf.embedFont(unicodeFont, { subset: true });
+        fonts.uni = await pdf.embedFont(unicodeFont, { subset: true });
       }
-      return { font: uniFont, lines };
+      return { font: fonts.uni, lines };
     }
     return {
       font: helv,
@@ -146,7 +212,7 @@ export async function exportPdf(doc, opts = {}) {
   };
 
   // MTEXT runs: Helvetica in its bold / oblique variants (embedded on first use), the Unicode font for other scripts
-  const HELV = { '00': helv };
+  const HELV = fonts.HELV;
   const HELV_NAME = { '10': StandardFonts.HelveticaBold, '01': StandardFonts.HelveticaOblique, '11': StandardFonts.HelveticaBoldOblique };
   const variant = (p) => `${p.bold ? 1 : 0}${p.italic ? 1 : 0}`;
   const prepareMText = async (mt) => {
@@ -162,7 +228,7 @@ export async function exportPdf(doc, opts = {}) {
   };
   const runFont = (t, p, count = false) => {
     if ([...t].every((ch) => helvChars.has(ch.codePointAt(0)))) return { font: HELV[variant(p)], text: t };
-    if (uniFont) return { font: uniFont, text: t };
+    if (fonts.uni) return { font: fonts.uni, text: t };
     return { font: HELV[variant(p)], text: [...t].map((ch) => (helvChars.has(ch.codePointAt(0)) ? ch : (count && missing++, '?'))).join('') };
   };
 
@@ -244,7 +310,7 @@ export async function exportPdf(doc, opts = {}) {
   }
   };
   if (layout) {
-    const modelScene = opts.modelScene ?? ((fr) => buildScene(docWithFrozen(doc, fr)));
+    const modelScene = opts.modelScene ?? memoModelScene(doc);
     const paper = { ox, oy, k };
     for (const v of layout.entities) {
       if (v.type !== 'VIEWPORT' || isPaperViewport(v) || v.on === false || !(v.width > 0 && v.height > 0)) continue;
@@ -261,8 +327,7 @@ export async function exportPdf(doc, opts = {}) {
   }
   await drawItems(scene, bb);
   if (ops.length) page.pushOperators(...ops.splice(0));
-  if (region) page.pushOperators(popGraphicsState());
+  if (cb) page.pushOperators(popGraphicsState());
   if (missing) warnings.push(`${missing} text characters could not be drawn (no Unicode font)`);
-  const bytes = await pdf.save();
-  return { bytes, warnings };
+  return warnings;
 }

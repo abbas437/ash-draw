@@ -9,9 +9,10 @@ import { createCanvas, loadImage, Path2D } from '@napi-rs/canvas';
 import { fixture } from './helpers.js';
 import { readDxf } from '../src/core/dxfRead.js';
 import { newLayout } from '../src/core/layouts.js';
-import { newDocument, addEntity, makeXline, makeLine, makeCircle, makeArc, makeText } from '../src/core/model.js';
+import { newDocument, addEntity, addLayer, makeXline, makeLine, makeCircle, makeArc, makeText } from '../src/core/model.js';
 import { exportSvg } from '../src/core/exportSvg.js';
-import { exportPdf, plotLayout, plotScale } from '../src/core/exportPdf.js';
+import { exportPdf, exportPdfPages, plotLayout, plotScale, pageFit } from '../src/core/exportPdf.js';
+import { plotSettingsFrom, plotSettingsToStore, PLOT_DEFAULTS } from '../src/core/plotSettings.js';
 
 const FIXTURES = ['basic', 'blocks', 'colors', 'dims', 'extrusion', 'hatch', 'polylines', 'splines', 'text', 'unsupported'];
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'ash-export-'));
@@ -171,4 +172,124 @@ test('layout PDF: an XLINE through a 1:100 viewport is plotted across the whole 
   // window = the viewport diagonal 223.6 mm; the 45 degree line crosses its square bounding box corner to corner: 223.6 * sqrt(2) mm
   const want = Math.hypot(200, 100) * Math.SQRT2 * 72 / 25.4;
   assert.ok(segs.some((l) => Math.abs(l - want) < 0.5), `no segment of ${want.toFixed(1)} pt in ${segs.map((l) => l.toFixed(1))}`);
+});
+
+// ---- layout sheets on other paper (fit to paper), PUBLISH --------------------------------------------------------
+const PT = 72 / 25.4, near = (a, b, tol = 0.01) => Math.abs(a - b) <= tol;
+
+test('pageFit: an A0 sheet fitted to A3 landscape inside 5 mm margins, centred', () => {
+  const f = pageFit(1189 * PT, 841 * PT, 'A3');
+  assert.equal(f.orientation, 'landscape');
+  assert.ok(near(f.pw, 1190.55) && near(f.ph, 841.89), `${f.pw} x ${f.ph}`);
+  // the binding side: (420 - 2*5) / 1189 across, (297 - 10) / 841 = 0.3413 up
+  assert.ok(near(f.scale, Math.min(410 / 1189, 287 / 841), 1e-6), String(f.scale)); // pdf-lib's A3 is rounded to 0.01 pt
+  assert.ok(near(f.ox, (f.pw - 1189 * PT * f.scale) / 2, 1e-9) && near(f.oy, (f.ph - 841 * PT * f.scale) / 2, 1e-9));
+  assert.ok(near(f.oy, 5 * PT, 1e-3), 'the height binds: 5 mm margin top and bottom');
+  assert.ok(f.fits);
+});
+
+test('pageFit: portrait sheet -> portrait paper; small sheet enlarged; no fit = 1:1 centred and may not fit', () => {
+  const p = pageFit(210 * PT, 297 * PT, 'A1');
+  assert.equal(p.orientation, 'portrait');
+  assert.ok(p.pw < p.ph && p.scale > 1, `${p.pw} x ${p.ph} at ${p.scale}`);
+  const one = pageFit(1189 * PT, 841 * PT, 'A3', { fit: false });
+  assert.equal(one.scale, 1);
+  assert.equal(one.fits, false);
+  assert.ok(near(one.ox, (1190.55 - 1189 * PT) / 2, 0.01));
+  const t = pageFit(1189 * PT, 841 * PT, 'Tabloid');
+  assert.deepEqual([t.pw, t.ph], [1224, 792]);
+  assert.throws(() => pageFit(1, 1, 'B5'), /Unknown page size/);
+});
+
+test('PUBLISH: the 2 layouts of layouts_r2000.dxf on A3 (fit) give a 2-page A3 landscape PDF; own paper keeps 420 x 297', async () => {
+  const doc = readDxf(fixture('layouts_r2000.dxf'));
+  assert.equal(doc.layouts.length, 2);
+  const sheets = doc.layouts.map((layout) => ({ doc, layout, label: layout.name }));
+  const a3 = await PDFDocument.load((await exportPdfPages(sheets, { paper: 'A3', fit: true, monochrome: true })).bytes);
+  assert.equal(a3.getPageCount(), 2);
+  for (const pg of a3.getPages()) { const { width, height } = pg.getSize(); assert.ok(near(width, 1190.55) && near(height, 841.89), `${width} x ${height}`); }
+  const a4 = await PDFDocument.load((await exportPdfPages([...sheets, { doc, layout: null, label: 'Model' }], { paper: 'A4', fit: true, pageSize: 'A4' })).bytes);
+  assert.equal(a4.getPageCount(), 3);
+  assert.deepEqual(a4.getPages().map((pg) => pg.getSize()).map(({ width, height }) => [+width.toFixed(2), +height.toFixed(2)]), [[841.89, 595.28], [841.89, 595.28], [841.89, 595.28]]);
+  const own = await PDFDocument.load((await exportPdf(doc, { layout: doc.layouts[0] })).bytes);
+  const { width, height } = own.getPage(0).getSize();
+  assert.ok(near(width, 420 * PT) && near(height, 297 * PT), `${width} x ${height}`);
+});
+
+test('layout on A1 (fit): paper geometry is enlarged by the fit scale', async () => {
+  const doc = readDxf(fixture('layouts_r2000.dxf')), layout = doc.layouts[0];
+  const segs = async (opts) => {
+    const pdf = await PDFDocument.load((await exportPdf(doc, { layout, ...opts })).bytes), c = pdf.getPage(0).node.Contents();
+    const streams = c instanceof PDFArray ? c.asArray().map((r) => pdf.context.lookup(r)) : [c];
+    const text = streams.map((st) => new TextDecoder().decode(decodePDFRawStream(st).decode())).join('\n');
+    return [...text.matchAll(/([-\d.]+) ([-\d.]+) m\s+([-\d.]+) ([-\d.]+) l/g)].map((m) => Math.hypot(m[3] - m[1], m[4] - m[2]));
+  };
+  // the model line (0,0)-(1000,0) through the 1:50 viewport: 20 mm of paper
+  const f = pageFit(420 * PT, 297 * PT, 'A1'), one = 20 * PT, big = one * f.scale;
+  assert.ok((await segs({})).some((l) => near(l, one, 0.05)), 'own paper: 20 mm');
+  const fitted = await segs({ paper: 'A1', fit: true });
+  assert.ok(fitted.some((l) => near(l, big, 0.05)), `A1 fit: ${big.toFixed(2)} pt in ${fitted.map((l) => l.toFixed(2))}`);
+});
+
+test('plot settings: stored values are validated, defaults fill the rest, the picked window is not stored', () => {
+  assert.deepEqual(plotSettingsFrom(undefined), { ...PLOT_DEFAULTS, window: null });
+  const s = plotSettingsFrom({ layoutPaper: 'A3', layoutFit: false, monochrome: true, pageSize: 'B9', n: -3, what: 'window', publishModel: 'yes' });
+  assert.equal(s.layoutPaper, 'A3'); assert.equal(s.layoutFit, false); assert.equal(s.monochrome, true);
+  assert.equal(s.pageSize, 'A3'); assert.equal(s.n, 100); assert.equal(s.what, 'extents'); assert.equal(s.publishModel, false);
+  const stored = plotSettingsToStore({ ...s, window: { minx: 0 } });
+  assert.equal('window' in stored, false);
+  assert.deepEqual(plotSettingsFrom(stored), s);
+});
+
+const pageText = async (bytes) => {
+  const pdf = await PDFDocument.load(bytes), c = pdf.getPage(0).node.Contents();
+  const streams = c instanceof PDFArray ? c.asArray().map((r) => pdf.context.lookup(r)) : [c];
+  return streams.map((st) => new TextDecoder().decode(decodePDFRawStream(st).decode())).join('\n');
+};
+
+test('layout on A3 (fit): the sheet is clipped first and every path point lies inside the 5 mm margins', async () => {
+  const doc = readDxf(fixture('layouts_r2000.dxf')), layout = doc.layouts[0];
+  const text = await pageText((await exportPdf(doc, { layout, paper: 'A3', fit: true })).bytes);
+  const pw = 1190.55, ph = 841.89, m = 5 * PT;
+  // page content opens with the sheet rectangle as a clip (q, path, W n) before anything is drawn
+  const clip = text.match(/^\s*q\s+([-\d.]+) ([-\d.]+) m\s+([-\d.]+) ([-\d.]+) l\s+([-\d.]+) ([-\d.]+) l\s+([-\d.]+) ([-\d.]+) l\s+h\s+W\s+n\b/);
+  assert.ok(clip, `no leading sheet clip in: ${text.slice(0, 200)}`);
+  const xs = [clip[1], clip[3], clip[5], clip[7]].map(Number), ys = [clip[2], clip[4], clip[6], clip[8]].map(Number);
+  // the clip is the whole sheet (420 x 297 mm) at the fit scale, centred: the very first clip, not a viewport's
+  const f = pageFit(420 * PT, 297 * PT, 'A3');
+  assert.ok(near(Math.min(...xs), f.ox, 0.05) && near(Math.max(...xs), f.ox + 420 * PT * f.scale, 0.05), `clip x ${xs} vs ${f.ox}`);
+  assert.ok(near(Math.min(...ys), f.oy, 0.05) && near(Math.max(...ys), f.oy + 297 * PT * f.scale, 0.05), `clip y ${ys} vs ${f.oy}`);
+  assert.ok(Math.min(...xs) >= m - 0.05 && Math.max(...xs) <= pw - m + 0.05 && Math.min(...ys) >= m - 0.05 && Math.max(...ys) <= ph - m + 0.05, 'clip inside the margins');
+  const pts = [...text.matchAll(/([-\d.]+) ([-\d.]+) [ml]\s/g)].map((q) => [+q[1], +q[2]]);
+  assert.ok(pts.length > 4, 'paths drawn');
+  for (const [x, y] of pts) assert.ok(x >= m - 0.05 && x <= pw - m + 0.05 && y >= m - 0.05 && y <= ph - m + 0.05, `point ${x},${y} outside the margins`);
+});
+
+test('layout PDF: each viewport draws the model without its own frozen layers (scene cache keyed by the frozen set)', async () => {
+  const doc = newDocument();
+  addLayer(doc, { name: 'A' }); addLayer(doc, { name: 'B' });
+  addEntity(doc, makeLine({ x: -20, y: 0 }, { x: 20, y: 0 }, { layer: 'A' }));
+  addEntity(doc, makeLine({ x: -20, y: 10 }, { x: 20, y: 10 }, { layer: 'B' }));
+  const lay = newLayout('Layout1', 1);
+  const vp = (id, cx, frozen) => ({ type: 'VIEWPORT', id, layer: '0', color: 256, vpId: id, on: true, c: { x: cx, y: 150 }, width: 100, height: 100, viewCenter: { x: 0, y: 0 }, viewHeight: 100, twist: 0, frozen });
+  lay.entities.push(vp(2, 100, ['A']), vp(3, 300, ['B']));
+  doc.layouts = [lay];
+  const text = await pageText((await exportPdf(doc, { layout: lay })).bytes);
+  const segs = [...text.matchAll(/([-\d.]+) ([-\d.]+) m\s+([-\d.]+) ([-\d.]+) l\s+S/g)].map((q) => ({ x: +q[1] / PT, y: +q[2] / PT, len: Math.abs(q[3] - q[1]) / PT }))
+    .filter((q) => Math.abs(q.len - 40) < 0.1);
+  const left = segs.filter((q) => q.x < 200), right = segs.filter((q) => q.x > 200);
+  // left viewport freezes A: only B (model y 10); right freezes B: only A (model y 0): 10 mm lower on the sheet
+  assert.equal(left.length, 1, JSON.stringify(segs)); assert.equal(right.length, 1, JSON.stringify(segs));
+  assert.ok(near(left[0].y - right[0].y, 10, 0.1), `left y ${left[0].y}, right y ${right[0].y}`);
+});
+
+test('PUBLISH monochrome: no stroking colour but black in any page of a coloured drawing', async () => {
+  const doc = readDxf(fixture('colors_r2000.dxf'));
+  const out = await exportPdfPages([{ doc, layout: null, label: 'Model' }], { paper: 'A3', pageSize: 'A3', orientation: 'auto', margin: 10, scale: null, centre: true, monochrome: true });
+  const text = await pageText(out.bytes);
+  const cols = [...text.matchAll(/([-\d.]+) ([-\d.]+) ([-\d.]+) RG/g)];
+  assert.ok(cols.length > 0, 'strokes drawn');
+  for (const c of cols) assert.deepEqual([+c[1], +c[2], +c[3]], [0, 0, 0], c[0]);
+  const colour = await pageText((await exportPdfPages([{ doc, layout: null, label: 'Model' }], { pageSize: 'A3', orientation: 'auto', margin: 10, scale: null, centre: true })).bytes);
+  assert.ok([...colour.matchAll(/([-\d.]+) ([-\d.]+) ([-\d.]+) RG/g)].some((c) => +c[1] || +c[2] || +c[3]), 'the coloured fixture has non-black strokes');
 });
