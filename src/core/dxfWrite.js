@@ -20,6 +20,7 @@ import { dimensionTags, arrowEntities, r2000DimensionTags } from './dims.js';
 import { mleaderTags, mleaderStyleTags, mleaderParts } from './mleader.js';
 import { viewportTags } from './layouts.js';
 import { imageTags, imageDefTags } from './image.js';
+import { oleDataWithCorners } from './ole.js';
 import { drain, runSliced } from './slice.js';
 const encode = (s) => String(s ?? '').replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7e]/g, (c) => {
   const code = c.charCodeAt(0);
@@ -302,7 +303,8 @@ export function* writeDxfSteps(doc, opts = {}) {
         o.p(70, e.version ?? 2); o.s(3, e.desc ?? 'OLE');
         o.pt(10, e.p1.x, e.p1.y); o.pt(11, e.p2.x, e.p2.y);
         o.p(71, e.kind ?? 2); o.p(72, e.tile ?? 0);
-        const data = e.data ?? [];
+        // the data header carries the frame corners too: a moved / scaled frame updates them (else written as read)
+        const data = oleDataWithCorners(e.data ?? [], e.p1, e.p2);
         o.p(90, data.reduce((n, h) => n + (h.length >> 1), 0));
         for (const h of data) o.p(310, h);
         o.s(1, 'OLE');

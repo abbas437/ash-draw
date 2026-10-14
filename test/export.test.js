@@ -4,13 +4,15 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { PDFDocument, PDFArray, decodePDFRawStream } from 'pdf-lib';
+import { PDFDocument, PDFArray, PDFName, decodePDFRawStream } from 'pdf-lib';
 import { createCanvas, loadImage, Path2D } from '@napi-rs/canvas';
 import { fixture } from './helpers.js';
+import { makeCfb, dib, bmpFile, oleData, oleDxf } from './oleFixtures.js';
 import { readDxf } from '../src/core/dxfRead.js';
 import { newLayout } from '../src/core/layouts.js';
 import { newDocument, addEntity, addLayer, makeXline, makeLine, makeCircle, makeArc, makeText } from '../src/core/model.js';
 import { exportSvg } from '../src/core/exportSvg.js';
+import { buildScene } from '../src/core/render.js';
 import { exportPdf, exportPdfPages, plotLayout, plotScale, pageFit } from '../src/core/exportPdf.js';
 import { plotSettingsFrom, plotSettingsToStore, PLOT_DEFAULTS } from '../src/core/plotSettings.js';
 
@@ -312,4 +314,66 @@ test('PUBLISH plot area: a stray far-away entity shrinks an Extents plot; Curren
   assert.ok(span(view.pts) > 0.8 * (view.w - 10), `view: the plan spans ${span(view.pts)} of ${view.w - 10} mm`);
   assert.ok(view.pts.every((p) => p.x >= 0 && p.x <= view.w), 'no path point beyond the page: the stray entity is not drawn');
   assert.equal(view.pts.length, 8, '4 lines only (the stray one is not written)');
+});
+
+// ---- raster pictures: OLE2FRAME previews (IMAGE entities go through the same branch) ----
+const oleDoc = (...frames) => {
+  const d = newDocument();
+  for (const [chunks, dx] of frames) {
+    const e = { ...readDxf(oleDxf(chunks)).entities[0], data: chunks };
+    d.entities.push(dx ? { ...e, p1: { x: e.p1.x + dx, y: e.p1.y }, p2: { x: e.p2.x + dx, y: e.p2.y } } : e);
+  }
+  return d;
+};
+const imageXObjects = (pdf) => [...pdf.context.enumerateIndirectObjects()].map(([, o]) => o).filter((o) => o.dict?.get(PDFName.of('Subtype'))?.asString() === '/Image');
+
+test('PDF: an OLE2FRAME preview is embedded as one image XObject placed at the frame; a second identical draw reuses it', async () => {
+  const MM = 72 / 25.4, RED = [220, 30, 40];
+  const chunks = oleData({ x: 100, y: 60 }, { x: 140, y: 20 }, makeCfb({ CONTENTS: bmpFile(dib(40, 40, RED)) }));
+  const doc = oleDoc([chunks, 0], [chunks, 100]); // two frames, one data array: one decoded preview
+  const { bytes } = await exportPdf(doc, { pageSize: 'fit', scale: 1, margin: 10, centre: false });
+  const imgs = imageXObjects(await PDFDocument.load(bytes));
+  assert.equal(imgs.length, 1, 'one image XObject for both frames');
+  assert.deepEqual([imgs[0].dict.get(PDFName.of('Width')).asNumber(), imgs[0].dict.get(PDFName.of('Height')).asNumber()], [40, 40]);
+  const text = await pageText(bytes);
+  const cms = [...text.matchAll(/([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+) cm\s+\/Img[-\w]* Do/g)].map((m) => m.slice(1).map(Number));
+  assert.equal(cms.length, 2, 'two cm + Do');
+  const [a, b, c, d, e, f] = cms[0];
+  // 40 x 20 drawing units at 1 mm each, frame lower-left (100, 20) at the 10 mm margin
+  assert.deepEqual([a / MM, b, c, d / MM, e / MM, f / MM].map((v) => Math.round(v * 1000) / 1000), [40, 0, 0, 40, 10, 10]);
+  assert.ok(Math.abs(cms[1][4] / MM - 110) < 1e-3, 'the second frame is 100 units to the right');
+});
+
+test('layout PDF: a model OLE picture seen through a viewport is clipped by the viewport', async () => {
+  const chunks = oleData({ x: 0, y: 10 }, { x: 20, y: 0 }, makeCfb({ CONTENTS: bmpFile(dib(8, 8, [10, 200, 30])) }));
+  const doc = oleDoc([chunks, 0]);
+  const lay = newLayout('Layout1', 1);
+  lay.entities.push({ type: 'VIEWPORT', id: 99, layer: '0', color: 256, vpId: 2, on: true, c: { x: 200, y: 150 }, width: 100, height: 60, viewCenter: { x: 10, y: 5 }, viewHeight: 60, twist: 0 });
+  doc.layouts = [lay];
+  const text = await pageText((await exportPdf(doc, { layout: lay })).bytes);
+  // the viewport's rectangle clip (m l l l h W n) is the one open when the picture is drawn: next operators are q, cm, Do
+  assert.match(text, /([-\d.]+ [-\d.]+ l\n){3}h\nW\nn\nq\n([-\d.]+ ){6}cm\n\/Img[-\w]* Do\n/);
+});
+
+test('PDF: imageRgba runs once for an IMAGE drawn twice (the cache is looked up first)', async () => {
+  const bitmap = {}, d = newDocument();
+  d.images = new Map([['pic.png', { status: 'loaded', bitmap }]]);
+  const img = (x) => ({ type: 'IMAGE', id: 0, layer: '0', color: 256, path: 'pic.png', p: { x, y: 0 }, u: { x: 0.1, y: 0 }, v: { x: 0, y: 0.1 }, size: { x: 10, y: 10 }, clip: { on: false } });
+  d.entities.push(img(0), img(20));
+  let calls = 0;
+  const imageRgba = () => { calls++; return { width: 1, height: 1, rgba: new Uint8ClampedArray([1, 2, 3, 255]) }; };
+  const { bytes } = await exportPdf(d, { pageSize: 'fit', scale: 1, margin: 10, centre: false, imageRgba });
+  assert.equal(imageXObjects(await PDFDocument.load(bytes)).length, 1);
+  assert.equal(calls, 1);
+});
+
+test('PDF: the border of an OLE2FRAME with a preview is shown on screen but not plotted; SVG keeps a frame', async () => {
+  const chunks = oleData({ x: 100, y: 60 }, { x: 140, y: 20 }, makeCfb({ CONTENTS: bmpFile(dib(40, 40, [220, 30, 40])) }));
+  const doc = oleDoc([chunks, 0]);
+  const sc = buildScene(doc);
+  assert.ok(sc.items.some((it) => it.kind === 'path' && it.oleFrame), 'the frame is in the scene (screen)');
+  const text = await pageText((await exportPdf(doc, { pageSize: 'fit', scale: 1, margin: 10, centre: false })).bytes);
+  assert.doesNotMatch(text, /\sl\n/, 'no line segment: only the picture');
+  assert.match(text, /\/Img[-\w]* Do/);
+  assert.match(exportSvg(doc), /<path/, 'SVG has no image path: the frame stays');
 });
