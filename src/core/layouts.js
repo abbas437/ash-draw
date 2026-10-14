@@ -7,6 +7,8 @@
 //            units (0 in, 1 mm, 2 px), rotation (0..3), plotType (74), flags (70), window, imageOrigin, styleSheet, stdScale }
 //   entities: paper-space entities, including { type:'VIEWPORT', ... } (see readViewport).
 
+import { mmPerUnit } from './model.js';
+
 const VP_LOCKED = 16384, VP_OFF = 131072, VP_CLIP = 65536;
 
 /** scale denominator N of "1:N" for a viewport (model units per paper unit) */
@@ -168,7 +170,18 @@ export function viewportFromModelView(pv, vp, mv) {
 }
 
 /** standard plot scales "1:N" offered for viewports */
-export const STANDARD_SCALES = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000];
+export const STANDARD_SCALES = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000];
+
+/** paper millimetres per layout unit as a viewport scale counts them: the layout's paper units alone (25.4 for an inch
+ *  layout, else 1). Like AutoCAD, a viewport's 1:N ignores the page setup's plot scale (unlike paperMmPerUnit). */
+export const layoutMmPerUnit = (plot) => (plot.units === 0 ? 25.4 : 1);
+
+/** printed scale N of "1:N" of a viewport: model millimetres per layout millimetre. `plot` is its layout's (only its
+ *  paper units count, see layoutMmPerUnit), `units` the drawing's $INSUNITS (unitless taken as mm) */
+export const viewportPrintScale = (vp, plot, units) => (viewportScale(vp) * mmPerUnit(units)) / layoutMmPerUnit(plot);
+
+/** the viewHeight that makes viewport `vp` print at 1:n (inverse of viewportPrintScale) */
+export const viewHeightForScale = (vp, n, plot, units) => (vp.height * n * layoutMmPerUnit(plot)) / mmPerUnit(units);
 
 /** the topmost (last drawn) usable viewport containing paper point p, or null */
 export function viewportAt(entities, p) {
@@ -178,6 +191,23 @@ export function viewportAt(entities, p) {
     if (Math.abs(p.x - v.c.x) <= v.width / 2 && Math.abs(p.y - v.c.y) <= v.height / 2) return v;
   }
   return null;
+}
+
+/** the page setup's plot window of a layout, normalised {minx,miny,maxx,maxy} in layout units, or null when it has
+ *  none (a DXF without one reads as all zeros) */
+export function layoutPlotWindow(plot) {
+  const w = plot.window;
+  if (!w || !(w.x1 !== w.x2 && w.y1 !== w.y2)) return null;
+  return { minx: Math.min(w.x1, w.x2), miny: Math.min(w.y1, w.y2), maxx: Math.max(w.x1, w.x2), maxy: Math.max(w.y1, w.y2) };
+}
+
+/** what a layout plot covers, in layout units {minx,miny,maxx,maxy}: area 'layout' the sheet, 'extents' the given
+ *  paper-space extents (the sheet when there are none), 'window' the page setup's plot window (the sheet when unset) */
+export function layoutPlotRegion(layout, area, extents) {
+  const { sheet } = paperRects(layout);
+  if (area === 'extents') return extents && extents.maxx >= extents.minx && extents.maxy >= extents.miny ? extents : sheet;
+  if (area === 'window') return layoutPlotWindow(layout.plot) ?? sheet;
+  return sheet;
 }
 
 /** PDF page for plotting a layout: page size in points = the paper, k = points per layout unit (paperMmPerUnit),

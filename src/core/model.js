@@ -18,6 +18,11 @@ export const SUPPORTED_TYPES = [
 export const BYLAYER = 256;
 export const BYBLOCK = 0;
 
+/** millimetres per drawing unit for $INSUNITS codes; 0 (unitless) and unknown codes have none */
+export const MM_PER_UNIT = Object.freeze({ 1: 25.4, 2: 304.8, 3: 1609344, 4: 1, 5: 10, 6: 1000, 7: 1e6, 8: 25.4e-6, 9: 0.0254, 10: 914.4, 11: 1e-7, 12: 1e-6, 13: 1e-3, 14: 100, 15: 1e4, 16: 1e5, 17: 1e12, 18: 1.495978707e14, 19: 9.4607304725808e18, 20: 3.0856776e19 });
+/** millimetres per drawing unit; a unitless (or unknown) drawing is taken as millimetres */
+export const mmPerUnit = (units) => MM_PER_UNIT[units] ?? 1;
+
 export function newDocument() {
   const doc = {
     units: 0, // $INSUNITS (0 = unitless, 1 = inch, 4 = mm, 5 = cm, 6 = m ...)

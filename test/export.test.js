@@ -9,7 +9,7 @@ import { createCanvas, loadImage, Path2D } from '@napi-rs/canvas';
 import { fixture } from './helpers.js';
 import { makeCfb, dib, bmpFile, oleData, oleDxf } from './oleFixtures.js';
 import { readDxf } from '../src/core/dxfRead.js';
-import { newLayout } from '../src/core/layouts.js';
+import { newLayout, layoutPlotRegion, paperRects } from '../src/core/layouts.js';
 import { newDocument, addEntity, addLayer, makeXline, makeLine, makeCircle, makeArc, makeText } from '../src/core/model.js';
 import { exportSvg } from '../src/core/exportSvg.js';
 import { buildScene } from '../src/core/render.js';
@@ -376,4 +376,63 @@ test('PDF: the border of an OLE2FRAME with a preview is shown on screen but not 
   assert.doesNotMatch(text, /\sl\n/, 'no line segment: only the picture');
   assert.match(text, /\/Img[-\w]* Do/);
   assert.match(exportSvg(doc), /<path/, 'SVG has no image path: the frame stays');
+});
+
+// ---- layout plot area and scale (the layout's page setup) ---------------------------------------------------------
+const paperLine = (x1, y1, x2, y2) => ({ ...makeLine({ x: x1, y: y1 }, { x: x2, y: y2 }), id: 900 + x1 });
+const layoutDoc = () => {
+  const doc = newDocument(), lay = newLayout('Layout1', 1);
+  lay.entities.push(paperLine(100, 50, 300, 150));
+  doc.layouts = [lay];
+  return { doc, lay };
+};
+
+test('layoutPlotRegion: the sheet, the extents (the sheet when empty), the normalised plot window (the sheet when unset)', () => {
+  const { lay } = layoutDoc(), sheet = paperRects(lay).sheet, ext = { minx: 100, miny: 50, maxx: 300, maxy: 150 };
+  assert.deepEqual(layoutPlotRegion(lay, 'layout', ext), sheet);
+  assert.deepEqual(layoutPlotRegion(lay, 'extents', ext), ext);
+  assert.deepEqual(layoutPlotRegion(lay, 'extents', null), sheet);
+  assert.deepEqual(layoutPlotRegion(lay, 'extents', { minx: Infinity, miny: Infinity, maxx: -Infinity, maxy: -Infinity }), sheet);
+  assert.deepEqual(layoutPlotRegion(lay, 'window', ext), sheet, 'no window');
+  lay.plot.window = { x1: 0, y1: 0, x2: 0, y2: 0 };
+  assert.deepEqual(layoutPlotRegion(lay, 'window', ext), sheet, 'a DXF without a window reads as zeros');
+  lay.plot.window = { x1: 80, y1: 60, x2: 10, y2: 20 };
+  assert.deepEqual(layoutPlotRegion(lay, 'window', ext), { minx: 10, miny: 20, maxx: 80, maxy: 60 });
+});
+
+test('layout PDF: extents at 1:2 on A3 is an A3 landscape page with the 100 x 50 mm area centred and clipped to it', async () => {
+  const { doc, lay } = layoutDoc();
+  const out = await exportPdf(doc, { layout: lay, area: 'extents', paper: 'A3', fit: false, layoutScale: 1 / 2 });
+  assert.deepEqual(out.warnings, []);
+  const pdf = await PDFDocument.load(out.bytes), { width, height } = pdf.getPage(0).getSize();
+  assert.ok(near(width, 1190.55) && near(height, 841.89), `${width} x ${height}`);
+  const text = await pageText(out.bytes), ox = (width - 100 * PT) / 2, oy = (height - 50 * PT) / 2;
+  const clip = text.match(/^\s*q\s+([-\d.]+) ([-\d.]+) m\s+([-\d.]+) ([-\d.]+) l\s+([-\d.]+) ([-\d.]+) l/);
+  assert.ok(clip && near(+clip[1], ox, 0.05) && near(+clip[2], oy, 0.05) && near(+clip[5], ox + 100 * PT, 0.05) && near(+clip[6], oy + 50 * PT, 0.05), `clip ${clip?.slice(1)}`);
+  const lines = [...text.matchAll(/([-\d.]+) ([-\d.]+) m\s+([-\d.]+) ([-\d.]+) l/g)].map((m) => m.slice(1).map(Number));
+  assert.ok(lines.some(([a, b, c, d]) => near(a, ox, 0.05) && near(b, oy, 0.05) && near(c, ox + 100 * PT, 0.05) && near(d, oy + 50 * PT, 0.05)), `the line ${ox},${oy} -> +100 x 50 mm in ${JSON.stringify(lines)}`);
+});
+
+test('layout PDF: a window fitted on the layout\'s own paper keeps its page size; too large at 1:1 on A4 warns', async () => {
+  const { doc, lay } = layoutDoc();
+  lay.plot.window = { x1: 100, y1: 50, x2: 300, y2: 150 };
+  const own = await exportPdf(doc, { layout: lay, area: 'window', fit: true });
+  const { width, height } = (await PDFDocument.load(own.bytes)).getPage(0).getSize();
+  assert.ok(near(width, 420 * PT) && near(height, 297 * PT), `${width} x ${height}`);
+  // 200 x 100 fitted into 410 x 287 mm: 2.05x, the line spans 410 mm
+  const lines = [...(await pageText(own.bytes)).matchAll(/([-\d.]+) ([-\d.]+) m\s+([-\d.]+) ([-\d.]+) l/g)].map((m) => m[3] - m[1]);
+  assert.ok(lines.some((l) => near(l, 410 * PT, 0.05)), `${lines}`);
+  lay.entities.push(paperLine(0, 0, 400, 0));
+  const big = await exportPdf(doc, { layout: lay, area: 'extents', paper: 'A4', fit: false, layoutScale: 1 });
+  assert.match(big.warnings.join(), /plot area \(extents\) is larger than A4/);
+});
+
+test('layout PDF: the sheet on its own paper ignores area-only options; publish options (no area) plot as before', async () => {
+  const doc = readDxf(fixture('layouts_r2000.dxf')), layout = doc.layouts[0];
+  const plain = await exportPdf(doc, { layout });
+  const same = await exportPdf(doc, { layout, area: 'layout', paper: 'layout', fit: true, layoutScale: 7 });
+  assert.equal(await pageText(same.bytes), await pageText(plain.bytes));
+  const a3 = await exportPdf(doc, { layout, paper: 'A3', fit: true, scale: null });
+  const a3Area = await exportPdf(doc, { layout, paper: 'A3', fit: true, area: 'layout', layoutScale: null });
+  assert.equal(await pageText(a3Area.bytes), await pageText(a3.bytes));
 });
