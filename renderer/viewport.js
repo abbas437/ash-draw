@@ -232,6 +232,7 @@ export class Viewport {
     }
     else this._sceneFrame(opts);
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    if (this.overlay) { ctx.save(); this.overlay(ctx, view, this); ctx.restore(); } // block editor base point
     this._drawGrips();
     if (this.preview) { ctx.save(); this.preview(ctx, view, this); ctx.restore(); }
     if (this.rubber) this._drawRubber();

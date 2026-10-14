@@ -20,6 +20,7 @@ import { initAutosave } from './autosave.js';
 import { AUTOSAVE_CHOICES, shouldDiscardAutosave } from '../src/core/autosave.js';
 import { FindPanel } from './find.js';
 import { plotDialog, publishDialog } from './plot.js';
+import { initBlockEditor } from './bedit-ui.js';
 import { initLayouts, restoreSpace, renderSpaceBar, layoutDoubleClick, exitMspace, renderVpScale, commitViewportView } from './layouts-ui.js';
 import { ComparePanel, runCompare, compareUses } from './compare.js';
 import { viewCommands, viewMenuItems } from './views-ui.js';
@@ -73,6 +74,7 @@ class App {
     this.bindDrop();
     this.find = new FindPanel(this);
     initLayouts(this);
+    initBlockEditor(this);
     this.history = new CommandHistory(); // one per window, shared by all tabs
     this.histView = new CmdHistView(this.history);
     this.comparePanel = new ComparePanel(this);
@@ -297,7 +299,7 @@ class App {
     if (cur !== tab && this.toolId) this.setTool(this.toolId === 'select' ? 'select' : this.toolId); // drop a half-done command
     this.active = tab;
     restoreSpace(this, tab);
-    this.vp.setSession(tab.session, { fit: fit || !tab.view, view: fit ? null : tab.view, selection: tab.selection, scene: tab.scene, index: tab.index, lastPoint: tab.lastPoint, initialView: firstView ? savedViewBox(tab.session.doc) : null });
+    this.vp.setSession(tab.bedit?.edit.session ?? tab.session, { fit: fit || !tab.view, view: fit ? null : tab.view, selection: tab.selection, scene: tab.scene, index: tab.index, lastPoint: tab.lastPoint, initialView: firstView ? savedViewBox(tab.session.doc) : null });
     tab.scene = tab.index = null;
     renderSpaceBar(this);
     this.refreshPanels(); this.refreshStatus(); this.updateTitle(); this.refreshDimStyles();
