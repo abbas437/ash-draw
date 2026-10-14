@@ -96,10 +96,20 @@ try {
   await page.selectOption('#cmp-view', 'differences');
 
   step = 'Plot to PDF… opens the Plot dialog for the compare tab';
+  await page.evaluate(() => { window.app.plotSettings = { ...(window.app.plotSettings ?? {}), monochrome: true }; });
   await page.click('#cmp-plot');
   await page.locator('#dlg[open]').waitFor({ timeout: 3000 });
+  assert.equal(await page.locator('#dlg input[name=monochrome]').isChecked(), false, 'a comparison plots in colour even when Monochrome is remembered');
   await page.keyboard.press('Escape');
   await page.locator('#dlg[open]').waitFor({ state: 'detached', timeout: 3000 }).catch(() => {});
+  assert.equal(await page.evaluate(() => window.app.plotSettings.monochrome), true, 'the remembered choice is untouched');
+  await page.evaluate(() => window.app.switchTo(window.app.tabs.find((t) => !t.compare)));
+  await page.evaluate(() => { window.app.exportPdf(); });
+  await page.locator('#dlg[open]').waitFor({ timeout: 3000 });
+  assert.equal(await page.locator('#dlg input[name=monochrome]').isChecked(), true, 'a normal drawing still shows the remembered Monochrome');
+  await page.keyboard.press('Escape');
+  await page.locator('#dlg[open]').waitFor({ state: 'detached', timeout: 3000 }).catch(() => {});
+  await page.evaluate(() => window.app.switchTo(window.app.tabs.find((t) => t.compare)));
 
   // click a world point on the canvas (endpoint snap gives it exactly)
   const clickAt = async (x, y) => {

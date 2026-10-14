@@ -518,3 +518,51 @@ test('alignQuality: share of A matched as unchanged or property-only', async () 
   assert.equal(p.pct, 5); assert.match(p.label, /^poor — check the alignment or pick points$/);
   assert.equal(q(0, 0, 0, 0).label.startsWith('poor'), true);
 });
+
+// ---- line styles per status (a black-and-white print still tells the statuses apart) --------------------
+import { PDFDocument, PDFArray, decodePDFRawStream } from 'pdf-lib';
+import { exportPdf } from '../src/core/exportPdf.js';
+
+test('compare layers: added heavy continuous, removed dashed, changed dash-dot, unchanged thin, property-only dotted', () => {
+  const L = COMPARE_LAYERS;
+  assert.deepEqual([L.added.linetype ?? null, L.added.lineweight], [null, 0.5]);
+  assert.deepEqual([L.removed.linetype, L.removed.lineweight], ['COMPARE_DASH', 0.35]);
+  for (const k of ['changed', 'changedA']) assert.deepEqual([L[k].linetype, L[k].lineweight], ['COMPARE_DASHDOT', 0.35]);
+  assert.deepEqual([L.same.linetype ?? null, L.same.lineweight], [null, 0.13]);
+  assert.equal(L.props.linetype, 'COMPARE_PROP_DOT'); assert.equal(L.props.lineweight, 0.13); assert.equal(L.props.color, 252);
+  const [a, b] = pair();
+  const d = buildCompareDoc(a, b, compareDocs(a, b));
+  for (const k of ['added', 'removed', 'changed', 'changedA', 'same', 'props']) {
+    const layer = d.layers.get(L[k].name);
+    assert.equal(layer.lineweight, L[k].lineweight, k);
+    for (const e of d.entities.filter((x) => x.layer === L[k].name)) assert.deepEqual([e.linetype, e.lineweight, e.color], ['BYLAYER', -1, 256], k);
+  }
+  for (const n of ['COMPARE_DASH', 'COMPARE_DASHDOT', 'COMPARE_PROP_DOT']) assert.ok(d.linetypes.get(n).pattern.length >= 2, n);
+});
+
+test('compare PDF in monochrome: added strokes heavier than removed, removed dashed, unchanged grey (not black)', async () => {
+  const mk = (...ls) => docOf(ls.map(([y]) => makeLine({ x: 0, y }, { x: 1000, y })));
+  const a = mk([0], [100]), b = mk([0], [200]); // y=0 unchanged, y=100 removed, y=200 added
+  const d = buildCompareDoc(a, b, compareDocs(a, b));
+  const pdf = await PDFDocument.load((await exportPdf(d, { monochrome: true })).bytes), c = pdf.getPage(0).node.Contents();
+  const streams = c instanceof PDFArray ? c.asArray().map((r) => pdf.context.lookup(r)) : [c];
+  const text = streams.map((st) => new TextDecoder().decode(decodePDFRawStream(st).decode())).join('\n');
+  const strokes = []; let rg = null, w = null, dash = null;
+  for (const line of text.split('\n').map((x) => x.trim())) {
+    if (/ RG$/.test(line)) rg = line; else if (/ w$/.test(line)) w = Number(line.split(' ')[0]); else if (/ d$/.test(line)) dash = line; else if (line === '[] 0 d') dash = null;
+    else if (line === 'S') strokes.push({ rg, w, dash });
+    else if (line === 'Q' || line === 'q') dash = null;
+  }
+  const isMark = (s) => { const m = s.dash && s.dash.match(/\[([\d.]+) ([\d.]+)\]/); return m && m[1] === m[2]; }; // the dotted cluster rectangle
+  strokes.splice(0, strokes.length, ...strokes.filter((s) => !isMark(s)));
+  assert.equal(strokes.length, 3, JSON.stringify(strokes));
+  const by = (f) => strokes.filter(f);
+  const dashed = by((s) => s.dash), plain = by((s) => !s.dash);
+  assert.equal(dashed.length, 1, 'only the removed line is dashed');
+  const heavy = plain.reduce((m, s) => (s.w > m.w ? s : m));
+  assert.ok(heavy.w > dashed[0].w, 'added heavier than removed');
+  const thin = plain.reduce((m, s) => (s.w < m.w ? s : m));
+  assert.ok(thin.w < dashed[0].w);
+  assert.notEqual(thin.rg, '0 0 0 RG', 'unchanged keeps its grey'); assert.notEqual(heavy.rg.slice(0, 5), '1 0 0');
+  assert.equal(heavy.rg, '0 0 0 RG'); assert.equal(dashed[0].rg, '0 0 0 RG');
+});

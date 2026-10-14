@@ -34,7 +34,7 @@ function* filterSteps(idx, keep) {
   return out;
 }
 import { newDocument, addLayer, addEntity } from './model.js';
-import { bboxOf, unionBox, explodeSteps, transformEntity, compose, translation, apply, DEG } from './geom.js';
+import { bboxOf, unionBox, docExtentsSteps, explodeSteps, transformEntity, compose, translation, apply, DEG } from './geom.js';
 import { drain } from './slice.js';
 
 const MAX_DEPTH = 16; // nested blocks expanded at most this deep (guards self-referencing blocks)
@@ -862,12 +862,14 @@ function* clusterSteps(a, b, r, gap) {
 
 // ---- the compare drawing ------------------------------------------------------------------------
 export const COMPARE_LAYERS = {
-  same: { name: 'COMPARE-SAME', color: 8 },             // unchanged: dimmed grey (B's copy)
-  added: { name: 'COMPARE-ADDED', color: 3 },           // in B only: green
-  removed: { name: 'COMPARE-REMOVED', color: 1 },       // in A only: red
-  changed: { name: 'COMPARE-CHANGED', color: 40 },      // changed, B's version: amber
-  changedA: { name: 'COMPARE-CHANGED-A', color: 40 },   // changed, A's version: amber
-  props: { name: 'COMPARE-PROPS', color: 252, linetype: 'COMPARE_DASH', lineweight: 0 }, // changed in colour / linetype / lineweight / layer only (B's version): faint grey, dashed, thin
+  // each status has its own line style as well as its colour, so a black-and-white print still tells them apart:
+  // added = heavy continuous, removed = dashed, changed = dash-dot, unchanged = thin continuous, property-only = thin dotted
+  same: { name: 'COMPARE-SAME', color: 8, lineweight: 0.13 },                                          // unchanged: dimmed grey (B's copy)
+  added: { name: 'COMPARE-ADDED', color: 3, lineweight: 0.5 },                                         // in B only: green
+  removed: { name: 'COMPARE-REMOVED', color: 1, linetype: 'COMPARE_DASH', lineweight: 0.35 },          // in A only: red
+  changed: { name: 'COMPARE-CHANGED', color: 40, linetype: 'COMPARE_DASHDOT', lineweight: 0.35 },      // changed, B's version: amber
+  changedA: { name: 'COMPARE-CHANGED-A', color: 40, linetype: 'COMPARE_DASHDOT', lineweight: 0.35 },   // changed, A's version: amber
+  props: { name: 'COMPARE-PROPS', color: 252, linetype: 'COMPARE_PROP_DOT', lineweight: 0.13 }, // changed in colour / linetype / lineweight / layer only (B's version): faint grey, dotted, thin
   marks: { name: 'COMPARE-MARKS', color: 6 },           // dotted rectangles around change clusters (no revision clouds)
 };
 
@@ -921,10 +923,11 @@ export function buildCompareDoc(a, b, r) {
 /** step generator behind buildCompareDoc: yields a progress fraction about every 256 objects copied */
 export function* buildCompareSteps(a, b, r) {
   const doc = newDocument();
+  doc.isCompare = true;
   doc.units = b.units || a.units;
   const mm = defaultTolerance(doc.units);
-  doc.linetypes.set('COMPARE_DASH', { name: 'COMPARE_DASH', description: 'Compare property changes __ __', pattern: [40 * mm, -20 * mm] });
-  for (const L of Object.values(COMPARE_LAYERS)) addLayer(doc, { name: L.name, color: L.color, ...(L.linetype ? { linetype: L.linetype, lineweight: L.lineweight } : {}) });
+  doc.linetypes.set('COMPARE_DASH', { name: 'COMPARE_DASH', description: 'Compare removed __ __', pattern: [40 * mm, -20 * mm] }); // re-scaled to the drawing below
+  for (const L of Object.values(COMPARE_LAYERS)) addLayer(doc, { name: L.name, color: L.color, ...(L.linetype ? { linetype: L.linetype } : {}), ...(L.lineweight != null ? { lineweight: L.lineweight } : {}) });
   for (const src of [a, b]) {
     for (const [k, v] of src.linetypes) if (!doc.linetypes.has(k)) doc.linetypes.set(k, v);
     for (const [k, v] of src.textStyles) if (!doc.textStyles.has(k)) doc.textStyles.set(k, v);
@@ -970,7 +973,7 @@ export function* buildCompareSteps(a, b, r) {
   n = 0;
   const put = (e, kind, ren) => {
     const c = structuredClone(e);
-    c.id = 0; c.layer = COMPARE_LAYERS[kind].name; c.color = 256;
+    c.id = 0; c.layer = COMPARE_LAYERS[kind].name; c.color = 256; c.linetype = 'BYLAYER'; c.lineweight = -1; // the status layer's colour, line type and weight win
     if (c.block && ren?.has(c.block)) c.block = ren.get(c.block);
     return addEntity(doc, c);
   };
@@ -983,6 +986,16 @@ export function* buildCompareSteps(a, b, r) {
   for (const e of r.removed) { if (piecewise(e, removedA)) put(e, 'removed'); if (tick()) yield n / total; }
   for (const t of addedB) { put(t, 'added'); if (tick()) yield n / total; }
   for (const e of r.added) { if (piecewise(e, addedB)) put(e, 'added'); if (tick()) yield n / total; }
+  // dash patterns are in drawing units: sized from the drawing so they read on paper (about 2 mm on A3 for the dash unit)
+  {
+    const g = docExtentsSteps(doc); let ext;
+    for (;;) { const st = g.next(); if (st.done) { ext = st.value; break; } if ((++n & 255) === 0) yield 0; }
+    const u = ext ? Math.max(ext.maxx - ext.minx, ext.maxy - ext.miny) / 250 : 0;
+    const unit = u > 0 ? u : mm;
+    doc.linetypes.set('COMPARE_DASH', { name: 'COMPARE_DASH', description: 'Compare removed __ __', pattern: [3 * unit, -1.5 * unit] });
+    doc.linetypes.set('COMPARE_DASHDOT', { name: 'COMPARE_DASHDOT', description: 'Compare changed __ . __ .', pattern: [3 * unit, -1 * unit, 0.4 * unit, -1 * unit] });
+    doc.linetypes.set('COMPARE_PROP_DOT', { name: 'COMPARE_PROP_DOT', description: 'Compare property changes . . .', pattern: [0.5 * unit, -0.8 * unit] });
+  }
   doc.linetypes.set('COMPARE_DOT', { name: 'COMPARE_DOT', description: 'Compare marks . . .', pattern: [1, -1] });
   for (const c of r.clusters) {
     c.mark = clusterMark(c);
