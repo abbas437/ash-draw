@@ -5,6 +5,7 @@ import { promises as fs, mkdirSync, readFileSync, renameSync, statSync, writeFil
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { atomicWrite, saveDrawingFile } from './backup.js';
+import { createAutosaveStore } from './autosave.js';
 import { createDwgBridge, DWG_OUT_VERSIONS } from './dwgBridge.js';
 import { createHandoffStore } from './handoff.js';
 import { createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isOdaExeName, ODA_DOWNLOAD_URL, ODA_DWG_VERSIONS } from './odaConverter.js';
@@ -99,6 +100,7 @@ const storePath = (n) => path.join(app.getPath('userData'), n);
 async function loadJson(n) { try { return JSON.parse(await fs.readFile(storePath(n), 'utf8')); } catch { return {}; } }
 async function saveJson(n, obj) { await fs.mkdir(app.getPath('userData'), { recursive: true }); await atomicWrite(storePath(n), JSON.stringify(obj, null, 2)); }
 let settings = null;
+const autosave = createAutosaveStore({ dir: () => path.join(app.getPath('userData'), 'autosave'), appVersion: app.getVersion() });
 
 // ---- launch files (argv / second instance / macOS open-file) ----
 function drawingArgs(argv, cwd) {
@@ -301,6 +303,11 @@ function registerIpc() {
     const p = grantedPath(o.path);
     return saveDrawingFile(p, asBytes(o.bytes)); // an existing .dxf/.dwg is copied to .bak first
   });
+  // ---- autosave (reviewer #29): copies of drawings with unsaved changes in <userData>/autosave, named by id only
+  handle('autosave:write', (id, bytes, meta) => autosave.write(id, asBytes(bytes, 'DXF data'), plainObject(meta)));
+  handle('autosave:list', () => autosave.list());
+  handle('autosave:read', (id) => autosave.read(id));
+  handle('autosave:discard', (id) => autosave.discard(id));
   handle('app:launchFiles', () => { rendererReady = true; return pendingFiles.splice(0); });
   // Print a plot: the renderer builds the PDF; it is written to a private temp folder, shown in a hidden window by
   // Electron's PDF viewer and printed from there with the system print dialog (printer, copies). Never the app window.

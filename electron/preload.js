@@ -40,6 +40,11 @@ contextBridge.exposeInMainWorld('api', {
   recentList: () => invoke('app:recentList'),
   recentOpen: (p) => invoke('app:recentOpen', p),
   recentClear: () => invoke('app:recentClear'),
+  // autosave copies of drawings with unsaved changes (ids only, never paths)
+  autosaveWrite: (id, bytes, meta) => invoke('autosave:write', id, bytes, meta),
+  autosaveList: () => invoke('autosave:list'),
+  autosaveRead: (id) => invoke('autosave:read', id),
+  autosaveDiscard: (id) => invoke('autosave:discard', id),
   dwgAvailable: () => invoke('dwg:available'),
   dwgConfig: () => invoke('dwg:config'),
   dwgSetConfig: (c) => invoke('dwg:setConfig', c),
