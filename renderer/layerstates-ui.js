@@ -1,7 +1,7 @@
 // ASH Draw Studio - LAYERSTATE / LAS / LMAN: the Layer States Manager. Save the layers' settings under a name, restore
 // them later (each action is one undo step, see src/core/layerstates.js), import and export AutoCAD .las files.
 // Setting 'layerstates.restoreMask': the LS bits Restore applies (the "Restore these properties" checkboxes).
-import { LS, LS_ALL, LS_PROPS, listLayerStates, getLayerState, stateMatches, saveLayerState, restoreLayerState, deleteLayerState, renameLayerState, exportLas, parseLas, importLayerStates } from '../src/core/layerstates.js';
+import { LS, LS_ALL, LS_PROPS, frozenCurrent, listLayerStates, getLayerState, stateMatches, saveLayerState, restoreLayerState, deleteLayerState, renameLayerState, exportLas, parseLas, importLayerStates } from '../src/core/layerstates.js';
 import { savePathIn } from './files.js';
 import { el, modal, message, promptDialog, toast } from './ui.js';
 
@@ -25,8 +25,8 @@ async function nameDialog(title, name = '', description = '') {
 async function newState(app) {
   const r = await nameDialog('New layer state');
   if (!r) return null;
-  if (getLayerState(app.doc, r.name) && !(await ask('Layer state exists', `A layer state named "${r.name}" already exists. Replace it?`))) return null;
-  return saveLayerState(app.session, r.name, r.description).name;
+  if (getLayerState(app.fileDoc, r.name) && !(await ask('Layer state exists', `A layer state named "${r.name}" already exists. Replace it?`))) return null;
+  return saveLayerState(app.session, r.name, r.description, { currentLayer: app.state.layer }).name;
 }
 
 /** Import .las…: states that clash with an existing name are taken only when the user says so; returns the first name added */
@@ -38,7 +38,7 @@ async function importLas(app) {
   if (!states.length) { toast('The file has no layer states.'); return null; }
   const replace = new Set();
   for (const st of states) {
-    if (getLayerState(app.doc, st.name) && (await ask('Layer state exists', `A layer state named "${st.name}" already exists. Replace it with the imported one?`))) replace.add(st.name);
+    if (getLayerState(app.fileDoc, st.name) && (await ask('Layer state exists', `A layer state named "${st.name}" already exists. Replace it with the imported one?`))) replace.add(st.name);
   }
   const added = importLayerStates(app.session, states, (n) => replace.has(n));
   toast(added.length ? `Imported: ${added.join(', ')}` : 'No layer states were imported.', 3000);
@@ -55,9 +55,9 @@ async function exportState(app, st) {
 export async function layerStatesDialog(app) {
   let mask = LS_ALL;
   try { const v = await window.api.settingsGet?.(MASK_KEY); if (Number.isInteger(v)) mask = v & LS_ALL; } catch { /* default: all */ }
-  let sel = listLayerStates(app.doc)[0]?.name ?? null;
+  let sel = listLayerStates(app.fileDoc)[0]?.name ?? null;
   for (;;) {
-    const s = app.session, doc = app.doc;
+    const s = app.session, doc = app.fileDoc; // the drawing, also on a layout tab (whose session doc is a space doc)
     let action = null;
     const close = (a) => { action = a; document.getElementById('dlg').close(); };
     const list = el('div', { class: 'ls-list', role: 'listbox', 'aria-label': 'Layer states' });
@@ -73,7 +73,7 @@ export async function layerStatesDialog(app) {
     };
     const btn = (id, label, title, onclick) => el('button', { type: 'button', id, title, onclick }, label);
     const needSel = [
-      btn('ls-update', 'Update', 'Save the current layers under the selected name', () => { saveLayerState(s, sel); toast(`Layer state ${sel} updated.`, 2000); render(); }),
+      btn('ls-update', 'Update', 'Save the current layers under the selected name', () => { saveLayerState(s, sel, undefined, { currentLayer: app.state.layer }); toast(`Layer state ${sel} updated.`, 2000); render(); }),
       btn('ls-rename', 'Rename…', 'Rename the selected layer state', () => close('rename')),
       btn('ls-delete', 'Delete', 'Delete the selected layer state', () => { deleteLayerState(s, sel); sel = null; render(); }),
       btn('ls-export', 'Export .las…', 'Save the selected layer state as an AutoCAD .las file', () => exportState(app, getLayerState(doc, sel))),
@@ -96,9 +96,10 @@ export async function layerStatesDialog(app) {
     if (!action) return;
     if (action === 'restore') {
       if (!sel) { toast('Select a layer state to restore.'); continue; }
-      const n = restoreLayerState(s, sel, { mask, offMissing });
+      const cur = frozenCurrent(doc, sel, { mask, currentLayer: app.state.layer });
+      const n = restoreLayerState(s, sel, { mask, offMissing, currentLayer: app.state.layer });
       app.refreshPanels(); app.vp.requestRender();
-      toast(n > 0 ? `Layer state ${sel} restored (${n} layer${n === 1 ? '' : 's'} changed).` : `Layer state ${sel}: the layers already match.`, 2500);
+      toast(`${n > 0 ? `Layer state ${sel} restored (${n} layer${n === 1 ? '' : 's'} changed).` : `Layer state ${sel}: the layers already match.`}${cur ? ` Layer ${cur} is current and was not frozen.` : ''}`, cur ? 4000 : 2500);
       return;
     }
     if (action === 'new') sel = (await newState(app)) ?? sel;

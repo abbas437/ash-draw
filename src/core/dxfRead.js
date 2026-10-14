@@ -851,7 +851,7 @@ function parseTokens(tk, onProgress = null) {
       }
       if (rec.type === 'STYLE') styleH.set(rec.str(5), rec.str(2));
       if (rec.type === 'TABLE' && rec.str(2) === 'LAYER') lsXdict = rec.get(360); // layer states live in its extension dictionary
-      if (rec.type === 'VIEW') viewRecs.push(rec.tags());
+      if (rec.type === 'VIEW') viewRecs.push(rec.tags().map(([c, v]) => [c, isStringCode(c) ? decodeU(v) : v])); // name, ASHDRAW layout XDATA
       if (rec.type === 'VPORT' && !vportSeen && rec.str(2).toLowerCase() === '*active') { vportSeen = true; const av = readActiveView(rec); if (av) doc.activeView = av; }
       if (rec.type === 'LAYER') {
         const name = rec.str(2);
@@ -959,7 +959,7 @@ function parseTokens(tk, onProgress = null) {
   if (secs.OBJECTS) {
     for (const rec of records(tk, secs.OBJECTS.from, secs.OBJECTS.to)) {
       if (rec.type !== 'LAYOUT') continue;
-      const lo = parseLayoutObject(rec.tags());
+      const lo = parseLayoutObject(rec.tags().map(([c, v]) => [c, isStringCode(c) ? decodeU(v) : v])); // a \U+XXXX layout name matches its views'
       const block = blockRecH.get(normHandle(lo.blockHandle)) ?? '';
       if (/^\*model_space$/i.test(block) || lo.name.toUpperCase() === 'MODEL') continue;
       lo.block = block || (layouts.length ? `*Paper_Space${layouts.length - 1}` : '*Paper_Space');

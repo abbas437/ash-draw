@@ -4,9 +4,14 @@
 //   transparency is the alpha byte (255 opaque); lineweight as in the model (mm, or -1/-2/-3).
 // Stored in DXF as AutoCAD does: LAYER table extension dictionary -> ACAD_LAYERSTATES dictionary -> one XRECORD per
 // state. The same group codes make up the .las file of AutoCAD's Layer States Manager.
-// Group codes were inferred (no AutoCAD-written sample with states was available): header 91 mask, 301 description,
-// 290 flag, 302 current layer; per layer 8 name, 90 flags (1 off, 2 frozen, 4 locked, 8 plot), 62 ACI, 92 true colour,
-// 370 lineweight, 6 linetype, 1 plot style, 440 transparency. Unknown codes are kept and written back.
+// Group codes: header 91 mask, 301 description, 290 flag, 302 current layer; per layer 8 name, 90 flags (1 off, 2 frozen,
+// 4 locked, 8 plot), 62 ACI, 92 true colour, 370 lineweight, 6 linetype, 2 plot style, 440 transparency (0 = opaque).
+// The per-layer codes 2 (plot style, e.g. "Color_2") and 440 = 0 for an opaque layer follow a .las written by AutoCAD
+// (Autodesk forum sample, "Deciphering the Layer State File (.las)"); in a .las code 1 is the state's name. Earlier ASH
+// versions wrote the plot style as code 1: read back only when it is the layer's single plot-style code.
+// Unknown codes are kept and written back.
+// A layout tab's session doc is a space doc (renderer/layouts-ui.js spaceDoc) that forwards only some properties, so
+// the states are always read and written on the drawing behind it (rootOf).
 
 /** mask bits, as AutoCAD's LayerStateMasks */
 export const LS = { on: 1, frozen: 2, locked: 4, plot: 8, newVp: 16, color: 32, linetype: 64, lineweight: 128, plotStyle: 256, currentVp: 512, transparency: 1024 };
@@ -15,6 +20,8 @@ export const LS_ALL = 2047;
 export const LS_PROPS = ['on', 'frozen', 'locked', 'plot', 'color', 'linetype', 'lineweight', 'transparency'];
 
 const key = (n) => String(n).toUpperCase();
+/** the whole drawing behind a session's doc (a layout's space doc forwards to it) */
+const rootOf = (doc) => doc.modelDoc ?? doc;
 const sameColor = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 /** a layer's current settings as a state entry */
@@ -23,15 +30,15 @@ export const layerEntry = (l) => ({
   color: typeof l.color === 'object' ? { ...l.color } : l.color, linetype: l.linetype, lineweight: l.lineweight, transparency: l.alpha ?? 255,
 });
 
-/** snapshot every layer of doc (xref layers excluded) */
-export function snapshot(doc, name, description = '') {
+/** snapshot every layer of doc (xref layers excluded); currentLayer: the drawing's current layer (the renderer's app.state.layer) */
+export function snapshot(doc, name, description = '', currentLayer) {
   const layers = new Map();
   for (const l of doc.layers.values()) if (!l.xrefDep) layers.set(l.name, layerEntry(l));
-  return { name: String(name), description, mask: LS_ALL, currentLayer: doc.header?.clayer ?? '0', layers };
+  return { name: String(name), description, mask: LS_ALL, currentLayer: currentLayer ?? doc.header?.clayer ?? '0', layers };
 }
 
-export const getLayerState = (doc, name) => doc.layerStates?.get(key(name)) ?? null;
-export const listLayerStates = (doc) => [...(doc.layerStates?.values() ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+export const getLayerState = (doc, name) => rootOf(doc).layerStates?.get(key(name)) ?? null;
+export const listLayerStates = (doc) => [...(rootOf(doc).layerStates?.values() ?? [])].sort((a, b) => a.name.localeCompare(b.name));
 
 /** the entry of layer `name` in state (exact, else case-insensitive) */
 function entryFor(st, name) {
@@ -69,29 +76,40 @@ export function stateMatches(doc, st, mask = st.mask) {
   return true;
 }
 
-/** save (or overwrite) a state from the current layers: one undo step. An overwrite keeps the description unless given. */
-export function saveLayerState(s, name, description) {
-  const old = getLayerState(s.doc, name);
-  const st = snapshot(s.doc, old?.name ?? name, description ?? old?.description ?? '');
+/** save (or overwrite) a state from the current layers: one undo step. An overwrite keeps the description unless given.
+ *  opts.currentLayer: the current layer, stored as the state's current layer (code 302). */
+export function saveLayerState(s, name, description, { currentLayer } = {}) {
+  const doc = rootOf(s.doc), old = getLayerState(doc, name);
+  const st = snapshot(doc, old?.name ?? name, description ?? old?.description ?? '', currentLayer);
   s.transact(old ? `Update layer state ${st.name}` : `Save layer state ${st.name}`, (tx) => {
-    if (!s.doc.layerStates) tx.set(s.doc, 'layerStates', new Map());
-    tx.set(s.doc.layerStates, key(name), st);
+    if (!doc.layerStates) tx.set(doc, 'layerStates', new Map());
+    tx.set(doc.layerStates, key(name), st);
   });
   return st;
 }
 
+/** the current layer when restoring `name` under `mask` would freeze it (restore leaves it thawed, as AutoCAD does), else null */
+export function frozenCurrent(doc, name, { mask = LS_ALL, currentLayer } = {}) {
+  const st = getLayerState(doc, name), l = currentLayer != null && rootOf(doc).layers.get(currentLayer);
+  if (!st || !l || l.xrefDep || !(mask & st.mask & LS.frozen)) return null;
+  const e = entryFor(st, l.name);
+  return e?.frozen && !l.frozen ? l.name : null;
+}
+
 /** restore a state: one undo step. opts.mask: LS bits to apply (default all the state saved);
- *  opts.offMissing: turn off layers the state does not list. Returns the number of layers changed, or -1 when unknown. */
-export function restoreLayerState(s, name, { mask = LS_ALL, offMissing = false } = {}) {
-  const st = getLayerState(s.doc, name);
+ *  opts.offMissing: turn off layers the state does not list; opts.currentLayer: the current layer, never frozen
+ *  (see frozenCurrent). Returns the number of layers changed, or -1 when unknown. */
+export function restoreLayerState(s, name, { mask = LS_ALL, offMissing = false, currentLayer } = {}) {
+  const doc = rootOf(s.doc), st = getLayerState(doc, name);
   if (!st) return -1;
   const m = mask & st.mask;
   return s.transact(`Restore layer state ${st.name}`, (tx) => {
     let n = 0;
-    for (const l of [...s.doc.layers.values()]) {
+    for (const l of [...doc.layers.values()]) {
       if (l.xrefDep) continue;
       const e = entryFor(st, l.name);
-      const p = e ? changes(s.doc, l, e, m) : offMissing && l.visible !== false ? { visible: false } : {};
+      const p = e ? changes(doc, l, e, m) : offMissing && l.visible !== false ? { visible: false } : {};
+      if (p.frozen && l.name === currentLayer) delete p.frozen; // AutoCAD cannot freeze the current layer
       if (Object.keys(p).length) { tx.layer(l.name, p); n++; }
     }
     return n;
@@ -99,27 +117,27 @@ export function restoreLayerState(s, name, { mask = LS_ALL, offMissing = false }
 }
 
 export function deleteLayerState(s, name) {
-  const st = getLayerState(s.doc, name);
+  const doc = rootOf(s.doc), st = getLayerState(doc, name);
   if (!st) return false;
-  s.transact(`Delete layer state ${st.name}`, (tx) => tx.set(s.doc.layerStates, key(name), undefined));
+  s.transact(`Delete layer state ${st.name}`, (tx) => tx.set(doc.layerStates, key(name), undefined));
   return true;
 }
 
 /** rename a state; false when it is unknown or the new name is taken by another state */
 export function renameLayerState(s, name, to) {
-  const st = getLayerState(s.doc, name);
+  const doc = rootOf(s.doc), st = getLayerState(doc, name);
   to = String(to).trim();
-  if (!st || !to || (key(to) !== key(name) && getLayerState(s.doc, to))) return false;
+  if (!st || !to || (key(to) !== key(name) && getLayerState(doc, to))) return false;
   s.transact(`Rename layer state ${st.name}`, (tx) => {
-    tx.set(s.doc.layerStates, key(name), undefined);
-    tx.set(s.doc.layerStates, key(to), { ...st, name: to });
+    tx.set(doc.layerStates, key(name), undefined);
+    tx.set(doc.layerStates, key(to), { ...st, name: to });
   });
   return true;
 }
 
 // ---- group codes (XRECORD body and .las) ------------------------------------------------------
 const HEAD = new Set([91, 301, 290, 302]);
-const LAYER = new Set([90, 62, 92, 370, 6, 1, 440]);
+const LAYER = new Set([90, 62, 92, 370, 6, 2, 440]);
 
 /** [code, value] pairs of a state (after the XRECORD's 100/280 tags) */
 export function layerStateTags(st) {
@@ -130,7 +148,7 @@ export function layerStateTags(st) {
     t.push([8, name], [90, flags], [62, rgb ? 7 : Math.abs(e.color ?? 7) % 256 || 7]);
     if (rgb) t.push([92, (e.color.r << 16) | (e.color.g << 8) | e.color.b]);
     t.push([370, e.lineweight >= 0 ? Math.round(e.lineweight * 100) : (e.lineweight ?? -3)], [6, e.linetype ?? 'Continuous'],
-      [1, e.plotStyle ?? `Color_${rgb ? 7 : Math.abs(e.color ?? 7) % 256 || 7}`], [440, 0x02000000 | (e.transparency ?? 255)], ...(e.extra ?? []));
+      [2, e.plotStyle ?? `Color_${rgb ? 7 : Math.abs(e.color ?? 7) % 256 || 7}`], [440, (e.transparency ?? 255) >= 255 ? 0 : 0x02000000 | e.transparency], ...(e.extra ?? []));
   }
   return t;
 }
@@ -140,6 +158,7 @@ export function layerStateFromTags(name, tags) {
   const st = { name: String(name), description: '', mask: LS_ALL, currentLayer: '0', layers: new Map() };
   let e = null;
   const int = (v) => parseInt(v, 10) || 0;
+  const legacy = new Map(); // layer entry -> its code-1 values (plot style as earlier ASH versions wrote it)
   for (const [c, v] of tags) {
     if (c === 8) { e = { on: true, frozen: false, locked: false, plot: true, color: 7, linetype: 'Continuous', lineweight: -3, transparency: 255 }; st.layers.set(String(v), e); continue; }
     if (!e) {
@@ -152,10 +171,12 @@ export function layerStateFromTags(name, tags) {
     else if (c === 92) { const x = int(v); e.color = { r: (x >> 16) & 255, g: (x >> 8) & 255, b: x & 255 }; }
     else if (c === 370) { const x = int(v); e.lineweight = x >= 0 ? x / 100 : x; }
     else if (c === 6) e.linetype = String(v);
-    else if (c === 1) e.plotStyle = String(v);
+    else if (c === 2) { if (e.plotStyle === undefined || legacy.has(e)) { e.plotStyle = String(v); legacy.delete(e); } else (e.extra ??= []).push([c, v]); }
+    else if (c === 1) { if (e.plotStyle === undefined || legacy.has(e)) legacy.set(e, [...(legacy.get(e) ?? []), String(v)]); }
     else if (c === 440) { const x = int(v); e.transparency = x & 0x02000000 ? x & 255 : 255; }
     else (e.extra ??= []).push([c, v]);
   }
+  for (const [x, vals] of legacy) if (vals.length === 1) x.plotStyle = vals[0]; // ambiguous (several code 1s) -> dropped
   return st;
 }
 
@@ -210,11 +231,11 @@ export function parseLas(text) {
 
 /** merge imported states in one undo step; overwrite(name) -> boolean decides on a clash. Returns the names added. */
 export function importLayerStates(s, states, overwrite = () => false) {
-  const take = states.filter((st) => !getLayerState(s.doc, st.name) || overwrite(st.name));
+  const doc = rootOf(s.doc), take = states.filter((st) => !getLayerState(doc, st.name) || overwrite(st.name));
   if (!take.length) return [];
   s.transact('Import layer states', (tx) => {
-    if (!s.doc.layerStates) tx.set(s.doc, 'layerStates', new Map());
-    for (const st of take) tx.set(s.doc.layerStates, key(st.name), st);
+    if (!doc.layerStates) tx.set(doc, 'layerStates', new Map());
+    for (const st of take) tx.set(doc.layerStates, key(st.name), st);
   });
   return take.map((st) => st.name);
 }

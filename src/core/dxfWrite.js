@@ -721,7 +721,7 @@ export function* writeDxfSteps(doc, opts = {}) {
   }
   if (hLsX) { // LAYER table extension dictionary -> ACAD_LAYERSTATES -> one XRECORD per state
     const xh = lsStates.map(() => H());
-    out.p(0, 'DICTIONARY'); out.p(5, hLsX); out.p(330, tbl.LAYER); out.p(100, 'AcDbDictionary'); out.p(280, 1); out.p(281, 1); out.p(3, 'ACAD_LAYERSTATES'); out.p(360, hLsD);
+    out.p(0, 'DICTIONARY'); out.p(5, hLsX); out.p(102, '{ACAD_REACTORS'); out.p(330, tbl.LAYER); out.p(102, '}'); out.p(330, tbl.LAYER); out.p(100, 'AcDbDictionary'); out.p(280, 1); out.p(281, 1); out.p(3, 'ACAD_LAYERSTATES'); out.p(360, hLsD);
     out.p(0, 'DICTIONARY'); out.p(5, hLsD); out.p(102, '{ACAD_REACTORS'); out.p(330, hLsX); out.p(102, '}'); out.p(330, hLsX); out.p(100, 'AcDbDictionary'); out.p(281, 1);
     lsStates.forEach((st, i) => { out.s(3, st.name); out.p(350, xh[i]); });
     lsStates.forEach((st, i) => {

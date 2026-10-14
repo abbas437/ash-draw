@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readDxf } from '../src/core/dxfRead.js';
 import { writeDxf } from '../src/core/dxfWrite.js';
 import { newDocument } from '../src/core/model.js';
+import { newLayout } from '../src/core/layouts.js';
 import { Session } from '../src/core/edit.js';
 import { saveView, deleteView, renameView, restoreView, findView, viewsIn, viewsOf, viewFromScreen, restorable, viewBox } from '../src/core/views.js';
 
@@ -102,4 +103,19 @@ test('a 3D view is kept on save but cannot be restored', () => {
   const again = readDxf(bytes(asText(writeDxf(doc))));
   assert.deepEqual(again.views.get('ISO').dxf.dir, { x: 1, y: -1, z: 1 });
   assert.deepEqual(viewBox(doc.views.get('PLANT ROOM')), { minx: 70, maxx: 130, miny: 30, maxy: 70 });
+});
+
+test('a view on a layout with a non-ASCII name (written as \\U+XXXX) keeps its layout and name', () => {
+  const doc = newDocument();
+  doc.layouts = [newLayout('Café', 1)];
+  const s = new Session(doc);
+  saveView(s, { name: 'Façade', center: { x: 1, y: 2 }, width: 3, height: 4, space: 'Café' });
+  const out = asText(writeDxf(doc));
+  assert.match(out, /Caf\\U\+00E9/);
+  const back = readDxf(bytes(out));
+  assert.deepEqual(back.layouts.map((l) => l.name), ['Café']);
+  const v = findView(back, 'Façade');
+  assert.equal(v?.name, 'Façade');
+  assert.equal(v.space, 'Café');
+  assert.deepEqual(viewsIn(back, 'Café').map((x) => x.name), ['Façade']);
 });
