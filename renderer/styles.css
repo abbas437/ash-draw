@@ -290,7 +290,8 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 .cmp-counts { display:flex; flex-wrap:wrap; gap:4px 12px; }
 .cmp-files { flex-basis:100%; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .cmp-n i { display:inline-block; width:10px; height:10px; margin-right:4px; border-radius:2px; vertical-align:-1px; }
-.cmp-n.added i { background:#00ff00; } .cmp-n.removed i { background:#ff0000; } .cmp-n.changed i { background:#ffbf00; } .cmp-n.same i { background:#808080; }
+.cmp-n.added i { background:#00ff00; } .cmp-n.removed i { background:#ff0000; } .cmp-n.changed i { background:#ffbf00; } .cmp-n.same i { background:#808080; } .cmp-n.props i { background:#00ffff; }
+.cmp-opt { display:block; margin:2px 0; }
 .cmp-btns { display:flex; gap:8px; align-items:center; }
 .cmp-pos { color:var(--dim); margin-left:auto; }
 .cmp-list { overflow:auto; min-height:0; border-top:1px solid var(--line); }

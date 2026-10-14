@@ -69,7 +69,7 @@ try {
   const checkResult = async (how) => {
     await page.waitForFunction((n) => window.app.tabs.filter((t) => t.compare).length === n && !document.getElementById('compare-panel').hidden, how === 'auto' ? 1 : 2, { timeout: 20000 });
     const { offset, counts } = await panelText();
-    assert.match(counts, /Pieces/); assert.match(counts, /Added 1(?!\d)/); assert.match(counts, /Removed 0(?!\d)/); assert.match(counts, /Changed 0(?!\d)/); assert.match(counts, /Unchanged 7(?!\d)/);
+    assert.match(counts, /Pieces/); assert.match(counts, /Added 1(?!\d)/); assert.match(counts, /Removed 0(?!\d)/); assert.match(counts, /Changed \(shape\/position\) 0(?!\d)/); assert.match(counts, /Unchanged 7(?!\d)/);
     assert.match(offset, /^A aligned to B: moved 500, 200/);
     assert.match(offset, how === 'auto' ? /automatic; match good/ : /picked points/);
   };
@@ -154,7 +154,7 @@ try {
   await page.waitForFunction(() => window.app.tabs.filter((t) => t.compare).length === 3 && !document.getElementById('compare-panel').hidden, null, { timeout: 20000 });
   {
     const { offset, counts } = await panelText();
-    assert.match(counts, /Added 1(?!\d)/); assert.match(counts, /Removed 0(?!\d)/); assert.match(counts, /Changed 0(?!\d)/); assert.match(counts, /Unchanged 7(?!\d)/);
+    assert.match(counts, /Added 1(?!\d)/); assert.match(counts, /Removed 0(?!\d)/); assert.match(counts, /Changed \(shape\/position\) 0(?!\d)/); assert.match(counts, /Unchanged 7(?!\d)/);
     assert.match(offset, /^A aligned to B: moved 2000, 1000; rotated 180° \(automatic; match good\)/);
     assert.equal(await page.locator('#compare-panel .cmp-row').count(), 1, 'one cluster');
   }
@@ -241,6 +241,34 @@ try {
   assert.equal(await page.locator('#toast .toast-cancel').count(), 0, 'no dead Cancel button');
   assert.equal(await page.evaluate(() => document.getElementById('toast').classList.contains('busy')), false);
   assert.equal(await page.evaluate(() => window.app.tabs.length), tabsBefore + 1, 'no tab for the failed compare');
+
+  step = 'property-only changes: both counts in the panel, the checkbox hides layer COMPARE-PROPS, the list option re-clusters';
+  await page.evaluate(async () => {
+    const M = await import('/src/core/model.js');
+    const mk = (color, dy) => {
+      const d = M.newDocument(); d.units = 4;
+      M.addLayer(d, { name: 'DUCT', color });
+      M.addEntity(d, M.makeLine({ x: 0, y: dy }, { x: 1000, y: dy }));
+      for (const x of [20000, 40000, 60000]) M.addEntity(d, M.makeLine({ x, y: 0 }, { x: x + 800, y: 0 }, { layer: 'DUCT' }));
+      return d;
+    };
+    await window.__showComparison(window.app, mk(2, 0), mk(5, 100), 'pa', 'pb', { align: 'none', opts: { tol: 1 } });
+  });
+  await page.waitForFunction(() => window.app.active.compare?.nameA === 'pa', null, { timeout: 10000 });
+  const pt = await page.locator('#compare-panel .cmp-counts').textContent();
+  assert.match(pt, /Changed \(shape\/position\) 1(?!\d)/); assert.match(pt, /Changed \(properties only\) 3(?!\d)/);
+  const propsVisible = () => page.evaluate(() => window.app.fileDoc.layers.get('COMPARE-PROPS').visible !== false);
+  assert.equal(await page.locator('#cmp-showprops').isChecked(), true);
+  assert.equal(await propsVisible(), true);
+  assert.equal(await page.locator('#compare-panel .cmp-row').count(), 1, 'property-only changes are not in the list by default');
+  await page.locator('#cmp-showprops').uncheck();
+  assert.equal(await propsVisible(), false, 'unchecking hides layer COMPARE-PROPS');
+  await page.locator('#cmp-showprops').check();
+  assert.equal(await propsVisible(), true);
+  await page.locator('#cmp-listprops').check();
+  assert.ok(await page.locator('#compare-panel .cmp-row').count() >= 2, 'the list includes the property-only changes');
+  await page.locator('#cmp-listprops').uncheck();
+  assert.equal(await page.locator('#compare-panel .cmp-row').count(), 1);
 
   assert.deepEqual(problems, []);
   console.log('compare e2e: OK');
