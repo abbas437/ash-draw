@@ -51,7 +51,8 @@ class Out {
   text() { return this.lines.join('\r\n') + '\r\n'; }
 }
 
-/** opts.dimensionsAsGeometry: write DIMENSION entities as plain INSERTs of their blocks (used for DWG, where the
+/** opts.mleadersAsGeometry: MLEADERs as their lines, arrows and text only (DWG through ODA).
+ *  opts.dimensionsAsGeometry: write DIMENSION entities as plain INSERTs of their blocks (used for DWG, where the
  *  converter cannot handle every dimension type), and MLEADERs as their lines, arrows and text (R2000 has no
  *  multileaders, and LibreDWG drops the whole drawing when the DXF holds MLEADERSTYLE / MULTILEADER objects). */
 export function writeDxf(doc, opts = {}) {
@@ -72,12 +73,15 @@ export function writeDxf(doc, opts = {}) {
   const hModelRec = '17', hPaperRec = '1B', hModelLayout = '1A', hPaperLayout = '1E';
   const tbl = { LAYER: '1', LTYPE: '2', APPID: '3', DIMSTYLE: '4', STYLE: '5', UCS: '6', VIEW: '7', VPORT: '8', BLOCK_RECORD: '9' };
   const asGeometry = !!(opts && opts.dimensionsAsGeometry);
+  // ODA File Converter drops MULTILEADER entities from an R2000 DXF (the class is newer), so DWG writing through ODA
+  // asks for multileaders as geometry while keeping real dimensions
+  const mleaderGeometry = asGeometry || !!(opts && opts.mleadersAsGeometry);
   // The multileader style objects are written only when the drawing has multileaders: LibreDWG's dxf2dwg drops
   // every entity of a DXF that holds them, so a plain DXF without multileaders must stay convertible.
   const isML = (e) => e && e.type === 'MLEADER';
   const hasMleaders = doc.entities.some(isML) || [...(doc.blocks?.values?.() ?? [])].some((b) => (b.entities ?? []).some(isML))
     || (doc.layouts ?? []).some((l) => (l.entities ?? []).some(isML));
-  const writeMlStyle = !asGeometry && hasMleaders;
+  const writeMlStyle = !mleaderGeometry && hasMleaders;
   let paperMode = false;
   const layerH = new Map([...doc.layers].filter(([, l]) => !l.xrefDep).map(([n]) => [n, H()]));
 
@@ -322,7 +326,7 @@ export function writeDxf(doc, opts = {}) {
       }
       case 'MLEADER': {
         if (!e.leaders?.length && !e.text) return false;
-        if (asGeometry) {
+        if (mleaderGeometry) {
           // R2000 DWG has no multileaders: LibreDWG drops every entity of a DXF that holds MLEADERSTYLE / MULTILEADER objects
           const own = { layer: e.layer, color: e.color, linetype: e.linetype, lineweight: e.lineweight };
           for (const sub of mleaderParts(e)) writeEntity(o, { ...sub, ...own }, owner);

@@ -161,3 +161,14 @@ test('an arrowhead longer than its leader segment is left out; one that fits is 
   assert.equal(mleaderParts(ml(400)).filter((p) => p.arrowHead).length, 0);
   assert.equal(mleaderParts(ml(2.5)).filter((p) => p.arrowHead).length, 1);
 });
+
+test('DWG through ODA: multileaders go out as geometry (ODA drops MULTILEADER from an R2000 DXF) while dimensions stay real', () => {
+  const doc = newDocument();
+  addEntity(doc, makeMLeader({ x: 0, y: 0 }, { x: 20, y: 10 }, 'SUPPLY AIR', { textHeight: 2.5 }));
+  const text = writeDxf(doc, { mleadersAsGeometry: true });
+  assert.doesNotMatch(text, /\r?\n0\r?\nMULTILEADER\r?\n/);
+  assert.doesNotMatch(text, /MLEADERSTYLE/);
+  const back = parseDxf(text);
+  assert.ok(back.entities.some((e) => e.type === 'MTEXT' && /SUPPLY AIR/.test(e.text)));
+  assert.equal(compareDocuments(doc, back).ok, true);
+});

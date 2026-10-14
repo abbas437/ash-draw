@@ -173,7 +173,7 @@ export async function saveDwg(api, doc, { name, fromPath = null, version = 'r200
   if (!api.isElectron) throw new Error('Saving DWG needs the desktop app.');
   const av = await api.dwgAvailable();
   if (!av.available) throw new Error(`The DWG converter is not available: ${av.reason ?? 'unknown reason'}.`);
-  const dxf = isOdaDwgVersion(version) ? dxfBytesOf(doc) : dxfBytesOf(doc, { dimensionsAsGeometry: true });
+  const dxf = isOdaDwgVersion(version) ? dxfBytesOf(doc, { mleadersAsGeometry: true }) : dxfBytesOf(doc, { dimensionsAsGeometry: true });
   const { dwgBytes } = await api.dxfToDwg(dxf, version);
   // verification.converter: which converter read the DWG back ('ODA' | 'LibreDWG'; null when the read-back failed)
   let verification;
