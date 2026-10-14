@@ -1,5 +1,5 @@
 // ASH Draw Studio - DOM helpers, dialogs, layers panel and properties panel.
-import { setLayerProps, setEntityProps, setText, deleteLayer } from '../src/core/edit.js';
+import { setLayerProps, setEntityProps, setText, deleteLayer, renameLayer, layerRenameError } from '../src/core/edit.js';
 import { tessellate, dist, DEG } from '../src/core/geom.js';
 import { aciToRgb } from '../src/core/aci.js';
 import { transparencyText, parseTransparency, percentFromAlpha } from '../src/core/model.js';
@@ -99,14 +99,23 @@ function select(options, current, onchange, extraClass = '') {
 export function renderLayers(app) {
   const box = document.getElementById('layers');
   const { doc, session } = app;
-  const rows = [...doc.layers.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  const filter = layerFilterUi(app);
+  const all = [...doc.layers.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  const rows = filter ? all.filter((l) => l.name.toUpperCase().includes(filter.toUpperCase())) : all;
   const used = new Map();
   for (const e of doc.entities) used.set(e.layer, (used.get(e.layer) ?? 0) + 1);
-  box.replaceChildren(...rows.map((l) => el('div', { class: `layer${app.state.layer === l.name ? ' current' : ''}` },
+  const current = (n) => { app.state.layer = n; app.refreshPanels(); };
+  const lwText = (w) => (w >= 0 ? `${w.toFixed(2)} mm` : 'Default');
+  box.replaceChildren(...rows.map((l) => {
+    const row = el('div', { class: `layer${app.state.layer === l.name ? ' current' : ''}`, tabindex: '0', 'data-layer': l.name,
+      onkeydown: (e) => { if (e.key === 'F2' && e.target === row) { e.preventDefault(); e.stopPropagation(); startRename(app, row, l); } },
+      oncontextmenu: (e) => { e.preventDefault(); popMenu(e, [['Rename', () => startRename(app, row, l)], ['Make current', () => current(l.name)], ['Linetype / lineweight…', () => layerPropsDialog(app, l)]]); } },
     // On/Off and Freeze/Thaw are independent flags (AutoCAD): toggling one never touches the other
     el('button', { class: 'icon lay-on', title: l.visible !== false ? 'Turn layer off' : 'Turn layer on', onclick: () => { setLayerProps(session, l.name, { visible: l.visible === false }); } }, l.visible !== false ? '◉' : '○'),
     el('button', { class: 'icon lay-frz', title: l.frozen ? 'Thaw layer' : 'Freeze layer', onclick: () => { setLayerProps(session, l.name, { frozen: !l.frozen }); } }, l.frozen ? '❄' : '☀'),
     el('button', { class: 'icon', title: l.locked ? 'Unlock layer' : 'Lock layer', onclick: () => { setLayerProps(session, l.name, { locked: !l.locked }); } }, l.locked ? '🔒' : '🔓'),
+    // Plot / No plot: a non-plotting layer is drawn on screen but left out of Print and Plot to PDF
+    el('button', { class: `icon lay-plot${l.plot === false ? ' off' : ''}`, title: l.plot === false ? 'Not plotted (click to plot this layer)' : 'Plotted (click to stop plotting this layer)', onclick: () => { setLayerProps(session, l.name, { plot: l.plot === false }); } }, '🖶'),
     el('span', { class: 'swatch', style: `background:${cssOfAci(Math.abs(l.color))}`, title: 'Layer colour (click to change)', onclick: (e) => colorMenu(e, (c) => setLayerProps(session, l.name, { color: c })) }),
     el('span', { class: 'lay-tr', title: 'Layer transparency 0-90 % (click to change)', onclick: async () => {
       const r = await promptDialog('Layer transparency (0-90 %)', String(l.alpha >= 0 ? percentFromAlpha(l.alpha) : 0));
@@ -115,9 +124,13 @@ export function renderLayers(app) {
       if (!t || t.alpha === -2) { toast('Enter a transparency from 0 to 90.'); return; }
       setLayerProps(session, l.name, { alpha: t.alpha ?? 255 });
     }, text: String(l.alpha >= 0 ? percentFromAlpha(l.alpha) : 0) }),
-    el('span', { class: 'lname', title: `${used.get(l.name) ?? 0} object(s)`, ondblclick: () => { app.state.layer = l.name; app.refreshPanels(); }, text: l.name }),
-    app.state.layer === l.name ? el('span', { class: 'cur', text: '●', title: 'Current layer' }) : el('button', { class: 'icon', title: 'Make current', onclick: () => { app.state.layer = l.name; app.refreshPanels(); } }, '○'),
-  )));
+    el('span', { class: 'lname', title: `${l.name}\nLinetype ${l.linetype ?? 'CONTINUOUS'} · Lineweight ${lwText(l.lineweight)} · ${used.get(l.name) ?? 0} object(s)\nDouble-click or F2 to rename; right-click for more`,
+      ondblclick: () => startRename(app, row, l), text: l.name }),
+    el('button', { class: 'icon lay-ltlw', title: `Linetype ${l.linetype ?? 'CONTINUOUS'}, lineweight ${lwText(l.lineweight)} (click to change)`, onclick: () => layerPropsDialog(app, l) }, '≡'),
+    app.state.layer === l.name ? el('span', { class: 'cur', text: '●', title: 'Current layer' }) : el('button', { class: 'icon', title: 'Make current', onclick: () => current(l.name) }, '○'),
+    );
+    return row;
+  }), ...(filter && !rows.length ? [el('div', { class: 'lay-none', text: `No layer matches "${filter}".` })] : []));
   document.getElementById('layer-add').onclick = async () => {
     const name = (await promptDialog('New layer name'))?.trim();
     if (!name) return;
@@ -130,6 +143,63 @@ export function renderLayers(app) {
     if (!deleteLayer(session, n)) toast(n === '0' ? 'Layer 0 cannot be deleted.' : 'Only empty layers can be deleted.');
     else { app.state.layer = '0'; app.refreshPanels(); }
   };
+}
+
+/** the filter box above the layer list: case-insensitive substring of the name (UI only, no undo); returns the filter */
+function layerFilterUi(app) {
+  const inp = document.getElementById('layer-filter'), clr = document.getElementById('layer-filter-clear');
+  app.layerFilter ??= '';
+  if (!inp.dataset.wired) {
+    inp.dataset.wired = '1';
+    inp.addEventListener('input', () => { app.layerFilter = inp.value; renderLayers(app); });
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Escape' && inp.value) { e.preventDefault(); e.stopPropagation(); clr.click(); } });
+    clr.addEventListener('click', () => { inp.value = ''; app.layerFilter = ''; renderLayers(app); inp.focus(); });
+  }
+  if (inp.value !== app.layerFilter) inp.value = app.layerFilter;
+  clr.hidden = !app.layerFilter;
+  return app.layerFilter.trim();
+}
+
+/** inline rename in the row: Enter commits (one undo step), Esc cancels; leaving the field commits a valid new name */
+function startRename(app, row, l) {
+  if (l.name === '0' || l.name.includes('|') || l.xrefDep) { toast(layerRenameError(app.doc, l.name, l.name)); return; }
+  const span = row.querySelector('.lname');
+  if (!span) return;
+  const inp = el('input', { type: 'text', class: 'lname-edit', value: l.name, 'aria-label': 'Layer name' });
+  let done = false;
+  const finish = (commit) => {
+    if (done) return;
+    const name = inp.value;
+    if (commit && name !== l.name) {
+      const err = layerRenameError(app.doc, l.name, name);
+      if (err) { if (commit === 'enter') { toast(err); inp.select(); return; } done = true; toast(err); renderLayers(app); return; }
+      done = true;
+      renameLayer(app.session, l.name, name, { doc: app.fileDoc ?? app.doc, current: app.state });
+      if (app.isoSaved?.has(l.name)) app.isoSaved = new Map([...app.isoSaved].map(([k, v]) => [k === l.name ? name : k, v])); // LAYUNISO follows the rename
+      app.refreshPanels();
+      return;
+    }
+    done = true;
+    renderLayers(app);
+  };
+  inp.addEventListener('keydown', (e) => {
+    e.stopPropagation(); // the canvas shortcuts and the row's F2 stay out of the edit
+    if (e.key === 'Enter') { e.preventDefault(); finish('enter'); } else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  inp.addEventListener('blur', () => finish('blur'));
+  span.replaceWith(inp);
+  inp.focus(); inp.select();
+}
+
+/** linetype and lineweight of a layer: each change is applied at once as one undo step */
+function layerPropsDialog(app, l) {
+  const lts = [...app.doc.linetypes.keys()].filter((n) => !/^BY(LAYER|BLOCK)$/.test(n)).map((n) => [n, n]);
+  const lws = LW_CHOICES.filter(([v]) => v !== -1); // a layer has no ByLayer lineweight
+  const name = l.name, cur = () => app.doc.layers.get(name) ?? l;
+  return modal(`Layer ${name}`, [
+    el('label', { class: 'lay-prop' }, 'Linetype ', select(lts, String(cur().linetype ?? 'CONTINUOUS').toUpperCase(), (v) => setLayerProps(app.session, name, { linetype: v }), 'lay-lt')),
+    el('label', { class: 'lay-prop' }, 'Lineweight ', select(lws, cur().lineweight >= 0 ? cur().lineweight : -3, (v) => setLayerProps(app.session, name, { lineweight: Number(v) }), 'lay-lw')),
+  ], [{ label: 'Close', value: true, primary: true }]);
 }
 
 /** context menu at the pointer: items = [[label, fn]]; closes on the next pointerdown */

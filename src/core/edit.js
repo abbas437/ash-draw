@@ -425,6 +425,52 @@ export function setLayerProps(s, name, props) {
   return s.transact('Layer', (tx) => { tx.layer(name, props); });
 }
 
+/** Why `name` cannot be the new name of layer `from` (AutoCAD rules), or '' when it can: non-empty, none of
+ *  < > / \\ " : ; ? * | , = `, unique ignoring case (a case-only change of the same layer is allowed); layer 0 and
+ *  xref-dependent layers (name with "|") keep their names. */
+export function layerRenameError(doc, from, name) {
+  const U = (x) => String(x).toUpperCase();
+  const l = getLayer(doc, from);
+  if (!l) return 'No such layer.';
+  if (from === '0') return 'Layer 0 cannot be renamed.';
+  if (from.includes('|') || l.xrefDep) return 'Xref-dependent layers cannot be renamed.';
+  if (!name || !name.trim()) return 'The layer name cannot be empty.';
+  if (/[<>/\\":;?*|,=`]/.test(name)) return 'A layer name cannot contain < > / \\ " : ; ? * | , = `';
+  if (name !== name.trim()) return 'A layer name cannot start or end with a space.';
+  for (const k of doc.layers.keys()) if (k !== from && U(k) === U(name)) return `A layer named "${k}" already exists.`;
+  return '';
+}
+
+/** Rename layer `from` to `to` as ONE undo step: the layer table entry, every entity on it (model space, every
+ *  layout, every block definition, INSERT attributes), viewport frozen-layer lists, and the current layer when
+ *  `opts.current.layer` names it. `opts.doc` is the whole drawing (default the session's). Throws on an invalid name. */
+export function renameLayer(s, from, to, opts = {}) {
+  const doc = opts.doc ?? s.doc;
+  const err = layerRenameError(doc, from, to);
+  if (err) throw new Error(err);
+  if (from === to) return false;
+  const U = (x) => String(x ?? '0').toUpperCase(), old = U(from);
+  // the layer table is case-sensitive: a reference follows only when it names `from` exactly, or when it has no exact
+  // table key at all (an orphan such as a block piece on "WALLS") and matches ignoring case
+  const keys = new Set(doc.layers.keys());
+  const hit = (n) => n === from || (!keys.has(n) && U(n) === old);
+  const lists = [doc.entities, ...(doc.layouts ?? []).map((lo) => lo.entities ?? []), ...[...doc.blocks.values()].filter((b) => !b.xref && !b.xrefDep).map((b) => b.entities ?? [])];
+  s.transact('Rename layer', (tx) => {
+    const before = { ...getLayer(doc, from) };
+    tx.layer(from, null);
+    tx.layer(to, { ...before, name: to });
+    for (const list of lists) {
+      for (const e of list) {
+        if (hit(e.layer)) tx.props(e, { layer: to });
+        for (const a of e.attribs ?? []) if (hit(a.layer)) tx.props(a, { layer: to });
+        if (e.type === 'VIEWPORT' && e.frozen?.some(hit)) tx.props(e, { frozen: e.frozen.map((n) => (hit(n) ? to : n)) });
+      }
+    }
+    if (opts.current && hit(opts.current.layer)) tx.props(opts.current, { layer: to });
+  });
+  return true;
+}
+
 /** Delete a layer unless it is "0" or still has entities. Returns true when deleted. */
 export function deleteLayer(s, name) {
   if (name === '0') return false;

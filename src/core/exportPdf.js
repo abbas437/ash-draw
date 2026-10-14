@@ -170,6 +170,7 @@ export async function exportPdf(doc, opts = {}) {
   const drawItems = async (scn, box) => {
   msize = markerSize(scn.bbox);
   for (let it of scn.items) {
+    if (doc.layers.get(it.style?.layerName)?.plot === false) continue; // a non-plotting layer is shown, never plotted
     if (it.inf && !(it = infiniteItem(it, box))) continue;
     if (it.kind === 'path') {
       ops.push(pushGraphicsState()); strokeState(it.style, dashPt(dashUnits(doc, it.style)));

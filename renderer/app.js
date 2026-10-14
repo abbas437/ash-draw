@@ -218,6 +218,12 @@ class App {
       layiso: need(() => { this.isoSaved = layIsolate(this.session, sel()); toast('Layers isolated (LAYUNISO restores)', 2500); }),
       layuniso: () => { if (layUnisolate(this.session, this.isoSaved)) { this.isoSaved = null; toast('Layers restored', 1500); } else toast('Nothing isolated.'); },
       layfrz: need(() => { const n = layFreeze(this.session, sel()); this.vp.setSelection([]); toast(`Frozen: ${n.join(', ')}`, 2500); }),
+      laymcur: need(() => {
+        if (this.vp.selection.size !== 1) { toast('Select one object to make its layer current.'); return; }
+        const e = this.doc.entities.find((x) => x.id === sel()[0]); if (!e) return;
+        const keys = [...this.doc.layers.keys()], name = keys.includes(e.layer) ? e.layer : (keys.find((k) => k.toUpperCase() === String(e.layer).toUpperCase()) ?? e.layer);
+        this.state.layer = name; this.refreshPanels(); toast(`Current layer: ${name}`, 2500);
+      }),
       layon: () => layOn(this.session), laythw: () => layThaw(this.session),
     };
   }
@@ -859,7 +865,7 @@ class App {
         return;
       }
       if ((e.key === 'Enter' || e.key === ' ') && e.target.closest?.('#menubar')) return; // let a focused menu button / item activate by keyboard
-      if (e.key === 'F2') { e.preventDefault(); this.toggleHistory(); return; }
+      if (e.key === 'F2') { if (e.target.closest?.('#layers')) return; e.preventDefault(); this.toggleHistory(); return; }
       if (e.key === 'F3') { e.preventDefault(); this.toggle('snap'); return; }
       if (e.key === 'F8') { e.preventDefault(); this.toggle('ortho'); return; }
       if (e.key === 'F9') { e.preventDefault(); this.toggle('lineweights'); return; }
