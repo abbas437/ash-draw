@@ -34,7 +34,7 @@ function* filterSteps(idx, keep) {
   return out;
 }
 import { newDocument, addLayer, addEntity } from './model.js';
-import { bboxOf, unionBox, explodeSteps, transformEntity, compose, translation, DEG } from './geom.js';
+import { bboxOf, unionBox, explodeSteps, transformEntity, compose, translation, apply, DEG } from './geom.js';
 import { drain } from './slice.js';
 
 const MAX_DEPTH = 16; // nested blocks expanded at most this deep (guards self-referencing blocks)
@@ -42,7 +42,8 @@ const MAX_DEPTH = 16; // nested blocks expanded at most this deep (guards self-r
 /**
  * The drawn pieces of `ents` (default: model space): INSERTs of non-xref blocks (nested too, arrays included) and
  * DIMENSIONs are replaced by their transformed block geometry, with layer "0" / BYBLOCK properties resolved from the
- * enclosing INSERT. Returns [{ e: piece, top: the model-space entity it comes from }] (top === e when not expanded).
+ * enclosing INSERT (BYBLOCK of a BYLAYER INSERT: its layer's value). Returns [{ e: piece, top: the model-space entity it
+ * comes from, outer?: layers of the INSERTs it is drawn by, outermost first }] (top === e when not expanded).
  */
 export function expandEntities(doc, ents = doc.entities) {
   return drain(expandSteps(doc, ents));
@@ -54,24 +55,30 @@ export function* expandSteps(doc, ents = doc.entities) {
   let work = 0;
   for (let t = 0; t < ents.length; t++) {
     const top = ents[t];
-    stack.push({ e: top, inh: null, depth: 0 }); // depth first, children in order (as the recursion it replaces)
+    stack.push({ e: top, inh: null, depth: 0, outer: null }); // depth first, children in order (as the recursion it replaces)
     while (stack.length) {
       if (work >= 1024) { work = 0; yield t / ents.length; }
-      const { e, inh, depth } = stack.pop();
+      const { e, inh, depth, outer } = stack.pop();
       if (inh) { // a fresh copy made by explode(): resolve what it inherits from the INSERT it was drawn by
         if (e.layer === '0' || e.layer == null) e.layer = inh.layer;
-        if (e.color === 0) e.color = inh.color;
-        if (String(e.linetype).toUpperCase() === 'BYBLOCK') e.linetype = inh.linetype;
-        if (e.lineweight === -2) e.lineweight = inh.lineweight;
+        // BYBLOCK takes the INSERT's value; when that is BYLAYER, it is the INSERT's layer's (not the piece's layer's)
+        const L = () => layerOf(doc, inh.layer);
+        if (e.color === 0) e.color = inh.color === 256 ? (L()?.color ?? 7) : inh.color;
+        if (String(e.linetype).toUpperCase() === 'BYBLOCK') e.linetype = String(inh.linetype ?? 'BYLAYER').toUpperCase() === 'BYLAYER' ? (L()?.linetype ?? 'CONTINUOUS') : inh.linetype;
+        if (e.lineweight === -2) e.lineweight = inh.lineweight === -1 ? (L()?.lineweight ?? -3) : inh.lineweight;
         delete e.parent; delete e.handle;
       }
       const blk = (e.type === 'INSERT' || e.type === 'DIMENSION') && depth < MAX_DEPTH ? doc.blocks.get(e.block) : null;
       if (blk && !blk.xref) {
         const kids = yield* explodeSteps(e, doc);
         work += kids.length;
-        if (kids.length || e.type === 'INSERT') { for (let i = kids.length - 1; i >= 0; i--) stack.push({ e: kids[i], inh: e, depth: depth + 1 }); continue; }
+        if (kids.length || e.type === 'INSERT') {
+          const o = [...(outer ?? []), e.layer]; // the layers of the INSERTs drawing these pieces (a frozen one hides them)
+          for (let i = kids.length - 1; i >= 0; i--) stack.push({ e: kids[i], inh: e, depth: depth + 1, outer: o });
+          continue;
+        }
       }
-      out.push({ e, top });
+      out.push(outer ? { e, top, outer } : { e, top });
       work++;
     }
   }
@@ -288,22 +295,122 @@ export function defaultTolerance(units) {
 // keys that are properties (compared for "changed") or bookkeeping, not geometry
 const PROP_KEYS = new Set(['layer', 'color', 'linetype', 'lineweight', 'ltscale']);
 const SKIP_KEYS = new Set(['id', 'type', 'handle', 'parent', ...PROP_KEYS]);
+// numbers by meaning: lengths are compared with tol as they are; angles (degrees) and other numbers (bulge, ratios,
+// scale factors ...) times the object's size, so a change that moves what is drawn by more than tol is never "same".
+// Integers of other keys (counts, flags, alignments) are compared exactly, as strings.
+const LEN_KEYS = new Set(['r', 'height', 'width', 'colSp', 'rowSp', 'startWidth', 'endWidth', 'constWidth', 'thickness', 'elevation', 'z']);
+const ANG_KEYS = new Set(['rot', 'angle', 'oblique', 'a0', 'a1']);
+const VEC_KEYS = new Set(['major', 'dir', 'u', 'v', 'normal', 'extrusion']); // {x, y} that are directions, not places
+// per type: keys whose meaning is carried by the drawn check points derived below instead
+const OWN_KEYS = {
+  ARC: new Set(['a0', 'a1']), ELLIPSE: new Set(['major', 'ratio', 'a0', 'a1']), XLINE: new Set(['dir']), RAY: new Set(['dir']),
+  TEXT: new Set(['rot', 'widthFactor', 'oblique']), MTEXT: new Set(['rot', 'widthFactor', 'oblique']), INSERT: new Set(['sx', 'sy', 'rot']),
+};
+const norm360 = (d) => ((d % 360) + 360) % 360;
 
-/** feature of one entity: strings (identity), points (x,y pairs), scalars; anchor = first point */
-function feature(e, doc) {
-  const pts = [], sc = [], str = [];
+/** a layer of `doc` by name, any case (null when unknown) */
+const layerCache = new WeakMap();
+function layerOf(doc, name) {
+  let m = layerCache.get(doc.layers);
+  if (!m) { m = new Map(); for (const [k, L] of doc.layers) m.set(String(k).toUpperCase(), L); layerCache.set(doc.layers, m); }
+  return m.get(String(name ?? '0').toUpperCase()) ?? null;
+}
+/** is a piece (its layer, and the layers of the INSERTs it is drawn by) hidden by `doc`'s layer table: off or frozen */
+function hiddenIn(doc, p) {
+  const L = layerOf(doc, p.e.layer);
+  if (L && (L.frozen || L.visible === false)) return true;
+  for (const n of p.outer ?? []) if (layerOf(doc, n)?.frozen) return true;
+  return false;
+}
+/** size (block units) of a block about its base point, at least 1: an INSERT's scale and rotation act at this distance */
+const blockSizes = new WeakMap();
+function blockSize(doc, name) {
+  let m = blockSizes.get(doc.blocks); if (!m) blockSizes.set(doc.blocks, m = new Map());
+  if (m.has(name)) return m.get(name);
+  m.set(name, 1); // guards self-references
+  const blk = doc.blocks.get(name); let box = null;
+  for (const c of blk?.entities ?? []) box = unionBox(box, bboxOf(c, doc));
+  const bx = blk?.base?.x ?? 0, by = blk?.base?.y ?? 0;
+  const S = box && Number.isFinite(box.minx + box.maxx + box.miny + box.maxy) ? Math.max(1, Math.abs(box.minx - bx), Math.abs(box.maxx - bx), Math.abs(box.miny - by), Math.abs(box.maxy - by)) : 1;
+  m.set(name, S);
+  return S;
+}
+
+/** drawn check points of the types whose angles / ratios / scales would otherwise be bare numbers */
+function checkPoints(e, doc, out) {
+  const at = (c, r, deg) => out.push(c.x + r * Math.cos(deg * DEG), c.y + r * Math.sin(deg * DEG));
+  switch (e.type) {
+    case 'ARC': {
+      const sweep = norm360(e.a1 - e.a0) || 360;
+      at(e.c, e.r, e.a0); at(e.c, e.r, e.a0 + sweep / 2); at(e.c, e.r, e.a0 + sweep);
+      break;
+    }
+    case 'ELLIPSE': {
+      const M = e.major, k = e.ratio ?? 1, N = { x: -M.y * k, y: M.x * k };
+      const P = (t) => out.push(e.c.x + M.x * Math.cos(t) + N.x * Math.sin(t), e.c.y + M.y * Math.cos(t) + N.y * Math.sin(t));
+      for (const t of [0, Math.PI / 2, Math.PI, 1.5 * Math.PI]) P(t);
+      let sw = (e.a1 ?? 2 * Math.PI) - (e.a0 ?? 0); sw = ((sw % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) || 2 * Math.PI;
+      P(e.a0 ?? 0); P((e.a0 ?? 0) + sw / 2); P((e.a0 ?? 0) + sw);
+      break;
+    }
+    case 'LWPOLYLINE': { // every segment's middle, on the arc for a bulged one
+      const v = e.vertices ?? [], n = v.length;
+      for (let i = 0; i < (e.closed ? n : n - 1); i++) {
+        const p = v[i], q = v[(i + 1) % n], b = p.bulge || 0;
+        out.push((p.x + q.x) / 2 + b * (q.y - p.y) / 2, (p.y + q.y) / 2 - b * (q.x - p.x) / 2);
+      }
+      break;
+    }
+    case 'XLINE': case 'RAY': if (e.p && e.dir) out.push(e.p.x + e.dir.x * 1e6, e.p.y + e.dir.y * 1e6); break;
+    case 'TEXT': case 'MTEXT': if (e.p) { // the far end of the baseline and the top corner over it
+      const h = e.height || 0, chars = Math.max(1, ...String(e.text ?? '').split(/\\P|\n/).map((l) => l.length));
+      const L = Math.max(h * (e.widthFactor ?? 1) * chars, e.type === 'MTEXT' ? e.width || 0 : 0), sh = h * Math.tan((e.oblique || 0) * DEG);
+      const c = Math.cos((e.rot || 0) * DEG), s = Math.sin((e.rot || 0) * DEG);
+      out.push(e.p.x + c * L, e.p.y + s * L, e.p.x + c * (L + sh) - s * h, e.p.y + s * (L + sh) + c * h);
+      break;
+    }
+    case 'INSERT': if (e.p) { // the block's x and y axes, scaled, at its size
+      const S = blockSize(doc, e.block), c = Math.cos((e.rot || 0) * DEG), s = Math.sin((e.rot || 0) * DEG), sx = (e.sx ?? 1) * S, sy = (e.sy ?? 1) * S;
+      out.push(e.p.x + c * sx, e.p.y + s * sx, e.p.x - s * sy, e.p.y + c * sy);
+      break;
+    }
+  }
+}
+
+/** colour / linetype / lineweight as drawn: BYLAYER resolved through `doc`'s layer table (BYBLOCK was resolved when the
+ *  piece was expanded from its INSERT) */
+function effectiveProps(e, doc, hid) {
+  const L = layerOf(doc, e.layer);
+  const color = e.color === 256 ? (L?.color ?? 7) : e.color;
+  const lt = String(e.linetype ?? 'BYLAYER').toUpperCase() === 'BYLAYER' ? (L?.linetype ?? 'CONTINUOUS') : e.linetype;
+  const lw = e.lineweight === -1 ? (L?.lineweight ?? -3) : e.lineweight;
+  return JSON.stringify([e.layer, color, String(lt).toUpperCase(), lw, e.ltscale ?? 1, hid ? 1 : 0]);
+}
+
+/** feature of one entity: strings (identity), points (x,y pairs: defining points, then drawn check points), scalars
+ *  (lengths, and the other numbers scaled to lengths); anchor = first point. hid: on a layer hidden in its drawing */
+function feature(e, doc, hid = false) {
+  const pts = [], sc = [], str = [], rel = [], own = OWN_KEYS[e.type];
   const walk = (v, k) => {
     if (v == null) return;
-    if (typeof v === 'number') { sc.push(v); return; }
+    if (typeof v === 'number') {
+      if (LEN_KEYS.has(k)) sc.push(v);
+      else if (ANG_KEYS.has(k)) rel.push(norm360(v) * DEG);
+      else if (Number.isInteger(v)) str.push(`${k}=${v}`);
+      else rel.push(v);
+      return;
+    }
     if (typeof v === 'string' || typeof v === 'boolean') { str.push(`${k}=${v}`); return; }
     if (Array.isArray(v)) { str.push(`${k}#${v.length}`); for (const x of v) walk(x, k); return; }
     if (typeof v === 'object') {
-      if (typeof v.x === 'number' && typeof v.y === 'number') pts.push(v.x, v.y);
+      const xy = typeof v.x === 'number' && typeof v.y === 'number';
+      if (xy && VEC_KEYS.has(k)) rel.push(v.x, v.y);
+      else if (xy) pts.push(v.x, v.y);
       for (const kk of Object.keys(v).sort()) if (!(kk === 'x' || kk === 'y') || typeof v[kk] !== 'number') walk(v[kk], kk);
     }
   };
   for (const k of Object.keys(e).sort()) {
-    if (SKIP_KEYS.has(k)) continue;
+    if (SKIP_KEYS.has(k) || own?.has(k)) continue;
     if (e.type === 'DIMENSION' && k === 'block') continue; // anonymous block names (*D12) differ between files
     walk(e[k], k);
   }
@@ -312,10 +419,19 @@ function feature(e, doc) {
     if (b) pts.push(b.minx, b.miny, b.maxx, b.maxy);
   }
   if (e.type === 'LINE' && (pts[0] > pts[2] || (pts[0] === pts[2] && pts[1] > pts[3]))) pts.push(...pts.splice(0, 2)); // direction-free
-  const props = `${e.layer}|${typeof e.color === 'object' ? JSON.stringify(e.color) : e.color}|${e.linetype}|${e.lineweight}|${e.ltscale ?? 1}`;
-  const s = `${e.type}\u0001${str.join('\u0002')}`;
-  return { e, s, props, pts, sc, ax: pts.length ? pts[0] : 0, ay: pts.length ? pts[1] : 0 };
+  checkPoints(e, doc, pts);
+  // the object's size: the numbers that are not lengths are compared as (number x size), i.e. an angle within tol / size
+  let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  for (let i = 0; i < pts.length; i += 2) { if (pts[i] < minx) minx = pts[i]; if (pts[i] > maxx) maxx = pts[i]; if (pts[i + 1] < miny) miny = pts[i + 1]; if (pts[i + 1] > maxy) maxy = pts[i + 1]; }
+  const size = Math.max(1, pts.length > 2 ? Math.hypot(maxx - minx, maxy - miny) : 0, 2 * Math.abs(e.r || 0), Math.abs(e.height || 0));
+  for (const v of rel) sc.push(v * size);
+  const props = effectiveProps(e, doc, hid);
+  const s = JSON.stringify([e.type, str]);
+  return { e, s, props, hid, pts, sc, ax: pts.length ? pts[0] : 0, ay: pts.length ? pts[1] : 0 };
 }
+
+/** identity strings and properties equal (the grid keys only narrow the search) */
+const sameIdentity = (a, b) => a.s === b.s && a.props === b.props;
 
 function within(a, b, tol, dx = 0, dy = 0) {
   if (a.pts.length !== b.pts.length || a.sc.length !== b.sc.length) return false;
@@ -379,12 +495,16 @@ function* realignSteps(ctx, pa, M, rotations) {
     done += l.length;
     const differs = Math.abs(t.rot - rotM) > 1e-6 || Math.hypot(t.dx - M[4], t.dy - M[5]) > 2 * ctx.tol;
     if (!differs || t.votes < Math.max(MIN_REALIGN_VOTES, 2 * t.atVotes)) continue;
-    realigned.push({ name: top ? top.block : '*Model_Space', rot: t.rot, dx: t.dx, dy: t.dy, m: t.m, votes: t.votes, confidence: t.confidence });
+    const g = { name: top ? top.block : '*Model_Space', rot: t.rot, dx: t.dx, dy: t.dy, m: t.m, votes: t.votes, confidence: t.confidence };
+    if (!top) g.ref = big.filter(([b]) => !topM.has(b)).map(([b]) => b.block); // the big blocks that stayed with the global transform
+    realigned.push(g);
     for (const p of top ? [{ top }] : l) topM.set(p.top, t.m);
   }
   return { realigned, topM };
 }
 
+/** bounding box of points */
+const boxOfPts = (ps) => ps.reduce((B, p) => unionBox(B, { minx: p.x, miny: p.y, maxx: p.x, maxy: p.y }), null);
 const isIdentity = (m) => m[0] === 1 && m[1] === 0 && m[2] === 0 && m[3] === 1 && !m[4] && !m[5];
 
 /**
@@ -399,8 +519,11 @@ const isIdentity = (m) => m[0] === 1 && m[1] === 0 && m[2] === 0 && m[3] === 1 &
  * that fits clearly better than the global transform.
  * Returns { added: [B pieces], removed: [A pieces], changed: [{a, b}], same: [{a, b}], clusters: [{box, added, removed,
  * changed}], offset: { m, rot, dx, dy, votes?, confidence? } (the global A->B transform; dx, dy = m[4], m[5]),
- * realigned: [{ name (block, or '*Model_Space' for the other objects), rot, dx, dy, m, votes, confidence }] (groups moved
- * by their own transform instead), topM: Map(model-space entity of A -> its matrix, when not offset.m),
+ * realigned: [{ name (block, or '*Model_Space' for the other objects), rot, dx, dy, m, votes, confidence, pieces, moved,
+ * rel: { dx, dy, rot } (move of the group's centre relative to the global transform), ref? ('*Model_Space': the big
+ * blocks that stayed with the global transform) }] (groups aligned by their own transform instead; a moved one's pieces
+ * that only matched through that transform are "changed" with why 'moved with group', A's piece at the global position,
+ * and its changes form one cluster { ..., moved: name } placed first), topM: Map(model-space entity of A -> its matrix, when not offset.m),
  * topOf: Map(piece -> model-space entity) } — A's pieces already transformed.
  */
 export function compareDocs(a, b, opts = {}) {
@@ -416,11 +539,19 @@ export function* compareSteps(a, b, opts = {}) {
   const P = { a: 0.08, b: 0.16, global: 0.42, realign: 0.66, feat: 0.78, match: 0.95 };
   let pa = expand ? yield* phase(expandSteps(a), 0, P.a) : a.entities.map((e) => ({ e, top: e }));
   let pb = expand ? yield* phase(expandSteps(b), P.a, P.b) : b.entities.map((e) => ({ e, top: e }));
+  let ignored = 0; // pieces left out because their layer (or their INSERT's) is ignored
   if (opts.ignoreLayers?.length) {
     const ign = new Set([...opts.ignoreLayers].map((n) => String(n).toUpperCase()));
     const keep = (p) => !ign.has(String(p.e.layer ?? '0').toUpperCase()) && !ign.has(String(p.top.layer ?? '0').toUpperCase());
+    const n0 = pa.length + pb.length;
     pa = pa.filter(keep); pb = pb.filter(keep);
+    ignored = n0 - pa.length - pb.length;
   }
+  // layer table: a piece hidden (layer off / frozen) in both drawings is left out; hidden in one only, it is compared
+  // with that state as a property (so it is never "same" with its visible twin)
+  const hidA = new Set(), hidB = new Set();
+  pa = pa.filter((p) => { const h = hiddenIn(a, p); if (h && hiddenIn(b, p)) return false; if (h) hidA.add(p); return true; });
+  pb = pb.filter((p) => { const h = hiddenIn(b, p); if (h && hiddenIn(a, p)) return false; if (h) hidB.add(p); return true; });
   let offset, realigned = [], topM = new Map();
   if (opts.align === 'auto') {
     const ctx = yield* phase(alignContextSteps(pa, pb, tol), P.b, P.b + 0.02), rotations = opts.rotations ?? [0, 90, 180, 270];
@@ -434,17 +565,36 @@ export function* compareSteps(a, b, opts = {}) {
   }
   const nAB = pa.length + pb.length || 1;
   const step = (i, n, lo, hi) => lo + (hi - lo) * (i / Math.max(n, 1)); // progress of item i of n within lo..hi
+  // realigned groups: their original pieces are kept (a moved group's pieces are compared again at the global position)
+  const gIdx = new Map(realigned.map((g, k) => [g.m, k])), ext = realigned.map(() => null), cnt = realigned.map(() => 0);
+  const origA = new Map(), groupA = new Map(); // A piece as matched -> original piece / index of its realigned group
   for (let i = 0; i < pa.length; i++) {
-    const p = pa[i], m = topM.get(p.top) ?? offset.m; if (!isIdentity(m)) p.e = transformEntity(p.e, m);
+    const p = pa[i], gm = topM.get(p.top), m = gm ?? offset.m, o = p.e;
+    if (!isIdentity(m)) p.e = transformEntity(p.e, m);
+    if (gm) {
+      const k = gIdx.get(gm), bx = bboxOf(o, a);
+      origA.set(p.e, o); groupA.set(p.e, k); cnt[k]++;
+      if (bx && Number.isFinite(bx.minx + bx.maxx + bx.miny + bx.maxy)) ext[k] = unionBox(ext[k], bx);
+    }
     if ((i & 1023) === 1023) yield step(i, nAB * 3, P.realign, P.feat);
   }
+  // a group is moved when its transform and the global one put a corner of its A extent more than tol apart
+  realigned.forEach((g, k) => {
+    const B = ext[k], corners = B ? [{ x: B.minx, y: B.miny }, { x: B.maxx, y: B.miny }, { x: B.maxx, y: B.maxy }, { x: B.minx, y: B.maxy }] : [];
+    g.pieces = cnt[k];
+    g.moved = corners.some((c) => { const p = apply(g.m, c), q = apply(offset.m, c); return Math.hypot(p.x - q.x, p.y - q.y) > tol; });
+    const c = B ? { x: (B.minx + B.maxx) / 2, y: (B.miny + B.maxy) / 2 } : { x: 0, y: 0 }, p = apply(g.m, c), q = apply(offset.m, c);
+    let rot = norm360(rotOf(g.m) - rotOf(offset.m)); if (rot > 180) rot -= 360; if (Math.abs(rot) < 1e-9) rot = 0;
+    g.rel = { dx: p.x - q.x, dy: p.y - q.y, rot };
+    g.box = B && unionBox(boxOfPts(corners.map((pt) => apply(g.m, pt))), boxOfPts(corners.map((pt) => apply(offset.m, pt))));
+  });
   const topOf = new Map();
   for (const p of pa) topOf.set(p.e, p.top);
   for (const p of pb) topOf.set(p.e, p.top);
   const fa = [], fb = [];
-  for (const [ps, d, fs] of [[pa, a, fa], [pb, b, fb]]) {
+  for (const [ps, d, fs, hid] of [[pa, a, fa, hidA], [pb, b, fb, hidB]]) {
     for (let i = 0; i < ps.length; i++) {
-      fs.push(feature(ps[i].e, d));
+      fs.push(feature(ps[i].e, d, hid.has(ps[i])));
       if ((i & 511) === 511) yield step(pa.length + fa.length + fb.length, nAB * 3, P.realign, P.feat);
     }
   }
@@ -454,17 +604,18 @@ export function* compareSteps(a, b, opts = {}) {
   const diag = fa.length + fb.length ? Math.hypot(maxx - minx, maxy - miny) : 0;
   const moveRadius = Math.max(opts.moveRadius ?? diag * 0.05, tol);
   const usedA = new Uint8Array(fa.length), usedB = new Uint8Array(fb.length);
-  const same = [], changed = [];
+  const same = [], changed = [], sameIJ = [];
 
   // 1. identical objects
   const M1 = P.feat + (P.match - P.feat) * 0.3; // progress: identical objects up to here, then the partners
   const g = new Grid(tol * 2);
-  for (let j = 0; j < fb.length; j++) { const f = fb[j]; g.add(f.s + f.props, f.ax, f.ay, j); if ((j & 4095) === 4095) yield; }
+  const idKey = (f) => `${f.s}\u0003${f.props}`;
+  for (let j = 0; j < fb.length; j++) { const f = fb[j]; g.add(idKey(f), f.ax, f.ay, j); if ((j & 4095) === 4095) yield; }
   for (let i = 0; i < fa.length; i++) {
     const f = fa[i];
-    for (const j of g.near(f.s + f.props, f.ax, f.ay)) {
-      if (usedB[j] || !within(f, fb[j], tol)) continue;
-      usedA[i] = usedB[j] = 1; same.push({ a: f.e, b: fb[j].e }); break;
+    for (const j of g.near(idKey(f), f.ax, f.ay)) {
+      if (usedB[j] || !sameIdentity(f, fb[j]) || !within(f, fb[j], tol)) continue;
+      usedA[i] = usedB[j] = 1; same.push({ a: f.e, b: fb[j].e }); sameIJ.push(i, j); break;
     }
     if ((i & 1023) === 1023) yield step(i, fa.length, P.feat, M1);
   }
@@ -527,17 +678,39 @@ export function* compareSteps(a, b, opts = {}) {
   yield P.match;
   for (const c of cand) {
     if (usedA[c.i] || usedB[c.j]) continue;
-    usedA[c.i] = usedB[c.j] = 1; changed.push({ a: fa[c.i].e, b: fb[c.j].e });
+    usedA[c.i] = usedB[c.j] = 1;
+    changed.push(fa[c.i].hid !== fb[c.j].hid ? { a: fa[c.i].e, b: fb[c.j].e, why: 'layer hidden' } : { a: fa[c.i].e, b: fb[c.j].e });
   }
 
+  // 3. a moved group's "same" pairs matched only through its own transform: A's original at the global position
+  //    compared again with the same partner; no longer matching, the pair is changed ('moved with group')
+  if (realigned.some((g) => g.moved)) {
+    const keep = [];
+    for (let n = 0; n < same.length; n++) {
+      const i = sameIJ[2 * n], j = sameIJ[2 * n + 1], k = groupA.get(fa[i].e);
+      if (k === undefined || !realigned[k].moved) { keep.push(same[n]); continue; }
+      const o = origA.get(fa[i].e), e = isIdentity(offset.m) ? o : transformEntity(o, offset.m), f = feature(e, a, fa[i].hid);
+      if (sameIdentity(f, fb[j]) && within(f, fb[j], tol)) { keep.push(same[n]); continue; }
+      topOf.set(e, topOf.get(fa[i].e)); groupA.set(e, k);
+      changed.push({ a: e, b: fb[j].e, why: 'moved with group' });
+      if ((n & 1023) === 1023) yield;
+    }
+    same.splice(0, same.length, ...keep);
+  }
   const removed = fa.filter((f, i) => !usedA[i]).map((f) => f.e);
   const added = fb.filter((f, j) => !usedB[j]).map((f) => f.e);
-  const clusters = yield* phase(clusterSteps(a, b, { added, removed, changed }, opts.clusterGap ?? defaultClusterGap(b.units || a.units)), P.match, 1);
-  return { added, removed, changed, same, clusters, offset, realigned, topM, topOf };
+  // the changes of each moved group form one cluster, first; clusterSteps gets the others
+  const movedOf = (e) => { const k = groupA.get(e); return k !== undefined && realigned[k].moved ? k : -1; };
+  const gcl = realigned.map((g) => ({ box: g.box, added: 0, removed: 0, changed: 0, moved: g.name }));
+  const outRemoved = removed.filter((e) => { const k = movedOf(e); if (k < 0) return true; gcl[k].removed++; return false; });
+  const outChanged = changed.filter((p) => { const k = movedOf(p.a); if (k < 0) return true; gcl[k].changed++; return false; });
+  const rest = yield* phase(clusterSteps(a, b, { added, removed: outRemoved, changed: outChanged }, opts.clusterGap ?? defaultClusterGap(b.units || a.units)), P.match, 1);
+  const clusters = [...gcl.filter((c) => c.box && c.removed + c.changed), ...rest];
+  for (const g of realigned) delete g.box;
+  return { added, removed, changed, same, clusters, ignored, offset, realigned, topM, topOf };
 }
 
 const CLUSTER_SPAN = 10;     // a cluster wider or taller than this many group distances is cut into smaller ones
-const MAX_CLUSTERS = 200;    // more clusters than this: the smallest are merged into their nearest neighbours
 const CELL_CHECKS = 64;      // members of one grid cell checked exactly; beyond that a shared cell is near enough
 
 /** default distance between changes that a reviewer would mark separately: 1.5 m in the drawing's units */
@@ -551,7 +724,9 @@ const boxGap = (p, q) => Math.max(p.minx - q.maxx, q.minx - p.maxx, p.miny - q.m
  *  2. a cluster whose box is more than CLUSTER_SPAN group distances (its larger side; 15 m at the default 1.5 m) is cut
  *     along its longer side, at its largest empty gap, or (none visible) into equal parts, until each part fits; a single
  *     change bigger than that is a cluster of its own;
- *  3. at most MAX_CLUSTERS: the smallest are merged into their nearest neighbours;
+ *  3. no cap and no merging (a merge would cross the size limit of 2.); the panel pages a long list;
+ *     changes without a finite box (XLINE, RAY, untessellatable) form one extra last cluster {unbounded: n} whose box
+ *     is the drawing extent;
  *  4. reading order: rows from the top, left to right within a row.
  */
 export function clusterChanges(a, b, r, gap) {
@@ -560,16 +735,17 @@ export function clusterChanges(a, b, r, gap) {
 
 /** step generator behind clusterChanges */
 function* clusterSteps(a, b, r, gap) {
-  const items = [], total = r.added.length + r.removed.length + r.changed.length;
+  const items = [], unb = { added: 0, removed: 0, changed: 0 }, total = r.added.length + r.removed.length + r.changed.length;
   const lists = [[r.added, (e) => bboxOf(e, b), 'added'], [r.removed, (e) => bboxOf(e, a), 'removed'], [r.changed, (p) => unionBox(bboxOf(p.a, a), bboxOf(p.b, b)), 'changed']];
   for (const [l, boxOf, k] of lists) {
     for (let i = 0; i < l.length; i++) {
       const box = boxOf(l[i]);
-      if (box && Number.isFinite(box.minx + box.maxx + box.miny + box.maxy)) items.push({ k, box });
+      if (box && Number.isFinite(box.minx + box.maxx + box.miny + box.maxy)) items.push({ k, box }); else unb[k]++;
       if ((i & 1023) === 1023) yield 0.4 * items.length / total;
     }
   }
-  if (!items.length) return [];
+  const nUnb = unb.added + unb.removed + unb.changed;
+  if (!items.length && !nUnb) return [];
   gap = Math.max(gap, 1e-9);
   const limit = CLUSTER_SPAN * gap;
   // a change bigger than a cluster may be (a long polyline, a hatch) is a cluster of its own: linked, it would hold
@@ -626,20 +802,7 @@ function* clusterSteps(a, b, r, gap) {
     }
     todo.push(l.slice(0, cut), l.slice(cut));
   }
-  // 3. cap the count: merge the smallest into its nearest neighbour
-  let live = parts.map((p) => ({ box: p.box, n: p.l.length, l: p.l }));
-  while (live.length > MAX_CLUSTERS) {
-    yield 0.9;
-    let s = 0;
-    for (let i = 1; i < live.length; i++) if (live[i].n < live[s].n) s = i;
-    const S = live[s];
-    let t = -1, dt = Infinity;
-    for (let i = 0; i < live.length; i++) { if (i === s) continue; const d = boxGap(S.box, live[i].box); if (d < dt) { dt = d; t = i; } }
-    const T = live[t];
-    T.box = unionBox(T.box, S.box); T.n += S.n; T.l = T.l.concat(S.l);
-    live[s] = live[live.length - 1]; live.pop();
-  }
-  const out = live.map(({ box, l }) => { const c = { box, added: 0, removed: 0, changed: 0 }; for (const it of l) c[it.k]++; return c; });
+  const out = parts.map(({ box, l }) => { const c = { box, added: 0, removed: 0, changed: 0 }; for (const it of l) c[it.k]++; return c; });
   // 4. reading order: a row starts with the highest remaining top; clusters whose top reaches above its middle (or
   //    less than 2 gaps below its top) join it
   out.sort((p, q) => q.box.maxy - p.box.maxy || p.box.minx - q.box.minx);
@@ -650,6 +813,11 @@ function* clusterSteps(a, b, r, gap) {
     while (j < out.length && out[j].box.maxy >= mid) j++;
     sorted.push(...out.slice(i, j).sort((p, q) => p.box.minx - q.box.minx || q.box.maxy - p.box.maxy));
     i = j;
+  }
+  if (nUnb) { // changes without a box: one last cluster over the drawing extent
+    let box = null;
+    for (const d of [a, b]) for (const e of d.entities) { const x = bboxOf(e, d); if (x && Number.isFinite(x.minx + x.maxx + x.miny + x.maxy)) box = unionBox(box, x); }
+    sorted.push({ box: box ?? { minx: 0, miny: 0, maxx: limit, maxy: limit }, ...unb, unbounded: nUnb });
   }
   return sorted;
 }

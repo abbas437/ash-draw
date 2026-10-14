@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { newDocument, addEntity, makeLine, makeCircle, makeText } from '../src/core/model.js';
+import { newDocument, addEntity, makeLine, makeCircle, makeText, makeXline } from '../src/core/model.js';
 import { compareDocs, buildCompareDoc, COMPARE_LAYERS } from '../src/core/compare.js';
 
 /** n identical entities (lines, circles, texts) laid out on a grid */
@@ -230,10 +230,60 @@ test('compare align auto, piecewise: a big background block left in place while 
   assert.equal(r.realigned.length, 1, JSON.stringify(r.realigned));
   const g = r.realigned[0];
   assert.ok(g.name === 'BG' && g.rot === 0 && Math.abs(g.dx) < 0.5 && Math.abs(g.dy) < 0.5, JSON.stringify(g));
-  assert.deepEqual([r.same.length, r.added.length, r.removed.length, r.changed.length], [base.length + bg.length, 0, 0, 0]);
+  // the block moved relative to the rest: its pieces are paired through its own transform but reported as moved
+  assert.deepEqual([r.same.length, r.added.length, r.removed.length, r.changed.length], [base.length, 0, 0, bg.length]);
+  assert.ok(r.changed.every((p) => p.why === 'moved with group'));
+  assert.ok(g.moved && g.pieces === bg.length && g.rel.rot === 180, JSON.stringify(g));
+  assert.deepEqual([r.clusters.length, r.clusters[0].moved, r.clusters[0].changed], [1, 'BG', bg.length]);
   // without the second pass the block's pieces do not line up
   const r1 = compareDocs(a, b, { align: 'auto', tol: 1, piecewise: false });
   assert.equal(r1.same.length, base.length);
+});
+
+/** n random axis-parallel lines in x0..x0+w, y0..y0+h (seeded) */
+function randomLines(n, seed, x0, y0, w, h) {
+  let s = seed; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  const out = [];
+  for (let i = 0; i < n; i++) { const x = x0 + rnd() * w, y = y0 + rnd() * h, L = 300 + rnd() * 3000; out.push(makeLine({ x, y }, { x: x + L * (i % 2), y: y + L * ((i + 1) % 2) })); }
+  return out;
+}
+
+test('compare moved group: 400 HVAC lines moved 500 mm relative to a 300-line background block are changed, not "No differences"', () => {
+  const bg = randomLines(300, 4242, 0, 0, 60000, 50000), hvac = randomLines(400, 999, 5000, 5000, 50000, 40000);
+  const a = newDocument(), b = newDocument();
+  for (const d of [a, b]) { addBlock(d, 'ARCH-BG', { x: 0, y: 0 }, structuredClone(bg)); addEntity(d, makeInsert('ARCH-BG', { x: 0, y: 0 })); }
+  for (const e of hvac) { addEntity(a, structuredClone(e)); addEntity(b, transformEntity(e, translation(500, 0))); }
+  const r = compareDocs(a, b, { align: 'auto', tol: 1 });
+  const diffs = r.added.length + r.removed.length + r.changed.length;
+  assert.ok(diffs >= 300, `${diffs} differences: ${JSON.stringify([r.same.length, r.changed.length, r.added.length, r.removed.length])}`);
+  assert.equal(r.realigned.length, 1, JSON.stringify(r.realigned));
+  const g = r.realigned[0];
+  assert.ok(g.moved && Math.abs(Math.abs(g.rel.dx) - 500) < 1 && Math.abs(g.rel.dy) < 1 && g.rel.rot === 0, JSON.stringify(g));
+  // whichever side the global transform follows, the other side's pieces are all changed, as one moved cluster first
+  const n = g.name === '*Model_Space' ? hvac.length : bg.length;
+  assert.equal(g.pieces, n);
+  assert.equal(r.changed.filter((p) => p.why === 'moved with group').length, n);
+  assert.deepEqual([r.same.length, r.changed.length, r.added.length, r.removed.length], [700 - n, n, 0, 0]);
+  assert.deepEqual([r.clusters[0].moved, r.clusters[0].changed], [g.name, n]);
+  assert.equal(r.clusters.filter((c) => c.moved).length, 1);
+});
+
+test('compare moved group: a 300-piece equipment block moved 3 m is changed (moved), not same', () => {
+  const eq = randomLines(300, 31337, 0, 0, 4000, 3000), base = plan();
+  const a = newDocument(), b = newDocument();
+  for (const d of [a, b]) { addBlock(d, 'AHU-01', { x: 0, y: 0 }, structuredClone(eq)); for (const e of base) addEntity(d, structuredClone(e)); }
+  addEntity(a, makeInsert('AHU-01', { x: 240000, y: 40000 }));
+  addEntity(b, makeInsert('AHU-01', { x: 243000, y: 40000 }));
+  const r = compareDocs(a, b, { align: 'auto', tol: 1 });
+  assert.deepEqual([r.same.length, r.changed.length, r.added.length, r.removed.length], [base.length, eq.length, 0, 0]);
+  assert.ok(r.changed.every((p) => p.why === 'moved with group'));
+  const g = r.realigned[0];
+  assert.ok(r.realigned.length === 1 && g.name === 'AHU-01' && g.moved && g.pieces === 300, JSON.stringify(r.realigned));
+  assert.ok(Math.abs(g.rel.dx - 3000) < 1 && Math.abs(g.rel.dy) < 1, JSON.stringify(g.rel));
+  assert.deepEqual([r.clusters.length, r.clusters[0].moved, r.clusters[0].changed], [1, 'AHU-01', 300]);
+  // A's version is shown where the global transform puts it (here: where it was)
+  const e0 = expandEntities(a, [a.entities.at(-1)])[0].e;
+  assert.ok(r.changed.some((p) => p.a.type === 'LINE' && Math.abs(p.a.p1.x - e0.p1.x) < 1e-6 && Math.abs(p.a.p1.y - e0.p1.y) < 1e-6));
 });
 
 // ---- change clusters: what a reviewer marks separately ----
@@ -292,12 +342,36 @@ test('clusters: reading order is rows from the top, left to right in a row', () 
   assert.deepEqual(r.clusters.map((c) => [Math.round((c.box.minx + 300) / 1000), Math.round((c.box.miny + 300) / 1000 * 10) / 10]), [[10, 50], [60, 48.5], [10, 20], [60, 21]]);
 });
 
-test('clusters: at most 200; the smallest are merged into their neighbours', () => {
+test('clusters: no cap and no merging: 300 isolated changes stay 300 clusters', () => {
   const dots = [];
   for (let i = 0; i < 300; i++) dots.push(makeCircle({ x: 5000 + (i % 20) * 3000, y: 5000 + Math.floor(i / 20) * 3000 }, 100));
   const r = compareDocs(sheet(100, 100), sheet(100, 100, dots), { tol: 1 });
-  assert.equal(r.clusters.length, 200);
+  assert.equal(r.clusters.length, 300);
   assert.equal(r.clusters.reduce((n, c) => n + c.added, 0), 300);
+});
+
+test('clusters: 5000 isolated changes over a 1 km sheet: every box within the size limit (10 group distances), under 1 s', () => {
+  const dots = [];
+  for (let i = 0; i < 5000; i++) dots.push(makeCircle({ x: 5000 + (i % 100) * 9500, y: 5000 + Math.floor(i / 100) * 19000 }, 100));
+  const A = sheet(1000, 1000), B = sheet(1000, 1000, dots);
+  const t0 = performance.now();
+  const r = compareDocs(A, B, { tol: 1 });
+  const ms = performance.now() - t0;
+  assert.equal(r.clusters.reduce((n, c) => n + c.added, 0), 5000);
+  assert.ok(r.clusters.length > 200);
+  for (const c of r.clusters) assert.ok(Math.max(c.box.maxx - c.box.minx, c.box.maxy - c.box.miny) <= 15000 + 1e-6, JSON.stringify(c.box));
+  assert.ok(ms < 1000, `${ms} ms`);
+});
+
+test('clusters: changes without a finite box (XLINE) form a fallback cluster; they are not "no differences"', () => {
+  const r = compareDocs(sheet(50, 50), sheet(50, 50, [makeXline('XLINE', { x: 1000, y: 1000 }, { x: 1, y: 1 })]), { tol: 1 });
+  assert.equal(r.added.length, 1);
+  assert.equal(r.clusters.length, 1);
+  assert.equal(r.clusters[0].unbounded, 1); assert.equal(r.clusters[0].added, 1);
+  assert.ok(Number.isFinite(r.clusters[0].box.maxx - r.clusters[0].box.minx) && r.clusters[0].box.maxx > r.clusters[0].box.minx);
+  // mixed with a bounded change: the bounded cluster plus the fallback one, last
+  const m = compareDocs(sheet(50, 50), sheet(50, 50, [makeCircle({ x: 5000, y: 5000 }, 100), makeXline('XLINE', { x: 1000, y: 1000 }, { x: 1, y: 1 })]), { tol: 1 });
+  assert.deepEqual(m.clusters.map((c) => c.unbounded ?? 0), [0, 1]);
 });
 
 test('compare ignoreLayers: pieces on an ignored layer (or drawn by an INSERT on it) are left out', () => {
@@ -314,6 +388,9 @@ test('compare ignoreLayers: pieces on an ignored layer (or drawn by an INSERT on
   assert.equal(r.added.length + r.removed.length + r.changed.length, 0);
   assert.equal(r.same.length, 5);
   assert.equal(r.clusters.length, 0);
+  // the pieces left out are counted: per drawing, the circle-free ones on REV-TABLE (INSERT's text part + DATE text)
+  assert.equal(r.ignored, 4);
+  assert.equal(all.ignored, 0);
 });
 
 // ---- time slicing: compareSteps / buildCompareSteps ----
@@ -355,4 +432,38 @@ test('compareSteps under runSliced: an aborted signal rejects with CANCELLED and
     (err) => err.code === 'CANCELLED' && /Compare was cancelled/.test(err.message));
   assert.equal(after, 0, 'no step after the abort');
   assert.equal(gen.next().done, true, 'the generator is closed');
+});
+
+// ---- review fixes: numbers compared by meaning, layer table state, identity keys ----
+import { makeArc, makeEllipse, makeMText, makePolyline, addLayer } from '../src/core/model.js';
+const verdict = (a, b, opts = { tol: 1 }) => { const r = compareDocs(a, b, opts); return [r.same.length, r.changed.length, r.added.length, r.removed.length]; };
+const notSame = (ea, eb, msg) => assert.equal(compareDocs(docOf([ea]), docOf([eb]), { tol: 1 }).same.length, 0, msg);
+
+test('compare fix: a bulge, an arc end angle, an ellipse ratio, an insert scale or a text rotation that moves what is drawn is never same', () => {
+  notSame(makePolyline([{ x: 0, y: 0 }, { x: 1000, y: 0 }]), makePolyline([{ x: 0, y: 0, bulge: 0.9 }, { x: 1000, y: 0 }]), 'bulge 0 -> 0.9');
+  notSame(makeArc({ x: 0, y: 0 }, 5000, 0, 90), makeArc({ x: 0, y: 0 }, 5000, 0, 90.9), 'R5000 arc end 90 -> 90.9 deg');
+  notSame(makeEllipse({ x: 0, y: 0 }, { x: 2000, y: 0 }, 0.3), makeEllipse({ x: 0, y: 0 }, { x: 2000, y: 0 }, 1.0), 'ellipse ratio 0.3 -> 1');
+  notSame(makeText({ x: 0, y: 0 }, 250, 'SUPPLY AIR DUCT 1'), makeText({ x: 0, y: 0 }, 250, 'SUPPLY AIR DUCT 1', { rot: 2 }), 'text 0 -> 2 deg (about 4 m long)');
+  const ins = (sx) => { const d = newDocument(); addBlock(d, 'AHU', { x: 0, y: 0 }, [makeLine({ x: 0, y: 0 }, { x: 2000, y: 0 }), makeLine({ x: 0, y: 0 }, { x: 0, y: 1000 })]); addEntity(d, makeInsert('AHU', { x: 500, y: 500 }, { sx, sy: sx })); return d; };
+  assert.equal(compareDocs(ins(1), ins(1.05), { tol: 1, expand: false }).same.length, 0, 'insert scale 1 -> 1.05 on a 2 m block');
+  assert.equal(compareDocs(ins(1), ins(1.05), { tol: 1 }).same.length, 0, 'expanded too');
+  // within tolerance stays same: a 0.01 deg arc end on R5000 (0.9 mm), the same text, the same insert
+  assert.deepEqual(verdict(docOf([makeArc({ x: 0, y: 0 }, 5000, 0, 90)]), docOf([makeArc({ x: 0, y: 0 }, 5000, 0, 90.01)])), [1, 0, 0, 0]);
+  assert.deepEqual(verdict(ins(1), ins(1)), [2, 0, 0, 0]);
+});
+
+test('compare fix: a layer frozen or off in B, or a BYLAYER colour changed in the layer table, is changed; hidden in both is left out', () => {
+  const mk = (layer) => { const d = docOf([makeLine({ x: 0, y: 0 }, { x: 1000, y: 0 }, { layer: 'M-DUCT' }), makeCircle({ x: 0, y: 0 }, 50)]); addLayer(d, { name: 'M-DUCT', color: 4, ...layer }); return d; };
+  let r = compareDocs(mk({}), mk({ frozen: true }), { tol: 1 });
+  assert.deepEqual([r.same.length, r.changed.length], [1, 1]); assert.equal(r.changed[0].why, 'layer hidden');
+  assert.deepEqual(verdict(mk({ visible: false }), mk({})), [1, 1, 0, 0]);
+  assert.deepEqual(verdict(mk({ color: 4 }), mk({ color: 1 })), [1, 1, 0, 0], 'layer colour 4 -> 1');
+  assert.deepEqual(verdict(mk({ frozen: true }), mk({ visible: false })), [1, 0, 0, 0], 'hidden in both: skipped');
+  // a block on a frozen layer hides its pieces, even those on visible layers
+  const blk = (frozen) => { const d = newDocument(); addLayer(d, { name: 'M-DUCT' }); addLayer(d, { name: 'M-EQPT', frozen }); addBlock(d, 'FAN', { x: 0, y: 0 }, [makeLine({ x: 0, y: 0 }, { x: 900, y: 0 }, { layer: 'M-DUCT' })]); addEntity(d, makeInsert('FAN', { x: 0, y: 0 }, { layer: 'M-EQPT' })); return d; };
+  assert.deepEqual(verdict(blk(false), blk(true)), [0, 1, 0, 0]);
+});
+
+test('compare fix: identity keys do not collide (MTEXT "TAG" on layer "1X" vs "TAG1" on "X")', () => {
+  assert.equal(compareDocs(docOf([makeMText({ x: 0, y: 0 }, 250, 'TAG', { layer: '1X', width: 5000 })]), docOf([makeMText({ x: 0, y: 0 }, 250, 'TAG1', { layer: 'X', width: 5000 })]), { tol: 1 }).same.length, 0);
 });
