@@ -13,6 +13,9 @@ import os from 'node:os';
 import path from 'node:path';
 
 export const ODA_TIMEOUT_MS = 10 * 60_000;
+/** time allowed for one ODA run: at least ODA_TIMEOUT_MS, else 15 s per MB of input (ODA with audit took ~4.5 min for
+ *  a 115 MB DWG in its own window on the user's PC and ran past 10 min inside the app), at most 1 hour */
+export const odaTimeoutFor = (bytes) => Math.min(60 * 60_000, Math.max(ODA_TIMEOUT_MS, Math.ceil(bytes / (1024 * 1024)) * 15_000));
 export const ODA_MAX_BYTES = 1536 * 1024 * 1024; // same cap as the LibreDWG bridge
 export const ODA_OUT_VERSION = 'ACAD2018';
 /** DWG versions the ODA File Converter writes for Save as DWG (ids as in src/core/dwgpref.js DWG_SAVE_VERSIONS) */
@@ -101,7 +104,6 @@ function run(file, args, opts) {
  */
 export function createOdaBridge(exe, opts = {}) {
   const tmpRoot = opts.tmpRoot ?? os.tmpdir();
-  const timeoutMs = opts.timeoutMs ?? ODA_TIMEOUT_MS;
   const maxBytes = opts.maxBytes ?? ODA_MAX_BYTES;
   /** run the converter on one input file in a private temp folder and return the single output file's bytes */
   async function convert(bytes, inKind, inName, outType, version) {
@@ -114,6 +116,7 @@ export function createOdaBridge(exe, opts = {}) {
       await fs.mkdir(inDir); await fs.mkdir(outDir);
       await fs.writeFile(path.join(inDir, inName), input);
       const args = odaArgs(inDir, outDir, outType, version);
+      const timeoutMs = opts.timeoutMs ?? odaTimeoutFor(input.length);
       try {
         await run(exe, args, { cwd: tmp, timeout: timeoutMs, windowsHide: true, shell: false, maxBuffer: 10 * 1024 * 1024, encoding: 'utf8' });
       } catch (err) {

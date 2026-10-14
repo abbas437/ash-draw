@@ -226,3 +226,11 @@ test('ODA converter: the temp folder is removed with retries, and a failed remov
     assert.deepEqual(seen, [{ recursive: true, force: true, maxRetries: 5, retryDelay: 200 }]);
   } finally { await s.cleanup(); }
 });
+
+test('ODA time limit grows with the drawing: 10 min floor, 15 s per MB, 1 h cap', async () => {
+  const { odaTimeoutFor, ODA_TIMEOUT_MS } = await import('./odaConverter.js');
+  const MiB = 1024 * 1024;
+  assert.equal(odaTimeoutFor(1 * MiB), ODA_TIMEOUT_MS);
+  assert.equal(odaTimeoutFor(115.4 * MiB), 116 * 15_000); // the reviewer's 115 MB drawing: 29 min
+  assert.equal(odaTimeoutFor(1000 * MiB), 60 * 60_000);
+});
