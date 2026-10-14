@@ -95,6 +95,21 @@ try {
   assert.equal(lb['COMPARE-ADDED'], true); assert.equal(lb['COMPARE-REMOVED'], false); assert.equal(lb['COMPARE-CHANGED-A'], false);
   await page.selectOption('#cmp-view', 'differences');
 
+  step = 'legend checkbox toggles layer COMPARE-LEGEND; review numbers match the cluster count';
+  const legVisible = () => page.evaluate(() => window.app.fileDoc.layers.get('COMPARE-LEGEND').visible !== false);
+  assert.equal(await page.locator('#cmp-legend').isChecked(), true, 'legend on by default');
+  assert.equal(await legVisible(), true);
+  await page.locator('#cmp-legend').uncheck();
+  assert.equal(await legVisible(), false);
+  await page.selectOption('#cmp-view', 'overlay');
+  assert.equal(await legVisible(), false, 'a view change keeps the choice');
+  await page.selectOption('#cmp-view', 'differences');
+  await page.locator('#cmp-legend').check();
+  assert.equal(await legVisible(), true);
+  const numTexts = () => page.evaluate(() => window.app.fileDoc.entities.filter((e) => e.layer === 'COMPARE-MARKS' && e.type === 'TEXT').length);
+  assert.equal(await numTexts(), await page.evaluate(() => window.app.active.compare.r.clusters.length), 'one number per cluster');
+  assert.ok(await numTexts() >= 1);
+
   step = 'Plot to PDF… opens the Plot dialog for the compare tab';
   await page.evaluate(() => { window.app.plotSettings = { ...(window.app.plotSettings ?? {}), monochrome: true }; });
   await page.click('#cmp-plot');
@@ -280,8 +295,10 @@ try {
   await page.locator('#cmp-showprops').check(); // the choice is kept for the next compare of the session
   await page.locator('#cmp-listprops').check();
   assert.ok(await page.locator('#compare-panel .cmp-row').count() >= 2, 'the list includes the property-only changes');
+  assert.equal(await numTexts(), await page.evaluate(() => window.app.active.compare.r.clusters.length), 'numbers follow the list');
   await page.locator('#cmp-listprops').uncheck();
   assert.equal(await page.locator('#compare-panel .cmp-row').count(), 1);
+  assert.equal(await numTexts(), 1);
 
   step = 'the Show property-only choice is remembered for the next compare of the session';
   await page.evaluate(async () => {

@@ -8,7 +8,7 @@ import { runSliced } from '../src/core/slice.js';
 import { Tool } from './tools.js';
 import { el, modal, message, toast, progressToast } from './ui.js';
 
-const { alignQuality, buildCompareDoc, defaultTolerance, defaultClusterGap, setCompareView, reclusterCompare, clusterMark, COMPARE_LAYERS } = core;
+const { alignQuality, buildCompareDoc, defaultTolerance, defaultClusterGap, setCompareView, reclusterCompare, rebuildMarks, COMPARE_LAYERS } = core;
 const VIEWS = [['differences', 'Differences'], ['overlay', 'Overlay'], ['a', 'A only'], ['b', 'B only']];
 const UNIT_NAMES = { 1: 'in', 2: 'ft', 4: 'mm', 5: 'cm', 6: 'm' };
 const CLUSTER_PAGE = 200; // rows of the cluster list shown at a time
@@ -61,6 +61,7 @@ export class ComparePanel {
     this.list = el('div', { class: 'cmp-list', role: 'listbox', 'aria-label': 'Change clusters' });
     this.offset = el('div', { class: 'cmp-offset' });
     this.showProps = el('input', { type: 'checkbox', id: 'cmp-showprops', checked: false, onchange: () => this.setShowProps(this.showProps.checked) });
+    this.legend = el('input', { type: 'checkbox', id: 'cmp-legend', checked: true, onchange: () => this.setLegend(this.legend.checked) });
     this.listProps = el('input', { type: 'checkbox', id: 'cmp-listprops', onchange: () => this.setListProps(this.listProps.checked) });
     this.view = el('select', { id: 'cmp-view', title: 'What the compare drawing shows', onchange: () => this.setView(this.view.value) },
       VIEWS.map(([v, label]) => el('option', { value: v, text: label })));
@@ -70,6 +71,7 @@ export class ComparePanel {
       this.offset,
       this.counts,
       el('label', { class: 'cmp-opt', title: 'Draw objects that differ only in colour, linetype, lineweight or layer (faint dashed grey, layer COMPARE-PROPS)' }, this.showProps, ' Show property-only changes'),
+      el('label', { class: 'cmp-opt', title: 'Draw the legend (line samples, file names, date) below the drawing, so it is on the plot (layer COMPARE-LEGEND)' }, this.legend, ' Legend on sheet'),
       el('label', { class: 'cmp-opt', title: 'Also group the property-only changes into the cluster list' }, this.listProps, ' Include property-only changes in the list'),
       el('div', { class: 'cmp-btns' }, el('label', {}, 'View ', this.view), el('span', { class: 'spacer' }), btn('Plot to PDF…', 'Plot or publish this compare drawing (the Plot dialog)', () => this.app.exportPdf(), 'cmp-plot')),
       el('div', { class: 'cmp-btns' }, btn('◀ Previous', 'Zoom to the previous change', () => this.step(-1), 'cmp-prev'), btn('Next ▶', 'Zoom to the next change', () => this.step(1), 'cmp-next'), this.pos),
@@ -86,7 +88,7 @@ export class ComparePanel {
     const sw = (cls, label, n) => el('span', { class: `cmp-n ${cls}`, 'data-kind': cls }, el('i'), `${label} ${n}`);
     this.offset.replaceChildren(el('div', { text: offsetText(c) }), ...realignedLines(c.r).map((t) => el('div', { class: 'cmp-realigned', text: t })));
     this.view.value = c.view ?? 'differences';
-    this.showProps.checked = c.showProps !== false; this.listProps.checked = !!c.clusterProps;
+    this.showProps.checked = c.showProps !== false; this.legend.checked = c.legend !== false; this.listProps.checked = !!c.clusterProps;
     this.counts.replaceChildren(el('div', { class: 'cmp-files', text: `A: ${c.nameA}  →  B: ${c.nameB}` }),
       el('div', { class: 'cmp-files', text: 'Pieces (blocks counted by their parts):' }),
       sw('added', 'Added', c.r.added.length), sw('removed', 'Removed', c.r.removed.length), sw('changed', 'Changed (shape/position)', (c.r.changedGeometry ?? c.r.changed).length), sw('props', 'Changed (properties only)', (c.r.changedProps ?? []).length), sw('same', 'Unchanged', c.r.same.length));
@@ -115,13 +117,24 @@ export class ComparePanel {
   applyShowProps(c) {
     const layer = this.app.fileDoc?.layers.get(COMPARE_LAYERS.props.name);
     if (layer) layer.visible = c.showProps !== false;
+    const leg = this.app.fileDoc?.layers.get(COMPARE_LAYERS.legend.name);
+    if (leg) leg.visible = c.legend !== false;
+  }
+  /** show / hide the legend on the sheet (layer COMPARE-LEGEND) */
+  setLegend(on) {
+    const c = this.app.active?.compare; if (!c) return;
+    c.legend = on;
+    this.applyShowProps(c);
+    this.app.vp.refreshStructure();
+    this.app.refreshPanels();
   }
   /** property-only changes in / out of the cluster list: only the clusters are recomputed, from the stored result */
   setListProps(on) {
     const c = this.app.active?.compare; if (!c) return;
     c.clusterProps = on;
     c.r.clusters = reclusterCompare(c.a, c.b, c.r, on);
-    for (const k of c.r.clusters) k.mark = clusterMark(k);
+    const doc = this.app.fileDoc;
+    if (doc) { rebuildMarks(doc, c.r.clusters, doc.compareExtent); this.app.vp.refreshStructure(); }
     this.cur = -1; this.shownRows = 0;
     this.list.replaceChildren();
     this.more();
@@ -314,7 +327,7 @@ export async function showComparison(app, a, b, nameA, nameB, { align = 'auto', 
     await new Promise((res) => requestAnimationFrame(() => setTimeout(res, 0))); // let the toast paint
     const cancelMessage = 'Compare was cancelled.';
     const r = await runSliced(core.compareSteps(a, b, opts), { signal: ac.signal, onProgress: (f) => pt.set(0.8 * f), cancelMessage });
-    const doc = await runSliced(core.buildCompareSteps(a, b, r), { signal: ac.signal, onProgress: (f) => pt.set(0.8 + 0.1 * f), cancelMessage });
+    const doc = await runSliced(core.buildCompareSteps(a, b, r, { nameA, nameB, date: new Date().toISOString().slice(0, 10) }), { signal: ac.signal, onProgress: (f) => pt.set(0.8 + 0.1 * f), cancelMessage });
     const prepared = await prepareView(doc, { signal: ac.signal, onProgress: (f) => pt.set(0.9 + 0.1 * f) });
     app.installDoc(doc, { path: null, name: `Compare ${nameA} vs ${nameB}`, format: 'dxf' }, { prepared });
     app.active.compare = { r, a, b, nameA, nameB, align, view: 'differences', showProps: sessionShowProps, clusterProps: !!opts.clusterProps };
