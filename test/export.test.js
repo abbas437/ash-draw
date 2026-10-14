@@ -293,3 +293,23 @@ test('PUBLISH monochrome: no stroking colour but black in any page of a coloured
   const colour = await pageText((await exportPdfPages([{ doc, layout: null, label: 'Model' }], { pageSize: 'A3', orientation: 'auto', margin: 10, scale: null, centre: true })).bytes);
   assert.ok([...colour.matchAll(/([-\d.]+) ([-\d.]+) ([-\d.]+) RG/g)].some((c) => +c[1] || +c[2] || +c[3]), 'the coloured fixture has non-black strokes');
 });
+
+test('PUBLISH plot area: a stray far-away entity shrinks an Extents plot; Current view clips and omits it', async () => {
+  const main = [makeLine({ x: 0, y: 0 }, { x: 1000, y: 0 }), makeLine({ x: 1000, y: 0 }, { x: 1000, y: 500 }), makeLine({ x: 1000, y: 500 }, { x: 0, y: 500 }), makeLine({ x: 0, y: 500 }, { x: 0, y: 0 })];
+  const doc = docWith(...main, makeLine({ x: 99000, y: 90000 }, { x: 100000, y: 90100 }));
+  const opts = { paper: 'A3', pageSize: 'A3', orientation: 'landscape', margin: 5, scale: null, centre: true, monochrome: true };
+  const plot = async (region) => {
+    const out = await exportPdfPages([{ doc, layout: null, label: 'Model', region }], opts);
+    const text = await pageText(out.bytes), w = (await PDFDocument.load(out.bytes)).getPage(0).getSize().width / MM;
+    const pts = [...text.matchAll(/([-\d.]+) ([-\d.]+) [ml]\n/g)].map((q) => ({ x: +q[1] / MM, y: +q[2] / MM }));
+    return { w, pts: region ? pts.slice(4) : pts }; // a region first writes its clip rectangle (m, 3 x l)
+  };
+  const span = (pts) => Math.max(...pts.map((p) => p.x)) - Math.min(...pts.map((p) => p.x));
+  const ext = await plot(null);
+  assert.ok(span(ext.pts.slice(0, 8)) < 0.2 * ext.w, `extents: the plan spans ${span(ext.pts.slice(0, 8))} of ${ext.w} mm`);
+  const view = await plot({ minx: -50, miny: -25, maxx: 1050, maxy: 525 });
+  assert.ok(view.pts.length >= 4, 'plan lines written');
+  assert.ok(span(view.pts) > 0.8 * (view.w - 10), `view: the plan spans ${span(view.pts)} of ${view.w - 10} mm`);
+  assert.ok(view.pts.every((p) => p.x >= 0 && p.x <= view.w), 'no path point beyond the page: the stray entity is not drawn');
+  assert.equal(view.pts.length, 8, '4 lines only (the stray one is not written)');
+});

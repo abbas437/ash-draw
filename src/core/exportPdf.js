@@ -89,15 +89,16 @@ export async function exportPdf(doc, opts = {}) {
 
 /**
  * exportPdfPages(sheets, opts) -> Promise<{bytes, warnings}>: one PDF, one page per sheet in order (PUBLISH).
- * sheets: [{doc, layout (null = model space), label}]; opts as exportPdf, applied to every sheet (a layout sheet uses
+ * sheets: [{doc, layout (null = model space), label, region (model sheet: area to plot, default opts.region, else the extents)}]; opts as exportPdf, applied to every sheet (a layout sheet uses
  * paper / fit, a model sheet pageSize / orientation / scale). Viewport scenes are built once per drawing and layer set.
  */
 export async function exportPdfPages(sheets, opts = {}) {
   const pdf = await newPdf(), warnings = [];
   let cur = null, modelScene = null; // scene cache of the current drawing only: dropped when the next sheet is from another
-  for (const { doc, layout = null, label = '' } of sheets) {
+  for (const sheet of sheets) {
+    const { doc, layout = null, label = '' } = sheet;
     if (doc !== cur) { cur = doc; modelScene = memoModelScene(doc); }
-    const w = await addPdfPage(pdf, doc, { ...opts, layout, modelScene: opts.modelScene ?? modelScene, scene: layout ? opts.scene : opts.scene ?? modelScene([]), region: layout ? null : opts.region });
+    const w = await addPdfPage(pdf, doc, { ...opts, layout, modelScene: opts.modelScene ?? modelScene, scene: layout ? opts.scene : opts.scene ?? modelScene([]), region: layout ? null : sheet.region ?? opts.region });
     warnings.push(...w.map((m) => (label ? `${label}: ${m}` : m)));
   }
   return { bytes: await pdf.save(), warnings };
@@ -233,9 +234,11 @@ async function addPdfPage(pdf, doc, opts) {
   };
 
   // box: the world window plotted, to which XLINE / RAY items are clipped (AutoCAD plots their visible part)
-  const drawItems = async (scn, box) => {
+  const drawItems = async (scn, box, cull = null) => {
   msize = markerSize(scn.bbox);
   for (let it of scn.items) {
+    // an item wholly outside the plot area is not written at all (the clip would hide it, but its points would stay in the file)
+    if (cull && it.bbox && (it.bbox.maxx < cull.minx || it.bbox.minx > cull.maxx || it.bbox.maxy < cull.miny || it.bbox.miny > cull.maxy)) continue;
     if (doc.layers.get(it.style?.layerName)?.plot === false) continue; // a non-plotting layer is shown, never plotted
     if (it.inf && !(it = infiniteItem(it, box))) continue;
     if (it.kind === 'path') {
@@ -325,7 +328,7 @@ async function addPdfPage(pdf, doc, opts) {
       ops.push(popGraphicsState());
     }
   }
-  await drawItems(scene, bb);
+  await drawItems(scene, bb, layout ? null : region);
   if (ops.length) page.pushOperators(...ops.splice(0));
   if (cb) page.pushOperators(popGraphicsState());
   if (missing) warnings.push(`${missing} text characters could not be drawn (no Unicode font)`);

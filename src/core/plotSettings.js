@@ -6,9 +6,9 @@ export const LAYOUT_PAPERS = ['layout', 'A4', 'A3', 'A2', 'A1', 'A0', 'Letter', 
 
 export const PLOT_DEFAULTS = Object.freeze({
   pageSize: 'A3', orientation: 'auto', monochrome: false, lineweights: true, transparency: true, what: 'extents', fit: true, n: 100, centre: true,
-  layoutPaper: 'layout', layoutFit: true, publishModel: false,
+  layoutPaper: 'layout', layoutFit: true, publishModel: false, publishArea: 'extents',
 });
-const CHOICES = { pageSize: ['fit', 'A4', 'A3', 'A2', 'A1', 'A0', 'Letter'], orientation: ['auto', 'landscape', 'portrait'], what: ['extents', 'view', 'window'], layoutPaper: LAYOUT_PAPERS };
+const CHOICES = { pageSize: ['fit', 'A4', 'A3', 'A2', 'A1', 'A0', 'Letter'], orientation: ['auto', 'landscape', 'portrait'], what: ['extents', 'view', 'window'], publishArea: ['extents', 'view'], layoutPaper: LAYOUT_PAPERS };
 
 /** a stored settings value -> full plot settings (window: none picked yet; a picked window is not remembered) */
 export function plotSettingsFrom(v) {

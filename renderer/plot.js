@@ -1,6 +1,7 @@
 // ASH Draw Studio - Print / Plot to PDF: one dialog (paper, orientation, what to print, scale, centring) that builds a
 // vector PDF with exportPdf, then either prints it (api.print -> system print dialog) or saves it.
 import { plotScale, pageFit, exportPdfPages } from '../src/core/exportPdf.js';
+import { screenToWorld } from '../src/core/render.js';
 import { layoutPage } from '../src/core/layouts.js';
 import { plotSettingsFrom, plotSettingsToStore, LAYOUT_PAPERS } from '../src/core/plotSettings.js';
 import { el, message, modal, toast } from './ui.js';
@@ -64,6 +65,12 @@ function pickWindow(app) {
 
 /** The drawing area currently shown in the viewport. */
 function viewRect(vp) { return rectOf(vp.toWorld(0, vp.view.height), vp.toWorld(vp.view.width, 0)); }
+
+/** the model view a drawing tab shows: the live view of the active tab, the saved one of another (null: none known, plot the extents) */
+function tabViewRect(app, tab) {
+  const v = tab === app.active ? (app.vp.layout ? null : app.vp.view) : tab.view && { ...tab.view, width: app.vp.view.width, height: app.vp.view.height };
+  return v ? rectOf(screenToWorld(v, 0, v.height), screenToWorld(v, v.width, 0)) : null;
+}
 
 /** mode 'print' (Print button, system print dialog) or 'pdf' (Save button, Plot to PDF). Options persist per session. */
 export async function plotDialog(app, mode) {
@@ -152,23 +159,25 @@ export async function publishDialog(app) {
   const rows = [];
   for (const tab of app.tabs) {
     const name = tab.file.name;
-    rows.push({ doc: tab.doc, layout: null, label: `${name} — Model`, on: s.publishModel });
+    rows.push({ tab, doc: tab.doc, layout: null, label: `${name} — Model`, on: s.publishModel });
     for (const lo of [...(tab.doc.layouts ?? [])].sort((a, b) => a.tab - b.tab)) rows.push({ doc: tab.doc, layout: lo, label: `${name} — ${lo.name}`, on: true });
   }
   for (const r of rows) r.box = el('input', { type: 'checkbox', name: 'sheet', checked: r.on });
   const list = el('div', { class: 'publish-list', style: 'max-height:40vh;overflow:auto;border:1px solid var(--line);padding:4px 8px;margin-bottom:8px' }, rows.map((r) => el('label', { style: 'display:block' }, r.box, ` ${r.label}`)));
   const paperSel = paperSelect(s.layoutPaper), fit = el('input', { type: 'checkbox', name: 'fit', checked: s.layoutFit });
+  const area = el('select', { name: 'area' }, options(['extents|Extents', 'view|Current view'])); area.value = s.publishArea;
   fit.disabled = paperSel.value === 'layout'; paperSel.onchange = () => { fit.disabled = paperSel.value === 'layout'; };
   const mono = el('input', { type: 'checkbox', name: 'monochrome', checked: s.monochrome }), lw = el('input', { type: 'checkbox', name: 'lineweights', checked: s.lineweights }), tp = el('input', { type: 'checkbox', name: 'transparency', checked: s.transparency });
   for (;;) {
     const r = await modal('Publish to PDF', [
       el('label', {}, 'Sheets (one page each, in this order)'), list,
       el('label', {}, 'Paper'), paperSel, el('label', {}, fit, ' Fit to paper'),
+      el('label', {}, 'Plot area of model sheets'), area,
       el('label', {}, mono, MONO), el('label', {}, lw, ' Use lineweights'), el('label', {}, tp, ' Plot transparency'),
-      el('p', { text: "Model sheets are fitted to the drawing extents on the chosen paper (A3 with the layout's own paper)." })],
+      el('p', { text: "Model sheets are fitted to the plot area on the chosen paper (A3 with the layout's own paper). Current view is the part of the model each drawing tab shows now; anything outside it is not plotted." })],
     [{ label: 'Publish', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
     if (r == null) return;
-    Object.assign(s, { layoutPaper: paperSel.value, layoutFit: fit.checked, monochrome: mono.checked, lineweights: lw.checked, transparency: tp.checked });
+    Object.assign(s, { layoutPaper: paperSel.value, layoutFit: fit.checked, monochrome: mono.checked, lineweights: lw.checked, transparency: tp.checked, publishArea: area.value });
     const model = rows.filter((x) => !x.layout);
     if (model.length) s.publishModel = model.some((x) => x.box.checked);
     remember(s);
@@ -176,7 +185,7 @@ export async function publishDialog(app) {
     if (!sheets.length) { await message('Nothing to publish', 'Tick at least one sheet.'); continue; }
     try {
       toast(`Publishing ${sheets.length} sheet${sheets.length > 1 ? 's' : ''}…`, 60000);
-      const out = await exportPdfPages(sheets.map((x) => ({ doc: x.doc, layout: x.layout, label: x.label })), {
+      const out = await exportPdfPages(sheets.map((x) => ({ doc: x.doc, layout: x.layout, label: x.label, region: !x.layout && s.publishArea === 'view' ? tabViewRect(app, x.tab) : null })), {
         paper: s.layoutPaper, fit: s.layoutFit, pageSize: s.layoutPaper === 'layout' ? 'A3' : s.layoutPaper, orientation: 'auto', margin: 10, scale: null, centre: true,
         monochrome: s.monochrome, lineweights: s.lineweights, transparency: s.transparency,
       });
