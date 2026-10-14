@@ -32,22 +32,31 @@ export function initSymbolsPanel(app, api) {
   const $ = (id) => document.getElementById(id);
   const srcSel = $('sym-source'), catSel = $('sym-cat'), search = $('sym-search'), grid = $('sym-grid'), status = $('sym-status');
   const scaleIn = $('sym-scale'), dscaleIn = $('sym-dscale'), addBtn = $('sym-add'), remBtn = $('sym-remove');
-  const st = { sources: [BUILTIN_SOURCE], source: BUILTIN_SOURCE, items: [], truncated: false, gen: 0, urls: [], scale: 1, drawingScale: 1 };
+  const st = { sources: [BUILTIN_SOURCE], source: BUILTIN_SOURCE, items: [], truncated: false, gen: 0, scale: 1, drawingScale: 1 };
 
   const observer = new IntersectionObserver((entries) => {
     for (const en of entries) if (en.isIntersecting) { observer.unobserve(en.target); loadThumb(en.target); }
   }, { root: grid, rootMargin: '120px' });
 
+  const blobToDataUrl = (blob) => new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result); r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
   function loadThumb(cell) {
     const gen = st.gen, item = cell._item, source = st.source;
     src.thumbnail(source, item).then((blob) => {
       if (gen !== st.gen) return;
       cell.classList.remove('loading');
       if (!blob) { cell.classList.add('nothumb'); return; }
-      const url = URL.createObjectURL(blob); st.urls.push(url);
-      const img = cell.querySelector('img');
-      img.onload = () => cell.classList.add('ready');
-      img.src = url;
+      // a data: URL (not a blob: URL) so a thumbnail whose cell is replaced mid-load (grid rebuilt) leaves no
+      // aborted request and nothing to revoke
+      return blobToDataUrl(blob).then((url) => {
+        if (gen !== st.gen) return;
+        const img = cell.querySelector('img');
+        img.onload = () => cell.classList.add('ready');
+        img.src = url;
+      });
     }).catch(() => { if (gen === st.gen) { cell.classList.remove('loading'); cell.classList.add('nothumb'); } });
   }
 
@@ -61,8 +70,6 @@ export function initSymbolsPanel(app, api) {
   function renderGrid() {
     st.gen++;
     observer.disconnect();
-    for (const u of st.urls) URL.revokeObjectURL(u);
-    st.urls = [];
     const shown = filterSymbols(st.items, catSel.value, search.value);
     const cells = shown.slice(0, SYMBOL_GRID_MAX).map((item) => {
       const cell = el('button', { type: 'button', class: 'sym-cell loading', title: item.file ?? item.name, 'data-key': item.key },
