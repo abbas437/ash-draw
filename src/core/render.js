@@ -550,7 +550,9 @@ class Builder {
     const solid = !!e.solid || e.pattern === 'SOLID';
     let lines = null;
     if (!solid) {
-      lines = e.patLines && e.patLines.length ? e.patLines : (hasPattern(e.pattern) ? patternLines(e.pattern, e.scale || 1, e.angle || 0) : null);
+      // the hatch's own definition (exact DWG look), else a loaded or built-in pattern by name, else ANSI31 so an unknown
+      // pattern still reads as a hatch (the open report names it: patterns.js unknownPatterns)
+      lines = e.patLines && e.patLines.length ? e.patLines : patternLines(hasPattern(e.pattern) ? e.pattern : 'ANSI31', e.scale || 1, e.angle || 0);
       if (lines && m) {
         const a = Math.atan2(m[1], m[0]) / DEG, sc = matScale(m);
         lines = lines.map((l) => ({

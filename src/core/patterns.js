@@ -22,11 +22,29 @@ const DEFS = {
 
 export const PATTERN_NAMES = ['SOLID', ...Object.keys(DEFS)];
 
-export function hasPattern(name) { return Object.prototype.hasOwnProperty.call(DEFS, String(name).toUpperCase()); }
+// patterns loaded from .pat files (app settings): name -> { name, description, units, type, lines }. Looked up before
+// the built-in ones, so a loaded acadiso.pat gives AutoCAD's own definitions.
+let LOADED = new Map();
+
+/** replace the loaded patterns (definitions as parsePat returns them) */
+export function setLoadedPatterns(list) {
+  LOADED = new Map();
+  for (const p of list ?? []) if (p && p.name && Array.isArray(p.lines) && p.lines.length) LOADED.set(String(p.name).toUpperCase(), p);
+}
+export const loadedPatterns = () => [...LOADED.values()];
+export const isLoadedPattern = (name) => LOADED.has(String(name).toUpperCase());
+
+const defOf = (name) => { const k = String(name).toUpperCase(); return LOADED.get(k)?.lines ?? (Object.prototype.hasOwnProperty.call(DEFS, k) ? DEFS[k] : null); };
+
+export function hasPattern(name) { return defOf(name) !== null; }
 
 export function patternLines(name, scale = 1, angleDeg = 0) {
-  const def = DEFS[String(name).toUpperCase()];
-  if (!def) return null;
+  const def = defOf(name);
+  return def ? linesOfDef(def, scale, angleDeg) : null;
+}
+
+/** a .pat-style definition as HATCH pattern lines (the form of DXF group codes 53/43/44/45/46/49) */
+export function linesOfDef(def, scale = 1, angleDeg = 0) {
   const out = [];
   for (const d of def) {
     const a = ((d.angle + angleDeg) * Math.PI) / 180;
@@ -38,4 +56,13 @@ export function patternLines(name, scale = 1, angleDeg = 0) {
     out.push({ angle: d.angle + angleDeg, base, offset: off, dashes: d.dashes.map((v) => v * scale) });
   }
   return out;
+}
+
+/** names of the pattern hatches (model space and blocks) that have no definition of their own and none by name */
+export function unknownPatterns(doc) {
+  const out = new Set();
+  const look = (list) => { for (const e of list) if (e.type === 'HATCH' && !e.solid && e.pattern !== 'SOLID' && !e.patLines?.length && !hasPattern(e.pattern)) out.add(e.pattern); };
+  look(doc.entities);
+  for (const b of doc.blocks?.values?.() ?? []) look(b.entities ?? []);
+  return [...out];
 }
