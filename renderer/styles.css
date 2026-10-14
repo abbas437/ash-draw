@@ -318,6 +318,16 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 .symc-table { border-collapse:collapse; width:100%; font-size:12px; } .symc-table th, .symc-table td { padding:2px 8px; text-align:left; border-bottom:1px solid var(--line); }
 .symc-table th { position:sticky; top:0; background:var(--panel2); } .symc-table td.num { text-align:right; }
 .symc-total { font-weight:600; }
+.ls { display:flex; flex-direction:column; gap:8px; min-width:30em; }
+.ls-main { display:flex; gap:8px; }
+.ls-list { flex:1; min-height:8em; max-height:40vh; overflow:auto; border:1px solid var(--line); }
+.ls-row { display:flex; gap:8px; padding:2px 4px; cursor:pointer; white-space:nowrap; }
+.ls-row.cur { background:var(--accent); color:var(--on-accent); }
+.ls-name { min-width:8em; } .ls-desc { flex:1; overflow:hidden; text-overflow:ellipsis; color:var(--dim); } .ls-row.cur .ls-desc { color:inherit; }
+.ls-match { width:1.2em; text-align:center; } .ls-none { padding:6px; color:var(--dim); }
+.ls-btns { display:flex; flex-direction:column; gap:4px; }
+.ls-opts { display:grid; grid-template-columns:1fr 1fr; gap:2px 12px; border:1px solid var(--line); margin:0; }
+.ls-form { display:flex; flex-direction:column; gap:6px; min-width:22em; } .ls-form label { display:flex; flex-direction:column; gap:2px; }
 
 /* External References panel (XREF) */
 .xref-table { border-collapse:collapse; min-width:560px; background:var(--panel2); color:var(--text); }
