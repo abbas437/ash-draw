@@ -29,6 +29,7 @@ import { iconSvg } from './icons.js';
 import { initSidePanel, applySide, markHead, windowTitle } from './side-panel.js';
 import { initSymbolsPanel } from './symbols-ui.js';
 import { symcountDialog } from './symcount-ui.js';
+import { layerStatesDialog } from './layerstates-ui.js';
 import { defaultLayout, cleanLayout, panelGroups, samePanel, quickRow, setQuickRow, compactKeys, foldMode, SEP } from './tool-layout.js';
 import { openCustomize, initToolContextMenu } from './tool-custom.js';
 import { loadDrawingImages } from './images.js';
@@ -78,6 +79,7 @@ class App {
     initSidePanel(this, api);
     this.symbolsPanel = initSymbolsPanel(this, api);
     document.getElementById('sym-count').onclick = () => symcountDialog(this);
+    document.getElementById('layer-states').onclick = () => layerStatesDialog(this);
     this.cmd = document.getElementById('cmd');
     this.cmd.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); const v = this.cmd.value; this.cmd.value = ''; this.vp.canvas.focus(); this.submit(v); }
@@ -242,6 +244,7 @@ class App {
         this.state.layer = name; this.refreshPanels(); toast(`Current layer: ${name}`, 2500);
       }),
       layon: () => layOn(this.session), laythw: () => layThaw(this.session),
+      layerstate: () => layerStatesDialog(this), las: () => layerStatesDialog(this), lman: () => layerStatesDialog(this),
     };
   }
   /** ZOOM Previous keeps one view stack per tab and space (model, each layout, each viewport entered from a layout) */

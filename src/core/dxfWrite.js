@@ -22,6 +22,7 @@ import { viewportTags } from './layouts.js';
 import { imageTags, imageDefTags } from './image.js';
 import { oleDataWithCorners } from './ole.js';
 import { drain, runSliced } from './slice.js';
+import { layerStateTags } from './layerstates.js';
 const encode = (s) => String(s ?? '').replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7e]/g, (c) => {
   const code = c.charCodeAt(0);
   return code < 32 ? ' ' : `\\U+${code.toString(16).toUpperCase().padStart(4, '0')}`;
@@ -541,7 +542,7 @@ export function* writeDxfSteps(doc, opts = {}) {
 
   // ---- tables ------------------------------------------------------------------------------------
   out.p(0, 'SECTION'); out.p(2, 'TABLES');
-  const table = (name, count, extra) => { out.p(0, 'TABLE'); out.p(2, name); out.p(5, tbl[name]); out.p(330, 0); out.p(100, 'AcDbSymbolTable'); out.p(70, count); if (extra) out.p(100, extra); };
+  const table = (name, count, extra, xd) => { out.p(0, 'TABLE'); out.p(2, name); out.p(5, tbl[name]); if (xd) { out.p(102, '{ACAD_XDICTIONARY'); out.p(360, xd); out.p(102, '}'); } out.p(330, 0); out.p(100, 'AcDbSymbolTable'); out.p(70, count); if (extra) out.p(100, extra); };
   const rec = (type, name, sub, ownerTable, handleCode = 5, preH = null) => { const h = preH ?? H(); out.p(0, type); out.p(handleCode, h); out.p(330, tbl[ownerTable]); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, sub); out.s(2, name); return h; };
 
   table('VPORT', 1);
@@ -570,7 +571,8 @@ export function* writeDxfSteps(doc, opts = {}) {
   out.p(0, 'ENDTAB');
 
   const layers = [...doc.layers.values()].filter((l) => !l.xrefDep);
-  table('LAYER', layers.length);
+  const lsStates = [...(doc.layerStates?.values() ?? [])], hLsX = lsStates.length ? H() : null, hLsD = hLsX && H(); // layer states
+  table('LAYER', layers.length, null, hLsX);
   for (const l of layers) {
     rec('LAYER', l.name, 'AcDbLayerTableRecord', 'LAYER', 5, layerH.get(l.name));
     out.p(70, (l.frozen ? 1 : 0) | (l.locked ? 4 : 0));
@@ -710,6 +712,16 @@ export function* writeDxfSteps(doc, opts = {}) {
   if (writeMlStyle) {
     out.p(0, 'MLEADERSTYLE'); out.p(5, hMleaderStyle); out.p(102, '{ACAD_REACTORS'); out.p(330, hMleaderDict); out.p(102, '}'); out.p(330, hMleaderDict);
     for (const [c, v] of mleaderStyleTags('__STDSTYLE__')) out.p(c, v);
+  }
+  if (hLsX) { // LAYER table extension dictionary -> ACAD_LAYERSTATES -> one XRECORD per state
+    const xh = lsStates.map(() => H());
+    out.p(0, 'DICTIONARY'); out.p(5, hLsX); out.p(330, tbl.LAYER); out.p(100, 'AcDbDictionary'); out.p(280, 1); out.p(281, 1); out.p(3, 'ACAD_LAYERSTATES'); out.p(360, hLsD);
+    out.p(0, 'DICTIONARY'); out.p(5, hLsD); out.p(102, '{ACAD_REACTORS'); out.p(330, hLsX); out.p(102, '}'); out.p(330, hLsX); out.p(100, 'AcDbDictionary'); out.p(281, 1);
+    lsStates.forEach((st, i) => { out.s(3, st.name); out.p(350, xh[i]); });
+    lsStates.forEach((st, i) => {
+      out.p(0, 'XRECORD'); out.p(5, xh[i]); out.p(102, '{ACAD_REACTORS'); out.p(330, hLsD); out.p(102, '}'); out.p(330, hLsD); out.p(100, 'AcDbXrecord'); out.p(280, 1);
+      for (const [c, v] of layerStateTags(st)) if (typeof v === 'string') out.s(c, v); else out.p(c, v);
+    });
   }
   out.p(0, 'ENDSEC');
   out.p(0, 'EOF');
