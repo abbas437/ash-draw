@@ -2,9 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import zlib from 'node:zlib';
-import { LIBREDWG, readmeSource, verifyArchive } from '../scripts/fetch-libredwg.mjs';
+import { LIBREDWG, readmeSource, resolveArchiveOptions, verifyArchive } from '../scripts/fetch-libredwg.mjs';
 
 const PATCH = readFileSync(new URL(`../${LIBREDWG.toolsDir}/${LIBREDWG.patchName}`, import.meta.url));
 const sha256 = (b) => createHash('sha256').update(b).digest('hex');
@@ -81,4 +81,55 @@ test('the repository patch is the LLP64 bit_advance_position fix', () => {
   const p = PATCH.toString('utf8');
   assert.match(p, /^\+\s+else if \(advance < 0 && pos < -\(size_t\)advance\)$/m);
   assert.match(p, /^-\s+else if \(\(long\)\(pos \+ advance\) < 0\)$/m);
+});
+
+test('both source notices carry the libiconv (LGPL) notice and cover it in the written offer', () => {
+  for (const patched of [true, false]) {
+    const txt = readmeSource([['dwg2dxf.exe', '0'.repeat(64)]], { patched });
+    assert.match(txt, /unmodified GNU libiconv as distributed\s+in the upstream LibreDWG Windows archive/);
+    assert.ok(txt.includes('https://ftp.gnu.org/pub/gnu/libiconv/'));
+    assert.match(txt, /machine-readable copy of the corresponding source code[^]*libiconv-2\.dll/);
+  }
+});
+
+test('patched notice says modified on the patch date, not built on it', () => {
+  const txt = readmeSource([['dwg2dxf.exe', '0'.repeat(64)]], { patched: true });
+  assert.ok(!/built them\s+on/.test(txt));
+  assert.match(txt, new RegExp(`modified\\s+them on ${LIBREDWG.patchDate}`));
+});
+
+test('an archive matching the pinned upstream zip hash is accepted as patched=false', () => {
+  const zip = makeZip(converters());
+  const r = verifyArchive(zip, { patch: PATCH, pins: { ...pins, zipSha256: sha256(zip) } });
+  assert.equal(r.patched, false);
+  assert.deepEqual(r.files.map(([n]) => n), LIBREDWG.files);
+});
+
+const realZip = ['.cache', '/home/claude/libredwg-win/upstream-zip', '/tmp/claude-0']
+  .map((d) => `${d}/${LIBREDWG.zipName}`).find((f) => existsSync(f));
+test('the real upstream zip is accepted as patched=false', { skip: realZip ? false : `${LIBREDWG.zipName} not present locally` }, () => {
+  const r = verifyArchive(readFileSync(realZip), { patch: PATCH });
+  assert.equal(r.patched, false);
+});
+
+test('requirePatched refuses the upstream zip but accepts a patched build', () => {
+  const up = makeZip(converters());
+  assert.throws(() => verifyArchive(up, { patch: PATCH, pins: { ...pins, zipSha256: sha256(up) }, requirePatched: true }),
+    /patched LibreDWG build is required/);
+  const ok = verifyArchive(makeZip({ ...converters(), [LIBREDWG.patchName]: PATCH }), { patch: PATCH, pins, requirePatched: true });
+  assert.equal(ok.patched, true);
+});
+
+test('resolveArchiveOptions: --from, env zip, require flag and env', () => {
+  assert.deepEqual(resolveArchiveOptions([], {}), { from: null, requirePatched: false });
+  assert.deepEqual(resolveArchiveOptions(['--from', 'a.zip'], { ASH_LIBREDWG_ZIP: 'b.zip' }), { from: 'a.zip', requirePatched: false });
+  assert.deepEqual(resolveArchiveOptions([], { ASH_LIBREDWG_ZIP: 'b.zip' }), { from: 'b.zip', requirePatched: false });
+  assert.equal(resolveArchiveOptions(['--require-patched'], {}).requirePatched, true);
+  assert.equal(resolveArchiveOptions([], { ASH_LIBREDWG_REQUIRE_PATCHED: '1' }).requirePatched, true);
+  assert.equal(resolveArchiveOptions([], { ASH_LIBREDWG_REQUIRE_PATCHED: '0' }).requirePatched, false);
+});
+
+test('resolveArchiveOptions: set-but-empty ASH_LIBREDWG_ZIP and a bare --from are errors', () => {
+  assert.throws(() => resolveArchiveOptions([], { ASH_LIBREDWG_ZIP: '' }), /set but empty/);
+  assert.throws(() => resolveArchiveOptions(['--from'], {}), /--from needs a path/);
 });

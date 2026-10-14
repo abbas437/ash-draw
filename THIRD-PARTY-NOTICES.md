@@ -152,11 +152,12 @@ PERFORMANCE OF THIS SOFTWARE.
 ## LibreDWG 0.14.8597 (GPL-3.0-or-later) - separate program, not part of the MIT-licensed app
 
 The Windows build ships LibreDWG 0.14.8597 executables
-`dwg2dxf.exe`, `dxf2dwg.exe` and their library `libredwg-0.dll`, **modified**: built from the
-upstream source with one patch (`tools/libredwg-win/libredwg-llp64-bitpos.patch`, fixing false
-"buffer underflow" errors past 256 MiB on 64-bit Windows), plus GNU libiconv's `libiconv-2.dll`
+`dwg2dxf.exe`, `dxf2dwg.exe` and their library `libredwg-0.dll`, plus GNU libiconv's `libiconv-2.dll`
 (LGPL-2.1-or-later, an unmodified separate DLL from the upstream archive, used only by libredwg), in
-`resources/libredwg/`. ASH Draw Studio does not link to or load LibreDWG; it runs
+`resources/libredwg/`. Release builds ship LibreDWG converters built from the upstream 0.14.8597 source
+with one patch (`tools/libredwg-win/libredwg-llp64-bitpos.patch`, fixing false "buffer underflow" errors
+past 256 MiB on 64-bit Windows); `resources/libredwg/README-SOURCE.txt` next to the converters states which
+build a given copy contains. ASH Draw Studio does not link to or load LibreDWG; it runs
 these programs as separate child processes (`execFile`, no shell) to convert DWG
 files to and from DXF through temporary files. LibreDWG is licensed under the GNU
 General Public License version 3 or later; the full text is shipped as

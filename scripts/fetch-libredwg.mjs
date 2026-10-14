@@ -18,6 +18,8 @@
 //   node scripts/fetch-libredwg.mjs                  download the upstream zip (cached in .cache/) and extract
 //   node scripts/fetch-libredwg.mjs --from <zip>     use a local zip (upstream, or the patched build)
 //   ASH_LIBREDWG_ZIP=<zip> npm run fetch:libredwg    same as --from (also picked up by `npm run dist`)
+//   --require-patched (or ASH_LIBREDWG_REQUIRE_PATCHED=1)  exit non-zero unless the verified archive is the
+//                                                    patched build (CI release builds set this)
 //   node scripts/fetch-libredwg.mjs --source <dir>   also download + verify the source tarball into <dir>
 //                                                    and copy the patch there (release assets)
 import { createHash } from 'node:crypto';
@@ -117,10 +119,11 @@ export function extractEntry(buf, entry, name) {
 /**
  * Checks a LibreDWG Windows archive and extracts LIBREDWG.files from it. Accepts the pinned
  * upstream zip, or a patched build carrying a copy of `patch` (the repository's patch file,
- * byte-identical) and the upstream libiconv-2.dll. Anything else is refused.
+ * byte-identical) and the upstream libiconv-2.dll. Anything else is refused. With `requirePatched`
+ * the upstream zip is refused too.
  * @returns {{patched: boolean, zipSha256: string, files: [string, Buffer][]}}
  */
-export function verifyArchive(zip, { patch, pins = LIBREDWG } = {}) {
+export function verifyArchive(zip, { patch, pins = LIBREDWG, requirePatched = false } = {}) {
   const zipSha256 = sha256(zip);
   const entries = readZipEntries(zip);
   const get = (name) => {
@@ -129,6 +132,10 @@ export function verifyArchive(zip, { patch, pins = LIBREDWG } = {}) {
     return extractEntry(zip, e, name);
   };
   const patched = zipSha256 !== pins.zipSha256;
+  if (!patched && requirePatched) {
+    throw new Error('a patched LibreDWG build is required (--require-patched / ASH_LIBREDWG_REQUIRE_PATCHED=1) '
+      + `but the archive is the unmodified upstream ${pins.zipName}, which misreads drawings past 256 MiB. Refusing to use it.`);
+  }
   if (patched) {
     if (!entries.has(pins.patchName)) {
       throw new Error(`SHA-256 mismatch for ${pins.zipName}: expected ${pins.zipSha256}, got ${zipSha256}, `
@@ -153,8 +160,8 @@ export function readmeSource(fileHashes, { patched = false, zipSha256 = LIBREDWG
   const L = LIBREDWG;
   const hashes = fileHashes.map(([n, h]) => `  ${h}  ${n}`).join('\n');
   const what = patched ? `The files in this folder are a MODIFIED version of GNU LibreDWG version
-${L.version}. ASH Technical & Project Management Services (ASH PMCS) built them
-on ${L.patchDate} (date of the modification) from the unmodified upstream source
+${L.version}. ASH Technical & Project Management Services (ASH PMCS) modified
+them on ${L.patchDate}; they are built from the unmodified upstream source
 release with one patch applied, ${L.patchName} (a copy is in this
 folder). The patch fixes a 64-bit Windows bug in src/bits.c: once a drawing's
 decompressed data passed 256 MiB, reads were reported as "buffer underflow" and
@@ -201,8 +208,9 @@ ${L.version} release, available at no charge from:
 The same source tarball is also attached to each tagged ASH Draw Studio release
 on the page from which the installer is distributed.`;
   const offered = patched
-    ? `of LibreDWG ${L.version} as listed above (source tarball, patch and build scripts)`
-    : `of LibreDWG ${L.version}`;
+    ? `of LibreDWG ${L.version} as listed above (source tarball, patch and build scripts)
+and of the GNU libiconv library libiconv-2.dll`
+    : `of LibreDWG ${L.version} and of the GNU libiconv library libiconv-2.dll`;
   return `LibreDWG ${L.version} (nightly build) - binaries bundled with ASH Draw Studio
 ==============================================================
 
@@ -218,7 +226,10 @@ folder. These programs come with ABSOLUTELY NO WARRANTY.
 libiconv-2.dll is GNU libiconv (Copyright (C) Free Software Foundation, Inc.), licensed
 under the GNU Lesser General Public License version 2.1 or later. It is an unmodified
 separate DLL that is only used by libredwg-0.dll; you may replace it with any
-compatible build of libiconv 2.x.
+compatible build of libiconv 2.x. It is the unmodified GNU libiconv as distributed
+in the upstream LibreDWG Windows archive ${L.zipName} (the version shipped
+in that archive); its source code is available at no charge from
+https://ftp.gnu.org/pub/gnu/libiconv/ and is covered by the written offer below.
 
 How ASH Draw Studio uses them
 -----------------------------
@@ -243,6 +254,21 @@ made by opening an issue at https://github.com/abbas437/ash-draw/issues.
 `;
 }
 
+/**
+ * Resolves which archive to use and whether it must be the patched build, from argv and env.
+ * @returns {{from: string|null, requirePatched: boolean}}
+ */
+export function resolveArchiveOptions(argv, env = {}) {
+  const fromIdx = argv.indexOf('--from');
+  if (fromIdx >= 0 && !argv[fromIdx + 1]) throw new Error('--from needs a path to the zip');
+  if (env.ASH_LIBREDWG_ZIP !== undefined && env.ASH_LIBREDWG_ZIP === '') {
+    throw new Error('ASH_LIBREDWG_ZIP is set but empty (the patched zip path did not resolve); unset it or give a path');
+  }
+  const from = fromIdx >= 0 ? argv[fromIdx + 1] : (env.ASH_LIBREDWG_ZIP ?? null);
+  const requirePatched = argv.includes('--require-patched') || env.ASH_LIBREDWG_REQUIRE_PATCHED === '1';
+  return { from, requirePatched };
+}
+
 async function verifiedSource(destDir) {
   const buf = await download(LIBREDWG.sourceUrlGithub);
   const got = sha256(buf);
@@ -260,11 +286,9 @@ async function verifiedSource(destDir) {
 }
 
 async function main(argv) {
-  const fromIdx = argv.indexOf('--from');
   const srcIdx = argv.indexOf('--source');
   let zip;
-  const from = fromIdx >= 0 ? argv[fromIdx + 1] : process.env.ASH_LIBREDWG_ZIP;
-  if (fromIdx >= 0 && !from) throw new Error('--from needs a path to the zip');
+  const { from, requirePatched } = resolveArchiveOptions(argv, process.env);
   if (from) {
     zip = await fs.readFile(from);
     console.log(`using local archive ${from}`);
@@ -284,7 +308,7 @@ async function main(argv) {
   }
 
   const patch = await fs.readFile(PATCH_FILE);
-  const { patched, zipSha256, files: extracted } = verifyArchive(zip, { patch });
+  const { patched, zipSha256, files: extracted } = verifyArchive(zip, { patch, requirePatched });
   console.log(patched
     ? `patched build (${LIBREDWG.patchName} matches ${LIBREDWG.toolsDir}), SHA-256 ${zipSha256}`
     : `upstream archive, SHA-256 OK ${zipSha256}`);

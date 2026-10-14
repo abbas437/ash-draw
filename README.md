@@ -118,7 +118,7 @@ notices ship as `LICENSES.chromium.html` in the installation folder.
 
 **LibreDWG.** DWG support uses GNU LibreDWG 0.14.8597 (libredwg), which is licensed under the
 GPL-3.0-or-later. ASH Draw Studio does not link to or load LibreDWG: the programs
-`dwg2dxf.exe` and `dxf2dwg.exe` (built from upstream source with one patch, see below) (with `libredwg-0.dll` and GNU libiconv's LGPL `libiconv-2.dll`) are shipped in
+`dwg2dxf.exe` and `dxf2dwg.exe` (release builds are built from upstream source with one patch, see below; `README-SOURCE.txt` states which build a copy contains) (with `libredwg-0.dll` and GNU libiconv's LGPL `libiconv-2.dll`) are shipped in
 `resources/libredwg/` and started as separate processes (`execFile`, no shell) that convert
 through temporary files. They keep their own licence; the GPL text is in
 `resources/libredwg/COPYING`. The complete corresponding source is the LibreDWG 0.14.8597

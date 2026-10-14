@@ -33,7 +33,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache/libredwg-llp64
-          key: libredwg-llp64-${{ runner.os }}-${{ hashFiles('tools/libredwg-win/**', 'scripts/fetch-libredwg.mjs') }}
+          key: libredwg-llp64-${{ runner.os }}-${{ env.ImageOS }}-${{ env.ImageVersion }}-${{ hashFiles('tools/libredwg-win/**', 'scripts/fetch-libredwg.mjs', '.github/workflows/build.yml') }}
       - name: Install mingw-w64
         if: steps.cache.outputs.cache-hit != 'true'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64 zip unzip xz-utils patch
@@ -49,7 +49,7 @@ jobs:
           .cache/libredwg-build
           .cache/libredwg-llp64
       - name: Verify the patched zip (patch matches, dwg2dxf/dxf2dwg/libredwg-0/libiconv-2 present)
-        run: node scripts/fetch-libredwg.mjs --from .cache/libredwg-llp64/libredwg-0.14.8597-llp64-win64.zip
+        run: node scripts/fetch-libredwg.mjs --from .cache/libredwg-llp64/libredwg-0.14.8597-llp64-win64.zip --require-patched
       - uses: actions/upload-artifact@v4
         with:
           name: libredwg-llp64-win64
@@ -66,6 +66,8 @@ jobs:
     env:
       # fetch-libredwg.mjs (also run by `npm run dist`) takes the patched converters from here.
       ASH_LIBREDWG_ZIP: ${{ github.workspace }}/.cache/libredwg-llp64/libredwg-0.14.8597-llp64-win64.zip
+      # Fail the build rather than ship the upstream (256 MiB-buggy) binaries.
+      ASH_LIBREDWG_REQUIRE_PATCHED: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -79,7 +81,7 @@ jobs:
       - run: npm ci
       - run: npm run licenses
       # Verify + extract the patched LibreDWG converters first so the DWG round-trip tests run on the shipped Windows binaries.
-      - run: npm run fetch:libredwg
+      - run: npm run fetch:libredwg -- --require-patched
       - name: npm test
         shell: bash
         env:
@@ -124,6 +126,9 @@ jobs:
             echo "::error title=electron-builder failed::$msg"
           fi
           exit $code
+      - name: Assert the shipped LibreDWG converters are the patched build
+        shell: bash
+        run: test -f build/libredwg/libredwg-llp64-bitpos.patch
       - name: LibreDWG corresponding source (GPL) for the release - tarball, patch, build scripts
         shell: bash
         run: |
