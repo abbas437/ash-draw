@@ -450,6 +450,10 @@ export function renameLayer(s, from, to, opts = {}) {
   if (err) throw new Error(err);
   if (from === to) return false;
   const U = (x) => String(x ?? '0').toUpperCase(), old = U(from);
+  // the layer table is case-sensitive: a reference follows only when it names `from` exactly, or when it has no exact
+  // table key at all (an orphan such as a block piece on "WALLS") and matches ignoring case
+  const keys = new Set(doc.layers.keys());
+  const hit = (n) => n === from || (!keys.has(n) && U(n) === old);
   const lists = [doc.entities, ...(doc.layouts ?? []).map((lo) => lo.entities ?? []), ...[...doc.blocks.values()].filter((b) => !b.xref && !b.xrefDep).map((b) => b.entities ?? [])];
   s.transact('Rename layer', (tx) => {
     const before = { ...getLayer(doc, from) };
@@ -457,12 +461,12 @@ export function renameLayer(s, from, to, opts = {}) {
     tx.layer(to, { ...before, name: to });
     for (const list of lists) {
       for (const e of list) {
-        if (U(e.layer) === old) tx.props(e, { layer: to });
-        for (const a of e.attribs ?? []) if (U(a.layer) === old) tx.props(a, { layer: to });
-        if (e.type === 'VIEWPORT' && e.frozen?.some((n) => U(n) === old)) tx.props(e, { frozen: e.frozen.map((n) => (U(n) === old ? to : n)) });
+        if (hit(e.layer)) tx.props(e, { layer: to });
+        for (const a of e.attribs ?? []) if (hit(a.layer)) tx.props(a, { layer: to });
+        if (e.type === 'VIEWPORT' && e.frozen?.some(hit)) tx.props(e, { frozen: e.frozen.map((n) => (hit(n) ? to : n)) });
       }
     }
-    if (opts.current && U(opts.current.layer) === old) tx.props(opts.current, { layer: to });
+    if (opts.current && hit(opts.current.layer)) tx.props(opts.current, { layer: to });
   });
   return true;
 }

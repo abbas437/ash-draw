@@ -108,7 +108,7 @@ export function renderLayers(app) {
   const lwText = (w) => (w >= 0 ? `${w.toFixed(2)} mm` : 'Default');
   box.replaceChildren(...rows.map((l) => {
     const row = el('div', { class: `layer${app.state.layer === l.name ? ' current' : ''}`, tabindex: '0', 'data-layer': l.name,
-      onkeydown: (e) => { if (e.key === 'F2' && e.target === row) { e.preventDefault(); startRename(app, row, l); } },
+      onkeydown: (e) => { if (e.key === 'F2' && e.target === row) { e.preventDefault(); e.stopPropagation(); startRename(app, row, l); } },
       oncontextmenu: (e) => { e.preventDefault(); popMenu(e, [['Rename', () => startRename(app, row, l)], ['Make current', () => current(l.name)], ['Linetype / lineweight…', () => layerPropsDialog(app, l)]]); } },
     // On/Off and Freeze/Thaw are independent flags (AutoCAD): toggling one never touches the other
     el('button', { class: 'icon lay-on', title: l.visible !== false ? 'Turn layer off' : 'Turn layer on', onclick: () => { setLayerProps(session, l.name, { visible: l.visible === false }); } }, l.visible !== false ? '◉' : '○'),
@@ -175,6 +175,7 @@ function startRename(app, row, l) {
       if (err) { if (commit === 'enter') { toast(err); inp.select(); return; } done = true; toast(err); renderLayers(app); return; }
       done = true;
       renameLayer(app.session, l.name, name, { doc: app.fileDoc ?? app.doc, current: app.state });
+      if (app.isoSaved?.has(l.name)) app.isoSaved = new Map([...app.isoSaved].map(([k, v]) => [k === l.name ? name : k, v])); // LAYUNISO follows the rename
       app.refreshPanels();
       return;
     }

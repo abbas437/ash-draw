@@ -115,3 +115,16 @@ test('plot flag: objects on a non-plotting layer are left out of the PDF (model 
   doc.layers.get('NP').plot = true;
   assert.match(await pdfText(doc), GREEN, 'plots once the flag is back on');
 });
+
+test('rename is case-exact: Walls -> A-WALL leaves a separate "walls" layer and its objects alone', () => {
+  const doc = M.newDocument();
+  M.addLayer(doc, { name: 'Walls', color: 3 });
+  M.addLayer(doc, { name: 'walls', color: 4 });
+  M.addEntity(doc, M.makeLine({ x: 0, y: 0 }, { x: 1, y: 1 }, { layer: 'Walls' }));
+  M.addEntity(doc, M.makeLine({ x: 0, y: 0 }, { x: 2, y: 1 }, { layer: 'walls' }));
+  const s = new Session(doc), cur = { layer: 'walls' };
+  assert.equal(renameLayer(s, 'Walls', 'A-WALL', { current: cur }), true);
+  assert.deepEqual(doc.entities.map((e) => e.layer), ['A-WALL', 'walls']);
+  assert.ok(doc.layers.has('walls') && doc.layers.has('A-WALL') && !doc.layers.has('Walls'));
+  assert.equal(cur.layer, 'walls', 'the current layer "walls" is a different layer');
+});

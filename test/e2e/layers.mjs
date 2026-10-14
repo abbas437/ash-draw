@@ -73,6 +73,19 @@ try {
   assert.equal(await row('PORTE').count(), 0);
   assert.equal(await page.evaluate(() => window.app.doc.entities.some((e) => e.layer === 'DOOR')), true);
 
+  step = 'F2 on a focused row opens the inline editor (global F2 must not steal focus)';
+  await row('DOOR').locator('.lname').click();
+  await page.keyboard.press('F2');
+  await page.waitForSelector('input.lname-edit', { timeout: 5000 });
+  await page.locator('input.lname-edit').fill('PORTE');
+  await page.locator('input.lname-edit').press('Enter');
+  await page.waitForSelector('#layers .layer[data-layer="PORTE"]');
+  assert.equal(await page.evaluate(() => window.app.doc.entities.some((e) => e.layer === 'PORTE') && !window.app.doc.entities.some((e) => e.layer === 'DOOR')), true);
+
+  await page.evaluate(() => document.activeElement?.blur?.());
+  await page.keyboard.press('Control+z');
+  await page.waitForSelector('#layers .layer[data-layer="DOOR"]');
+
   step = 'invalid name: toast, editor stays open';
   await row('DOOR').locator('.lname').dblclick();
   await page.locator('input.lname-edit').fill('a/b');
