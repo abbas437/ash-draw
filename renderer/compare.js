@@ -8,10 +8,12 @@ import { runSliced } from '../src/core/slice.js';
 import { Tool } from './tools.js';
 import { el, modal, message, toast, progressToast } from './ui.js';
 
-const { buildCompareDoc, defaultTolerance, defaultClusterGap, setCompareView, reclusterCompare, clusterMark, COMPARE_LAYERS } = core;
+const { alignQuality, buildCompareDoc, defaultTolerance, defaultClusterGap, setCompareView, reclusterCompare, clusterMark, COMPARE_LAYERS } = core;
 const VIEWS = [['differences', 'Differences'], ['overlay', 'Overlay'], ['a', 'A only'], ['b', 'B only']];
 const UNIT_NAMES = { 1: 'in', 2: 'ft', 4: 'mm', 5: 'cm', 6: 'm' };
 const CLUSTER_PAGE = 200; // rows of the cluster list shown at a time
+/** the reviewer's choice for "Show property-only changes", kept for the compares of this session (default: hidden) */
+let sessionShowProps = false;
 const num = (v) => String(+(+v).toFixed(4) + 0);
 
 /** one row of the cluster list */
@@ -33,7 +35,7 @@ export function offsetText(c) {
   if (c.align === 'none' || (!dx && !dy && !rot && c.align !== 'auto')) return 'Not aligned (A compared where it is).';
   let t = `A aligned to B: moved ${num(dx)}, ${num(dy)}`;
   if (Math.abs(rot) > 1e-9) t += `; rotated ${num(rot)}°`;
-  if (c.align === 'auto') t += ` (automatic; match ${(o.confidence ?? 0) >= 0.5 ? 'good' : 'weak'})`;
+  if (c.align === 'auto') { const q = alignQuality(c.r); t += ` (automatic; ${q.pct} % of A unchanged — ${q.label})`; }
   else if (c.align === 'pick') t += ' (picked points)';
   return t;
 }
@@ -58,7 +60,7 @@ export class ComparePanel {
     this.pos = el('span', { class: 'cmp-pos' });
     this.list = el('div', { class: 'cmp-list', role: 'listbox', 'aria-label': 'Change clusters' });
     this.offset = el('div', { class: 'cmp-offset' });
-    this.showProps = el('input', { type: 'checkbox', id: 'cmp-showprops', checked: true, onchange: () => this.setShowProps(this.showProps.checked) });
+    this.showProps = el('input', { type: 'checkbox', id: 'cmp-showprops', checked: false, onchange: () => this.setShowProps(this.showProps.checked) });
     this.listProps = el('input', { type: 'checkbox', id: 'cmp-listprops', onchange: () => this.setListProps(this.listProps.checked) });
     this.view = el('select', { id: 'cmp-view', title: 'What the compare drawing shows', onchange: () => this.setView(this.view.value) },
       VIEWS.map(([v, label]) => el('option', { value: v, text: label })));
@@ -67,7 +69,7 @@ export class ComparePanel {
       el('div', { class: 'phead' }, 'Compare', el('span', { class: 'spacer' }), btn('×', 'Hide panel', () => { this.box.hidden = true; }, 'cmp-close')),
       this.offset,
       this.counts,
-      el('label', { class: 'cmp-opt', title: 'Draw objects that differ only in colour, linetype, lineweight or layer (dashed cyan, layer COMPARE-PROPS)' }, this.showProps, ' Show property-only changes'),
+      el('label', { class: 'cmp-opt', title: 'Draw objects that differ only in colour, linetype, lineweight or layer (faint dashed grey, layer COMPARE-PROPS)' }, this.showProps, ' Show property-only changes'),
       el('label', { class: 'cmp-opt', title: 'Also group the property-only changes into the cluster list' }, this.listProps, ' Include property-only changes in the list'),
       el('div', { class: 'cmp-btns' }, el('label', {}, 'View ', this.view), el('span', { class: 'spacer' }), btn('Plot to PDF…', 'Plot or publish this compare drawing (the Plot dialog)', () => this.app.exportPdf(), 'cmp-plot')),
       el('div', { class: 'cmp-btns' }, btn('◀ Previous', 'Zoom to the previous change', () => this.step(-1), 'cmp-prev'), btn('Next ▶', 'Zoom to the next change', () => this.step(1), 'cmp-next'), this.pos),
@@ -105,7 +107,7 @@ export class ComparePanel {
   /** show / hide the layer of the property-only changes (the view keeps its colours) */
   setShowProps(on) {
     const c = this.app.active?.compare; if (!c) return;
-    c.showProps = on;
+    c.showProps = sessionShowProps = on;
     this.applyShowProps(c);
     this.app.vp.refreshStructure();
     this.app.refreshPanels();
@@ -315,7 +317,8 @@ export async function showComparison(app, a, b, nameA, nameB, { align = 'auto', 
     const doc = await runSliced(core.buildCompareSteps(a, b, r), { signal: ac.signal, onProgress: (f) => pt.set(0.8 + 0.1 * f), cancelMessage });
     const prepared = await prepareView(doc, { signal: ac.signal, onProgress: (f) => pt.set(0.9 + 0.1 * f) });
     app.installDoc(doc, { path: null, name: `Compare ${nameA} vs ${nameB}`, format: 'dxf' }, { prepared });
-    app.active.compare = { r, a, b, nameA, nameB, align, view: 'differences', showProps: true, clusterProps: !!opts.clusterProps };
+    app.active.compare = { r, a, b, nameA, nameB, align, view: 'differences', showProps: sessionShowProps, clusterProps: !!opts.clusterProps };
+    app.comparePanel.applyShowProps(app.active.compare); app.vp.refreshStructure();
     app.comparePanel.sync();
     toast(`${r.added.length} added, ${r.removed.length} removed, ${r.changedGeometry.length} changed, ${r.changedProps.length} property-only (pieces)`, 3000);
   } catch (err) {

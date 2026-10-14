@@ -503,5 +503,18 @@ test('compare: a moved line is changedGeometry, lines whose layer colour changed
   const d = buildCompareDoc(a, b, r);
   assert.equal(d.entities.filter((e) => e.layer === COMPARE_LAYERS.props.name).length, 3);
   assert.equal(d.entities.filter((e) => e.layer === COMPARE_LAYERS.changed.name).length, 1);
-  assert.equal(d.layers.get(COMPARE_LAYERS.props.name).color, 4);
+  assert.equal(d.layers.get(COMPARE_LAYERS.props.name).color, 252);
+});
+
+test('alignQuality: share of A matched as unchanged or property-only', async () => {
+  const { alignQuality } = await import('../src/core/compare.js');
+  const n = (k) => Array(k).fill({});
+  const q = (same, props, changed, removed) => alignQuality({ same: n(same), changedProps: n(props), changed: n(props + changed), removed: n(removed) });
+  assert.deepEqual(q(50, 0, 25, 25), { pct: 50, label: 'good' });
+  assert.deepEqual(q(40, 10, 25, 25), { pct: 50, label: 'good' }, 'property-only counts as matched');
+  assert.deepEqual(q(10, 0, 45, 45), { pct: 10, label: 'fair' });
+  assert.deepEqual(q(49, 0, 25, 26).label, 'fair');
+  const p = q(5, 0, 45, 50);
+  assert.equal(p.pct, 5); assert.match(p.label, /^poor — check the alignment or pick points$/);
+  assert.equal(q(0, 0, 0, 0).label.startsWith('poor'), true);
 });

@@ -867,14 +867,23 @@ export const COMPARE_LAYERS = {
   removed: { name: 'COMPARE-REMOVED', color: 1 },       // in A only: red
   changed: { name: 'COMPARE-CHANGED', color: 40 },      // changed, B's version: amber
   changedA: { name: 'COMPARE-CHANGED-A', color: 40 },   // changed, A's version: amber
-  props: { name: 'COMPARE-PROPS', color: 4, linetype: 'COMPARE_DASH', lineweight: 0 }, // changed in colour / linetype / lineweight / layer only (B's version): cyan, dashed, thin
+  props: { name: 'COMPARE-PROPS', color: 252, linetype: 'COMPARE_DASH', lineweight: 0 }, // changed in colour / linetype / lineweight / layer only (B's version): faint grey, dashed, thin
   marks: { name: 'COMPARE-MARKS', color: 6 },           // dotted rectangles around change clusters (no revision clouds)
 };
 
+/** how well the automatic alignment fits, from the result: the share of A's pieces that matched as unchanged or
+ *  property-only. { pct (whole %), label 'good' >= 50 % | 'fair' >= 10 % | 'poor — check the alignment or pick points' } */
+export function alignQuality(r) {
+  const same = r.same?.length ?? 0, props = r.changedProps?.length ?? 0;
+  const total = same + (r.changed?.length ?? 0) + (r.removed?.length ?? 0);
+  const share = total ? (same + props) / total : 0;
+  return { pct: Math.round(share * 100), label: share >= 0.5 ? 'good' : share >= 0.1 ? 'fair' : 'poor — check the alignment or pick points' };
+}
+
 /** the compare tab's views: colour of each compare layer, null = layer hidden */
 export const COMPARE_VIEWS = {
-  differences: { same: 8, added: 3, removed: 1, changed: 40, changedA: 40, props: 4, marks: 6 },
-  overlay: { same: 7, added: 3, removed: 1, changed: 3, changedA: 1, props: 4, marks: 6 },   // A red, B green, both: white
+  differences: { same: 8, added: 3, removed: 1, changed: 40, changedA: 40, props: 252, marks: 6 },
+  overlay: { same: 7, added: 3, removed: 1, changed: 3, changedA: 1, props: 252, marks: 6 },   // A red, B green, both: white
   a: { same: 7, added: null, removed: 1, changed: null, changedA: 1, props: 1, marks: 6 },    // drawing A only (its own parts red)
   b: { same: 7, added: 3, removed: null, changed: 3, changedA: null, props: 3, marks: 6 },    // drawing B only (its own parts green)
 };
