@@ -308,8 +308,9 @@ try {
   await bounded(failing, 5000, 'open()');
   await prefs('auto');
   const av = await win.evaluate(() => window.api.dwgAvailable());
-  assert.equal(av.engine, 'oda', JSON.stringify(av));
-  assert.equal(av.version, 'ODA File Converter 99.1.0');
+  // Automatic: the built-in converter is tried first; ODA (installed) takes over when it cannot read the file
+  assert.equal(av.engine, 'libredwg', JSON.stringify(av));
+  assert.equal(av.oda.version, '99.1.0');
   await bounded(win.evaluate(() => window.app.open()), 15000, 'open()');
   await win.waitForFunction(() => window.app.file.name === 'truncated.dwg', null, { timeout: 15000 });
   assert.deepEqual(await win.evaluate(() => window.app.doc.entities.map((e) => [e.type, e.layer])), [['LINE', 'ODA']]);
