@@ -49,7 +49,7 @@ export class Viewport {
     this.cursor = { x: 0, y: 0 };      // last resolved (snapped) world point
     this.rawCursor = { x: 0, y: 0 };
     this.snapMarker = null;
-    this.lastPoint = null;             // last point entered (for relative input and ortho)
+    this._lastPoint = null;            // see the lastPoint accessor
     this.settings = { snap: true, ortho: false, polar: false, polarStep: 45, polarExtra: [], lineweights: false, transparency: true, dark: false, zoomFactor: ZOOMFACTOR_DEFAULT, kinds: new Set(DEFAULT_KINDS) };
     this.preview = null;               // (ctx, view, vp) => void drawn above the scene
     this.rubber = null;                // selection rectangle {a,b,crossing} in world coordinates
@@ -178,6 +178,7 @@ export class Viewport {
   // ---- point resolution (snap / ortho / polar) -------------------------------------------------
   resolve(sx, sy, { from = this.lastPoint, snap = this.settings.snap, exclude } = {}) {
     const raw = this.toWorld(sx, sy);
+    this._checkParallel();
     let p = raw, marker = null;
     if (snap && this.index) {
       const par = from && this.settings.kinds.has('par') ? this.parallel?.dir : undefined;
@@ -231,6 +232,7 @@ export class Viewport {
     this._drawGrips();
     if (this.preview) { ctx.save(); this.preview(ctx, view, this); ctx.restore(); }
     if (this.rubber) this._drawRubber();
+    this._checkParallel();
     if (this.parallel && this.lastPoint) this._drawParallelAcquired();
     if (this.snapMarker) this._drawSnapMarker();
     this._drawCrosshair();
@@ -367,9 +369,14 @@ export class Viewport {
     clearTimeout(this._hoverT); this._hoverKey = key;
     if (!key) return;
     const at = { ...raw };
-    this._hoverT = setTimeout(() => { this.parallel = { dir, at, id: e.id }; this.requestRender(); }, ACQUIRE_MS);
+    this._hoverT = setTimeout(() => { if (!this.lastPoint) return; this.parallel = { dir, at, id: e.id }; this.requestRender(); }, ACQUIRE_MS);
   }
-  /** forget the acquired parallel direction (a new tool) */
+  /** last point entered (for relative input and ortho); when it goes away the acquired parallel direction goes with it */
+  get lastPoint() { return this._lastPoint; }
+  set lastPoint(p) { this._lastPoint = p; if (!p) this.clearTracking(); }
+  /** drop the acquired direction once its entity no longer exists (deleted, or its creation undone) */
+  _checkParallel() { if (this.parallel && !getEntity(this.doc, this.parallel.id)) this.clearTracking(); }
+  /** forget the acquired parallel direction (a new tool, the end of a command sequence) */
   clearTracking() { clearTimeout(this._hoverT); this._hoverKey = null; this.parallel = null; }
   /** the canvas CSS cursor: none only while the crosshair is drawn (it is not while busy, panning or in Pan) */
   _syncCursor() {

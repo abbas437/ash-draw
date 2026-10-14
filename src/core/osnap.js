@@ -77,7 +77,35 @@ export function directionAt(e, p) {
  *  Green's theorem: A = ∮x dy, Cx = ∮x² dy / 2A, Cy = -∮y² dx / 2A. */
 export function geometricCenter(e) {
   if (e.type !== 'LWPOLYLINE' || !e.closed || e.vertices.length < 2) return null;
+  if (gcenCache.has(e)) return gcenCache.get(e);
+  const r = computeGeometricCenter(e);
+  gcenCache.set(e, r);
+  return r;
+}
+
+/** entity object -> centre|null; edits replace the entity object (as for the bbox cache in pick.js), so a changed entity misses */
+const gcenCache = new WeakMap();
+const SELF_X_MAX = 500; // above this many segments the self-intersection check is skipped
+
+/** true when two non-adjacent segments of the closed outline (bulges taken as chords) properly cross */
+function selfIntersects(v) {
+  const n = v.length;
+  if (n < 4 || n > SELF_X_MAX) return false;
+  const o = (a, b, c) => Math.sign((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
+  for (let i = 0; i < n; i++) {
+    const a = v[i], b = v[(i + 1) % n];
+    for (let j = i + 2; j < n; j++) {
+      if (i === 0 && j === n - 1) continue; // adjacent through the closing segment
+      const c = v[j], d = v[(j + 1) % n];
+      if (o(a, b, c) * o(a, b, d) < 0 && o(c, d, a) * o(c, d, b) < 0) return true;
+    }
+  }
+  return false;
+}
+
+function computeGeometricCenter(e) {
   const v = e.vertices;
+  if (selfIntersects(v)) return null;
   let A = 0, X = 0, Y = 0;
   for (let i = 0; i < v.length; i++) {
     const p = v[i], q = v[(i + 1) % v.length];

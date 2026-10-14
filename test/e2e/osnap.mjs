@@ -93,6 +93,13 @@ try {
   assert.equal(await marker(), 'par');
   const pc = await page.evaluate(() => window.app.vp.cursor);
   assert.ok(Math.abs((pc.y - 10) - (pc.x - 0) / 2) < 1e-9, JSON.stringify(pc));
+  step = 'Enter ends the LINE; a new line does not keep the acquired direction (no snap, no glyph)';
+  await typeCmd('');
+  assert.equal(await page.evaluate(() => window.app.vp.parallel), null, 'acquired direction cleared when the command sequence ends');
+  await typeCmd('L'); await typeCmd('0,10');
+  await hover(8, 14.03);
+  assert.notEqual(await marker(), 'par');
+  assert.equal(await page.evaluate(() => window.app.vp.parallel), null);
   await typeCmd('');
 
   step = 'F3 toggles running snaps';
@@ -108,12 +115,18 @@ try {
   await page.locator('#osnap-none').click();
   await page.locator('#osnap-end').check();
   await page.locator('#osnap-gcen').check();
+  await page.locator('#polar-extra').fill('15');
   await dialogOk();
+  await page.locator('#cv').focus();
+  await page.keyboard.press('F3'); // snap off after the dialog saved: only the toggle itself persists this
+  assert.equal(await page.evaluate(() => window.app.vp.settings.snap), false);
   await page.reload({ waitUntil: 'load' });
   await ready();
   await page.waitForFunction(() => window.app.vp.settings.kinds.size === 2, null, { timeout: 5000 });
   assert.deepEqual(await kinds(), ['end', 'gcen']);
   assert.equal(await page.evaluate(() => window.app.vp.settings.polarStep), 30);
+  assert.deepEqual(await page.evaluate(() => window.app.vp.settings.polarExtra), [15]);
+  assert.equal(await page.evaluate(() => window.app.vp.settings.snap), false, 'F3 off survives the reload');
 
   assert.deepEqual(problems, []);
   console.log('osnap e2e: OK');

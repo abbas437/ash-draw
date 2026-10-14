@@ -59,6 +59,9 @@ test('geometricCenter: rectangle, circle from two bulges, D shape; open polyline
   const d = M.makePolyline([{ x: 0, y: -2, bulge: 0 }, { x: 0, y: 2, bulge: -1 }], true);
   nearPt(geometricCenter(d), (4 * 2) / (3 * Math.PI), 0);
   assert.equal(geometricCenter(M.makePolyline([P(0, 0), P(4, 0), P(4, 2)], false)), null);
+  assert.equal(geometricCenter(M.makePolyline([P(0, 0), P(6, 4), P(6, 0), P(0, 2)], true)), null, 'self-intersecting (uneven bowtie)');
+  const sq = M.makePolyline([P(0, 0), P(4, 0), P(4, 2), P(0, 2)], true);
+  assert.equal(geometricCenter(sq), geometricCenter(sq), 'cached per entity object');
   const { index, ents: [r] } = docWith(M.makePolyline([P(0, 0), P(4, 0), P(4, 2), P(0, 2)], true));
   assert.deepEqual(findSnap(index, P(2.1, 1.1), 0.5, { kinds: new Set(['gcen']) }), { x: 2, y: 1, kind: 'gcen', id: r.id });
   assert.equal(findSnap(index, P(2.1, 1.1), 0.5, { kinds: new Set(['cen', 'end']) }), null);
