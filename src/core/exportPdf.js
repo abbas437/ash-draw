@@ -176,7 +176,8 @@ async function addPdfPage(pdf, doc, opts) {
   const helvChars = new Set(helv.getCharacterSet());
   let missing = 0;
 
-  const colOf = (style) => colorRgb(style, { monochrome }).map((v) => v / 255);
+  const keepGreys = !!doc.isCompare; // a comparison keeps its unchanged-grey in monochrome, so it still stands back from the changes
+  const colOf = (style) => colorRgb(style, { monochrome, keepGreys }).map((v) => v / 255);
   const lwPt = (style) => Math.max(lineweightMm(style, lineweights) * PT_PER_MM, MIN_LW_PT);
   const ops = [];
   const pathOps = (pathData) => walkOps(pathData, {
@@ -338,7 +339,7 @@ async function addPdfPage(pdf, doc, opts) {
       const lay = mtextItemLayout(it, runWidth);
       const glyphs = fonts.shape ? reorderPdfLines(lay.glyphs) : lay.glyphs;
       const c = Math.cos(it.rot), s = Math.sin(it.rot);
-      const rc = (col) => runRgb(col, it.style, { monochrome }).map((v) => v / 255);
+      const rc = (col) => runRgb(col, it.style, { monochrome, keepGreys }).map((v) => v / 255);
       page.pushOperators(...ops.splice(0), pushGraphicsState(), concatTransformationMatrix(c, s, -s, c, X(it.p.x), Y(it.p.y)));
       // layout is in drawing units, y down; the text frame is in page points, y up
       for (const g of glyphs) {

@@ -5,7 +5,7 @@
 // Also holds the scene helpers shared with exportPdf.js (path walking, colours, lineweights, dashes,
 // hatch pattern lines, text layout).
 import { buildScene, infiniteItem } from './render.js';
-import { runColor } from './aci.js';
+import { runColor, aciToRgb } from './aci.js';
 import { layoutMText, approxMeasure } from './mtext.js';
 
 const TAU = Math.PI * 2;
@@ -49,10 +49,13 @@ export function walkOps(ops, sink) {
   }
 }
 
+const ACI_GREYS = [8, 9, 250, 251, 252, 253, 254].map((i) => aciToRgb(i).join(','));
+const isAciGrey = (rgb) => ACI_GREYS.includes(rgb.join(','));
+
 /** item colour as [r,g,b] 0..255; `auto` colours contrast with the background (black on white / no background) */
-export function colorRgb(style, { monochrome = false, darkBackground = false } = {}) {
-  if (monochrome) return [0, 0, 0];
+export function colorRgb(style, { monochrome = false, darkBackground = false, keepGreys = false } = {}) {
   const c = style && style.color;
+  if (monochrome) return keepGreys && c && !c.auto && c.rgb && isAciGrey(c.rgb) ? c.rgb : [0, 0, 0]; // keepGreys (a compare drawing): the ACI greys 8, 9, 250-254 stay grey
   if (!c || c.auto || !c.rgb) return darkBackground ? [255, 255, 255] : [0, 0, 0];
   return c.rgb;
 }

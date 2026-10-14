@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { newDocument, addEntity, makeLine, makeCircle, makeText, makeXline } from '../src/core/model.js';
-import { compareDocs, buildCompareDoc, COMPARE_LAYERS } from '../src/core/compare.js';
+import { compareDocs, buildCompareDoc, rebuildMarks, COMPARE_LAYERS } from '../src/core/compare.js';
 
 /** n identical entities (lines, circles, texts) laid out on a grid */
 function common(n) {
@@ -72,8 +72,9 @@ test('compare doc: colours by status and a dotted rectangle per cluster', () => 
   assert.equal(on('changed').length, 1); // B's version of each changed object
   assert.equal(on('props').length, 1); // the recoloured line, on its own layer
   assert.equal(on('changedA').length, 1); // and A's, on its own layer (for the Overlay / A only / B only views)
-  assert.equal(on('marks').length, r.clusters.length);
-  assert.ok(on('marks').every((e) => e.type === 'LWPOLYLINE' && e.linetype === 'COMPARE_DOT'));
+  const rects = on('marks').filter((e) => e.type === 'LWPOLYLINE');
+  assert.equal(rects.length, r.clusters.length);
+  assert.ok(rects.every((e) => e.linetype === 'COMPARE_DOT'));
   assert.equal(d.layers.get(COMPARE_LAYERS.added.name).color, 3);
   assert.equal(d.layers.get(COMPARE_LAYERS.removed.name).color, 1);
 });
@@ -517,4 +518,96 @@ test('alignQuality: share of A matched as unchanged or property-only', async () 
   const p = q(5, 0, 45, 50);
   assert.equal(p.pct, 5); assert.match(p.label, /^poor — check the alignment or pick points$/);
   assert.equal(q(0, 0, 0, 0).label.startsWith('poor'), true);
+});
+
+// ---- line styles per status (a black-and-white print still tells the statuses apart) --------------------
+import { PDFDocument, PDFArray, decodePDFRawStream } from 'pdf-lib';
+import { exportPdf } from '../src/core/exportPdf.js';
+
+test('compare layers: added heavy continuous, removed dashed, changed dash-dot, unchanged thin, property-only dotted', () => {
+  const L = COMPARE_LAYERS;
+  assert.deepEqual([L.added.linetype ?? null, L.added.lineweight], [null, 0.5]);
+  assert.deepEqual([L.removed.linetype, L.removed.lineweight], ['COMPARE_DASH', 0.35]);
+  for (const k of ['changed', 'changedA']) assert.deepEqual([L[k].linetype, L[k].lineweight], ['COMPARE_DASHDOT', 0.35]);
+  assert.deepEqual([L.same.linetype ?? null, L.same.lineweight], [null, 0.13]);
+  assert.equal(L.props.linetype, 'COMPARE_PROP_DOT'); assert.equal(L.props.lineweight, 0.13); assert.equal(L.props.color, 252);
+  const [a, b] = pair();
+  const d = buildCompareDoc(a, b, compareDocs(a, b));
+  for (const k of ['added', 'removed', 'changed', 'changedA', 'same', 'props']) {
+    const layer = d.layers.get(L[k].name);
+    assert.equal(layer.lineweight, L[k].lineweight, k);
+    for (const e of d.entities.filter((x) => x.layer === L[k].name)) assert.deepEqual([e.linetype, e.lineweight, e.color], ['BYLAYER', -1, 256], k);
+  }
+  for (const n of ['COMPARE_DASH', 'COMPARE_DASHDOT', 'COMPARE_PROP_DOT']) assert.ok(d.linetypes.get(n).pattern.length >= 2, n);
+});
+
+test('compare PDF in monochrome: added strokes heavier than removed, removed dashed, unchanged grey (not black)', async () => {
+  const mk = (...ls) => docOf(ls.map(([y]) => makeLine({ x: 0, y }, { x: 1000, y })));
+  const a = mk([0], [100]), b = mk([0], [200]); // y=0 unchanged, y=100 removed, y=200 added
+  const d = buildCompareDoc(a, b, compareDocs(a, b));
+  d.entities = d.entities.filter((e) => e.layer !== COMPARE_LAYERS.legend.name); // the legend's samples are strokes too; counted below
+  const pdf = await PDFDocument.load((await exportPdf(d, { monochrome: true })).bytes), c = pdf.getPage(0).node.Contents();
+  const streams = c instanceof PDFArray ? c.asArray().map((r) => pdf.context.lookup(r)) : [c];
+  const text = streams.map((st) => new TextDecoder().decode(decodePDFRawStream(st).decode())).join('\n');
+  const strokes = []; let rg = null, w = null, dash = null;
+  for (const line of text.split('\n').map((x) => x.trim())) {
+    if (/ RG$/.test(line)) rg = line; else if (/ w$/.test(line)) w = Number(line.split(' ')[0]); else if (/ d$/.test(line)) dash = line; else if (line === '[] 0 d') dash = null;
+    else if (line === 'S') strokes.push({ rg, w, dash });
+    else if (line === 'Q' || line === 'q') dash = null;
+  }
+  const isMark = (s) => { const m = s.dash && s.dash.match(/\[([\d.]+) ([\d.]+)\]/); return m && m[1] === m[2]; }; // the dotted cluster rectangle
+  strokes.splice(0, strokes.length, ...strokes.filter((s) => !isMark(s)));
+  assert.equal(strokes.length, 3, JSON.stringify(strokes));
+  const by = (f) => strokes.filter(f);
+  const dashed = by((s) => s.dash), plain = by((s) => !s.dash);
+  assert.equal(dashed.length, 1, 'only the removed line is dashed');
+  const heavy = plain.reduce((m, s) => (s.w > m.w ? s : m));
+  assert.ok(heavy.w > dashed[0].w, 'added heavier than removed');
+  const thin = plain.reduce((m, s) => (s.w < m.w ? s : m));
+  assert.ok(thin.w < dashed[0].w);
+  assert.notEqual(thin.rg, '0 0 0 RG', 'unchanged keeps its grey'); assert.notEqual(heavy.rg.slice(0, 5), '1 0 0');
+  assert.equal(heavy.rg, '0 0 0 RG'); assert.equal(dashed[0].rg, '0 0 0 RG');
+});
+
+// ---- review numbers and the legend on the sheet -----------------------------------------------------------
+test('compare doc: each cluster rectangle is numbered at its top-left; rebuildMarks follows a recluster', () => {
+  const [a, b] = propsPair();
+  const r = compareDocs(a, b);
+  const d = buildCompareDoc(a, b, r);
+  const marks = () => d.entities.filter((e) => e.layer === COMPARE_LAYERS.marks.name);
+  const nums = () => marks().filter((e) => e.type === 'TEXT');
+  assert.equal(nums().length, r.clusters.length);
+  assert.ok(r.clusters.length >= 1);
+  r.clusters.forEach((c, i) => {
+    const t = nums()[i];
+    assert.equal(t.text, String(i + 1));
+    assert.deepEqual([t.p.x, t.p.y], [c.mark.minx, c.mark.maxy]);
+    assert.ok(t.height >= d.compareExtent / 120 - 1e-9, 'readable on A3');
+  });
+  // property-only changes into the list: more clusters, the numbers follow
+  const more = reclusterCompare(a, b, r, true);
+  assert.ok(more.length > r.clusters.length);
+  rebuildMarks(d, more, d.compareExtent);
+  assert.equal(nums().length, more.length);
+  assert.equal(marks().filter((e) => e.type === 'LWPOLYLINE').length, more.length);
+  more.forEach((c, i) => { assert.equal(nums()[i].text, String(i + 1)); assert.equal(nums()[i].p.y, c.mark.maxy); });
+  assert.equal(d.entities.filter((e) => e.layer === COMPARE_LAYERS.props.name).length, 3, 'other layers untouched');
+});
+
+test('compare doc: legend below the drawing with the five statuses, both names and the date', () => {
+  const [a, b] = pair();
+  const r = compareDocs(a, b);
+  const d = buildCompareDoc(a, b, r, { nameA: 'old.dxf', nameB: 'new.dxf', date: '2026-10-14' });
+  const leg = d.entities.filter((e) => e.layer === COMPARE_LAYERS.legend.name);
+  const texts = leg.filter((e) => e.type === 'TEXT').map((e) => e.text);
+  for (const l of ['Added (Rev B)', 'Removed (Rev A)', 'Changed', 'Property only', 'Unchanged']) assert.ok(texts.includes(l), l);
+  assert.ok(texts.includes('A: old.dxf   B: new.dxf   2026-10-14'));
+  const lines = leg.filter((e) => e.type === 'LINE');
+  assert.equal(lines.length, 5);
+  assert.deepEqual(lines.map((e) => e.linetype), ['CONTINUOUS', 'COMPARE_DASH', 'COMPARE_DASHDOT', 'COMPARE_PROP_DOT', 'CONTINUOUS']);
+  assert.deepEqual(lines.map((e) => e.color), [3, 1, 40, 252, 8]);
+  const others = d.entities.filter((e) => e.layer !== COMPARE_LAYERS.legend.name && e.layer !== COMPARE_LAYERS.marks.name);
+  const minY = Math.min(...others.flatMap((e) => (e.type === 'LINE' ? [e.p1.y, e.p2.y] : e.type === 'CIRCLE' ? [e.c.y - e.r] : e.type === 'TEXT' ? [e.p.y] : [])));
+  assert.ok(leg.every((e) => (e.p ?? e.p1).y < minY), 'just outside, below the drawing');
+  assert.ok(d.layers.get(COMPARE_LAYERS.legend.name));
 });

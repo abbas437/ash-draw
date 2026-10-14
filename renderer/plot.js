@@ -77,6 +77,8 @@ function tabViewRect(app, tab) {
 export async function plotDialog(app, mode) {
   if (app.vp.layout) { await plotLayoutDialog(app, mode); return; }
   const s = await settings(app);
+  const cmp = !!app.active?.compare, storedMono = s.monochrome; // a comparison plots in colour; the remembered choice is kept for other tabs
+  let monoNow = false;
   for (;;) {
     const size = el('select', { name: 'pageSize' }, options(['fit|Fit to drawing', 'A4|A4', 'A3|A3', 'A2|A2', 'A1|A1', 'A0|A0', 'Letter|Letter']));
     const ori = el('select', { name: 'orientation' }, options(['auto|Automatic', 'landscape|Landscape', 'portrait|Portrait']));
@@ -85,7 +87,7 @@ export async function plotDialog(app, mode) {
     const fit = el('input', { type: 'checkbox', name: 'fit', checked: s.fit });
     const n = el('input', { type: 'number', name: 'scale', min: '0.000001', step: 'any', value: String(s.n), style: 'width:7em' });
     const centre = el('input', { type: 'checkbox', name: 'centre', checked: s.centre });
-    const mono = el('input', { type: 'checkbox', name: 'monochrome', checked: s.monochrome }), lw = el('input', { type: 'checkbox', name: 'lineweights', checked: s.lineweights }), tp = el('input', { type: 'checkbox', name: 'transparency', checked: s.transparency });
+    const mono = el('input', { type: 'checkbox', name: 'monochrome', checked: cmp ? false : s.monochrome }), lw = el('input', { type: 'checkbox', name: 'lineweights', checked: s.lineweights }), tp = el('input', { type: 'checkbox', name: 'transparency', checked: s.transparency });
     const winText = s.window ? `Window: (${fmt(s.window.minx)}, ${fmt(s.window.miny)}) to (${fmt(s.window.maxx)}, ${fmt(s.window.maxy)})` : 'Window: not picked yet';
     const r = await modal(mode === 'print' ? 'Print' : 'Plot to PDF', [
       el('label', {}, 'Page size'), size, el('label', {}, 'Orientation'), ori,
@@ -97,7 +99,8 @@ export async function plotDialog(app, mode) {
     [{ label: mode === 'print' ? 'Print' : 'Save', value: 'ok', primary: true }, { label: 'Pick window…', value: 'pick' }, { label: 'Cancel', value: null }]);
     if (r == null) return;
     const nv = Number(n.value);
-    Object.assign(s, { pageSize: size.value, orientation: ori.value, what: what.value, fit: fit.checked, centre: centre.checked, monochrome: mono.checked, lineweights: lw.checked, transparency: tp.checked });
+    monoNow = mono.checked;
+    Object.assign(s, { pageSize: size.value, orientation: ori.value, what: what.value, fit: fit.checked, centre: centre.checked, monochrome: cmp ? storedMono : mono.checked, lineweights: lw.checked, transparency: tp.checked });
     if (!s.fit && !(nv > 0)) { await message('Invalid scale', 'Enter a scale greater than zero, for example 1 : 50.'); continue; }
     if (nv > 0) s.n = nv;
     if (r === 'pick' || (s.what === 'window' && !s.window)) {
@@ -111,7 +114,7 @@ export async function plotDialog(app, mode) {
   const region = s.what === 'window' ? s.window : s.what === 'view' ? viewRect(app.vp) : null;
   try {
     const out = await exportPdfBytes(app.fileDoc, app.scene(), {
-      pageSize: s.pageSize, orientation: s.orientation, monochrome: s.monochrome, lineweights: s.lineweights, transparency: s.transparency,
+      pageSize: s.pageSize, orientation: s.orientation, monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency,
       region, centre: s.centre, scale: s.fit ? null : plotScale(s.n, 1 / unitsPerMm(app.fileDoc)),
     });
     if (mode === 'pdf') await app.saveBytes(out.bytes, 'pdf', 'PDF document');
@@ -126,10 +129,11 @@ export async function plotDialog(app, mode) {
 /** a layout tab plots the layout sheet at 1:1 on its own paper, or on another paper (fitted, or 1:1 centred) */
 async function plotLayoutDialog(app, mode) {
   const s = await settings(app);
+  const cmp = !!app.active?.compare, storedMono = s.monochrome;
   const layout = app.vp.layout, p = layout.plot, swap = p.rotation === 1 || p.rotation === 3;
   const what = el('select', { name: 'what' }, options(['layout|Layout']));
   const paperSel = paperSelect(s.layoutPaper), fit = el('input', { type: 'checkbox', name: 'fit', checked: s.layoutFit });
-  const mono = el('input', { type: 'checkbox', name: 'monochrome', checked: s.monochrome }), lw = el('input', { type: 'checkbox', name: 'lineweights', checked: s.lineweights }), tp = el('input', { type: 'checkbox', name: 'transparency', checked: s.transparency });
+  const mono = el('input', { type: 'checkbox', name: 'monochrome', checked: cmp ? false : s.monochrome }), lw = el('input', { type: 'checkbox', name: 'lineweights', checked: s.lineweights }), tp = el('input', { type: 'checkbox', name: 'transparency', checked: s.transparency });
   const own = `${p.paperName || 'Paper'}: ${fmt(swap ? p.paperH : p.paperW)} × ${fmt(swap ? p.paperW : p.paperH)} mm (${p.units === 0 ? 'inches' : 'millimetres'})`;
   const readout = el('p', { class: 'plot-scale' });
   const update = () => { fit.disabled = paperSel.value === 'layout'; readout.textContent = sheetScaleText(layout, paperSel.value, fit.checked); };
@@ -141,10 +145,11 @@ async function plotLayoutDialog(app, mode) {
     el('p', { text: 'The layout is plotted as vector graphics; viewports are clipped to their boundaries. Line weights keep their plotted width on any paper.' })],
   [{ label: mode === 'print' ? 'Print' : 'Save', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
   if (r == null) return;
-  Object.assign(s, { layoutPaper: paperSel.value, layoutFit: fit.checked, monochrome: mono.checked, lineweights: lw.checked, transparency: tp.checked });
+  const monoNow = mono.checked;
+  Object.assign(s, { layoutPaper: paperSel.value, layoutFit: fit.checked, monochrome: cmp ? storedMono : monoNow, lineweights: lw.checked, transparency: tp.checked });
   remember(s);
   try {
-    const out = await exportPdfBytes(app.fileDoc, null, { layout, modelScene: app.vp.modelScene, paper: s.layoutPaper, fit: s.layoutFit, monochrome: s.monochrome, lineweights: s.lineweights, transparency: s.transparency });
+    const out = await exportPdfBytes(app.fileDoc, null, { layout, modelScene: app.vp.modelScene, paper: s.layoutPaper, fit: s.layoutFit, monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency });
     if (mode === 'pdf') await app.saveBytes(out.bytes, 'pdf', 'PDF document');
     else {
       const res = await window.api.print(out.bytes);
@@ -157,6 +162,7 @@ async function plotLayoutDialog(app, mode) {
 /** PUBLISH (File > Publish to PDF…): the chosen sheets of every open drawing, one page each in list order, in one PDF */
 export async function publishDialog(app) {
   const s = await settings(app);
+  const cmp = !!app.active?.compare, storedMono = s.monochrome;
   const rows = [];
   for (const tab of app.tabs) {
     const name = tab.file.name;
@@ -168,7 +174,7 @@ export async function publishDialog(app) {
   const paperSel = paperSelect(s.layoutPaper), fit = el('input', { type: 'checkbox', name: 'fit', checked: s.layoutFit });
   const area = el('select', { name: 'area' }, options(['extents|Extents', 'view|Current view'])); area.value = s.publishArea;
   fit.disabled = paperSel.value === 'layout'; paperSel.onchange = () => { fit.disabled = paperSel.value === 'layout'; };
-  const mono = el('input', { type: 'checkbox', name: 'monochrome', checked: s.monochrome }), lw = el('input', { type: 'checkbox', name: 'lineweights', checked: s.lineweights }), tp = el('input', { type: 'checkbox', name: 'transparency', checked: s.transparency });
+  const mono = el('input', { type: 'checkbox', name: 'monochrome', checked: cmp ? false : s.monochrome }), lw = el('input', { type: 'checkbox', name: 'lineweights', checked: s.lineweights }), tp = el('input', { type: 'checkbox', name: 'transparency', checked: s.transparency });
   for (;;) {
     const r = await modal('Publish to PDF', [
       el('label', {}, 'Sheets (one page each, in this order)'), list,
@@ -178,7 +184,8 @@ export async function publishDialog(app) {
       el('p', { text: "Model sheets are fitted to the plot area on the chosen paper (A3 with the layout's own paper). Current view is the part of the model each drawing tab shows now; anything outside it is not plotted." })],
     [{ label: 'Publish', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
     if (r == null) return;
-    Object.assign(s, { layoutPaper: paperSel.value, layoutFit: fit.checked, monochrome: mono.checked, lineweights: lw.checked, transparency: tp.checked, publishArea: area.value });
+    const monoNow = mono.checked;
+    Object.assign(s, { layoutPaper: paperSel.value, layoutFit: fit.checked, monochrome: cmp ? storedMono : monoNow, lineweights: lw.checked, transparency: tp.checked, publishArea: area.value });
     const model = rows.filter((x) => !x.layout);
     if (model.length) s.publishModel = model.some((x) => x.box.checked);
     remember(s);
@@ -188,7 +195,7 @@ export async function publishDialog(app) {
       toast(`Publishing ${sheets.length} sheet${sheets.length > 1 ? 's' : ''}…`, 60000);
       const out = await exportPdfPages(sheets.map((x) => ({ doc: x.doc, layout: x.layout, label: x.label, region: !x.layout && s.publishArea === 'view' ? tabViewRect(app, x.tab) : null })), {
         paper: s.layoutPaper, fit: s.layoutFit, pageSize: s.layoutPaper === 'layout' ? 'A3' : s.layoutPaper, orientation: 'auto', margin: 10, scale: null, centre: true,
-        monochrome: s.monochrome, lineweights: s.lineweights, transparency: s.transparency, unicodeFonts, imageRgba: bitmapRgba,
+        monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency, unicodeFonts, imageRgba: bitmapRgba,
       });
       toast(`Published ${sheets.length} sheet${sheets.length > 1 ? 's' : ''}`, 1500);
       await app.saveBytes(out.bytes, 'pdf', 'PDF document');
