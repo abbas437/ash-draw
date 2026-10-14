@@ -22,6 +22,6 @@ SOFTWARE.
 
 ---------------------------------------------------------------------------
 This licence covers ASH Draw Studio only. The Windows build also ships the
-unmodified LibreDWG converter programs (GPL-3.0-or-later) as separate
-executables in resources/libredwg/; see THIRD-PARTY-NOTICES.md and
+LibreDWG converter programs (GPL-3.0-or-later, built from upstream source with
+one patch) as separate executables in resources/libredwg/; see THIRD-PARTY-NOTICES.md and
 resources/libredwg/COPYING.

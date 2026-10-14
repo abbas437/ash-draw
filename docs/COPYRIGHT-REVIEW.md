@@ -30,9 +30,14 @@ Even so, the project uses the term descriptively only:
 
 DWG conversion uses GNU LibreDWG 0.14.8597 (libredwg), licensed GPL-3.0-or-later.
 
-- **Unmodified**: `dwg2dxf.exe`, `dxf2dwg.exe`, `libredwg-0.dll` and `libiconv-2.dll` (GNU libiconv, LGPL-2.1-or-later, a separate unmodified DLL used only by libredwg) are taken byte-for-byte
-  from the official upstream Windows x64 release archive. `scripts/fetch-libredwg.mjs` refuses
-  the archive unless its SHA-256 matches the pinned value.
+- **Modified, one patch**: release builds ship `dwg2dxf.exe`, `dxf2dwg.exe` and `libredwg-0.dll`
+  cross-built by CI (`tools/libredwg-win/build-patched.sh`, mingw-w64) from the SHA-256-pinned upstream
+  source tarball plus `tools/libredwg-win/libredwg-llp64-bitpos.patch`, which fixes false "buffer
+  underflow" errors past 256 MiB on 64-bit Windows. `libiconv-2.dll` (GNU libiconv, LGPL-2.1-or-later,
+  a separate DLL used only by libredwg) is taken unmodified from the official upstream Windows x64
+  archive. `scripts/fetch-libredwg.mjs` accepts either the pinned upstream archive or a patched build
+  whose patch is byte-identical to the repository's, and `README-SOURCE.txt` states which one shipped
+  (GPL-3.0 section 5(a): prominent notice of modification, with date).
 - **Separate executables, no linking**: the app starts the converters as separate processes
   with `execFile` (no shell) and exchanges data through temporary files. It does not link to,
   load or embed LibreDWG, so the MIT-licensed app and the GPL programs are separate works
@@ -42,8 +47,9 @@ DWG conversion uses GNU LibreDWG 0.14.8597 (libredwg), licensed GPL-3.0-or-later
   offer).
 - **Source**: https://github.com/LibreDWG/libredwg/releases/tag/0.14.8597 and
   https://github.com/LibreDWG/libredwg/releases/download/0.14.8597/libredwg-0.14.8597.tar.xz. The CI workflow downloads and
-  hash-verifies `libredwg-0.14.8597.tar.xz` and attaches it to every tagged GitHub Release next to
-  the installers.
+  hash-verifies `libredwg-0.14.8597.tar.xz` and attaches it, the patch
+  (`libredwg-0.14.8597-llp64-bitpos.patch`) and the build scripts
+  (`libredwg-0.14.8597-win64-build-tools.tar.gz`) to every tagged GitHub Release next to the installers.
 - It is listed in `THIRD-PARTY-NOTICES.md` as the one deliberate exception to the
   permissive-licence allow-list (which applies to npm packages).
 

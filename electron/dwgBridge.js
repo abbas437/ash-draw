@@ -1,7 +1,7 @@
 // DWG <-> DXF bridge over the separately-distributed LibreDWG command-line tools.
 //
 // Licence boundary: LibreDWG (GPL-3.0-or-later) is never linked or loaded into this
-// process. The unmodified dwg2dxf / dxf2dwg executables run as child processes via
+// process. The dwg2dxf / dxf2dwg executables run as child processes via
 // execFile (no shell) with a fixed argument list; data crosses the boundary only as
 // files in a private temporary directory.
 //

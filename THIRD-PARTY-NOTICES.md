@@ -151,8 +151,11 @@ PERFORMANCE OF THIS SOFTWARE.
 
 ## LibreDWG 0.14.8597 (GPL-3.0-or-later) - separate program, not part of the MIT-licensed app
 
-The Windows build ships the **unmodified** upstream LibreDWG 0.14.8597 executables
-`dwg2dxf.exe`, `dxf2dwg.exe` and their library `libredwg-0.dll` (plus GNU libiconv's `libiconv-2.dll`, LGPL-2.1-or-later, an unmodified separate DLL used only by libredwg) in
+The Windows build ships LibreDWG 0.14.8597 executables
+`dwg2dxf.exe`, `dxf2dwg.exe` and their library `libredwg-0.dll`, **modified**: built from the
+upstream source with one patch (`tools/libredwg-win/libredwg-llp64-bitpos.patch`, fixing false
+"buffer underflow" errors past 256 MiB on 64-bit Windows), plus GNU libiconv's `libiconv-2.dll`
+(LGPL-2.1-or-later, an unmodified separate DLL from the upstream archive, used only by libredwg), in
 `resources/libredwg/`. ASH Draw Studio does not link to or load LibreDWG; it runs
 these programs as separate child processes (`execFile`, no shell) to convert DWG
 files to and from DXF through temporary files. LibreDWG is licensed under the GNU
@@ -160,10 +163,12 @@ General Public License version 3 or later; the full text is shipped as
 `resources/libredwg/COPYING`, and `resources/libredwg/README-SOURCE.txt` contains
 the source-code locations and a written offer.
 
-- Upstream binaries: https://github.com/LibreDWG/libredwg/releases/download/0.14.8597/libredwg-0.14.8597-win64.zip
+- Upstream binaries (the patched build reuses their `libiconv-2.dll`): https://github.com/LibreDWG/libredwg/releases/download/0.14.8597/libredwg-0.14.8597-win64.zip
   (SHA-256 7fee5c67c4f451f0542c0d6a3b12e91e99b15faf363fbf8b98ad84bac17ddfa2)
 - Corresponding source: https://github.com/LibreDWG/libredwg/releases/tag/0.14.8597 and
-  https://github.com/LibreDWG/libredwg/releases/download/0.14.8597/libredwg-0.14.8597.tar.xz
+  https://github.com/LibreDWG/libredwg/releases/download/0.14.8597/libredwg-0.14.8597.tar.xz, plus the
+  patch and build scripts in `tools/libredwg-win/` (also attached to each release as
+  `libredwg-0.14.8597-llp64-bitpos.patch` and `libredwg-0.14.8597-win64-build-tools.tar.gz`)
 - Copyright (C) Free Software Foundation, Inc. No warranty.
 
 This is the one deliberate exception to the permissive-licence allow-list, which

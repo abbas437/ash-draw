@@ -1,0 +1,5 @@
+LIBRARY libiconv-2.dll
+EXPORTS
+libiconv_open
+libiconv
+libiconv_close

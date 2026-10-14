@@ -64,15 +64,17 @@ npm run dist            # fetch + verify LibreDWG, vendor, notices, build Setup 
 Windows x64 archive, refuses it unless its SHA-256 matches the pinned value, and extracts only
 `dwg2dxf.exe`, `dxf2dwg.exe`, `libredwg-0.dll` and `libiconv-2.dll` into `build/libredwg/` together with the GPL
 text (`COPYING`) and `README-SOURCE.txt`. `node scripts/fetch-libredwg.mjs --source <dir>`
-additionally downloads and verifies the LibreDWG source tarball. `npm run licenses` regenerates
+additionally downloads and verifies the LibreDWG source tarball. Release builds instead use converters patched for large drawings (`tools/libredwg-win/build-patched.sh`, built by CI);
+to use such a zip locally set `ASH_LIBREDWG_ZIP=<path to libredwg-0.14.8597-llp64-win64.zip>` (or pass `--from <zip>`). `npm run licenses` regenerates
 `THIRD-PARTY-NOTICES.md` and fails if an npm production dependency has a non-permissive licence.
 `npm run icon` regenerates `build/icon.png` (original artwork).
 
 ### Releases
 
 Releases are built by GitHub Actions (`.github/workflows/build.yml`): every push to `main`
-builds and tests on `windows-latest` and uploads the two .exe files, `SHA256SUMS.txt` and the
-LibreDWG source tarball as workflow artifacts; pushing a tag `v*` additionally creates a GitHub
+builds the patched LibreDWG converters on `ubuntu-latest` (mingw-w64), then builds and tests on
+`windows-latest` and uploads the two .exe files, `SHA256SUMS.txt` and the LibreDWG source tarball,
+patch and build scripts as workflow artifacts; pushing a tag `v*` additionally creates a GitHub
 Release with those files attached. A separate `ubuntu-latest` job runs the unit tests.
 
 ## The `window.api` contract
@@ -115,14 +117,15 @@ Third-party components are listed with their licence texts in `THIRD-PARTY-NOTIC
 notices ship as `LICENSES.chromium.html` in the installation folder.
 
 **LibreDWG.** DWG support uses GNU LibreDWG 0.14.8597 (libredwg), which is licensed under the
-GPL-3.0-or-later. ASH Draw Studio does not link to or load LibreDWG: the unmodified upstream
-programs `dwg2dxf.exe` and `dxf2dwg.exe` (with `libredwg-0.dll` and GNU libiconv's LGPL `libiconv-2.dll`) are shipped in
+GPL-3.0-or-later. ASH Draw Studio does not link to or load LibreDWG: the programs
+`dwg2dxf.exe` and `dxf2dwg.exe` (built from upstream source with one patch, see below) (with `libredwg-0.dll` and GNU libiconv's LGPL `libiconv-2.dll`) are shipped in
 `resources/libredwg/` and started as separate processes (`execFile`, no shell) that convert
 through temporary files. They keep their own licence; the GPL text is in
 `resources/libredwg/COPYING`. The complete corresponding source is the LibreDWG 0.14.8597
 release, available from https://github.com/LibreDWG/libredwg/releases/tag/0.14.8597 and
 https://github.com/LibreDWG/libredwg/releases/download/0.14.8597/libredwg-0.14.8597.tar.xz, and the same tarball
-(`libredwg-0.14.8597.tar.xz`) is attached to every ASH Draw Studio GitHub Release.
+(`libredwg-0.14.8597.tar.xz`) is attached to every ASH Draw Studio GitHub Release, together with the
+patch and build scripts from `tools/libredwg-win/` that complete the corresponding source.
 `resources/libredwg/README-SOURCE.txt` contains a written offer for the source.
 GPL source offer contact: https://github.com/abbas437/ash-draw/issues
 
