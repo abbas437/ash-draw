@@ -71,7 +71,7 @@ try {
     const { offset, counts } = await panelText();
     assert.match(counts, /Pieces/); assert.match(counts, /Added 1(?!\d)/); assert.match(counts, /Removed 0(?!\d)/); assert.match(counts, /Changed \(shape\/position\) 0(?!\d)/); assert.match(counts, /Unchanged 7(?!\d)/);
     assert.match(offset, /^A aligned to B: moved 500, 200/);
-    assert.match(offset, how === 'auto' ? /automatic; match good/ : /picked points/);
+    assert.match(offset, how === 'auto' ? /automatic; \d+ % of A unchanged — good/ : /picked points/);
   };
 
   step = 'COMPARE, Automatic: 1 added, 0 removed, offset 500, 200';
@@ -83,7 +83,8 @@ try {
   const scene0 = await page.evaluate(() => { window.__scene = window.app.vp.scene; return true; });
   assert.ok(scene0);
   await page.selectOption('#cmp-view', 'overlay');
-  assert.ok(Object.values(await layers()).every(Boolean), 'overlay: all compare layers on');
+  const lo = await layers(); delete lo['COMPARE-PROPS']; // property-only changes stay hidden until the reviewer asks for them
+  assert.ok(Object.values(lo).every(Boolean), 'overlay: all compare layers on');
   assert.ok(await page.evaluate(() => window.app.vp.scene !== window.__scene), 'the scene is rebuilt after a view change');
   await page.selectOption('#cmp-view', 'a');
   const la = await layers();
@@ -155,7 +156,7 @@ try {
   {
     const { offset, counts } = await panelText();
     assert.match(counts, /Added 1(?!\d)/); assert.match(counts, /Removed 0(?!\d)/); assert.match(counts, /Changed \(shape\/position\) 0(?!\d)/); assert.match(counts, /Unchanged 7(?!\d)/);
-    assert.match(offset, /^A aligned to B: moved 2000, 1000; rotated 180° \(automatic; match good\)/);
+    assert.match(offset, /^A aligned to B: moved 2000, 1000; rotated 180° \(automatic; \d+ % of A unchanged — good\)/);
     assert.equal(await page.locator('#compare-panel .cmp-row').count(), 1, 'one cluster');
   }
 
@@ -258,17 +259,29 @@ try {
   const pt = await page.locator('#compare-panel .cmp-counts').textContent();
   assert.match(pt, /Changed \(shape\/position\) 1(?!\d)/); assert.match(pt, /Changed \(properties only\) 3(?!\d)/);
   const propsVisible = () => page.evaluate(() => window.app.fileDoc.layers.get('COMPARE-PROPS').visible !== false);
-  assert.equal(await page.locator('#cmp-showprops').isChecked(), true);
-  assert.equal(await propsVisible(), true);
+  assert.equal(await page.locator('#cmp-showprops').isChecked(), false, 'property-only changes are hidden by default');
+  assert.equal(await propsVisible(), false);
+  assert.equal(await page.evaluate(() => window.app.fileDoc.layers.get('COMPARE-PROPS').color), 252, 'drawn faint grey, not cyan');
   assert.equal(await page.locator('#compare-panel .cmp-row').count(), 1, 'property-only changes are not in the list by default');
-  await page.locator('#cmp-showprops').uncheck();
-  assert.equal(await propsVisible(), false, 'unchecking hides layer COMPARE-PROPS');
   await page.locator('#cmp-showprops').check();
-  assert.equal(await propsVisible(), true);
+  assert.equal(await propsVisible(), true, 'checking shows layer COMPARE-PROPS');
+  await page.locator('#cmp-showprops').uncheck();
+  assert.equal(await propsVisible(), false);
+  await page.locator('#cmp-showprops').check(); // the choice is kept for the next compare of the session
   await page.locator('#cmp-listprops').check();
   assert.ok(await page.locator('#compare-panel .cmp-row').count() >= 2, 'the list includes the property-only changes');
   await page.locator('#cmp-listprops').uncheck();
   assert.equal(await page.locator('#compare-panel .cmp-row').count(), 1);
+
+  step = 'the Show property-only choice is remembered for the next compare of the session';
+  await page.evaluate(async () => {
+    const M = await import('/src/core/model.js');
+    const mk = (color) => { const d = M.newDocument(); d.units = 4; M.addLayer(d, { name: 'DUCT', color }); M.addEntity(d, M.makeLine({ x: 0, y: 0 }, { x: 800, y: 0 }, { layer: 'DUCT' })); return d; };
+    await window.__showComparison(window.app, mk(2), mk(5), 'qa', 'qb', { align: 'none', opts: { tol: 1 } });
+  });
+  await page.waitForFunction(() => window.app.active.compare?.nameA === 'qa', null, { timeout: 10000 });
+  assert.equal(await page.locator('#cmp-showprops').isChecked(), true);
+  assert.equal(await propsVisible(), true);
 
   assert.deepEqual(problems, []);
   console.log('compare e2e: OK');
