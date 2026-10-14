@@ -187,6 +187,12 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 .layer .lay-tr { width:2.2em; text-align:right; cursor:pointer; opacity:.75; font-size:11px; }
 .layer .lname { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:default; }
 .layer .cur { color:var(--accent); width:22px; text-align:center; }
+.lay-search { display:flex; align-items:center; gap:2px; margin-bottom:4px; }
+.lay-search input { flex:1; min-width:0; }
+.layer .lay-plot.off { opacity:.35; text-decoration:line-through; }
+.layer .lname-edit { flex:1; min-width:0; font:inherit; padding:0 2px; }
+.lay-none { color:var(--dim); padding:2px 0; font-style:italic; }
+.lay-prop { display:block; margin:6px 0; }
 button.icon { border:none; background:none; padding:0 3px; width:22px; }
 .swatch { display:inline-block; width:14px; height:14px; border:1px solid var(--swatch-border); vertical-align:middle; cursor:pointer; }
 #props label { display:grid; grid-template-columns:80px 1fr; align-items:center; gap:6px; margin:4px 0; color:var(--dim); }
