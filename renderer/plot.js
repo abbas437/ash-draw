@@ -1,8 +1,8 @@
 // ASH Draw Studio - Print / Plot to PDF: one dialog (paper, orientation, what to print, scale, centring) that builds a
 // vector PDF with exportPdf, then either prints it (api.print -> system print dialog) or saves it.
-import { plotScale, pageFit, exportPdfPages } from '../src/core/exportPdf.js';
+import { plotScale, pageFit, placeOnPage, exportPdfPages } from '../src/core/exportPdf.js';
 import { screenToWorld } from '../src/core/render.js';
-import { layoutPage } from '../src/core/layouts.js';
+import { layoutPage, layoutPlotRegion, layoutPlotWindow, layoutMmPerUnit } from '../src/core/layouts.js';
 import { plotSettingsFrom, plotSettingsToStore, LAYOUT_PAPERS } from '../src/core/plotSettings.js';
 import { el, message, modal, toast } from './ui.js';
 import { exportPdfBytes, unitsPerMm, unicodeFonts } from './files.js';
@@ -12,7 +12,7 @@ import { viewsIn, findView, restorable, viewBox } from '../src/core/views.js';
 const options = (pairs) => pairs.map((s) => { const [v, l] = s.split('|'); return el('option', { value: v, text: l }); });
 const fmt = (v) => String(+v.toPrecision(6));
 const MONO = ' Monochrome (monochrome.ctb)';
-const PAPER_LABELS = { layout: "Layout's own paper (1:1)", Tabloid: 'Tabloid / ANSI B' };
+const PAPER_LABELS = { layout: "Layout's own paper", Tabloid: 'Tabloid / ANSI B' };
 const paperSelect = (value) => { const e = el('select', { name: 'paper' }, LAYOUT_PAPERS.map((v) => el('option', { value: v, text: PAPER_LABELS[v] ?? v }))); e.value = value; return e; };
 
 /** the plot choices, loaded once from setting 'plot.settings' */
@@ -25,12 +25,18 @@ async function settings(app) {
 }
 const remember = (s) => window.api?.settingsSet?.('plot.settings', plotSettingsToStore(s))?.catch?.(() => {});
 
-/** scale readout of a layout sheet put on `paper` (1:n of the layout paper) */
-export function sheetScaleText(layout, paper, fit) {
-  if (paper === 'layout') return 'Scale 1:1 on the layout\'s own paper';
-  const lp = layoutPage(layout), f = pageFit(lp.pw, lp.ph, paper, { fit });
-  const r = f.scale <= 1 ? `1:${+(1 / f.scale).toFixed(2)}` : `${+f.scale.toFixed(2)}:1`;
-  return `${fit ? 'Fit' : 'Scale'}: ${r} of layout paper, ${paper} ${f.orientation}${f.fits ? '' : ' (sheet larger than the paper: edges cut off)'}`;
+const AREA_LABELS = { layout: 'layout sheet', extents: 'extents', window: 'window' };
+/** scale readout of a layout plot: `area` (layout | extents | window; `extents` the paper-space extents) on `paper`,
+ *  fitted or at 1:n (paper : layout), as exportPdf plots it with layoutScale = layoutMmPerUnit / n */
+export function sheetScaleText(layout, { paper, fit, area = 'layout', n = 1, extents = null }) {
+  if (paper === 'layout' && area === 'layout') return 'Scale 1:1 on the layout\'s own paper';
+  const lp = layoutPage(layout), reg = layoutPlotRegion(layout, area, extents), mm = layoutMmPerUnit(layout.plot), k0 = (mm / n) * (72 / 25.4);
+  const w = (reg.maxx - reg.minx) * k0, h = (reg.maxy - reg.miny) * k0;
+  const f = paper === 'layout' ? { ...placeOnPage(w, h, lp.pw, lp.ph, { fit }), orientation: '' } : pageFit(w, h, paper, { fit });
+  const s = f.scale / n; // paper : layout
+  const r = s <= 1 ? `1:${+(1 / s).toFixed(2)}` : `${+s.toFixed(2)}:1`;
+  const on = paper === 'layout' ? 'the layout\'s own paper' : `${paper} ${f.orientation}`;
+  return `${fit ? 'Fit' : 'Scale'}: ${r} of the layout, ${AREA_LABELS[area]} on ${on}${f.fits ? '' : ' (larger than the paper: edges cut off)'}`;
 }
 const rectOf = (a, b) => ({ minx: Math.min(a.x, b.x), miny: Math.min(a.y, b.y), maxx: Math.max(a.x, b.x), maxy: Math.max(a.y, b.y) });
 
@@ -132,30 +138,47 @@ export async function plotDialog(app, mode) {
   } catch (err) { await message(mode === 'pdf' ? 'Export failed' : 'Print failed', err.message || String(err)); }
 }
 
-/** a layout tab plots the layout sheet at 1:1 on its own paper, or on another paper (fitted, or 1:1 centred) */
+/** a layout tab plots its page setup: the sheet, extents or plot window, fitted or at 1:N, on the layout's own paper or
+ *  another (the sheet on its own paper is always 1:1) */
 async function plotLayoutDialog(app, mode) {
   const s = await settings(app);
   const cmp = !!app.active?.compare, storedMono = s.monochrome;
   const layout = app.vp.layout, p = layout.plot, swap = p.rotation === 1 || p.rotation === 3;
-  const what = el('select', { name: 'what' }, options(['layout|Layout']));
-  const paperSel = paperSelect(s.layoutPaper), fit = el('input', { type: 'checkbox', name: 'fit', checked: s.layoutFit });
+  const extents = (app.vp.mspace?.paperScene ?? app.vp.scene)?.bbox ?? null, hasWindow = !!layoutPlotWindow(p);
+  const area = el('select', { name: 'area' }, options(['layout|Layout', 'extents|Extents', 'window|Window']));
+  area.querySelector('option[value=window]').disabled = !hasWindow;
+  area.value = p.plotType === 1 ? 'extents' : p.plotType === 4 && hasWindow ? 'window' : 'layout';
+  const paperSel = paperSelect('layout'), fit = el('input', { type: 'checkbox', name: 'fit', checked: p.stdScale === 0 });
+  const n0 = p.scaleNum > 0 && p.scaleDen > 0 ? p.scaleDen / p.scaleNum : 1;
+  const n = el('input', { type: 'number', name: 'scale', min: '0.000001', step: 'any', value: String(+n0.toPrecision(6)), style: 'width:7em' });
   const mono = el('input', { type: 'checkbox', name: 'monochrome', checked: cmp ? false : s.monochrome }), lw = el('input', { type: 'checkbox', name: 'lineweights', checked: s.lineweights }), tp = el('input', { type: 'checkbox', name: 'transparency', checked: s.transparency });
   const own = `${p.paperName || 'Paper'}: ${fmt(swap ? p.paperH : p.paperW)} × ${fmt(swap ? p.paperW : p.paperH)} mm (${p.units === 0 ? 'inches' : 'millimetres'})`;
   const readout = el('p', { class: 'plot-scale' });
-  const update = () => { fit.disabled = paperSel.value === 'layout'; readout.textContent = sheetScaleText(layout, paperSel.value, fit.checked); };
-  paperSel.onchange = update; fit.onchange = update; update();
-  const r = await modal(mode === 'print' ? `Print ${layout.name}` : `Plot ${layout.name} to PDF`, [
-    el('label', {}, 'What to print'), what, el('p', { class: 'plot-paper', text: own }),
-    el('label', {}, 'Paper'), paperSel, el('label', {}, fit, ' Fit to paper'), readout,
-    el('label', {}, mono, MONO), el('label', {}, lw, ' Use lineweights'), el('label', {}, tp, ' Plot transparency'),
-    el('p', { text: 'The layout is plotted as vector graphics; viewports are clipped to their boundaries. Line weights keep their plotted width on any paper.' })],
-  [{ label: mode === 'print' ? 'Print' : 'Save', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
-  if (r == null) return;
-  const monoNow = mono.checked;
-  Object.assign(s, { layoutPaper: paperSel.value, layoutFit: fit.checked, monochrome: cmp ? storedMono : monoNow, lineweights: lw.checked, transparency: tp.checked });
+  const update = () => {
+    const sheet11 = area.value === 'layout' && paperSel.value === 'layout';
+    fit.disabled = sheet11; n.disabled = sheet11 || fit.checked;
+    const nv = Number(n.value);
+    readout.textContent = sheetScaleText(layout, { paper: paperSel.value, fit: fit.checked || !(nv > 0), area: area.value, n: nv > 0 ? nv : 1, extents });
+  };
+  area.onchange = update; paperSel.onchange = update; fit.onchange = update; n.oninput = update; update();
+  let r;
+  for (;;) {
+    r = await modal(mode === 'print' ? `Print ${layout.name}` : `Plot ${layout.name} to PDF`, [
+      el('label', {}, 'Plot area'), area, el('p', { class: 'plot-paper', text: own }),
+      el('label', {}, 'Paper'), paperSel, el('label', {}, fit, ' Fit to paper'), el('label', {}, 'Scale (paper : layout)  1 : ', n), readout,
+      el('label', {}, mono, MONO), el('label', {}, lw, ' Use lineweights'), el('label', {}, tp, ' Plot transparency'),
+      el('p', { text: 'The layout is plotted as vector graphics; viewports are clipped to their boundaries. Line weights keep their plotted width on any paper. The plot area, fit and scale start from the layout\'s page setup.' })],
+    [{ label: mode === 'print' ? 'Print' : 'Save', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
+    if (r == null) return;
+    if (fit.disabled || fit.checked || Number(n.value) > 0) break;
+    await message('Invalid scale', 'Enter a scale greater than zero, for example 1 : 1.');
+  }
+  const monoNow = mono.checked, sheet11 = fit.disabled, fitNow = !sheet11 && fit.checked;
+  const layoutScale = sheet11 || fitNow ? null : layoutMmPerUnit(p) / Number(n.value);
+  Object.assign(s, { monochrome: cmp ? storedMono : monoNow, lineweights: lw.checked, transparency: tp.checked });
   remember(s);
   try {
-    const out = await exportPdfBytes(app.fileDoc, null, { layout, modelScene: app.vp.modelScene, paper: s.layoutPaper, fit: s.layoutFit, monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency });
+    const out = await exportPdfBytes(app.fileDoc, null, { layout, modelScene: app.vp.modelScene, paper: paperSel.value, area: area.value, fit: fitNow, layoutScale, monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency });
     if (mode === 'pdf') await app.saveBytes(out.bytes, 'pdf', 'PDF document');
     else {
       const res = await window.api.print(out.bytes);

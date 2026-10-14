@@ -4,9 +4,11 @@
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { PDFDocument } from 'pdf-lib';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CHROME = process.env.CHROME_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
@@ -102,6 +104,32 @@ try {
   assert.equal(await page.evaluate(() => window.app.active.session.undoStack.length), u2 + 1, 'leaving MSPACE records no second step');
   await typeCmd('u');
   assert.equal((await vpInfo()).viewHeight, v0.viewHeight);
+  await page.click('#spacebar button[data-space="Model"]');
+
+  step = 'layout Plot dialog follows PAGESETUP (Extents, fit); the plot is the chosen paper';
+  await page.click(`#spacebar button[data-space="${lay1}"]`);
+  await typeCmd('pagesetup');
+  await page.locator('dialog[open] select[name=area]').selectOption('1');
+  await page.locator('dialog[open] input[name=fit]').check();
+  await btn('OK');
+  assert.deepEqual(await page.evaluate(() => [window.app.vp.layout.plot.plotType, window.app.vp.layout.plot.stdScale]), [1, 0]);
+  await page.locator('#menubar .menu > button', { hasText: 'File' }).click();
+  await page.locator('#menubar .drop button', { hasText: 'Plot to PDF…' }).click();
+  assert.equal(await page.locator('#dlg select[name=area]').inputValue(), 'extents', 'area from the page setup');
+  assert.equal(await page.locator('#dlg input[name=fit]').isChecked(), true, 'fit from the page setup');
+  assert.equal(await page.locator('#dlg input[name=fit]').isDisabled(), false, 'fit applies to an extents plot on its own paper');
+  assert.equal(await page.locator('#dlg select[name=paper]').inputValue(), 'layout');
+  assert.match(await page.locator('#dlg .plot-scale').innerText(), /^Fit: .*extents on the layout's own paper/);
+  await page.locator('#dlg select[name=paper]').selectOption('A4');
+  const dl = page.waitForEvent('download');
+  await page.locator('#dlg button.primary').click();
+  const pdfOut = path.join(os.tmpdir(), `ash-e2e-layoutplot-${process.pid}.pdf`);
+  await (await dl).saveAs(pdfOut);
+  const size = (await PDFDocument.load(await fs.readFile(pdfOut))).getPage(0).getSize();
+  await fs.rm(pdfOut, { force: true });
+  assert.deepEqual([Math.round(size.width), Math.round(size.height)].sort(), [595, 842].sort(), `A4 page ${size.width} x ${size.height}`);
+  await typeCmd('u');
+  assert.equal(await page.evaluate(() => window.app.vp.layout.plot.plotType), 5, 'undo restores the page setup');
   await page.click('#spacebar button[data-space="Model"]');
 
   step = 'LAYOUT New';

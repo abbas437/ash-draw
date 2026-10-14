@@ -8,7 +8,7 @@ import {
   clip, clipEvenOdd, endPath, concatTransformationMatrix, setGraphicsState,
 } from 'pdf-lib';
 import { buildScene, docWithFrozen, infiniteItem } from './render.js';
-import { layoutPage, viewportScale, isPaperViewport } from './layouts.js';
+import { layoutPage, layoutPlotRegion, paperMmPerUnit, viewportScale, isPaperViewport } from './layouts.js';
 import {
   walkOps, colorRgb, lineweightMm, dashUnits, hatchFamilies, layoutText, markerSize, arrowTriangle, runRgb, mtextItemLayout,
 } from './exportSvg.js';
@@ -34,10 +34,16 @@ export function pageFit(sheetW, sheetH, paper, { fit = true, margin = LAYOUT_FIT
   if (!SIZES[paper]) throw new Error(`Unknown page size: ${paper}`);
   const [a, b] = SIZES[paper], land = sheetW > sheetH;
   const [pw, ph] = land ? [Math.max(a, b), Math.min(a, b)] : [Math.min(a, b), Math.max(a, b)];
+  return { ...placeOnPage(sheetW, sheetH, pw, ph, { fit, margin }), orientation: land ? 'landscape' : 'portrait' };
+}
+
+/** placeOnPage(w, h, pw, ph, {fit, margin}) -> {pw, ph, scale, ox, oy, fits}: pageFit's placement of a w x h point box
+ *  on a pw x ph point page of a given orientation (e.g. a layout's own paper) */
+export function placeOnPage(sheetW, sheetH, pw, ph, { fit = true, margin = LAYOUT_FIT_MARGIN_MM } = {}) {
   const m = margin * PT_PER_MM, w = Math.max(sheetW, 1e-9), h = Math.max(sheetH, 1e-9);
   const scale = fit ? Math.min((pw - 2 * m) / w, (ph - 2 * m) / h) : 1;
   const fits = w * scale <= pw - 2 * m + 1e-6 && h * scale <= ph - 2 * m + 1e-6;
-  return { pw, ph, scale, ox: (pw - w * scale) / 2, oy: (ph - h * scale) / 2, orientation: land ? 'landscape' : 'portrait', fits };
+  return { pw, ph, scale, ox: (pw - w * scale) / 2, oy: (ph - h * scale) / 2, fits };
 }
 
 /**
@@ -81,8 +87,10 @@ export const plotScale = (n, mmPerUnit = 1) => mmPerUnit / n;
  * margin (mm, 10), scale (null = fit to page | page mm per drawing unit), centre (true), region (area to plot in drawing
  * units, clipped; default the drawing extents), monochrome, lineweights, unicodeFonts (TTF/OTF bytes for text outside
  * WinAnsi, in fallback order: an array, or an async function returning one, called only when such text is plotted;
- * unicodeFont: a single font), scene (prebuilt). A layout sheet (opts.layout): paper 'layout' (its own paper at 1:1, default) or a page size
- * name, with fit (true: scaled into the paper's margins, see pageFit; false: 1:1, centred).
+ * unicodeFont: a single font), scene (prebuilt). A layout sheet (opts.layout): paper 'layout' (its own paper, default) or a page size
+ * name; area 'layout' (the sheet, default) | 'extents' | 'window' (the page setup's plot window), see layoutPlotRegion;
+ * fit (true: the area scaled into the paper's margins, see pageFit; false: at layoutScale, centred); layoutScale
+ * (paper mm per layout unit; null = paperMmPerUnit, the page setup's scale). The sheet on its own paper always plots 1:1.
  * Raster pictures (OLE2FRAME previews, IMAGE entities) are embedded in colour (also when monochrome: AutoCAD plots
  * raster images in colour); imageRgba(bitmap) -> {width, height, rgba} turns a loaded IMAGE bitmap (a browser
  * ImageBitmap) into pixels - a bitmap that already is {width, height, rgba} needs no provider.
@@ -153,17 +161,23 @@ async function addPdfPage(pdf, doc, opts) {
   const bb = region || scene.bbox || { minx: 0, miny: 0, maxx: 100, maxy: 100 };
   let pw, ph, k, ox, oy, warnings, clipBox = region;
   if (layout) {
-    // 1:1 on the layout's own paper, or the sheet put on another paper (fitted or 1:1, centred): one scale + offset
-    // applied to every layout coordinate; line weights stay their plotted width (AutoCAD: lineweights not scaled)
-    const lp = layoutPage(layout);
-    let s = 1, dx = 0, dy = 0;
+    // the sheet at 1:1 on the layout's own paper; or the plot area (sheet, extents or window) at a scale or fitted,
+    // centred on the layout's paper or another: one scale + offset applied to every layout coordinate; line weights
+    // stay their plotted width (AutoCAD: lineweights not scaled)
+    const lp = layoutPage(layout), area = opts.area ?? 'layout', own = !opts.paper || opts.paper === 'layout';
+    let s = 1, dx = 0, dy = 0, reg = lp.sheet;
     ({ pw, ph, k } = lp); warnings = [];
-    if (opts.paper && opts.paper !== 'layout') {
-      const f = pageFit(lp.pw, lp.ph, opts.paper, { fit: opts.fit !== false });
-      ({ pw, ph } = f); s = f.scale; dx = f.ox; dy = f.oy; clipBox = lp.sheet;
-      if (!f.fits) warnings.push(`${layout.name}: the sheet is larger than ${opts.paper} at 1:1; its edges are cut off`);
+    if (area !== 'layout' || !own) {
+      reg = layoutPlotRegion(layout, area, scene.bbox);
+      k = (opts.layoutScale ?? paperMmPerUnit(layout.plot)) * PT_PER_MM;
+      const w = (reg.maxx - reg.minx) * k, h = (reg.maxy - reg.miny) * k, fit = opts.fit !== false;
+      const f = own ? placeOnPage(w, h, lp.pw, lp.ph, { fit }) : pageFit(w, h, opts.paper, { fit });
+      ({ pw, ph } = f); s = f.scale; dx = f.ox; dy = f.oy; clipBox = reg;
+      const paperName = own ? "the layout's paper" : opts.paper;
+      if (!f.fits) warnings.push(area === 'layout' && opts.layoutScale == null ? `${layout.name}: the sheet is larger than ${opts.paper} at 1:1; its edges are cut off`
+        : `${layout.name}: the plot area (${area}) is larger than ${paperName} at this scale; its edges are cut off`);
     }
-    k *= s; ox = dx - lp.sheet.minx * k; oy = dy - lp.sheet.miny * k;
+    k *= s; ox = dx - reg.minx * k; oy = dy - reg.miny * k;
   } else ({ pw, ph, k, ox, oy, warnings } = plotLayout(bb, opts));
   const X = (x) => ox + x * k, Y = (y) => oy + y * k;
 

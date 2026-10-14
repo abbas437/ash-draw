@@ -174,7 +174,7 @@ export const STANDARD_SCALES = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 100
 
 /** paper millimetres per layout unit as a viewport scale counts them: the layout's paper units alone (25.4 for an inch
  *  layout, else 1). Like AutoCAD, a viewport's 1:N ignores the page setup's plot scale (unlike paperMmPerUnit). */
-const layoutMmPerUnit = (plot) => (plot.units === 0 ? 25.4 : 1);
+export const layoutMmPerUnit = (plot) => (plot.units === 0 ? 25.4 : 1);
 
 /** printed scale N of "1:N" of a viewport: model millimetres per layout millimetre. `plot` is its layout's (only its
  *  paper units count, see layoutMmPerUnit), `units` the drawing's $INSUNITS (unitless taken as mm) */
@@ -191,6 +191,23 @@ export function viewportAt(entities, p) {
     if (Math.abs(p.x - v.c.x) <= v.width / 2 && Math.abs(p.y - v.c.y) <= v.height / 2) return v;
   }
   return null;
+}
+
+/** the page setup's plot window of a layout, normalised {minx,miny,maxx,maxy} in layout units, or null when it has
+ *  none (a DXF without one reads as all zeros) */
+export function layoutPlotWindow(plot) {
+  const w = plot.window;
+  if (!w || !(w.x1 !== w.x2 && w.y1 !== w.y2)) return null;
+  return { minx: Math.min(w.x1, w.x2), miny: Math.min(w.y1, w.y2), maxx: Math.max(w.x1, w.x2), maxy: Math.max(w.y1, w.y2) };
+}
+
+/** what a layout plot covers, in layout units {minx,miny,maxx,maxy}: area 'layout' the sheet, 'extents' the given
+ *  paper-space extents (the sheet when there are none), 'window' the page setup's plot window (the sheet when unset) */
+export function layoutPlotRegion(layout, area, extents) {
+  const { sheet } = paperRects(layout);
+  if (area === 'extents') return extents && extents.maxx >= extents.minx && extents.maxy >= extents.miny ? extents : sheet;
+  if (area === 'window') return layoutPlotWindow(layout.plot) ?? sheet;
+  return sheet;
 }
 
 /** PDF page for plotting a layout: page size in points = the paper, k = points per layout unit (paperMmPerUnit),
