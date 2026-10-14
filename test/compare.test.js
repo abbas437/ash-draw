@@ -230,10 +230,60 @@ test('compare align auto, piecewise: a big background block left in place while 
   assert.equal(r.realigned.length, 1, JSON.stringify(r.realigned));
   const g = r.realigned[0];
   assert.ok(g.name === 'BG' && g.rot === 0 && Math.abs(g.dx) < 0.5 && Math.abs(g.dy) < 0.5, JSON.stringify(g));
-  assert.deepEqual([r.same.length, r.added.length, r.removed.length, r.changed.length], [base.length + bg.length, 0, 0, 0]);
+  // the block moved relative to the rest: its pieces are paired through its own transform but reported as moved
+  assert.deepEqual([r.same.length, r.added.length, r.removed.length, r.changed.length], [base.length, 0, 0, bg.length]);
+  assert.ok(r.changed.every((p) => p.why === 'moved with group'));
+  assert.ok(g.moved && g.pieces === bg.length && g.rel.rot === 180, JSON.stringify(g));
+  assert.deepEqual([r.clusters.length, r.clusters[0].moved, r.clusters[0].changed], [1, 'BG', bg.length]);
   // without the second pass the block's pieces do not line up
   const r1 = compareDocs(a, b, { align: 'auto', tol: 1, piecewise: false });
   assert.equal(r1.same.length, base.length);
+});
+
+/** n random axis-parallel lines in x0..x0+w, y0..y0+h (seeded) */
+function randomLines(n, seed, x0, y0, w, h) {
+  let s = seed; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  const out = [];
+  for (let i = 0; i < n; i++) { const x = x0 + rnd() * w, y = y0 + rnd() * h, L = 300 + rnd() * 3000; out.push(makeLine({ x, y }, { x: x + L * (i % 2), y: y + L * ((i + 1) % 2) })); }
+  return out;
+}
+
+test('compare moved group: 400 HVAC lines moved 500 mm relative to a 300-line background block are changed, not "No differences"', () => {
+  const bg = randomLines(300, 4242, 0, 0, 60000, 50000), hvac = randomLines(400, 999, 5000, 5000, 50000, 40000);
+  const a = newDocument(), b = newDocument();
+  for (const d of [a, b]) { addBlock(d, 'ARCH-BG', { x: 0, y: 0 }, structuredClone(bg)); addEntity(d, makeInsert('ARCH-BG', { x: 0, y: 0 })); }
+  for (const e of hvac) { addEntity(a, structuredClone(e)); addEntity(b, transformEntity(e, translation(500, 0))); }
+  const r = compareDocs(a, b, { align: 'auto', tol: 1 });
+  const diffs = r.added.length + r.removed.length + r.changed.length;
+  assert.ok(diffs >= 300, `${diffs} differences: ${JSON.stringify([r.same.length, r.changed.length, r.added.length, r.removed.length])}`);
+  assert.equal(r.realigned.length, 1, JSON.stringify(r.realigned));
+  const g = r.realigned[0];
+  assert.ok(g.moved && Math.abs(Math.abs(g.rel.dx) - 500) < 1 && Math.abs(g.rel.dy) < 1 && g.rel.rot === 0, JSON.stringify(g));
+  // whichever side the global transform follows, the other side's pieces are all changed, as one moved cluster first
+  const n = g.name === '*Model_Space' ? hvac.length : bg.length;
+  assert.equal(g.pieces, n);
+  assert.equal(r.changed.filter((p) => p.why === 'moved with group').length, n);
+  assert.deepEqual([r.same.length, r.changed.length, r.added.length, r.removed.length], [700 - n, n, 0, 0]);
+  assert.deepEqual([r.clusters[0].moved, r.clusters[0].changed], [g.name, n]);
+  assert.equal(r.clusters.filter((c) => c.moved).length, 1);
+});
+
+test('compare moved group: a 300-piece equipment block moved 3 m is changed (moved), not same', () => {
+  const eq = randomLines(300, 31337, 0, 0, 4000, 3000), base = plan();
+  const a = newDocument(), b = newDocument();
+  for (const d of [a, b]) { addBlock(d, 'AHU-01', { x: 0, y: 0 }, structuredClone(eq)); for (const e of base) addEntity(d, structuredClone(e)); }
+  addEntity(a, makeInsert('AHU-01', { x: 240000, y: 40000 }));
+  addEntity(b, makeInsert('AHU-01', { x: 243000, y: 40000 }));
+  const r = compareDocs(a, b, { align: 'auto', tol: 1 });
+  assert.deepEqual([r.same.length, r.changed.length, r.added.length, r.removed.length], [base.length, eq.length, 0, 0]);
+  assert.ok(r.changed.every((p) => p.why === 'moved with group'));
+  const g = r.realigned[0];
+  assert.ok(r.realigned.length === 1 && g.name === 'AHU-01' && g.moved && g.pieces === 300, JSON.stringify(r.realigned));
+  assert.ok(Math.abs(g.rel.dx - 3000) < 1 && Math.abs(g.rel.dy) < 1, JSON.stringify(g.rel));
+  assert.deepEqual([r.clusters.length, r.clusters[0].moved, r.clusters[0].changed], [1, 'AHU-01', 300]);
+  // A's version is shown where the global transform puts it (here: where it was)
+  const e0 = expandEntities(a, [a.entities.at(-1)])[0].e;
+  assert.ok(r.changed.some((p) => p.a.type === 'LINE' && Math.abs(p.a.p1.x - e0.p1.x) < 1e-6 && Math.abs(p.a.p1.y - e0.p1.y) < 1e-6));
 });
 
 // ---- change clusters: what a reviewer marks separately ----

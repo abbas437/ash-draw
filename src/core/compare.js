@@ -34,7 +34,7 @@ function* filterSteps(idx, keep) {
   return out;
 }
 import { newDocument, addLayer, addEntity } from './model.js';
-import { bboxOf, unionBox, explodeSteps, transformEntity, compose, translation, DEG } from './geom.js';
+import { bboxOf, unionBox, explodeSteps, transformEntity, compose, translation, apply, DEG } from './geom.js';
 import { drain } from './slice.js';
 
 const MAX_DEPTH = 16; // nested blocks expanded at most this deep (guards self-referencing blocks)
@@ -495,12 +495,16 @@ function* realignSteps(ctx, pa, M, rotations) {
     done += l.length;
     const differs = Math.abs(t.rot - rotM) > 1e-6 || Math.hypot(t.dx - M[4], t.dy - M[5]) > 2 * ctx.tol;
     if (!differs || t.votes < Math.max(MIN_REALIGN_VOTES, 2 * t.atVotes)) continue;
-    realigned.push({ name: top ? top.block : '*Model_Space', rot: t.rot, dx: t.dx, dy: t.dy, m: t.m, votes: t.votes, confidence: t.confidence });
+    const g = { name: top ? top.block : '*Model_Space', rot: t.rot, dx: t.dx, dy: t.dy, m: t.m, votes: t.votes, confidence: t.confidence };
+    if (!top) g.ref = big.filter(([b]) => !topM.has(b)).map(([b]) => b.block); // the big blocks that stayed with the global transform
+    realigned.push(g);
     for (const p of top ? [{ top }] : l) topM.set(p.top, t.m);
   }
   return { realigned, topM };
 }
 
+/** bounding box of points */
+const boxOfPts = (ps) => ps.reduce((B, p) => unionBox(B, { minx: p.x, miny: p.y, maxx: p.x, maxy: p.y }), null);
 const isIdentity = (m) => m[0] === 1 && m[1] === 0 && m[2] === 0 && m[3] === 1 && !m[4] && !m[5];
 
 /**
@@ -515,8 +519,11 @@ const isIdentity = (m) => m[0] === 1 && m[1] === 0 && m[2] === 0 && m[3] === 1 &
  * that fits clearly better than the global transform.
  * Returns { added: [B pieces], removed: [A pieces], changed: [{a, b}], same: [{a, b}], clusters: [{box, added, removed,
  * changed}], offset: { m, rot, dx, dy, votes?, confidence? } (the global A->B transform; dx, dy = m[4], m[5]),
- * realigned: [{ name (block, or '*Model_Space' for the other objects), rot, dx, dy, m, votes, confidence }] (groups moved
- * by their own transform instead), topM: Map(model-space entity of A -> its matrix, when not offset.m),
+ * realigned: [{ name (block, or '*Model_Space' for the other objects), rot, dx, dy, m, votes, confidence, pieces, moved,
+ * rel: { dx, dy, rot } (move of the group's centre relative to the global transform), ref? ('*Model_Space': the big
+ * blocks that stayed with the global transform) }] (groups aligned by their own transform instead; a moved one's pieces
+ * that only matched through that transform are "changed" with why 'moved with group', A's piece at the global position,
+ * and its changes form one cluster { ..., moved: name } placed first), topM: Map(model-space entity of A -> its matrix, when not offset.m),
  * topOf: Map(piece -> model-space entity) } — A's pieces already transformed.
  */
 export function compareDocs(a, b, opts = {}) {
@@ -558,10 +565,29 @@ export function* compareSteps(a, b, opts = {}) {
   }
   const nAB = pa.length + pb.length || 1;
   const step = (i, n, lo, hi) => lo + (hi - lo) * (i / Math.max(n, 1)); // progress of item i of n within lo..hi
+  // realigned groups: their original pieces are kept (a moved group's pieces are compared again at the global position)
+  const gIdx = new Map(realigned.map((g, k) => [g.m, k])), ext = realigned.map(() => null), cnt = realigned.map(() => 0);
+  const origA = new Map(), groupA = new Map(); // A piece as matched -> original piece / index of its realigned group
   for (let i = 0; i < pa.length; i++) {
-    const p = pa[i], m = topM.get(p.top) ?? offset.m; if (!isIdentity(m)) p.e = transformEntity(p.e, m);
+    const p = pa[i], gm = topM.get(p.top), m = gm ?? offset.m, o = p.e;
+    if (!isIdentity(m)) p.e = transformEntity(p.e, m);
+    if (gm) {
+      const k = gIdx.get(gm), bx = bboxOf(o, a);
+      origA.set(p.e, o); groupA.set(p.e, k); cnt[k]++;
+      if (bx && Number.isFinite(bx.minx + bx.maxx + bx.miny + bx.maxy)) ext[k] = unionBox(ext[k], bx);
+    }
     if ((i & 1023) === 1023) yield step(i, nAB * 3, P.realign, P.feat);
   }
+  // a group is moved when its transform and the global one put a corner of its A extent more than tol apart
+  realigned.forEach((g, k) => {
+    const B = ext[k], corners = B ? [{ x: B.minx, y: B.miny }, { x: B.maxx, y: B.miny }, { x: B.maxx, y: B.maxy }, { x: B.minx, y: B.maxy }] : [];
+    g.pieces = cnt[k];
+    g.moved = corners.some((c) => { const p = apply(g.m, c), q = apply(offset.m, c); return Math.hypot(p.x - q.x, p.y - q.y) > tol; });
+    const c = B ? { x: (B.minx + B.maxx) / 2, y: (B.miny + B.maxy) / 2 } : { x: 0, y: 0 }, p = apply(g.m, c), q = apply(offset.m, c);
+    let rot = norm360(rotOf(g.m) - rotOf(offset.m)); if (rot > 180) rot -= 360; if (Math.abs(rot) < 1e-9) rot = 0;
+    g.rel = { dx: p.x - q.x, dy: p.y - q.y, rot };
+    g.box = B && unionBox(boxOfPts(corners.map((pt) => apply(g.m, pt))), boxOfPts(corners.map((pt) => apply(offset.m, pt))));
+  });
   const topOf = new Map();
   for (const p of pa) topOf.set(p.e, p.top);
   for (const p of pb) topOf.set(p.e, p.top);
@@ -578,7 +604,7 @@ export function* compareSteps(a, b, opts = {}) {
   const diag = fa.length + fb.length ? Math.hypot(maxx - minx, maxy - miny) : 0;
   const moveRadius = Math.max(opts.moveRadius ?? diag * 0.05, tol);
   const usedA = new Uint8Array(fa.length), usedB = new Uint8Array(fb.length);
-  const same = [], changed = [];
+  const same = [], changed = [], sameIJ = [];
 
   // 1. identical objects
   const M1 = P.feat + (P.match - P.feat) * 0.3; // progress: identical objects up to here, then the partners
@@ -589,7 +615,7 @@ export function* compareSteps(a, b, opts = {}) {
     const f = fa[i];
     for (const j of g.near(idKey(f), f.ax, f.ay)) {
       if (usedB[j] || !sameIdentity(f, fb[j]) || !within(f, fb[j], tol)) continue;
-      usedA[i] = usedB[j] = 1; same.push({ a: f.e, b: fb[j].e }); break;
+      usedA[i] = usedB[j] = 1; same.push({ a: f.e, b: fb[j].e }); sameIJ.push(i, j); break;
     }
     if ((i & 1023) === 1023) yield step(i, fa.length, P.feat, M1);
   }
@@ -656,9 +682,31 @@ export function* compareSteps(a, b, opts = {}) {
     changed.push(fa[c.i].hid !== fb[c.j].hid ? { a: fa[c.i].e, b: fb[c.j].e, why: 'layer hidden' } : { a: fa[c.i].e, b: fb[c.j].e });
   }
 
+  // 3. a moved group's "same" pairs matched only through its own transform: A's original at the global position
+  //    compared again with the same partner; no longer matching, the pair is changed ('moved with group')
+  if (realigned.some((g) => g.moved)) {
+    const keep = [];
+    for (let n = 0; n < same.length; n++) {
+      const i = sameIJ[2 * n], j = sameIJ[2 * n + 1], k = groupA.get(fa[i].e);
+      if (k === undefined || !realigned[k].moved) { keep.push(same[n]); continue; }
+      const o = origA.get(fa[i].e), e = isIdentity(offset.m) ? o : transformEntity(o, offset.m), f = feature(e, a, fa[i].hid);
+      if (sameIdentity(f, fb[j]) && within(f, fb[j], tol)) { keep.push(same[n]); continue; }
+      topOf.set(e, topOf.get(fa[i].e)); groupA.set(e, k);
+      changed.push({ a: e, b: fb[j].e, why: 'moved with group' });
+      if ((n & 1023) === 1023) yield;
+    }
+    same.splice(0, same.length, ...keep);
+  }
   const removed = fa.filter((f, i) => !usedA[i]).map((f) => f.e);
   const added = fb.filter((f, j) => !usedB[j]).map((f) => f.e);
-  const clusters = yield* phase(clusterSteps(a, b, { added, removed, changed }, opts.clusterGap ?? defaultClusterGap(b.units || a.units)), P.match, 1);
+  // the changes of each moved group form one cluster, first; clusterSteps gets the others
+  const movedOf = (e) => { const k = groupA.get(e); return k !== undefined && realigned[k].moved ? k : -1; };
+  const gcl = realigned.map((g) => ({ box: g.box, added: 0, removed: 0, changed: 0, moved: g.name }));
+  const outRemoved = removed.filter((e) => { const k = movedOf(e); if (k < 0) return true; gcl[k].removed++; return false; });
+  const outChanged = changed.filter((p) => { const k = movedOf(p.a); if (k < 0) return true; gcl[k].changed++; return false; });
+  const rest = yield* phase(clusterSteps(a, b, { added, removed: outRemoved, changed: outChanged }, opts.clusterGap ?? defaultClusterGap(b.units || a.units)), P.match, 1);
+  const clusters = [...gcl.filter((c) => c.box && c.removed + c.changed), ...rest];
+  for (const g of realigned) delete g.box;
   return { added, removed, changed, same, clusters, ignored, offset, realigned, topM, topOf };
 }
 

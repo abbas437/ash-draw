@@ -16,9 +16,10 @@ const num = (v) => String(+(+v).toFixed(4) + 0);
 
 /** one row of the cluster list */
 export function clusterRow(k, i, onclick) {
-  const t = k.unbounded
+  const who = k.moved ? `${k.moved === '*Model_Space' ? 'Other objects' : `Block ${k.moved}`} moved: ` : '';
+  const t = who + (k.unbounded
     ? `${k.unbounded} unbounded objects (XLINE/RAY…)`
-    : [k.added && `+${k.added} added`, k.removed && `−${k.removed} removed`, k.changed && `~${k.changed} changed`].filter(Boolean).join(', ');
+    : [k.added && `+${k.added} added`, k.removed && `−${k.removed} removed`, k.changed && `~${k.changed} changed`].filter(Boolean).join(', '));
   return el('div', { class: 'cmp-row', role: 'option', onclick }, `${i + 1}.`, el('span', { text: t }));
 }
 
@@ -40,8 +41,12 @@ export function offsetText(c) {
 /** one line per group of A aligned on its own (r.realigned), so the reviewer knows a group moved */
 export function realignedLines(r) {
   return (r.realigned ?? []).map((g) => {
-    const how = `${Math.abs(g.rot) > 1e-9 ? `rotated ${num(g.rot)}°, ` : ''}moved ${num(g.dx)}, ${num(g.dy)}`;
-    return g.name === '*Model_Space' ? `The other objects of A were aligned separately (${how}).` : `Background block ${g.name} was aligned separately (${how}).`;
+    const n = g.pieces != null ? ` (${g.pieces} pieces)` : '';
+    const who = g.name === '*Model_Space' ? `The other objects${n}` : `Block ${g.name}${n}`;
+    if (!g.moved || !g.rel) return `${who} lined up with B on their own (within tolerance of the rest).`;
+    const rel = g.name === '*Model_Space' ? (g.ref?.length ? `${g.ref.length > 1 ? 'blocks' : 'block'} ${g.ref.join(', ')}` : 'the blocks') : 'the rest';
+    const rot = Math.abs(g.rel.rot) > 1e-9 ? ` (rotated ${num(g.rel.rot)}°)` : '';
+    return `${who} moved by ${num(g.rel.dx)}, ${num(g.rel.dy)}${rot} relative to ${rel} — shown as moved`;
   });
 }
 
