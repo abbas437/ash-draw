@@ -8,7 +8,7 @@ const TAU = Math.PI * 2;
 /** the running object snap modes in dialog order: [kind, label, implemented] */
 export const OSNAP_MODES = [
   ['end', 'Endpoint', true], ['mid', 'Midpoint', true], ['cen', 'Center', true], ['gcen', 'Geometric center', true],
-  ['node', 'Node', true], ['quad', 'Quadrant', true], ['int', 'Intersection', true], ['ext', 'Extension', false],
+  ['node', 'Node', true], ['quad', 'Quadrant', true], ['int', 'Intersection', true], ['ext', 'Extension', true],
   ['ins', 'Insertion', true], ['per', 'Perpendicular', true], ['tan', 'Tangent', true], ['near', 'Nearest', true],
   ['app', 'Apparent intersection', false], ['par', 'Parallel', true],
 ];
@@ -145,6 +145,7 @@ export function snapGlyph(kind) {
     case 'near': return [P([[-1, -1], [1, -1], [-1, 1], [1, 1]], true)];
     case 'par': return [P([[-1, 0.4], [0, -1]]), P([[0, 1], [1, -0.4]])];
     case 'ext': return [P([[-1, 0], [1, 0]]), P([[0, -1], [0, 1]])];
+    case 'track': case 'trackint': return [P([[-0.6, -0.6], [0.6, 0.6]]), P([[0.6, -0.6], [-0.6, 0.6]])];
     default: return [P([[-1, -1], [1, -1], [1, 1], [-1, 1]], true), P([[-1, -1], [1, 1]])];
   }
 }

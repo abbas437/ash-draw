@@ -44,6 +44,8 @@ const angleOf = (a, b) => Math.atan2(b.y - a.y, b.x - a.x);
 export class Tool {
   constructor(host) { this.h = host; this.vp = host.vp; }
   get prompt() { return ''; }
+  /** the tool is asking for a point: object snap tracking may acquire points */
+  get tracks() { return true; }
   activate() { this.vp.preview = (c, v) => this.draw?.(c, v); }
   deactivate() { this.vp.preview = null; this.vp.rubber = null; this.vp.lastPoint = null; }
   cancel() { this.h.setTool('select'); }
@@ -94,6 +96,7 @@ const GRIP_ASK = { STRETCH: 'specify stretch point', MOVE: 'specify move point (
  *  C = Copy: originals stay and each pick adds copies until Enter / Esc; the whole grip command is ONE undo step. */
 class SelectTool extends Tool {
   constructor(h) { super(h); this.sel = new Selector(this.vp, { clearOnEmpty: true }); this.hot = null; this.multi = []; }
+  get tracks() { return !!this.hot; }
   setMulti(m) { this.multi = m; this.vp.gripHots = m.length ? m : null; this.vp.requestRender(); }
   get prompt() {
     if (!this.hot) return 'Select objects (picks add, Shift = remove, drag right-to-left = crossing)';

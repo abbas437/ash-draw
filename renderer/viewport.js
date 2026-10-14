@@ -5,6 +5,7 @@ import { wheelScale, ZOOMFACTOR_DEFAULT } from '../src/core/cmdline.js';
 import { SpatialIndex, findSnap, orthoPoint, polarPoint, pickEntity, selectInBox } from '../src/core/pick.js';
 import { bboxOf, growBox } from '../src/core/geom.js';
 import { snapGlyph, directionAt, OSNAP_LABEL } from '../src/core/osnap.js';
+import { extensionEnds, resolveTracking, trackAngles, toggleAcquired, trackLabel, ACQUIRE_KINDS } from '../src/core/otrack.js';
 import { gripsOf } from './grips.js';
 import { getEntity } from '../src/core/model.js';
 import { setTextMeasure } from '../src/core/textMetrics.js';
@@ -49,8 +50,9 @@ export class Viewport {
     this.cursor = { x: 0, y: 0 };      // last resolved (snapped) world point
     this.rawCursor = { x: 0, y: 0 };
     this.snapMarker = null;
+    this.acquired = [];                // object snap tracking / extension points: [{at, path?}] (otrack.js)
     this._lastPoint = null;            // see the lastPoint accessor
-    this.settings = { snap: true, ortho: false, polar: false, polarStep: 45, polarExtra: [], lineweights: false, transparency: true, dark: false, zoomFactor: ZOOMFACTOR_DEFAULT, kinds: new Set(DEFAULT_KINDS) };
+    this.settings = { snap: true, ortho: false, polar: false, otrack: false, polarStep: 45, polarExtra: [], lineweights: false, transparency: true, dark: false, zoomFactor: ZOOMFACTOR_DEFAULT, kinds: new Set(DEFAULT_KINDS) };
     this.preview = null;               // (ctx, view, vp) => void drawn above the scene
     this.rubber = null;                // selection rectangle {a,b,crossing} in world coordinates
     this.layout = null;                // the layout shown (paper space; see layouts-ui.js), null = model space
@@ -182,7 +184,8 @@ export class Viewport {
     let p = raw, marker = null;
     if (snap && this.index) {
       const par = from && this.settings.kinds.has('par') ? this.parallel?.dir : undefined;
-      const s = findSnap(this.index, raw, this.tolWorld, { kinds: this.settings.kinds, from: from ?? undefined, exclude, parallel: par });
+      const st = this.settings, s0 = findSnap(this.index, raw, this.tolWorld, { kinds: st.kinds, from: from ?? undefined, exclude, parallel: par });
+      const s = resolveTracking(s0, this.acquired, raw, this.tolWorld, { otrack: st.otrack, ext: st.kinds.has('ext'), angles: trackAngles(st.polar, st.polarStep, st.polarExtra) });
       if (s) { p = { x: s.x, y: s.y }; marker = s; }
     }
     if (!marker && from) {
@@ -234,6 +237,7 @@ export class Viewport {
     if (this.rubber) this._drawRubber();
     this._checkParallel();
     if (this.parallel && this.lastPoint) this._drawParallelAcquired();
+    if (this.acquired.length) this._drawAcquired();
     if (this.snapMarker) this._drawSnapMarker();
     this._drawCrosshair();
   }
@@ -339,14 +343,16 @@ export class Viewport {
     const m = this.snapMarker, s = this.toScreen(m), c = this.ctx;
     c.save(); c.strokeStyle = this.inkColor; c.lineWidth = 1.5;
     const r = 6;
-    if (m.kind === 'par' && m.from) { // the tracking line: from the last point through the snap and on
-      const a = this.toScreen(m.from), dx = s.x - a.x, dy = s.y - a.y, l = Math.hypot(dx, dy) || 1;
-      c.save(); c.lineWidth = 1; c.setLineDash([3, 3]); c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(s.x + (dx / l) * 2000, s.y + (dy / l) * 2000); c.stroke(); c.restore();
-    }
+    // the tracking lines: from the last / acquired point through the snap and on; an arc's extension along its circle
+    const rays = m.kind === 'trackint' ? m.lines.map((l) => l.from) : (m.kind === 'par' || m.track) && m.from ? [m.from] : [];
+    c.save(); c.lineWidth = 1; c.setLineDash([3, 3]); c.beginPath();
+    for (const f of rays) { const a = this.toScreen(f), dx = s.x - a.x, dy = s.y - a.y, l = Math.hypot(dx, dy) || 1; c.moveTo(a.x, a.y); c.lineTo(s.x + (dx / l) * 2000, s.y + (dy / l) * 2000); }
+    if (m.kind === 'ext' && m.path?.c) { const k = m.path, o = this.toScreen(k.c), ang = (q) => -Math.atan2(q.y - k.c.y, q.x - k.c.x); c.arc(o.x, o.y, k.r * this.view.zoom, ang(k.from), ang(m), k.ccw); }
+    c.stroke(); c.restore();
     glyphPath(c, snapGlyph(m.kind), s.x, s.y, r);
     c.stroke();
     // the tooltip: the mode's name on a small box beside the marker
-    const label = OSNAP_LABEL[m.kind] ?? m.kind;
+    const label = m.kind === 'ext' || m.kind === 'track' || m.kind === 'trackint' ? trackLabel(m) : OSNAP_LABEL[m.kind] ?? m.kind;
     c.font = '11px "Segoe UI", sans-serif';
     const w = c.measureText(label).width, bx = s.x + r + 6, by = s.y + r + 4;
     c.fillStyle = this.settings.dark ? 'rgba(40,44,52,0.92)' : 'rgba(255,255,225,0.95)'; c.fillRect(bx, by, w + 8, 16);
@@ -358,6 +364,26 @@ export class Viewport {
   _drawParallelAcquired() {
     const s = this.toScreen(this.parallel.at), c = this.ctx;
     c.save(); c.strokeStyle = this.inkColor; c.lineWidth = 1.5; glyphPath(c, snapGlyph('par'), s.x, s.y, 5); c.stroke(); c.restore();
+  }
+  /** the acquired tracking / extension points: a small + at each */
+  _drawAcquired() {
+    const c = this.ctx; c.save(); c.strokeStyle = this.inkColor; c.lineWidth = 1.5;
+    for (const a of this.acquired) { const s = this.toScreen(a.at); glyphPath(c, snapGlyph('ext'), s.x, s.y, 4); c.stroke(); }
+    c.restore();
+  }
+  /** Object snap tracking (OTRACK) / Extension: resting ACQUIRE_MS on a running snap point (OTRACK) or on the end of a
+   *  line or arc (EXT) while a tool asks for a point acquires it; resting on an acquired point again releases it */
+  _acquireHover(raw, marker) {
+    const st = this.settings, tol = this.tolWorld;
+    let cand = null;
+    if (st.snap && this.index && this.tool?.tracks) {
+      if (st.kinds.has('ext')) { const e = this.pick(raw); cand = (e && extensionEnds(e).find((x) => Math.hypot(x.at.x - raw.x, x.at.y - raw.y) <= tol)) || null; }
+      if (st.otrack && marker && ACQUIRE_KINDS.has(marker.kind) && !(cand && Math.hypot(cand.at.x - marker.x, cand.at.y - marker.y) < 1e-9)) cand = { at: { x: marker.x, y: marker.y }, path: null };
+    }
+    const key = cand ? `${cand.at.x},${cand.at.y}` : null;
+    if (key === this._acqKey) return;
+    clearTimeout(this._acqT); this._acqKey = key;
+    if (cand) this._acqT = setTimeout(() => { this.acquired = toggleAcquired(this.acquired, cand); this.requestRender(); }, ACQUIRE_MS);
   }
   /** Parallel snap: while there is a last point, resting on a straight line for ACQUIRE_MS acquires its direction */
   _trackHover(raw) {
@@ -375,9 +401,10 @@ export class Viewport {
   get lastPoint() { return this._lastPoint; }
   set lastPoint(p) { this._lastPoint = p; if (!p) this.clearTracking(); }
   /** drop the acquired direction once its entity no longer exists (deleted, or its creation undone) */
-  _checkParallel() { if (this.parallel && !getEntity(this.doc, this.parallel.id)) this.clearTracking(); }
-  /** forget the acquired parallel direction (a new tool, the end of a command sequence) */
-  clearTracking() { clearTimeout(this._hoverT); this._hoverKey = null; this.parallel = null; }
+  _checkParallel() { if (this.parallel && !getEntity(this.doc, this.parallel.id)) this._clearParallel(); }
+  _clearParallel() { clearTimeout(this._hoverT); this._hoverKey = null; this.parallel = null; }
+  /** forget the acquired parallel direction and tracking points (a new tool, the end of a command sequence) */
+  clearTracking() { this._clearParallel(); clearTimeout(this._acqT); this._acqKey = null; this.acquired = []; }
   /** the canvas CSS cursor: none only while the crosshair is drawn (it is not while busy, panning or in Pan) */
   _syncCursor() {
     this.canvas.style.cursor = this._pan ? 'grabbing' : this.busy ? 'wait' : this.panTool || this._spaceDown ? 'grab' : '';
@@ -467,6 +494,7 @@ export class Viewport {
     const res = this.resolve(sx, sy, resolveOpts);
     this.cursor = res.p; this.rawCursor = res.raw; this.snapMarker = res.marker;
     this._trackHover(res.raw);
+    if (resolveOpts?.snap !== false) this._acquireHover(res.raw, res.marker);
     if (this._down && Math.hypot(sx - this._down.sx, sy - this._down.sy) > 4) this._down.moved = true;
     this.tool?.move?.(res.p, mk(e, res.raw, sx, sy, { dragging: !!this._down?.moved }));
     this.emit('cursor', res.p);

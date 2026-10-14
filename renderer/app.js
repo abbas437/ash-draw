@@ -212,7 +212,8 @@ class App {
     if (sys[low]) { sys[low](); return; }
     const last = this.vp.lastPoint ?? { x: 0, y: 0 };
     const dir = this.vp.lastPoint ? { x: this.vp.cursor.x - last.x, y: this.vp.cursor.y - last.y } : null;
-    const pt = parseCoordinate(s, last, dir);
+    const tr = this.vp.snapMarker?.track, td = tr && parseCoordinate(s, tr.from, tr.dir); // a distance typed on a tracking line goes along it
+    const pt = td?.distance !== undefined ? td : parseCoordinate(s, last, dir);
     if (pt && Number.isFinite(pt.x) && (this.toolId !== 'select' || t.hot)) { this.vp.cursor = { x: pt.x, y: pt.y }; t.click({ x: pt.x, y: pt.y }); this.refreshPrompt(); this.vp.requestRender(); return; }
     toast(`Unknown command "${s}".`);
     this.log(`Unknown command "${s}".`);
@@ -829,7 +830,7 @@ class App {
       if (settings) b.addEventListener('contextmenu', (e) => { e.preventDefault(); draftingSettings(this); });
       return b;
     };
-    s.append(el('span', { class: 'coord', id: 'coord' }), tog('SNAP', 'snap', 'Object snap (F3); right-click: snap settings', true), tog('ORTHO', 'ortho', 'Ortho (F8)'), tog('POLAR', 'polar', 'Polar tracking (F10); right-click: settings', true), tog('LWT', 'lineweights', 'Show lineweights (F9)'), tog('TPY', 'transparency', 'Show transparency'),
+    s.append(el('span', { class: 'coord', id: 'coord' }), tog('SNAP', 'snap', 'Object snap (F3); right-click: snap settings', true), tog('ORTHO', 'ortho', 'Ortho (F8)'), tog('POLAR', 'polar', 'Polar tracking (F10); right-click: settings', true), tog('OTRACK', 'otrack', 'Object snap tracking (F11)'), tog('LWT', 'lineweights', 'Show lineweights (F9)'), tog('TPY', 'transparency', 'Show transparency'),
       el('span', { class: 'spacer' }),
       el('span', { id: 'conv', hidden: true, role: 'button', tabindex: '0', style: 'margin-right:12px;cursor:pointer', onclick: () => this.converterLog(), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.converterLog(); } } }),
       el('span', { id: 'sel' }), el('span', { id: 'units', style: 'margin-left:12px', role: 'button', tabindex: '0', title: 'Drawing units (Format > Units…)', onclick: () => this.unitsDialog(), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.unitsDialog(); } } }),
@@ -842,6 +843,7 @@ class App {
     st[key] = !st[key];
     if (key === 'transparency') api.settingsSet?.('canvas.transparency', st[key])?.catch?.(() => {});
     if (key === 'snap') api.settingsSet?.('osnap.on', st.snap)?.catch?.(() => {});
+    if (key === 'otrack') api.settingsSet?.('otrack.on', st.otrack)?.catch?.(() => {});
     if (key === 'ortho' && st.ortho) st.polar = false;
     if (key === 'polar' && st.polar) st.ortho = false;
     this.refreshToggles(); this.vp.requestRender();
@@ -933,6 +935,7 @@ class App {
       if (e.key === 'F8') { e.preventDefault(); this.toggle('ortho'); return; }
       if (e.key === 'F9') { e.preventDefault(); this.toggle('lineweights'); return; }
       if (e.key === 'F10') { e.preventDefault(); this.toggle('polar'); return; }
+      if (e.key === 'F11') { e.preventDefault(); this.toggle('otrack'); return; }
       if (e.key === 'Escape' && this.histView.open) { e.preventDefault(); this.toggleHistory(false); return; }
       if (typing) return;
       if (e.key === 'Escape') { e.preventDefault(); this.tool.key(e) || this.tool.cancel(); this.refreshPrompt(); return; }
