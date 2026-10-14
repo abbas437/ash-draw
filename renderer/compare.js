@@ -11,7 +11,16 @@ import { el, modal, message, toast, progressToast } from './ui.js';
 const { buildCompareDoc, defaultTolerance, defaultClusterGap, setCompareView } = core;
 const VIEWS = [['differences', 'Differences'], ['overlay', 'Overlay'], ['a', 'A only'], ['b', 'B only']];
 const UNIT_NAMES = { 1: 'in', 2: 'ft', 4: 'mm', 5: 'cm', 6: 'm' };
+const CLUSTER_PAGE = 200; // rows of the cluster list shown at a time
 const num = (v) => String(+(+v).toFixed(4) + 0);
+
+/** one row of the cluster list */
+export function clusterRow(k, i, onclick) {
+  const t = k.unbounded
+    ? `${k.unbounded} unbounded objects (XLINE/RAY…)`
+    : [k.added && `+${k.added} added`, k.removed && `−${k.removed} removed`, k.changed && `~${k.changed} changed`].filter(Boolean).join(', ');
+  return el('div', { class: 'cmp-row', role: 'option', onclick }, `${i + 1}.`, el('span', { text: t }));
+}
 
 /** the offset line of the panel: how A was moved onto B, in words */
 export function offsetText(c) {
@@ -69,9 +78,19 @@ export class ComparePanel {
     this.counts.replaceChildren(el('div', { class: 'cmp-files', text: `A: ${c.nameA}  →  B: ${c.nameB}` }),
       el('div', { class: 'cmp-files', text: 'Pieces (blocks counted by their parts):' }),
       sw('added', 'Added', c.r.added.length), sw('removed', 'Removed', c.r.removed.length), sw('changed', 'Changed', c.r.changed.length), sw('same', 'Unchanged', c.r.same.length));
-    this.list.replaceChildren(...c.r.clusters.map((k, i) => el('div', { class: 'cmp-row', role: 'option', onclick: () => this.go(i) },
-      `${i + 1}.`, el('span', { text: [k.added && `+${k.added} added`, k.removed && `−${k.removed} removed`, k.changed && `~${k.changed} changed`].filter(Boolean).join(', ') }))));
+    if (c.r.ignored > 0) this.counts.append(el('div', { class: 'cmp-ignored', text: `${c.r.ignored} pieces on ignored layers not compared` }));
+    this.shownRows = 0;
+    this.list.replaceChildren();
+    this.more(); // the first page of the list
     this.mark();
+  }
+  /** append the next page of the cluster list (CLUSTER_PAGE rows); a "Show more…" row stays while rows remain */
+  more() {
+    const cl = this.app.active?.compare?.r.clusters ?? [];
+    this.list.querySelector('.cmp-more')?.remove();
+    for (let i = this.shownRows; i < Math.min(cl.length, this.shownRows + CLUSTER_PAGE); i++) this.list.append(clusterRow(cl[i], i, () => this.go(i)));
+    this.shownRows = Math.min(cl.length, this.shownRows + CLUSTER_PAGE);
+    if (this.shownRows < cl.length) this.list.append(el('div', { class: 'cmp-more', role: 'button', onclick: () => { this.more(); this.mark(); } }, `Show more… (${cl.length - this.shownRows} left)`));
   }
   /** show the compare tab as differences / overlay / A only / B only (layer colours and visibility) */
   setView(v) {
@@ -83,12 +102,14 @@ export class ComparePanel {
   }
   mark() {
     const c = this.app.active?.compare, n = c?.r.clusters.length ?? 0;
-    this.pos.textContent = n ? `${this.cur < 0 ? '–' : this.cur + 1} of ${n}` : 'No differences';
-    [...this.list.children].forEach((r, i) => { r.classList.toggle('cur', i === this.cur); r.setAttribute('aria-selected', String(i === this.cur)); });
+    const diffs = c ? c.r.added.length + c.r.removed.length + c.r.changed.length : 0;
+    this.pos.textContent = n ? `${this.cur < 0 ? '–' : this.cur + 1} of ${n}` : diffs ? `${diffs} differences` : 'No differences';
+    [...this.list.querySelectorAll('.cmp-row')].forEach((r, i) => { r.classList.toggle('cur', i === this.cur); r.setAttribute('aria-selected', String(i === this.cur)); });
   }
   go(i) {
     const c = this.app.active?.compare; if (!c?.r.clusters[i]) return;
     this.cur = i;
+    while (i >= this.shownRows) this.more();
     this.app.vp.zoomBox(c.r.clusters[i].mark);
     this.list.children[i]?.scrollIntoView({ block: 'nearest' });
     this.mark();
@@ -264,7 +285,7 @@ export async function showComparison(app, a, b, nameA, nameB, { align = 'auto', 
     app.comparePanel.sync();
     toast(`${r.added.length} added, ${r.removed.length} removed, ${r.changed.length} changed (pieces)`, 3000);
   } catch (err) {
-    if (err.code !== 'CANCELLED') throw err;
-    toast('Compare cancelled.', 2500);
+    if (err.code === 'CANCELLED') toast('Compare cancelled.', 2500);
+    else toast(`Compare failed: ${err?.message || err}`, 8000); // replaces the progress toast (and its dead Cancel button)
   } finally { running = null; }
 }

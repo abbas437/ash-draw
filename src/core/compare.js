@@ -532,10 +532,13 @@ export function* compareSteps(a, b, opts = {}) {
   const P = { a: 0.08, b: 0.16, global: 0.42, realign: 0.66, feat: 0.78, match: 0.95 };
   let pa = expand ? yield* phase(expandSteps(a), 0, P.a) : a.entities.map((e) => ({ e, top: e }));
   let pb = expand ? yield* phase(expandSteps(b), P.a, P.b) : b.entities.map((e) => ({ e, top: e }));
+  let ignored = 0; // pieces left out because their layer (or their INSERT's) is ignored
   if (opts.ignoreLayers?.length) {
     const ign = new Set([...opts.ignoreLayers].map((n) => String(n).toUpperCase()));
     const keep = (p) => !ign.has(String(p.e.layer ?? '0').toUpperCase()) && !ign.has(String(p.top.layer ?? '0').toUpperCase());
+    const n0 = pa.length + pb.length;
     pa = pa.filter(keep); pb = pb.filter(keep);
+    ignored = n0 - pa.length - pb.length;
   }
   // layer table: a piece hidden (layer off / frozen) in both drawings is left out; hidden in one only, it is compared
   // with that state as a property (so it is never "same" with its visible twin)
@@ -656,11 +659,10 @@ export function* compareSteps(a, b, opts = {}) {
   const removed = fa.filter((f, i) => !usedA[i]).map((f) => f.e);
   const added = fb.filter((f, j) => !usedB[j]).map((f) => f.e);
   const clusters = yield* phase(clusterSteps(a, b, { added, removed, changed }, opts.clusterGap ?? defaultClusterGap(b.units || a.units)), P.match, 1);
-  return { added, removed, changed, same, clusters, offset, realigned, topM, topOf };
+  return { added, removed, changed, same, clusters, ignored, offset, realigned, topM, topOf };
 }
 
 const CLUSTER_SPAN = 10;     // a cluster wider or taller than this many group distances is cut into smaller ones
-const MAX_CLUSTERS = 200;    // more clusters than this: the smallest are merged into their nearest neighbours
 const CELL_CHECKS = 64;      // members of one grid cell checked exactly; beyond that a shared cell is near enough
 
 /** default distance between changes that a reviewer would mark separately: 1.5 m in the drawing's units */
@@ -674,7 +676,9 @@ const boxGap = (p, q) => Math.max(p.minx - q.maxx, q.minx - p.maxx, p.miny - q.m
  *  2. a cluster whose box is more than CLUSTER_SPAN group distances (its larger side; 15 m at the default 1.5 m) is cut
  *     along its longer side, at its largest empty gap, or (none visible) into equal parts, until each part fits; a single
  *     change bigger than that is a cluster of its own;
- *  3. at most MAX_CLUSTERS: the smallest are merged into their nearest neighbours;
+ *  3. no cap and no merging (a merge would cross the size limit of 2.); the panel pages a long list;
+ *     changes without a finite box (XLINE, RAY, untessellatable) form one extra last cluster {unbounded: n} whose box
+ *     is the drawing extent;
  *  4. reading order: rows from the top, left to right within a row.
  */
 export function clusterChanges(a, b, r, gap) {
@@ -683,16 +687,17 @@ export function clusterChanges(a, b, r, gap) {
 
 /** step generator behind clusterChanges */
 function* clusterSteps(a, b, r, gap) {
-  const items = [], total = r.added.length + r.removed.length + r.changed.length;
+  const items = [], unb = { added: 0, removed: 0, changed: 0 }, total = r.added.length + r.removed.length + r.changed.length;
   const lists = [[r.added, (e) => bboxOf(e, b), 'added'], [r.removed, (e) => bboxOf(e, a), 'removed'], [r.changed, (p) => unionBox(bboxOf(p.a, a), bboxOf(p.b, b)), 'changed']];
   for (const [l, boxOf, k] of lists) {
     for (let i = 0; i < l.length; i++) {
       const box = boxOf(l[i]);
-      if (box && Number.isFinite(box.minx + box.maxx + box.miny + box.maxy)) items.push({ k, box });
+      if (box && Number.isFinite(box.minx + box.maxx + box.miny + box.maxy)) items.push({ k, box }); else unb[k]++;
       if ((i & 1023) === 1023) yield 0.4 * items.length / total;
     }
   }
-  if (!items.length) return [];
+  const nUnb = unb.added + unb.removed + unb.changed;
+  if (!items.length && !nUnb) return [];
   gap = Math.max(gap, 1e-9);
   const limit = CLUSTER_SPAN * gap;
   // a change bigger than a cluster may be (a long polyline, a hatch) is a cluster of its own: linked, it would hold
@@ -749,20 +754,7 @@ function* clusterSteps(a, b, r, gap) {
     }
     todo.push(l.slice(0, cut), l.slice(cut));
   }
-  // 3. cap the count: merge the smallest into its nearest neighbour
-  let live = parts.map((p) => ({ box: p.box, n: p.l.length, l: p.l }));
-  while (live.length > MAX_CLUSTERS) {
-    yield 0.9;
-    let s = 0;
-    for (let i = 1; i < live.length; i++) if (live[i].n < live[s].n) s = i;
-    const S = live[s];
-    let t = -1, dt = Infinity;
-    for (let i = 0; i < live.length; i++) { if (i === s) continue; const d = boxGap(S.box, live[i].box); if (d < dt) { dt = d; t = i; } }
-    const T = live[t];
-    T.box = unionBox(T.box, S.box); T.n += S.n; T.l = T.l.concat(S.l);
-    live[s] = live[live.length - 1]; live.pop();
-  }
-  const out = live.map(({ box, l }) => { const c = { box, added: 0, removed: 0, changed: 0 }; for (const it of l) c[it.k]++; return c; });
+  const out = parts.map(({ box, l }) => { const c = { box, added: 0, removed: 0, changed: 0 }; for (const it of l) c[it.k]++; return c; });
   // 4. reading order: a row starts with the highest remaining top; clusters whose top reaches above its middle (or
   //    less than 2 gaps below its top) join it
   out.sort((p, q) => q.box.maxy - p.box.maxy || p.box.minx - q.box.minx);
@@ -773,6 +765,11 @@ function* clusterSteps(a, b, r, gap) {
     while (j < out.length && out[j].box.maxy >= mid) j++;
     sorted.push(...out.slice(i, j).sort((p, q) => p.box.minx - q.box.minx || q.box.maxy - p.box.maxy));
     i = j;
+  }
+  if (nUnb) { // changes without a box: one last cluster over the drawing extent
+    let box = null;
+    for (const d of [a, b]) for (const e of d.entities) { const x = bboxOf(e, d); if (x && Number.isFinite(x.minx + x.maxx + x.miny + x.maxy)) box = unionBox(box, x); }
+    sorted.push({ box: box ?? { minx: 0, miny: 0, maxx: limit, maxy: limit }, ...unb, unbounded: nUnb });
   }
   return sorted;
 }

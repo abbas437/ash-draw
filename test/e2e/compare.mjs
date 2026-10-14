@@ -221,6 +221,27 @@ try {
     assert.equal(await page.evaluate(() => window.app.closeTab(window.app.tabs.find((t) => t.file.name === 'big-a.dxf')).then(() => 'x')), 'x');
   }
 
+  step = 'a pair differing only by an XLINE: the panel lists it, not "No differences"; a failing compare replaces the progress toast';
+  const tabsBefore = await page.evaluate(() => window.app.tabs.length);
+  await page.evaluate(async () => {
+    const M = await import('/src/core/model.js');
+    const { showComparison } = await import('/renderer/compare.js');
+    const mk = (x) => { const d = M.newDocument(); d.units = 4; M.addEntity(d, M.makeLine({ x: 0, y: 0 }, { x: 400, y: 0 })); if (x) M.addEntity(d, M.makeXline('XLINE', { x: 100, y: 100 }, { x: 1, y: 1 })); return d; };
+    window.__showComparison = showComparison; window.__mk = mk;
+    await showComparison(window.app, mk(false), mk(true), 'xa', 'xb', { align: 'none', opts: { tol: 1 } });
+  });
+  await page.waitForFunction((n) => window.app.tabs.length === n + 1, tabsBefore, { timeout: 10000 });
+  const xp = await page.locator('#compare-panel').textContent();
+  assert.match(xp, /1 unbounded objects \(XLINE\/RAY…\)/); assert.doesNotMatch(xp, /No differences/);
+  await page.evaluate(async () => {
+    const bad = { get tol() { throw new Error('boom'); } };
+    await window.__showComparison(window.app, window.__mk(false), window.__mk(true), 'ea', 'eb', { align: 'none', opts: bad });
+  });
+  assert.match(await page.locator('#toast').textContent(), /Compare failed: boom/);
+  assert.equal(await page.locator('#toast .toast-cancel').count(), 0, 'no dead Cancel button');
+  assert.equal(await page.evaluate(() => document.getElementById('toast').classList.contains('busy')), false);
+  assert.equal(await page.evaluate(() => window.app.tabs.length), tabsBefore + 1, 'no tab for the failed compare');
+
   assert.deepEqual(problems, []);
   console.log('compare e2e: OK');
 } catch (err) {

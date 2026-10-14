@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { newDocument, addEntity, makeLine, makeCircle, makeText } from '../src/core/model.js';
+import { newDocument, addEntity, makeLine, makeCircle, makeText, makeXline } from '../src/core/model.js';
 import { compareDocs, buildCompareDoc, COMPARE_LAYERS } from '../src/core/compare.js';
 
 /** n identical entities (lines, circles, texts) laid out on a grid */
@@ -292,12 +292,36 @@ test('clusters: reading order is rows from the top, left to right in a row', () 
   assert.deepEqual(r.clusters.map((c) => [Math.round((c.box.minx + 300) / 1000), Math.round((c.box.miny + 300) / 1000 * 10) / 10]), [[10, 50], [60, 48.5], [10, 20], [60, 21]]);
 });
 
-test('clusters: at most 200; the smallest are merged into their neighbours', () => {
+test('clusters: no cap and no merging: 300 isolated changes stay 300 clusters', () => {
   const dots = [];
   for (let i = 0; i < 300; i++) dots.push(makeCircle({ x: 5000 + (i % 20) * 3000, y: 5000 + Math.floor(i / 20) * 3000 }, 100));
   const r = compareDocs(sheet(100, 100), sheet(100, 100, dots), { tol: 1 });
-  assert.equal(r.clusters.length, 200);
+  assert.equal(r.clusters.length, 300);
   assert.equal(r.clusters.reduce((n, c) => n + c.added, 0), 300);
+});
+
+test('clusters: 5000 isolated changes over a 1 km sheet: every box within the size limit (10 group distances), under 1 s', () => {
+  const dots = [];
+  for (let i = 0; i < 5000; i++) dots.push(makeCircle({ x: 5000 + (i % 100) * 9500, y: 5000 + Math.floor(i / 100) * 19000 }, 100));
+  const A = sheet(1000, 1000), B = sheet(1000, 1000, dots);
+  const t0 = performance.now();
+  const r = compareDocs(A, B, { tol: 1 });
+  const ms = performance.now() - t0;
+  assert.equal(r.clusters.reduce((n, c) => n + c.added, 0), 5000);
+  assert.ok(r.clusters.length > 200);
+  for (const c of r.clusters) assert.ok(Math.max(c.box.maxx - c.box.minx, c.box.maxy - c.box.miny) <= 15000 + 1e-6, JSON.stringify(c.box));
+  assert.ok(ms < 1000, `${ms} ms`);
+});
+
+test('clusters: changes without a finite box (XLINE) form a fallback cluster; they are not "no differences"', () => {
+  const r = compareDocs(sheet(50, 50), sheet(50, 50, [makeXline('XLINE', { x: 1000, y: 1000 }, { x: 1, y: 1 })]), { tol: 1 });
+  assert.equal(r.added.length, 1);
+  assert.equal(r.clusters.length, 1);
+  assert.equal(r.clusters[0].unbounded, 1); assert.equal(r.clusters[0].added, 1);
+  assert.ok(Number.isFinite(r.clusters[0].box.maxx - r.clusters[0].box.minx) && r.clusters[0].box.maxx > r.clusters[0].box.minx);
+  // mixed with a bounded change: the bounded cluster plus the fallback one, last
+  const m = compareDocs(sheet(50, 50), sheet(50, 50, [makeCircle({ x: 5000, y: 5000 }, 100), makeXline('XLINE', { x: 1000, y: 1000 }, { x: 1, y: 1 })]), { tol: 1 });
+  assert.deepEqual(m.clusters.map((c) => c.unbounded ?? 0), [0, 1]);
 });
 
 test('compare ignoreLayers: pieces on an ignored layer (or drawn by an INSERT on it) are left out', () => {
@@ -314,6 +338,9 @@ test('compare ignoreLayers: pieces on an ignored layer (or drawn by an INSERT on
   assert.equal(r.added.length + r.removed.length + r.changed.length, 0);
   assert.equal(r.same.length, 5);
   assert.equal(r.clusters.length, 0);
+  // the pieces left out are counted: per drawing, the circle-free ones on REV-TABLE (INSERT's text part + DATE text)
+  assert.equal(r.ignored, 4);
+  assert.equal(all.ignored, 0);
 });
 
 // ---- time slicing: compareSteps / buildCompareSteps ----
