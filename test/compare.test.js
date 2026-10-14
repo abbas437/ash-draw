@@ -356,3 +356,37 @@ test('compareSteps under runSliced: an aborted signal rejects with CANCELLED and
   assert.equal(after, 0, 'no step after the abort');
   assert.equal(gen.next().done, true, 'the generator is closed');
 });
+
+// ---- review fixes: numbers compared by meaning, layer table state, identity keys ----
+import { makeArc, makeEllipse, makeMText, makePolyline, addLayer } from '../src/core/model.js';
+const verdict = (a, b, opts = { tol: 1 }) => { const r = compareDocs(a, b, opts); return [r.same.length, r.changed.length, r.added.length, r.removed.length]; };
+const notSame = (ea, eb, msg) => assert.equal(compareDocs(docOf([ea]), docOf([eb]), { tol: 1 }).same.length, 0, msg);
+
+test('compare fix: a bulge, an arc end angle, an ellipse ratio, an insert scale or a text rotation that moves what is drawn is never same', () => {
+  notSame(makePolyline([{ x: 0, y: 0 }, { x: 1000, y: 0 }]), makePolyline([{ x: 0, y: 0, bulge: 0.9 }, { x: 1000, y: 0 }]), 'bulge 0 -> 0.9');
+  notSame(makeArc({ x: 0, y: 0 }, 5000, 0, 90), makeArc({ x: 0, y: 0 }, 5000, 0, 90.9), 'R5000 arc end 90 -> 90.9 deg');
+  notSame(makeEllipse({ x: 0, y: 0 }, { x: 2000, y: 0 }, 0.3), makeEllipse({ x: 0, y: 0 }, { x: 2000, y: 0 }, 1.0), 'ellipse ratio 0.3 -> 1');
+  notSame(makeText({ x: 0, y: 0 }, 250, 'SUPPLY AIR DUCT 1'), makeText({ x: 0, y: 0 }, 250, 'SUPPLY AIR DUCT 1', { rot: 2 }), 'text 0 -> 2 deg (about 4 m long)');
+  const ins = (sx) => { const d = newDocument(); addBlock(d, 'AHU', { x: 0, y: 0 }, [makeLine({ x: 0, y: 0 }, { x: 2000, y: 0 }), makeLine({ x: 0, y: 0 }, { x: 0, y: 1000 })]); addEntity(d, makeInsert('AHU', { x: 500, y: 500 }, { sx, sy: sx })); return d; };
+  assert.equal(compareDocs(ins(1), ins(1.05), { tol: 1, expand: false }).same.length, 0, 'insert scale 1 -> 1.05 on a 2 m block');
+  assert.equal(compareDocs(ins(1), ins(1.05), { tol: 1 }).same.length, 0, 'expanded too');
+  // within tolerance stays same: a 0.01 deg arc end on R5000 (0.9 mm), the same text, the same insert
+  assert.deepEqual(verdict(docOf([makeArc({ x: 0, y: 0 }, 5000, 0, 90)]), docOf([makeArc({ x: 0, y: 0 }, 5000, 0, 90.01)])), [1, 0, 0, 0]);
+  assert.deepEqual(verdict(ins(1), ins(1)), [2, 0, 0, 0]);
+});
+
+test('compare fix: a layer frozen or off in B, or a BYLAYER colour changed in the layer table, is changed; hidden in both is left out', () => {
+  const mk = (layer) => { const d = docOf([makeLine({ x: 0, y: 0 }, { x: 1000, y: 0 }, { layer: 'M-DUCT' }), makeCircle({ x: 0, y: 0 }, 50)]); addLayer(d, { name: 'M-DUCT', color: 4, ...layer }); return d; };
+  let r = compareDocs(mk({}), mk({ frozen: true }), { tol: 1 });
+  assert.deepEqual([r.same.length, r.changed.length], [1, 1]); assert.equal(r.changed[0].why, 'layer hidden');
+  assert.deepEqual(verdict(mk({ visible: false }), mk({})), [1, 1, 0, 0]);
+  assert.deepEqual(verdict(mk({ color: 4 }), mk({ color: 1 })), [1, 1, 0, 0], 'layer colour 4 -> 1');
+  assert.deepEqual(verdict(mk({ frozen: true }), mk({ visible: false })), [1, 0, 0, 0], 'hidden in both: skipped');
+  // a block on a frozen layer hides its pieces, even those on visible layers
+  const blk = (frozen) => { const d = newDocument(); addLayer(d, { name: 'M-DUCT' }); addLayer(d, { name: 'M-EQPT', frozen }); addBlock(d, 'FAN', { x: 0, y: 0 }, [makeLine({ x: 0, y: 0 }, { x: 900, y: 0 }, { layer: 'M-DUCT' })]); addEntity(d, makeInsert('FAN', { x: 0, y: 0 }, { layer: 'M-EQPT' })); return d; };
+  assert.deepEqual(verdict(blk(false), blk(true)), [0, 1, 0, 0]);
+});
+
+test('compare fix: identity keys do not collide (MTEXT "TAG" on layer "1X" vs "TAG1" on "X")', () => {
+  assert.equal(compareDocs(docOf([makeMText({ x: 0, y: 0 }, 250, 'TAG', { layer: '1X', width: 5000 })]), docOf([makeMText({ x: 0, y: 0 }, 250, 'TAG1', { layer: 'X', width: 5000 })]), { tol: 1 }).same.length, 0);
+});
