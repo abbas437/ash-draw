@@ -54,17 +54,21 @@ export class SpatialIndex {
   constructor(doc, { isVisible, deferred = false } = {}) {
     this.doc = doc;
     this.isVisible = isVisible || defaultVisible(doc);
-    this._boxCache = new WeakMap(); // entity object -> bbox|null
+    // entity id -> {e, box|null}; a hit needs the same object (an edit replaces it). Not a WeakMap keyed by the entity:
+    // each entry of one is an ephemeron, and a full GC's final pause marks them one by one (~280 ms at 122,000 objects,
+    // a frozen window right after a big drawing opens; test/e2e/run.mjs 'large DXF opens in a worker').
+    this._boxCache = new Map();
     if (!deferred) this.rebuild();
   }
 
   /** Cached bbox of an entity object (null when empty / not finite). Replaced objects get a fresh entry. */
   bboxOf(e) {
     if (isInfinite(e)) return INF_BOX; // XLINE / RAY: indexed (oversize) for picking, though outside the extents
-    if (this._boxCache.has(e)) return this._boxCache.get(e);
+    const c = this._boxCache.get(e.id);
+    if (c?.e === e) return c.box;
     const b = safe(() => bboxOf(e, this.doc), null);
     const r = finiteBox(b) ? b : null;
-    this._boxCache.set(e, r);
+    this._boxCache.set(e.id, { e, box: r });
     return r;
   }
 
@@ -90,7 +94,7 @@ export class SpatialIndex {
     if (this._leafCount(e.block) <= BOX_CHUNK) return;
     const st = { work: 0 };
     const b = yield* this._boxSteps(e, frac, st, new Set());
-    this._boxCache.set(e, finiteBox(b) ? b : null);
+    this._boxCache.set(e.id, { e, box: finiteBox(b) ? b : null });
   }
 
   /** box of the leaves of INSERT e (already placed in world space by explode): its block BOX_CHUNK entities at a
@@ -131,7 +135,7 @@ export class SpatialIndex {
       const e = ents[i];
       yield (0.9 * i) / n;
       if (!safe(() => this.isVisible(e), false)) continue;
-      if (e.type === 'INSERT' && !this._boxCache.has(e)) yield* this._insertBoxSteps(e, (0.9 * i) / n);
+      if (e.type === 'INSERT' && this._boxCache.get(e.id)?.e !== e) yield* this._insertBoxSteps(e, (0.9 * i) / n);
       const box = this.bboxOf(e);
       if (!box) continue;
       const reach = reachOf(e, box);
@@ -191,7 +195,7 @@ export class SpatialIndex {
   /** Re-index only these ids (entity removed, added, or its object replaced). */
   update(ids) {
     const want = new Set(ids);
-    for (const id of want) this._remove(id);
+    for (const id of want) { this._remove(id); this._boxCache.delete(id); } // an erased object is not kept by the cache
     this.doc.entities.forEach((e, i) => {
       if (!want.has(e.id)) return;
       if (!safe(() => this.isVisible(e), false)) return;

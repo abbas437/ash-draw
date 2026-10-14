@@ -9,7 +9,7 @@ import { bboxOf } from '../src/core/geom.js';
 import { SpatialIndex } from '../src/core/pick.js';
 import { runSliced, drain } from '../src/core/slice.js';
 import { mixedDoc } from './ref/mixedDoc.js';
-import { postDocInBatches, docAssembler } from '../src/core/docBatches.js';
+import { postDocInBatches, docAssembler, batchCredits } from '../src/core/docBatches.js';
 
 const docs = () => [
   ...readdirSync(FIX).filter((f) => f.endsWith('.dxf') && f !== 'binary_sentinel.dxf').map((f) => [f, readDxf(fixture(f))]),
@@ -67,6 +67,27 @@ test('batched doc hand-off: the pieces, each structured-cloned on its own, reass
     assert.deepEqual(asm.doc, structuredClone(doc), name);
     if (doc.entities.length > 3) assert.ok(n > 3, `${name}: sent in several batches`);
   }
+});
+
+test('batched doc hand-off with flow control: one batch in flight, the next only after the receiver acknowledges it', async () => {
+  const [name, doc] = docs().find(([, d]) => d.entities.length > 10);
+  const credits = batchCredits(), asm = docAssembler();
+  const queue = []; // posted, not yet read by the receiver
+  let maxQueued = 0, done = false;
+  const sent = postDocInBatches(doc, (m) => { queue.push(m); maxQueued = Math.max(maxQueued, queue.filter((x) => x.ents).length); }, { first: 3, targetMs: 0, ready: credits.ready });
+  assert.ok(sent instanceof Promise, 'with ready it returns a Promise');
+  // the receiver: reads what is queued, then acknowledges each batch on a later turn
+  while (!done) {
+    await new Promise((r) => setTimeout(r, 0));
+    for (const m of queue.splice(0)) {
+      if (m.done) { done = true; continue; }
+      assert.ok(asm.accept(structuredClone(m)), name);
+      if (m.ents) credits.give();
+    }
+  }
+  await sent;
+  assert.equal(maxQueued, 1, 'never more than one unread batch');
+  assert.deepEqual(asm.doc, structuredClone(doc), name);
 });
 
 // one top-level INSERT (rotated, scaled, on layer 0 content) of a block of 10,000 entities with a nested INSERT

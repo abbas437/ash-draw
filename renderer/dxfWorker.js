@@ -1,9 +1,12 @@
 // ASH Draw Studio - reads a DXF off the main thread (module worker). In: {bytes: Uint8Array} (buffer transferred).
-// or {url} of a converted DWG's DXF to fetch (electron/main.js handOff). Out: {progress: 0..100} while reading, then the document in batches (src/core/docBatches.js), or {error: {message, code}}.
+// or {url} of a converted DWG's DXF to fetch (electron/main.js handOff). Out: {progress: 0..100} while reading, then the document in batches (src/core/docBatches.js; each acknowledged by {ack: true}), or {error: {message, code}}.
 import { readDxf } from '../src/core/dxfRead.js';
-import { postDocInBatches } from '../src/core/docBatches.js';
+import { postDocInBatches, batchCredits } from '../src/core/docBatches.js';
 
+// the window acknowledges each batch ({ack: true}) once read: the next one is posted then (docBatches.js batchCredits)
+const credits = batchCredits();
 self.onmessage = async ({ data }) => {
+  if (data.ack) { credits.give(); return; }
   let last = -1;
   if (data.url) {
     try {
@@ -18,5 +21,5 @@ self.onmessage = async ({ data }) => {
     self.postMessage({ error: { message: String(err?.message ?? err), code: err?.code ?? null } });
     return;
   }
-  try { postDocInBatches(doc, (m) => self.postMessage(m)); } catch (err) { self.postMessage({ error: { message: `The drawing could not be handed to the window (${err.message}).`, code: null } }); }
+  try { await postDocInBatches(doc, (m) => self.postMessage(m), { ready: credits.ready }); } catch (err) { self.postMessage({ error: { message: `The drawing could not be handed to the window (${err.message}).`, code: null } }); }
 };
