@@ -1730,8 +1730,9 @@ try {
     // layer transparency
     const hatch2 = await px(80, 20);
     assert.deepEqual(hatch2, [255, 0, 0], 'ByLayer hatch on an opaque layer');
-    await page.locator('#layers .layer', { has: page.locator('.lname', { hasText: /^TL$/ }) }).locator('.lay-tr').click();
-    await page.locator('#dlg input').fill('50'); await page.locator('#dlg input').press('Enter');
+    await page.locator('#layers .layer', { has: page.locator('.lname', { hasText: /^TL$/ }) }).locator('.lay-ltlw').click();
+    await page.locator('#dlg input.lay-tr').fill('50'); await page.locator('#dlg input.lay-tr').press('Enter');
+    await page.locator('#dlg button.primary').click(); // Close
     assert.equal(await page.evaluate(() => window.app.doc.layers.get('TL').alpha), 127, 'layer TL alpha 127');
     const lb = await px(80, 20);
     assert.ok(lb[0] < 200 && lb[1] > 0, `ByLayer entity blends with the layer transparency: ${lb}`);

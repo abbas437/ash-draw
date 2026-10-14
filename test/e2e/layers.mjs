@@ -107,6 +107,20 @@ try {
   await page.waitForFunction(() => window.app.state.layer === 'WALL_HATCH', null, { timeout: 5000 });
   assert.match(await page.locator('#toast').textContent(), /Current layer: WALL_HATCH/);
 
+  step = 'width: a 20-character layer name shows in full at the default panel width; the rename input is at least 160 px';
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.evaluate(async () => { const M = await import('/src/core/model.js'); M.addLayer(window.app.doc, { name: 'M-HVAC-DUCT-SUPPLY1' }); window.app.refreshPanels(); });
+  const longRow = row('M-HVAC-DUCT-SUPPLY1');
+  await longRow.waitFor();
+  const m = await longRow.locator('.lname').evaluate((n) => ({ client: n.clientWidth, scroll: n.scrollWidth, title: n.title }));
+  assert.ok(m.client >= m.scroll, `name truncated: clientWidth ${m.client} < scrollWidth ${m.scroll}`);
+  assert.ok(m.title.startsWith('M-HVAC-DUCT-SUPPLY1'), 'full name in the tooltip');
+  assert.equal(await longRow.locator('.lay-tr').count(), 0, 'no stray number column in the row');
+  await longRow.locator('.lname').dblclick();
+  const rw = await longRow.locator('input.lname-edit').evaluate((i) => i.getBoundingClientRect().width);
+  assert.ok(rw >= 160, `rename input ${rw}px < 160`);
+  await longRow.locator('input.lname-edit').press('Escape');
+
   assert.deepEqual(problems, []);
   console.log('layers e2e: OK');
 } catch (err) {

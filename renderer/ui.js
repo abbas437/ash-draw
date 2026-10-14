@@ -117,16 +117,9 @@ export function renderLayers(app) {
     // Plot / No plot: a non-plotting layer is drawn on screen but left out of Print and Plot to PDF
     el('button', { class: `icon lay-plot${l.plot === false ? ' off' : ''}`, title: l.plot === false ? 'Not plotted (click to plot this layer)' : 'Plotted (click to stop plotting this layer)', onclick: () => { setLayerProps(session, l.name, { plot: l.plot === false }); } }, '🖶'),
     el('span', { class: 'swatch', style: `background:${cssOfAci(Math.abs(l.color))}`, title: 'Layer colour (click to change)', onclick: (e) => colorMenu(e, (c) => setLayerProps(session, l.name, { color: c })) }),
-    el('span', { class: 'lay-tr', title: 'Layer transparency 0-90 % (click to change)', onclick: async () => {
-      const r = await promptDialog('Layer transparency (0-90 %)', String(l.alpha >= 0 ? percentFromAlpha(l.alpha) : 0));
-      if (r == null) return;
-      const t = parseTransparency(r);
-      if (!t || t.alpha === -2) { toast('Enter a transparency from 0 to 90.'); return; }
-      setLayerProps(session, l.name, { alpha: t.alpha ?? 255 });
-    }, text: String(l.alpha >= 0 ? percentFromAlpha(l.alpha) : 0) }),
-    el('span', { class: 'lname', title: `${l.name}\nLinetype ${l.linetype ?? 'CONTINUOUS'} · Lineweight ${lwText(l.lineweight)} · ${used.get(l.name) ?? 0} object(s)\nDouble-click or F2 to rename; right-click for more`,
+    el('span', { class: 'lname', title: `${l.name}\nLinetype ${l.linetype ?? 'CONTINUOUS'} · Lineweight ${lwText(l.lineweight)} · Transparency ${l.alpha >= 0 ? percentFromAlpha(l.alpha) : 0} % · ${used.get(l.name) ?? 0} object(s)\nDouble-click or F2 to rename; right-click for more`,
       ondblclick: () => startRename(app, row, l), text: l.name }),
-    el('button', { class: 'icon lay-ltlw', title: `Linetype ${l.linetype ?? 'CONTINUOUS'}, lineweight ${lwText(l.lineweight)} (click to change)`, onclick: () => layerPropsDialog(app, l) }, '≡'),
+    el('button', { class: 'icon lay-ltlw', title: `Linetype ${l.linetype ?? 'CONTINUOUS'}, lineweight ${lwText(l.lineweight)}, transparency ${l.alpha >= 0 ? percentFromAlpha(l.alpha) : 0} % (click to change)`, onclick: () => layerPropsDialog(app, l) }, '≡'),
     app.state.layer === l.name ? el('span', { class: 'cur', text: '●', title: 'Current layer' }) : el('button', { class: 'icon', title: 'Make current', onclick: () => current(l.name) }, '○'),
     );
     return row;
@@ -191,7 +184,7 @@ function startRename(app, row, l) {
   inp.focus(); inp.select();
 }
 
-/** linetype and lineweight of a layer: each change is applied at once as one undo step */
+/** linetype, lineweight and transparency of a layer: each change is applied at once as one undo step */
 function layerPropsDialog(app, l) {
   const lts = [...app.doc.linetypes.keys()].filter((n) => !/^BY(LAYER|BLOCK)$/.test(n)).map((n) => [n, n]);
   const lws = LW_CHOICES.filter(([v]) => v !== -1); // a layer has no ByLayer lineweight
@@ -199,6 +192,8 @@ function layerPropsDialog(app, l) {
   return modal(`Layer ${name}`, [
     el('label', { class: 'lay-prop' }, 'Linetype ', select(lts, String(cur().linetype ?? 'CONTINUOUS').toUpperCase(), (v) => setLayerProps(app.session, name, { linetype: v }), 'lay-lt')),
     el('label', { class: 'lay-prop' }, 'Lineweight ', select(lws, cur().lineweight >= 0 ? cur().lineweight : -3, (v) => setLayerProps(app.session, name, { lineweight: Number(v) }), 'lay-lw')),
+    el('label', { class: 'lay-prop' }, 'Transparency 0-90 % ', el('input', { type: 'number', min: '0', max: '90', step: '1', class: 'lay-tr', style: 'width:5em', value: String(cur().alpha >= 0 ? percentFromAlpha(cur().alpha) : 0),
+      onchange: (e) => { const t = parseTransparency(e.target.value); if (!t || t.alpha === -2) { toast('Enter a transparency from 0 to 90.'); return; } setLayerProps(app.session, name, { alpha: t.alpha ?? 255 }); } })),
   ], [{ label: 'Close', value: true, primary: true }]);
 }
 
