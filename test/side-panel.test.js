@@ -10,7 +10,8 @@ test('side panel settings: never-set means shown with nothing folded; only an ex
   assert.deepEqual(sideFoldedFrom(undefined), []);
   assert.deepEqual(sideFoldedFrom('layers'), []);
   assert.deepEqual(sideFoldedFrom(['props', 'bogus', 3, 'layers', 'layers']), ['layers', 'props']);
-  assert.deepEqual(SIDE_SECTIONS, ['layers', 'markups', 'props']);
+  assert.deepEqual(sideFoldedFrom(['symbols']), ['symbols']);
+  assert.deepEqual(SIDE_SECTIONS, ['layers', 'markups', 'symbols', 'props']);
 });
 
 test('window title carries the build version so two test builds can be told apart', () => {

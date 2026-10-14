@@ -100,3 +100,14 @@ test('thumbnail: rendered once and put in the cache; a cached one is served with
   assert.equal(await fresh.thumbnail(folder, items.find((i) => i.name === 'Pump')), null);
   assert.equal((await fresh.thumbnail(BUILTIN_SOURCE, (await fresh.listSymbols(BUILTIN_SOURCE))[0])).type, 'image/png');
 });
+
+test('listSymbols: a capped folder listing is flagged truncated (non-enumerable, so the items compare as before)', async () => {
+  const api = fakeApi();
+  const src = createSymbolSource(api, opts);
+  const folder = (await src.listSources())[1];
+  assert.equal((await src.listSymbols(folder)).truncated, false);
+  api.symbolsList = async () => ({ files: [{ rel: 'A.dxf', name: 'A.dxf', category: '', size: 1, mtimeMs: 1 }], truncated: true });
+  const items = await src.listSymbols(folder);
+  assert.equal(items.truncated, true);
+  assert.deepEqual(Object.keys(items), ['0']);
+});

@@ -1,8 +1,8 @@
-// The right-hand side panel (Layers, Markups, Properties): collapse to a thin strip, fold single sections, window title.
+// The right-hand side panel (Layers, Markups, Symbols, Properties): collapse to a thin strip, fold single sections, window title.
 // State is saved like the other UI prefs: settings 'side.shown' (boolean) and 'side.folded' (section keys).
 
 /** the foldable sections, by the data-sec of their .panel in index.html */
-export const SIDE_SECTIONS = ['layers', 'markups', 'props'];
+export const SIDE_SECTIONS = ['layers', 'markups', 'symbols', 'props'];
 /** saved settings -> state; never-set values keep the panel shown and every section unfolded */
 export const sideShownFrom = (saved) => saved !== false;
 export const sideFoldedFrom = (saved) => (Array.isArray(saved) ? SIDE_SECTIONS.filter((k) => saved.includes(k)) : []);

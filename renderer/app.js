@@ -27,6 +27,7 @@ import { loadDrawingXrefs, xrefPanel } from './xref-panel.js';
 import { TOOL_BUTTONS, buildToolPanel, iconButton, quickCommand, canvasDarkFrom, labelsFrom, placementFrom, PLACEMENTS, collapsedFrom, applyCollapsed, toolTitle, moreButton, fitToolBand, initToolBand } from './tool-panel.js';
 import { iconSvg } from './icons.js';
 import { initSidePanel, applySide, markHead, windowTitle } from './side-panel.js';
+import { initSymbolsPanel } from './symbols-ui.js';
 import { defaultLayout, cleanLayout, panelGroups, samePanel, quickRow, setQuickRow, compactKeys, foldMode, SEP } from './tool-layout.js';
 import { openCustomize, initToolContextMenu } from './tool-custom.js';
 import { loadDrawingImages } from './images.js';
@@ -74,6 +75,7 @@ class App {
     this.comparePanel = new ComparePanel(this);
     this.markupPanel = new MarkupPanel(this);
     initSidePanel(this, api);
+    this.symbolsPanel = initSymbolsPanel(this, api);
     this.cmd = document.getElementById('cmd');
     this.cmd.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); const v = this.cmd.value; this.cmd.value = ''; this.vp.canvas.focus(); this.submit(v); }
@@ -164,7 +166,7 @@ class App {
     applySide(this);
     if (save) api.settingsSet?.('side.shown', this.sideShown)?.catch?.(() => {});
   }
-  /** fold or unfold one side panel section ('layers', 'markups', 'props'), saved as 'side.folded' */
+  /** fold or unfold one side panel section ('layers', 'markups', 'symbols', 'props'), saved as 'side.folded' */
   foldSideSection(key, folded = !this.sideFolded.includes(key)) {
     this.sideFolded = folded ? [...new Set([...this.sideFolded, key])] : this.sideFolded.filter((k) => k !== key);
     applySide(this);
@@ -220,7 +222,8 @@ class App {
       panel.scrollIntoView({ block: 'nearest' });
     };
     const regen = () => { this.vp.refreshStructure(); this.vp.invalidate(); toast('Regenerating model.', 1500); };
-    return { pr: show('props'), properties: show('props'), ch: show('props'), mo: show('props'), la: show('layers'), layer: show('layers'),
+    const symbols = () => { show('sym-grid')(); this.symbolsPanel.focus(); };
+    return { pr: show('props'), properties: show('props'), ch: show('props'), mo: show('props'), la: show('layers'), layer: show('layers'), symbols,
       re: regen, regen, regenall: regen, redraw: regen, r: regen };
   }
   layerCommands() {

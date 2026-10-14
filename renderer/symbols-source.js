@@ -60,14 +60,16 @@ export function createSymbolSource(api = globalThis.window?.api, { canvas = offs
       return f ? folderSource(f) : null;
     },
     async removeFolder(source) { return api.symbolsRemoveFolder(source.id); },
-    /** the items of a source: built-in symbols, or a folder's files (category = subfolder, name from the file name) */
+    /** the items of a source: built-in symbols, or a folder's files (category = subfolder, name from the file name);
+     *  a folder's array has `truncated` (non-enumerable) set when the listing hit its cap */
     async listSymbols(source) {
       if (isBuiltin(source)) return builtinSymbols().map((s) => ({ key: s.id, name: s.name, category: s.category }));
-      const { files } = await api.symbolsList(source.id);
-      return files.map((f) => ({
+      const { files, truncated } = await api.symbolsList(source.id);
+      const items = files.map((f) => ({
         key: f.rel, rel: f.rel, file: f.name, name: cleanSymbolName(f.name), category: f.category,
         format: /\.dwg$/i.test(f.name) ? 'dwg' : 'dxf', size: f.size, mtimeMs: f.mtimeMs,
       }));
+      return Object.defineProperty(items, 'truncated', { value: !!truncated }); // the folder had more files than listed
     },
     /** the symbols of an item (usually one; a block library file gives one per top-level block); cached in memory.
      *  Rejects for an unreadable file (Error.code 'BAD_SYMBOL'), or a DWG in the browser ('DWG_DESKTOP_ONLY'). */

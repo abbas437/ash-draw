@@ -28,6 +28,7 @@ import { createDivideTools } from './tools-divide.js';
 import { createCenterTools } from './tools-center.js';
 import { createDimTools } from './tools-dims.js';
 import { createBlockTools } from './tools-blocks.js';
+import { createSymbolTools } from './symbols-ui.js';
 import { createMTextTools } from './mtext-editor.js';
 import { createMLeaderTools } from './tools-mleader.js';
 import { createMarkupTools } from './markup.js';
@@ -669,6 +670,7 @@ export function createTools(h) {
     ...createCenterTools(h, { Tool }),
     ...createDimTools(h, { Tool }),
     ...createBlockTools(h, { Tool, ModifyTool }),
+    ...createSymbolTools(h, { Tool }),
     ...createMTextTools(h, { Tool }),
     ...createMLeaderTools(h, { Tool }),
     ...createMarkupTools(h, { Tool }),
