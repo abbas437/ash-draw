@@ -118,3 +118,38 @@ export function blockContentView(be) {
 export function attribsAsText(ins) {
   return (ins.attribs ?? []).filter((a) => !(a.attrib.flags & ATT_INVISIBLE)).map((a) => { const t = structuredClone(a); delete t.attrib; t.id = 0; return t; });
 }
+
+// -- ATTSYNC ------------------------------------------------------------------------------------
+/** Blocks whose definition has attributes (ATTSYNC "?"). */
+export const blocksWithAttdefs = (doc) => insertableBlocks(doc).filter((n) => attdefsOf(doc.blocks.get(n)).length);
+
+/** ATTSYNC on one INSERT: ATTRIBs rebuilt from blk's ATTDEFs (placement, height, style, rotation, justification through
+ *  the insert transform, as INSERT makes them), keeping the values of tags that are still defined. Null when unchanged. */
+export function syncAttribs(ins, blk) {
+  const values = Object.fromEntries((ins.attribs ?? []).map((a) => [a.attrib.tag, a.text]));
+  const fresh = instantiate(blk, ins.p, { sx: ins.sx ?? 1, sy: ins.sy ?? 1, rot: ins.rot ?? 0, values }).attribs ?? [];
+  if (JSON.stringify(fresh) === JSON.stringify(ins.attribs ?? [])) return null;
+  const c = structuredClone(ins);
+  if (fresh.length) c.attribs = fresh; else delete c.attribs;
+  return c;
+}
+
+/** ATTSYNC: every INSERT of block `name` (model space, every layout, nested in other blocks) synced as ONE undo step on
+ *  session s. Xref content is left alone (it is reloaded from its file). Returns the number of INSERTs changed. */
+export function attSync(s, name) {
+  const doc = s.doc.modelDoc ?? s.doc, blk = doc.blocks.get(name);
+  if (!blk) return 0;
+  const fix = (list, put) => { let n = 0; list.forEach((e, i) => { const c = e?.type === 'INSERT' && e.block === name && syncAttribs(e, blk); if (c) { put(i, c); n++; } }); return n; };
+  return s.transact('ATTSYNC', (tx) => {
+    const lists = [...new Set([doc.entities, ...(doc.layouts ?? []).map((l) => l.entities)].filter(Boolean))];
+    let n = 0;
+    for (const list of lists) n += fix(list, (i, c) => (list === s.doc.entities ? tx.replace(c) : tx.set(list, i, c)));
+    for (const [bn, b] of [...doc.blocks]) {
+      if (b === blk || b.xref || b.xrefDep || lists.includes(b.entities) || (doc.layouts?.length && /^\*(paper|model)_space/i.test(bn))) continue;
+      const ents = b.entities.slice();
+      const k = fix(ents, (i, c) => { ents[i] = c; });
+      if (k) { tx.block(bn, { ...b, entities: ents }); n += k; }
+    }
+    return n;
+  });
+}

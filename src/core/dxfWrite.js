@@ -24,6 +24,7 @@ import { oleDataWithCorners } from './ole.js';
 import { viewToDxf } from './views.js';
 import { drain, runSliced } from './slice.js';
 import { layerStateTags } from './layerstates.js';
+import { spatialFilterTags } from './xclip.js';
 const encode = (s) => String(s ?? '').replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7e]/g, (c) => {
   const code = c.charCodeAt(0);
   return code < 32 ? ' ' : `\\U+${code.toString(16).toUpperCase().padStart(4, '0')}`;
@@ -109,6 +110,9 @@ export function* writeDxfSteps(doc, opts = {}) {
     || (doc.layouts ?? []).some((l) => (l.entities ?? []).some(isML));
   const writeMlStyle = !mleaderGeometry && hasMleaders;
   let paperMode = false;
+  const clipRefs = []; // XCLIP'd inserts written: { hIns, hX, e }
+  const hasClip = (list) => (list ?? []).some((e) => e?.type === 'INSERT' && e.clip?.pts?.length >= 2);
+  const anyClip = hasClip(doc.entities) || [...(doc.blocks?.values?.() ?? [])].some((b) => hasClip(b.entities)) || (doc.layouts ?? []).some((l) => hasClip(l.entities));
   const layerH = new Map([...doc.layers].filter(([, l]) => !l.xrefDep).map(([n]) => [n, H()]));
 
   // ---- collect what is used ---------------------------------------------------------------
@@ -136,10 +140,11 @@ export function* writeDxfSteps(doc, opts = {}) {
   };
 
   // ---- entity writer -------------------------------------------------------------------------
-  function head(o, e, type, owner) {
+  function head(o, e, type, owner, xd) {
     const hd = H();
     o.p(0, type);
     o.p(5, hd);
+    if (xd) { o.p(102, '{ACAD_XDICTIONARY'); o.p(360, xd); o.p(102, '}'); }
     o.p(330, owner);
     o.p(100, 'AcDbEntity');
     if (paperMode) o.p(67, 1);
@@ -336,7 +341,10 @@ export function* writeDxfSteps(doc, opts = {}) {
       case 'INSERT': {
         if (!doc.blocks.has(e.block)) { report.skipped['INSERT (block missing)'] = (report.skipped['INSERT (block missing)'] ?? 0) + 1; return false; }
         const atts = e.attribs?.length ? e.attribs : null;
-        const hIns = head(o, e, 'INSERT', owner); o.p(100, 'AcDbBlockReference'); if (atts) o.p(66, 1); o.s(2, e.block); o.pt(10, e.p.x, e.p.y);
+        // XCLIP: extension dictionary -> ACAD_FILTER -> SPATIAL -> SPATIAL_FILTER, written with the OBJECTS
+        const hX = e.clip?.pts?.length >= 2 ? H() : null;
+        const hIns = head(o, e, 'INSERT', owner, hX); o.p(100, 'AcDbBlockReference');
+        if (hX) clipRefs.push({ hIns, hX, e }); if (atts) o.p(66, 1); o.s(2, e.block); o.pt(10, e.p.x, e.p.y);
         if (e.sx !== 1) o.p(41, e.sx); if (e.sy !== 1) o.p(42, e.sy); if (e.sx !== 1 || e.sy !== 1) o.p(43, 1);
         if (e.rot) o.p(50, e.rot);
         if ((e.cols || 1) > 1 || (e.rows || 1) > 1) { o.p(70, e.cols || 1); o.p(71, e.rows || 1); o.p(44, e.colSp || 0); o.p(45, e.rowSp || 0); }
@@ -522,6 +530,7 @@ export function* writeDxfSteps(doc, opts = {}) {
   out.p(0, 'SECTION'); out.p(2, 'CLASSES');
   const cls = (name, cpp, app, flags) => { out.p(0, 'CLASS'); out.p(1, name); out.p(2, cpp); out.p(3, app); out.p(90, flags); out.p(280, 0); out.p(281, 0); };
   cls('ACDBDICTIONARYWDFLT', 'AcDbDictionaryWithDefault', 'ObjectDBX Classes', 0);
+  if (anyClip) cls('SPATIAL_FILTER', 'AcDbSpatialFilter', 'ObjectDBX Classes', 1153);
   cls('ACDBPLACEHOLDER', 'AcDbPlaceHolder', 'ObjectDBX Classes', 0);
   cls('LAYOUT', 'AcDbLayout', 'ObjectDBX Classes', 0);
   if (writeMlStyle) {
@@ -728,6 +737,13 @@ export function* writeDxfSteps(doc, opts = {}) {
       out.p(0, 'XRECORD'); out.p(5, xh[i]); out.p(102, '{ACAD_REACTORS'); out.p(330, hLsD); out.p(102, '}'); out.p(330, hLsD); out.p(100, 'AcDbXrecord'); out.p(280, 1);
       for (const [c, v] of layerStateTags(st)) if (typeof v === 'string') out.s(c, v); else out.p(c, v);
     });
+  }
+  for (const { hIns, hX, e } of clipRefs) {
+    const hF = H(), hS = H();
+    out.p(0, 'DICTIONARY'); out.p(5, hX); out.p(102, '{ACAD_REACTORS'); out.p(330, hIns); out.p(102, '}'); out.p(330, hIns); out.p(100, 'AcDbDictionary'); out.p(280, 1); out.p(281, 1); out.p(3, 'ACAD_FILTER'); out.p(360, hF);
+    out.p(0, 'DICTIONARY'); out.p(5, hF); out.p(102, '{ACAD_REACTORS'); out.p(330, hX); out.p(102, '}'); out.p(330, hX); out.p(100, 'AcDbDictionary'); out.p(280, 1); out.p(281, 1); out.p(3, 'SPATIAL'); out.p(360, hS);
+    out.p(0, 'SPATIAL_FILTER'); out.p(5, hS); out.p(102, '{ACAD_REACTORS'); out.p(330, hF); out.p(102, '}'); out.p(330, hF);
+    for (const [c, v] of spatialFilterTags(e, doc.blocks.get(e.block)?.base)) out.p(c, v);
   }
   out.p(0, 'ENDSEC');
   out.p(0, 'EOF');

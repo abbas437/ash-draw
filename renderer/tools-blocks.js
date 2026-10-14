@@ -1,13 +1,14 @@
-// ASH Draw Studio - BLOCK, ATTDEF, INSERT and EATTEDIT tools: the UI over src/core/blocks.js.
+// ASH Draw Studio - BLOCK, ATTDEF, INSERT, EATTEDIT, ATTSYNC and XCLIP tools: the UI over src/core/blocks.js.
 // Dialogs follow AutoCAD LT. tools.js owns the Tool / ModifyTool base classes and passes them to
 // createBlockTools (a factory, so this module does not import tools.js back).
 import {
-  blockNameError, makeBlock, makeAttdef, insertableBlocks, attdefsOf, instantiate, withAttribValues, blockContentView,
+  blockNameError, makeBlock, makeAttdef, insertableBlocks, attdefsOf, instantiate, withAttribValues, blockContentView, blocksWithAttdefs, attSync,
   ATT_INVISIBLE, ATT_CONSTANT, ATT_VERIFY, ATT_PRESET,
 } from '../src/core/blocks.js';
 import { getEntity } from '../src/core/model.js';
 import { tessellate, explode, boxOfPoints } from '../src/core/geom.js';
 import { attachXref, uniqueXrefName } from '../src/core/xref.js';
+import { xclipInserts, worldToBlock } from '../src/core/xclip.js';
 import { pickXref } from './xref-panel.js';
 import { el, modal, promptDialog } from './ui.js';
 import { dimTextEdit } from './grips.js';
@@ -231,6 +232,148 @@ export function createBlockTools(h, { Tool, ModifyTool }) {
     }
   }
 
+  // ---- ATTSYNC: pick an INSERT or type the block name ("?" lists blocks with attributes); one undo step ----
+  class AttSyncTool extends Tool {
+    get prompt() { return 'ATTSYNC  select a block, or type its name (? = list)'; }
+    activate() {
+      super.activate();
+      const sel = this.vp.selectedEntities();
+      if (sel.length === 1 && sel[0].type === 'INSERT') this.run(sel[0].block);
+    }
+    run(name) {
+      const doc = this.h.doc.modelDoc ?? this.h.doc;
+      if (!attdefsOf(doc.blocks.get(name)).length) { this.h.toast(`ATTSYNC: block "${name}" has no attributes.`); return; }
+      const n = attSync(this.h.session, name);
+      this.h.toast(`ATTSYNC ${name}: ${n} block${n === 1 ? '' : 's'} updated`, 2500);
+      this.h.setTool('select');
+    }
+    click(p, ev) {
+      const hit = this.vp.pick(ev?.raw ?? p);
+      if (hit?.type === 'INSERT') this.run(hit.block); else this.h.toast('ATTSYNC: select a block reference.');
+    }
+    text(s) {
+      const t = s.trim(), doc = this.h.doc.modelDoc ?? this.h.doc;
+      if (!t) return false;
+      const names = blocksWithAttdefs(doc);
+      if (t === '?') { this.h.toast(names.length ? `Blocks with attributes: ${names.join(', ')}` : 'No block in this drawing has attributes.', 5000); return true; }
+      const name = [...doc.blocks.keys()].find((k) => k.toUpperCase() === t.toUpperCase());
+      if (!name) { this.h.toast(`ATTSYNC: no block named "${t}".`); return true; }
+      this.run(name);
+      return true;
+    }
+  }
+
+  // ---- XCLIP: clip block references to a boundary (AutoCAD LT prompts); every change is one undo step ----
+  // The boundary is picked in world coordinates and stored per insert in its block coordinates (worldToBlock).
+  class XclipTool extends ModifyTool {
+    constructor(host) { super(host); this.name = 'XCLIP'; }
+    begin() {
+      const all = this.ids.map((id) => getEntity(this.h.doc, id)).filter(Boolean);
+      const ins = all.filter((e) => e.type === 'INSERT');
+      if (ins.length < all.length) this.h.toast(`XCLIP: ${all.length - ins.length} object${all.length - ins.length === 1 ? '' : 's'} ignored (not block references).`);
+      Object.assign(this, { ids: ins.map((e) => e.id), step: 'option', inverted: false, pts: [] });
+      if (!ins.length) { this.phase = 'select'; this.vp.setSelection([]); }
+    }
+    reset() { this.step = 'option'; this.pts = []; this.vp.lastPoint = null; }
+    get prompt() {
+      if (this.phase === 'select') return this.selPrompt;
+      switch (this.step) {
+        case 'delold': return 'XCLIP  Delete old boundary? [Yes/No] <Yes>:';
+        case 'boundary': return `XCLIP  Specify clipping boundary${this.inverted ? ' (inverted: the inside is hidden)' : ''} [Select polyline/Polygonal/Rectangular/Invert clip] <Rectangular>:`;
+        case 'rect': return this.pts.length ? 'XCLIP  Specify opposite corner:' : 'XCLIP  Specify first corner:';
+        case 'poly': return this.pts.length ? 'XCLIP  Specify next point (Enter = close):' : 'XCLIP  Specify first point:';
+        case 'pline': return 'XCLIP  Select a closed polyline:';
+        default: return 'XCLIP  Enter clipping option [ON/OFF/Delete/New boundary] <New>:';
+      }
+    }
+    inserts() { return this.ids.map((id) => getEntity(this.h.doc, id)).filter((e) => e?.type === 'INSERT'); }
+    text(s) {
+      if (this.phase !== 'go') return false;
+      const lo = s.trim().toLowerCase();
+      if (this.step === 'option') {
+        if (lo === 'on' || lo === 'off') { this.apply((c) => c && { ...c, enabled: lo === 'on' }, `Clipping turned ${lo}`); return true; }
+        if (lo === 'd' || lo === 'delete') { this.apply(() => null, 'Clipping boundary deleted'); return true; }
+        if (lo === '' || lo === 'n' || lo === 'new' || lo === 'new boundary') { this.step = this.inserts().some((e) => e.clip) ? 'delold' : 'boundary'; return true; }
+        return false;
+      }
+      if (this.step === 'delold') {
+        if (lo === '' || lo === 'y' || lo === 'yes') { this.step = 'boundary'; return true; }
+        if (lo === 'n' || lo === 'no') { this.done(); return true; }
+        return false;
+      }
+      if (this.step === 'boundary') {
+        if (lo === '' || lo === 'r' || lo === 'rectangular') { this.step = 'rect'; return true; }
+        if (lo === 'p' || lo === 'polygonal') { this.step = 'poly'; return true; }
+        if (lo === 's' || lo === 'select' || lo === 'select polyline') { this.step = 'pline'; return true; }
+        if (lo === 'i' || lo === 'invert' || lo === 'invert clip') {
+          this.inverted = !this.inverted;
+          this.h.toast(this.inverted ? 'XCLIP: objects inside the boundary will be hidden.' : 'XCLIP: objects outside the boundary will be hidden.');
+          return true;
+        }
+        return false;
+      }
+      return false;
+    }
+    click(p, ev) {
+      if (this.phase !== 'go') return;
+      if (this.step === 'rect') {
+        if (!this.pts.length) { this.pts = [p]; this.vp.lastPoint = p; return; }
+        const a = this.pts[0];
+        if (Math.abs(p.x - a.x) < 1e-9 || Math.abs(p.y - a.y) < 1e-9) { this.h.toast('XCLIP: the rectangle has no area.'); return; }
+        this.newBoundary([a, { x: p.x, y: a.y }, p, { x: a.x, y: p.y }], true);
+      } else if (this.step === 'poly') {
+        this.pts.push(p); this.vp.lastPoint = p;
+      } else if (this.step === 'pline') {
+        const hit = this.vp.pick(ev?.raw ?? p);
+        const ring = hit?.type === 'LWPOLYLINE' ? tessellate(hit, this.h.doc, this.vp.tolWorld / 4)[0] : null;
+        const closed = ring && (hit.closed || Math.hypot(ring[0].x - ring.at(-1).x, ring[0].y - ring.at(-1).y) < 1e-9);
+        if (!closed) { this.h.toast('XCLIP: select a closed polyline.'); return; }
+        if (Math.hypot(ring[0].x - ring.at(-1).x, ring[0].y - ring.at(-1).y) < 1e-9) ring.pop();
+        if (ring.length < 3) { this.h.toast('XCLIP: select a closed polyline.'); return; }
+        this.newBoundary(ring, false);
+      }
+      this.h.refreshPrompt();
+    }
+    /** a new boundary on every selected insert; a rectangle stays a 2-point clip where the insert keeps it axis-aligned */
+    newBoundary(world, rect) {
+      const blocks = (this.h.doc.modelDoc ?? this.h.doc).blocks, inverted = this.inverted;
+      this.apply((_, e) => {
+        const blk = blocks.get(e.block);
+        if (!blk) return undefined;
+        let pts = worldToBlock(e, blk.base, world);
+        if (rect && pts.every((q, i) => { const r = pts[(i + 1) % 4]; return Math.abs(q.x - r.x) < 1e-9 * (1 + Math.abs(q.x)) || Math.abs(q.y - r.y) < 1e-9 * (1 + Math.abs(q.y)); })) {
+          pts = [{ x: Math.min(...pts.map((q) => q.x)), y: Math.min(...pts.map((q) => q.y)) }, { x: Math.max(...pts.map((q) => q.x)), y: Math.max(...pts.map((q) => q.y)) }];
+        }
+        return { pts, enabled: true, inverted, showFrame: true };
+      }, 'Block clipped');
+    }
+    apply(change, what) {
+      const n = xclipInserts(this.h.session, this.ids, change);
+      this.h.toast(n ? `XCLIP: ${what} (${n} block${n === 1 ? '' : 's'}).` : 'XCLIP: no clipping boundary on the selected blocks.', 2500);
+      this.done();
+    }
+    key(e) {
+      if (e.key === 'Escape') { this.done(); return true; }
+      if (e.key === 'Enter' && this.phase === 'go') {
+        if (this.step === 'poly') {
+          const pts = this.pts;
+          if (pts.length < 3) { this.h.toast('XCLIP: a polygonal boundary needs at least 3 points; nothing clipped.'); this.done(); } else this.newBoundary(pts, false);
+        } else if (this.step === 'rect' || this.step === 'pline') this.done();
+        else this.text('');
+        this.h.refreshPrompt();
+        return true;
+      }
+      return super.key(e);
+    }
+    draw(c) {
+      if (this.phase !== 'go' || !this.pts.length) return;
+      const q = this.vp.cursor, a = this.pts[0];
+      c.strokeStyle = this.vp.inkColor;
+      if (this.step === 'rect') this.poly(c, [a, { x: q.x, y: a.y }, q, { x: a.x, y: q.y }], true);
+      else if (this.step === 'poly') this.poly(c, [...this.pts, q], true);
+    }
+  }
+
   // ---- TEXTEDIT / DDEDIT / ED on a dimension: edit its text override ---------------------------------
   class DimTextEditTool extends Tool {
     get prompt() { return 'TEXTEDIT  select a dimension'; }
@@ -277,5 +420,5 @@ export function createBlockTools(h, { Tool, ModifyTool }) {
     }
   }
 
-  return { block: new BlockTool(h), attdef: new AttdefTool(h), insert: new InsertTool(h), eattedit: new AttEditTool(h), textedit: new DimTextEditTool(h), xattach: new XAttachTool(h) };
+  return { block: new BlockTool(h), attdef: new AttdefTool(h), insert: new InsertTool(h), eattedit: new AttEditTool(h), attsync: new AttSyncTool(h), xclip: new XclipTool(h), textedit: new DimTextEditTool(h), xattach: new XAttachTool(h) };
 }

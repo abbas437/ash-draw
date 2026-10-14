@@ -24,6 +24,7 @@ import { mlineFromTags, mlineStyleFromTags } from './mline.js';
 import { parseLayoutObject, readViewport, markPaperViewport } from './layouts.js';
 import { imageDefFromTags, imageFromTags } from './image.js';
 import { oleFrameCorners } from './ole.js';
+import { clipFromSpatialFilter } from './xclip.js';
 import { readLayerStates } from './layerstates.js';
 import { viewFromDxf, viewKey } from './views.js';
 
@@ -472,10 +473,25 @@ function buildSolid(rec, o) {
 }
 
 function buildInsert(rec, o) {
-  return makeInsert(rec.str(2), pt(rec, 10), {
+  const ins = makeInsert(rec.str(2), pt(rec, 10), {
     ...o, sx: rec.num(41, 1), sy: rec.num(42, 1), rot: rec.num(50), cols: Math.max(1, rec.int(70, 1)), rows: Math.max(1, rec.int(71, 1)),
     colSp: rec.num(44), rowSp: rec.num(45),
   });
+  // XCLIP: extension dictionary (102 {ACAD_XDICTIONARY 360) -> ACAD_FILTER -> SPATIAL -> SPATIAL_FILTER
+  const xd = clipObjs.size && rec.get(360);
+  if (xd) {
+    const entry = (h, key) => {
+      const d = clipObjs.get(normHandle(h));
+      if (!d || d.type !== 'DICTIONARY') return null;
+      const t = d.tags();
+      for (let i = 0; i < t.length - 1; i++) if (t[i][0] === 3 && t[i][1] === key && (t[i + 1][0] === 350 || t[i + 1][0] === 360)) return t[i + 1][1];
+      return null;
+    };
+    const f = entry(xd, 'ACAD_FILTER'), sh = f && entry(f, 'SPATIAL'), sf = sh && clipObjs.get(normHandle(sh));
+    const clip = sf?.type === 'SPATIAL_FILTER' ? clipFromSpatialFilter(sf.tags()) : null;
+    if (clip) ins.clip = clip;
+  }
+  return ins;
 }
 
 function buildDimension(rec, o) {
@@ -636,6 +652,7 @@ function readXData(rec) {
 // ---------------------------------------------------------------------------------------------
 let mlStyles = new Map(); // MLEADERSTYLE handle -> defaults (set per parse)
 let dimHandleName = () => undefined; // (DIMVAR, handle) -> block / text style name, for DSTYLE overrides (set per parse)
+let clipObjs = new Map(); // DICTIONARY / SPATIAL_FILTER records by handle, for XCLIP'd inserts (set per parse)
 let imageDefs = new Map(); // IMAGEDEF handle -> image definition (set per parse)
 function buildEntity(rec, doc, extra) {
   const o = common(rec);
@@ -898,8 +915,10 @@ function parseTokens(tk, onProgress = null) {
   mlStyles = new Map();
   imageDefs = new Map();
   const lsObjs = new Map();
+  clipObjs = new Map();
   if (secs.OBJECTS) {
     for (const rec of records(tk, secs.OBJECTS.from, secs.OBJECTS.to)) {
+      if (rec.type === 'DICTIONARY' || rec.type === 'SPATIAL_FILTER') clipObjs.set(normHandle(rec.str(5)), rec);
       if (lsXdict && (rec.type === 'DICTIONARY' || rec.type === 'XRECORD')) lsObjs.set(normHandle(rec.str(5)), rec);
       if (rec.type === 'IMAGEDEF') imageDefs.set(rec.str(5), imageDefFromTags(rec.tags()));
       if (rec.type === 'WIPEOUTVARIABLES') doc.header.wipeoutFrame = rec.int(70); // WIPEOUTFRAME: 0 hidden, 1 shown + plotted, 2 shown only

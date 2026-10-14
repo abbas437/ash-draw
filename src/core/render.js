@@ -28,6 +28,7 @@ import { strokeLayout, shxSubstitute } from './shx.js';
 import { isGdtFont, gdtText, gdtModel } from './gdt.js';
 import { textFrame, textCorners, textAdvance } from './textMetrics.js';
 import { isPaperViewport } from './layouts.js';
+import { worldClip, clipItem } from './xclip.js';
 
 const TAU = Math.PI * 2;
 const OP_M = 0, OP_L = 1, OP_A = 2, OP_E = 3, OP_Z = 4;
@@ -66,6 +67,7 @@ class Builder {
     this.uiBox = null; // the extents of those placeholder items (the scene bbox when there is nothing else)
     this._ui = false;
     this.globalLt = doc.header.ltscale || 1;
+    this.clips = null; // XCLIP boundaries of the inserts being expanded (world), innermost last
     this.work = 0; this.frac = 0; // insertSteps: block entities since its last yield; the progress it yields
   }
 
@@ -143,6 +145,22 @@ class Builder {
     const style = this.styleFor(e, layer, inherit, layerName);
     const cols = Math.max(1, e.cols || 1), rows = Math.max(1, e.rows || 1);
     const rot = (e.rot || 0) * DEG;
+    // XCLIP: everything this insert emits (nested inserts and attributes included) is cut to the boundary, given in
+    // block coordinates and placed by the first cell's transform; the frame is an item of its own (kind 'clipFrame')
+    // shown with the selection only, never plotted
+    const clip = e.clip?.pts?.length >= 2 ? worldClip(e.clip, (p) => apply(compose(m, compose(translation(e.p.x, e.p.y), compose(rotation(rot),
+      compose(scaling(e.sx ?? 1, e.sy ?? 1), translation(-blk.base.x, -blk.base.y))))), p)) : null;
+    const outer = this.clips;
+    if (clip && e.clip.enabled !== false) this.clips = outer ? [...outer, clip] : [clip];
+    try { yield* this.insertCells(e, m, style, rootId, depth, blk, cols, rows, rot); } finally { this.clips = outer; }
+    if (clip && e.clip.enabled !== false) {
+      const ops = []; clip.poly.forEach((p, i) => ops.push(i ? OP_L : OP_M, p.x, p.y)); ops.push(OP_Z);
+      let bbox = null; for (const p of clip.poly) bbox = growBox(bbox, p);
+      this.push({ kind: 'clipFrame', ops, style, bbox }, rootId);
+    }
+  }
+
+  *insertCells(e, m, style, rootId, depth, blk, cols, rows, rot) {
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const local = compose(translation(e.p.x, e.p.y), compose(rotation(rot),
@@ -164,6 +182,7 @@ class Builder {
   }
 
   push(item, rootId) {
+    if (this.clips) for (const c of this.clips) if (!(item = clipItem(item, c, clipInfinite))) return;
     // an item with a NaN / infinite box cannot be drawn sensibly and would poison the extents: it is left out (counted)
     const bb = item.bbox;
     if (bb && !Number.isFinite(bb.minx + bb.miny + bb.maxx + bb.maxy)) { this.dropped = (this.dropped ?? 0) + 1; return; }
@@ -949,7 +968,7 @@ export function* drawSceneSteps(ctx, scene, view, opts = {}) {
       if (++work >= DRAW_TICK) { work = 0; yield; }
       if (it.inf && !(it = infiniteItem(it, infBox))) continue;
       const k = it.kind;
-      if (k === 'wipeout') continue;
+      if (k === 'wipeout' || k === 'clipFrame') continue;
       if (it.arrow || k === 'point') marks.push(it);
       if (k === 'point') continue;
       const b = it.bbox;
@@ -1130,7 +1149,7 @@ export function* drawSceneSteps(ctx, scene, view, opts = {}) {
       if (!list) continue;
       if (list.some((it) => it.inf)) list = list.map((it) => (it.inf ? infiniteItem(it, infBox) : it)).filter(Boolean);
       for (const it of list) {
-        if (it.kind === 'path' || it.kind === 'hatch' || it.kind === 'fill' || it.kind === 'image' || it.kind === 'wipeout') { ctx.beginPath(); strokePath(it.ops, 9); ctx.stroke(); }
+        if (it.kind === 'path' || it.kind === 'hatch' || it.kind === 'fill' || it.kind === 'image' || it.kind === 'wipeout' || it.kind === 'clipFrame') { ctx.beginPath(); strokePath(it.ops, 9); ctx.stroke(); }
         else if (it.kind === 'text' || it.kind === 'point') {
           const b = it.bbox;
           if (b) ctx.strokeRect(sx(b.minx) - 2, sy(b.maxy) - 2, (b.maxx - b.minx) * z + 4, (b.maxy - b.miny) * z + 4);
