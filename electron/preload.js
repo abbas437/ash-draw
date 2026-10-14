@@ -63,5 +63,7 @@ contextBridge.exposeInMainWorld('api', {
   dwgToDxf: (bytes) => invoke('dwg:toDxf', bytes),
   dwgOpen: (pathOrBytes) => invoke('dwg:open', pathOrBytes),
   dwgRelease: (url) => invoke('dwg:release', url),
+  dwgCacheInfo: () => invoke('dwg:cacheInfo'),
+  dwgCacheClear: () => invoke('dwg:cacheClear'),
   dxfToDwg: (dxfBytes, version) => invoke('dwg:fromDxf', { dxfBytes, version }),
 });

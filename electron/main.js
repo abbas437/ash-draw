@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { atomicWrite, saveDrawingFile } from './backup.js';
 import { createAutosaveStore } from './autosave.js';
 import { createDwgBridge, DWG_OUT_VERSIONS } from './dwgBridge.js';
+import { cacheLimitBytes, createDwgCache, openCached } from './dwgCache.js';
 import { createHandoffStore } from './handoff.js';
 import { createClipboardBridge } from './clipboard.js';
 import { createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isOdaExeName, ODA_DOWNLOAD_URL, ODA_DWG_VERSIONS } from './odaConverter.js';
@@ -102,6 +103,8 @@ const storePath = (n) => path.join(app.getPath('userData'), n);
 async function loadJson(n) { try { return JSON.parse(await fs.readFile(storePath(n), 'utf8')); } catch { return {}; } }
 async function saveJson(n, obj) { await fs.mkdir(app.getPath('userData'), { recursive: true }); await atomicWrite(storePath(n), JSON.stringify(obj, null, 2)); }
 let settings = null;
+// converted-drawing cache: <userData>/dwg-cache, limit from the setting 'dwg.cacheMaxMB' (default 2 GB, 0 = off)
+const dwgCache = createDwgCache({ dir: () => path.join(app.getPath('userData'), 'dwg-cache'), limitBytes: () => cacheLimitBytes(settings?.['dwg.cacheMaxMB']) });
 const autosave = createAutosaveStore({ dir: () => path.join(app.getPath('userData'), 'autosave'), appVersion: app.getVersion() });
 // Symbols panel folders: only a folder chosen in the dialog becomes a root (its own store, not settings.json)
 const symbols = createSymbolLibrary({
@@ -423,12 +426,27 @@ function registerIpc() {
   handle('dwg:toDxf', (bytes) => dwg.toDxf(asBytes(bytes, 'DWG data')));
   // Opening a DWG: the source is a granted path (read here, not in the window) or the DWG bytes; the DXF comes back
   // as a one-time URL (handOff) that the window's reader worker fetches.
+  // A DWG opened from a path goes through the converted-drawing cache (electron/dwgCache.js): an unchanged file is
+  // not converted again.
   handle('dwg:open', async (src) => {
-    const bytes = typeof src === 'string' ? await readGranted(grantedPath(src)) : asBytes(src, 'DWG data');
+    if (typeof src === 'string') {
+      const p = grantedPath(src);
+      settings ??= await loadJson('settings.json');
+      const av = await dwg.available();
+      const converter = JSON.stringify([av.mode, av.libredwg?.version ?? null, av.oda?.available ? (av.oda.path ?? null) : null, av.oda?.version ?? null]);
+      const { dxfBytes, warnings, engine, converter: conv, errorCount, log, dwgSize, header, cached } = await openCached(dwgCache, p, { converter, read: readGranted, convert: (b) => dwg.toDxf(b) });
+      return { url: handOff(dxfBytes), size: dxfBytes.byteLength, dwgSize, header, warnings, engine, converter: conv, errorCount, log, cached };
+    }
+    const bytes = asBytes(src, 'DWG data');
     const { dxfBytes, warnings, engine, converter, errorCount, log } = await dwg.toDxf(bytes);
     const header = Buffer.from(bytes.subarray(0, 6)).toString('latin1'); // "AC1032": the DWG version, kept for Save in the same version
     return { url: handOff(dxfBytes), size: dxfBytes.byteLength, dwgSize: bytes.byteLength, header, warnings, engine, converter, errorCount, log };
   });
+  handle('dwg:cacheInfo', async () => {
+    settings ??= await loadJson('settings.json');
+    return { ...(await dwgCache.info()), limitBytes: cacheLimitBytes(settings['dwg.cacheMaxMB']) };
+  });
+  handle('dwg:cacheClear', () => dwgCache.clear());
   // the window gives a hand-off back unserved (a cancelled or failed open), so main does not hold the DXF until it expires
   handle('dwg:release', (url) => { const t = tokenOf(url); if (t) handoffs.release(t); });
   handle('dwg:fromDxf', (opts) => {

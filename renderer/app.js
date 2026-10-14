@@ -643,13 +643,26 @@ class App {
     const status = av ? `In use: ${av.available ? av.version : `none (${av.reason})`}. ${odaStatusText(av)}` : '';
     const odaNote = odaMissing(av) ? el('p', { id: 'pref-oda-note' }, [ODA_OPTIONAL_NOTE, ' ',
       ...(api.openOdaDownload ? [el('button', { type: 'button', id: 'pref-oda-get', text: ODA_GET_LABEL, onclick: () => api.openOdaDownload().catch(() => {}) })] : [])]) : null;
+    // converted-drawing cache (electron/dwgCache.js): its limit (setting 'dwg.cacheMaxMB') and a Clear button
+    const ci = await api.dwgCacheInfo?.().catch(() => null);
+    const gb = (n) => `${(n / 1073741824).toFixed(n < 1073741824 ? 2 : 1)} GB`;
+    const cacheSel = el('select', { id: 'pref-dwg-cache' }, [[0, 'Off'], [1024, '1 GB'], [2048, '2 GB'], [5120, '5 GB'], [10240, '10 GB']].map(([v, t]) => el('option', { value: String(v), text: t })));
+    const curMB = ci ? Math.round(ci.limitBytes / 1048576) : 2048;
+    if (![...cacheSel.options].some((o) => o.value === String(curMB))) cacheSel.append(el('option', { value: String(curMB), text: `${curMB} MB` }));
+    cacheSel.value = String(curMB);
+    const cacheUse = el('span', { id: 'pref-dwg-cache-use', text: ci ? ` ${gb(ci.bytes)} used by ${ci.entries} drawing${ci.entries === 1 ? '' : 's'} ` : ' ' });
+    const cacheClear = el('button', { type: 'button', id: 'pref-dwg-cache-clear', text: 'Clear converted-drawing cache', onclick: async () => {
+      try { const n = await api.dwgCacheClear(); cacheUse.textContent = ' 0.00 GB used by 0 drawings '; toast(`Converted-drawing cache cleared (${n} drawing${n === 1 ? '' : 's'})`, 2500); } catch (err) { toast(`The cache could not be cleared: ${err.message || err}`, 4000); }
+    } });
+    const cacheRow = ci ? el('p', {}, el('label', { text: 'Keep converted DWG drawings (reopening an unchanged DWG skips the conversion), up to ' }), cacheSel, cacheUse, cacheClear) : null;
     const r = await modal('Preferences', el('div', {}, zoomRow, dwgSaveRow, autosaveRow,
       el('label', { text: 'DWG converter ' }, mode),
       el('p', {}, el('label', { text: 'ODA File Converter (ODAFileConverter.exe), leave empty to detect it: ' }), odaPath, browse),
-      el('p', { id: 'pref-dwg-status', text: status }), odaNote),
+      el('p', { id: 'pref-dwg-status', text: status }), odaNote, cacheRow),
     [{ label: 'Save', value: 'save', primary: true }, { label: 'Cancel', value: null }]);
     if (r !== 'save') return;
     applyDwgSave(); applyAutosave();
+    if (ci && Number(cacheSel.value) !== curMB) api.settingsSet?.('dwg.cacheMaxMB', Number(cacheSel.value))?.catch?.(() => {});
     const nz = parseZoomFactor(zf.value);
     if (nz !== null) this.setZoomFactor(nz); else toast(`ZOOMFACTOR not changed: it must be a whole number from ${ZOOMFACTOR_MIN} to ${ZOOMFACTOR_MAX}.`, 4000);
     try { await api.dwgSetConfig({ mode: mode.value, odaPath: odaPath.value.trim() }); this.refreshDwgWrite(); toast('Preferences saved', 2000); } catch (err) { await message('Preferences not saved', String(err.message || err).replace(/^Error invoking remote method '[^']*': (\w*Error: )?/, '')); }
