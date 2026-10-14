@@ -47,7 +47,7 @@ export function scheduleEntities(doc, rows, total, at, th, layer = SCHEDULE_LAYE
   rows.forEach((r, k) => {
     const i = k + 2;
     text(1, i, r.name); text(2, i, r.count);
-    const pic = picture(doc, r.name, { x: xs[0] + wPic / 2, y: yAt(i) - rh / 2 }, Math.min(0.8 * rh, 0.8 * wPic), 0.8 * rh, layer);
+    const pic = picture(doc, r.block ?? r.name, { x: xs[0] + wPic / 2, y: yAt(i) - rh / 2 }, Math.min(0.8 * rh, 0.8 * wPic), 0.8 * rh, layer);
     if (pic) out.push(pic);
   });
   text(1, n - 1, 'Total'); text(2, n - 1, total);
