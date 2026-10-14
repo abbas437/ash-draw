@@ -319,7 +319,9 @@ const isIdentity = (m) => m[0] === 1 && m[1] === 0 && m[2] === 0 && m[3] === 1 &
 /**
  * Compare drawing `a` (original) with `b` (revised), model space.
  * opts: tol (geometry tolerance, drawing units, default 1e-6), moveRadius (largest move still reported as "changed",
- * default 5 % of the drawings' anchor extents), clusterGap (changes closer than this form one cluster, default 2 %),
+ * default 5 % of the drawings' anchor extents), clusterGap (changes closer than this form one cluster, drawing units, default
+ * defaultClusterGap = 1.5 m), ignoreLayers (layer names, any case: pieces on them, or drawn by a model-space entity on them,
+ * are left out of the compare),
  * expand (compare drawn pieces, blocks expanded: default true), transform (geom.js matrix applied to A's pieces first)
  * and/or dx/dy (then move A by this), or align: 'auto' (estimateTransform; opts.rotations as there), which by default
  * (piecewise: false to skip) also aligns each big top-level INSERT, and the rest of A as one group, on its own when
@@ -333,8 +335,13 @@ const isIdentity = (m) => m[0] === 1 && m[1] === 0 && m[2] === 0 && m[3] === 1 &
 export function compareDocs(a, b, opts = {}) {
   const tol = Math.max(opts.tol ?? 1e-6, 1e-12);
   const expand = opts.expand ?? true;
-  const pa = expand ? expandEntities(a) : a.entities.map((e) => ({ e, top: e }));
-  const pb = expand ? expandEntities(b) : b.entities.map((e) => ({ e, top: e }));
+  let pa = expand ? expandEntities(a) : a.entities.map((e) => ({ e, top: e }));
+  let pb = expand ? expandEntities(b) : b.entities.map((e) => ({ e, top: e }));
+  if (opts.ignoreLayers?.length) {
+    const ign = new Set([...opts.ignoreLayers].map((n) => String(n).toUpperCase()));
+    const keep = (p) => !ign.has(String(p.e.layer ?? '0').toUpperCase()) && !ign.has(String(p.top.layer ?? '0').toUpperCase());
+    pa = pa.filter(keep); pb = pb.filter(keep);
+  }
   let offset, realigned = [], topM = new Map();
   if (opts.align === 'auto') {
     const ctx = alignContext(pa, pb, tol), rotations = opts.rotations ?? [0, 90, 180, 270];
@@ -427,37 +434,114 @@ export function compareDocs(a, b, opts = {}) {
 
   const removed = fa.filter((f, i) => !usedA[i]).map((f) => f.e);
   const added = fb.filter((f, j) => !usedB[j]).map((f) => f.e);
-  const clusters = clusterChanges(a, b, { added, removed, changed }, opts.clusterGap ?? diag * 0.02);
+  const clusters = clusterChanges(a, b, { added, removed, changed }, opts.clusterGap ?? defaultClusterGap(b.units || a.units),
+    fa.length + fb.length ? { minx, miny, maxx, maxy } : null);
   return { added, removed, changed, same, clusters, offset, realigned, topM, topOf };
 }
 
-/** group nearby changes; each cluster = { box, added, removed, changed } (counts), in reading order (top-left first) */
-function clusterChanges(a, b, r, gap) {
+const CLUSTER_SHARE = 0.2;   // a cluster wider or taller than this share of the drawing is cut into smaller ones
+const MAX_CLUSTERS = 200;    // more clusters than this: the smallest are merged into their nearest neighbours
+const CELL_CHECKS = 64;      // members of one grid cell checked exactly; beyond that a shared cell is near enough
+
+/** default distance between changes that a reviewer would mark separately: 1.5 m in the drawing's units */
+export function defaultClusterGap(units) { return 1500 * defaultTolerance(units); }
+
+const boxGap = (p, q) => Math.max(p.minx - q.maxx, q.minx - p.maxx, p.miny - q.maxy, q.miny - p.maxy, 0);
+
+/**
+ * Group nearby changes; each cluster = { box, added, removed, changed } (counts).
+ *  1. single linkage: changes whose boxes are at most `gap` apart share a cluster (grid of gap-wide cells: linear-ish);
+ *  2. a cluster whose box is more than CLUSTER_SHARE of the drawing extent `ext` (its larger side) is cut along its longer
+ *     side, at its largest empty gap, or (none visible) into equal parts, until each part fits;
+ *  3. at most MAX_CLUSTERS: the smallest are merged into their nearest neighbours;
+ *  4. reading order: rows from the top, left to right within a row.
+ */
+export function clusterChanges(a, b, r, gap, ext = null) {
   const items = [
     ...r.added.map((e) => ({ k: 'added', box: bboxOf(e, b) })),
     ...r.removed.map((e) => ({ k: 'removed', box: bboxOf(e, a) })),
     ...r.changed.map((p) => ({ k: 'changed', box: unionBox(bboxOf(p.a, a), bboxOf(p.b, b)) })),
-  ].filter((it) => it.box);
+  ].filter((it) => it.box && Number.isFinite(it.box.minx + it.box.maxx + it.box.miny + it.box.maxy));
+  if (!items.length) return [];
+  gap = Math.max(gap, 1e-9);
+  const limit = ext ? CLUSTER_SHARE * Math.max(ext.maxx - ext.minx, ext.maxy - ext.miny) : Infinity;
+  // a change bigger than a cluster may be (a long polyline, a hatch) is a cluster of its own: linked, it would hold
+  // every change it spans in one box no cut can shrink
+  const huge = items.filter((it) => Math.max(it.box.maxx - it.box.minx, it.box.maxy - it.box.miny) > limit);
+  if (huge.length) { const h = new Set(huge); items.splice(0, items.length, ...items.filter((it) => !h.has(it))); }
+  // 1. single linkage on boxes
   const parent = items.map((_, i) => i);
   const find = (i) => { while (parent[i] !== i) i = parent[i] = parent[parent[i]]; return i; };
-  // grid of cells `gap` wide: items whose boxes (grown by gap/2) reach a common cell join one cluster (linear time)
-  const cell = Math.max(gap, 1e-9), owner = new Map();
+  const cell = gap, cells = new Map();
   items.forEach((it, i) => {
     const B = it.box, h = gap / 2;
     let x0 = Math.floor((B.minx - h) / cell), x1 = Math.floor((B.maxx + h) / cell), y0 = Math.floor((B.miny - h) / cell), y1 = Math.floor((B.maxy + h) / cell);
-    while ((x1 - x0 + 1) * (y1 - y0 + 1) > 4096) { x0 >>= 1; x1 >>= 1; y0 >>= 1; y1 >>= 1; } // huge box: ignore its interior detail
+    const border = (x1 - x0 + 1) * (y1 - y0 + 1) > 4096; // a huge box: its rim cells only (what is inside touches it anyway via others)
     for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
-      const k = `${x},${y}`, o = owner.get(k);
-      if (o === undefined) owner.set(k, i); else parent[find(i)] = find(o);
+      if (border && x !== x0 && x !== x1 && y !== y0 && y !== y1) continue;
+      const key = x * 1e7 + y, l = cells.get(key);
+      if (!l) { cells.set(key, [i]); continue; }
+      let n = 0;
+      for (const o of l) {
+        if (find(o) === find(i)) continue;
+        if (++n > CELL_CHECKS || boxGap(it.box, items[o].box) <= gap) parent[find(i)] = find(o);
+      }
+      l.push(i);
     }
   });
-  const byRoot = new Map();
-  items.forEach((it, i) => {
-    const r0 = find(i);
-    const c = byRoot.get(r0) ?? { box: null, added: 0, removed: 0, changed: 0 };
-    c.box = unionBox(c.box, it.box); c[it.k]++; byRoot.set(r0, c);
-  });
-  return [...byRoot.values()].sort((p, q) => q.box.maxy - p.box.maxy || p.box.minx - q.box.minx);
+  const groups = new Map(huge.map((it, i) => [-1 - i, [it]]));
+  items.forEach((it, i) => { const g = find(i), l = groups.get(g); if (l) l.push(it); else groups.set(g, [it]); });
+  // 2. cut oversize clusters
+  const boxOf = (l) => l.reduce((bx, it) => unionBox(bx, it.box), null);
+  const parts = [], todo = [...groups.values()];
+  while (todo.length) {
+    const l = todo.pop(), B = boxOf(l);
+    const wx = B.maxx - B.minx, wy = B.maxy - B.miny, side = Math.max(wx, wy);
+    if (side <= limit || l.length < 2) { parts.push({ l, box: B }); continue; }
+    const [lo, hi] = wx >= wy ? ['minx', 'maxx'] : ['miny', 'maxy'];
+    l.sort((p, q) => p.box[lo] - q.box[lo]);
+    // largest empty gap along the axis (between the reach so far and the next start)
+    let reach = l[0].box[hi], cut = -1, best = 0;
+    for (let i = 1; i < l.length; i++) {
+      const g = l[i].box[lo] - reach;
+      if (g > best) { best = g; cut = i; }
+      if (l[i].box[hi] > reach) reach = l[i].box[hi];
+    }
+    if (best < gap / 4) { // no visible gap: equal parts (by centre), the first one cut off here
+      const k = Math.ceil(side / limit), at = B[lo] + side / k;
+      const c = (it) => (it.box[lo] + it.box[hi]) / 2;
+      l.sort((p, q) => c(p) - c(q));
+      cut = l.findIndex((it) => c(it) > at);
+      if (cut <= 0) cut = l.length >> 1;
+      if (c(l[cut - 1]) === c(l[cut]) && c(l[0]) === c(l[l.length - 1])) { parts.push({ l, box: B }); continue; } // cannot split
+    }
+    todo.push(l.slice(0, cut), l.slice(cut));
+  }
+  // 3. cap the count: merge the smallest into its nearest neighbour
+  let live = parts.map((p) => ({ box: p.box, n: p.l.length, l: p.l }));
+  while (live.length > MAX_CLUSTERS) {
+    let s = 0;
+    for (let i = 1; i < live.length; i++) if (live[i].n < live[s].n) s = i;
+    const S = live[s];
+    let t = -1, dt = Infinity;
+    for (let i = 0; i < live.length; i++) { if (i === s) continue; const d = boxGap(S.box, live[i].box); if (d < dt) { dt = d; t = i; } }
+    const T = live[t];
+    T.box = unionBox(T.box, S.box); T.n += S.n; T.l = T.l.concat(S.l);
+    live[s] = live[live.length - 1]; live.pop();
+  }
+  const out = live.map(({ box, l }) => { const c = { box, added: 0, removed: 0, changed: 0 }; for (const it of l) c[it.k]++; return c; });
+  // 4. reading order: a row starts with the highest remaining top; clusters whose top reaches above its middle (or
+  //    less than 2 gaps below its top) join it
+  out.sort((p, q) => q.box.maxy - p.box.maxy || p.box.minx - q.box.minx);
+  const sorted = [];
+  for (let i = 0; i < out.length;) {
+    const mid = Math.min((out[i].box.miny + out[i].box.maxy) / 2, out[i].box.maxy - 2 * gap);
+    let j = i + 1;
+    while (j < out.length && out[j].box.maxy >= mid) j++;
+    sorted.push(...out.slice(i, j).sort((p, q) => p.box.minx - q.box.minx || q.box.maxy - p.box.maxy));
+    i = j;
+  }
+  return sorted;
 }
 
 // ---- the compare drawing ------------------------------------------------------------------------

@@ -130,6 +130,35 @@ try {
   await checkResult('pick');
   assert.equal(await toolId(), 'select');
 
+  step = 'B turned 180° about (1000, 500) plus one line: offset line says rotated 180°, counts right; Group distance 1.5 m';
+  await page.evaluate(async () => {
+    const M = await import('/src/core/model.js');
+    const { writeDxf } = await import('/src/core/dxfWrite.js');
+    const { loadDrawing } = await import('/renderer/files.js');
+    const d = M.newDocument(); d.units = 4;
+    const T = (x, y) => ({ x: 2000 - x, y: 1000 - y }); // 180° about (1000, 500)
+    const L = (x1, y1, x2, y2) => M.addEntity(d, M.makeLine(T(x1, y1), T(x2, y2)));
+    L(0, 0, 400, 0); L(400, 0, 400, 250); L(400, 250, 0, 250); L(0, 250, 0, 0); L(50, 50, 150, 120); L(300, 60, 360, 60);
+    M.addEntity(d, M.makeCircle(T(200, 180), 30));
+    L(100, 200, 180, 230);
+    const { doc } = await loadDrawing(window.api, 'b180.dxf', new TextEncoder().encode(writeDxf(d)));
+    window.app.installDoc(doc, { path: null, name: 'b180.dxf', format: 'dxf' });
+  });
+  await typeCmd('compare');
+  await page.locator('#dlg[open] #cmp-a').waitFor({ timeout: 3000 });
+  await page.selectOption('#cmp-a', { label: 'a.dxf' });
+  await page.selectOption('#cmp-b', { label: 'b180.dxf' });
+  assert.equal(await page.locator('#cmp-gap').inputValue(), '1500', 'group distance 1.5 m in a mm drawing');
+  assert.ok((await page.locator('#cmp-ignore option').count()) >= 1, 'the layers of B to ignore');
+  await page.locator('#dlg button.primary').click();
+  await page.waitForFunction(() => window.app.tabs.filter((t) => t.compare).length === 3 && !document.getElementById('compare-panel').hidden, null, { timeout: 20000 });
+  {
+    const { offset, counts } = await panelText();
+    assert.match(counts, /Added 1(?!\d)/); assert.match(counts, /Removed 0(?!\d)/); assert.match(counts, /Changed 0(?!\d)/); assert.match(counts, /Unchanged 7(?!\d)/);
+    assert.match(offset, /^A aligned to B: moved 2000, 1000; rotated 180° \(automatic; match good\)/);
+    assert.equal(await page.locator('#compare-panel .cmp-row').count(), 1, 'one cluster');
+  }
+
   assert.deepEqual(problems, []);
   console.log('compare e2e: OK');
 } catch (err) {

@@ -235,3 +235,67 @@ test('compare align auto, piecewise: a big background block left in place while 
   const r1 = compareDocs(a, b, { align: 'auto', tol: 1, piecewise: false });
   assert.equal(r1.same.length, base.length);
 });
+
+// ---- change clusters: what a reviewer marks separately ----
+import { defaultClusterGap } from '../src/core/compare.js';
+/** a mm drawing: a frame w x h metres (unchanged) plus the given entities */
+function sheet(w, h, ents = []) {
+  const d = newDocument(); d.units = 4;
+  const W = w * 1000, H = h * 1000;
+  for (const [p, q] of [[[0, 0], [W, 0]], [[W, 0], [W, H]], [[W, H], [0, H]], [[0, H], [0, 0]]]) addEntity(d, makeLine({ x: p[0], y: p[1] }, { x: q[0], y: q[1] }));
+  for (const e of ents) addEntity(d, structuredClone(e));
+  return d;
+}
+const edits = (x, y) => [makeLine({ x, y }, { x: x + 800, y }), makeLine({ x, y: y + 300 }, { x: x + 800, y: y + 300 }), makeCircle({ x: x + 400, y: y + 150 }, 100)];
+
+test('clusters: two edit groups 10 m apart on a 600 m sheet are two clusters (gap 1.5 m by default in mm)', () => {
+  assert.equal(defaultClusterGap(4), 1500); assert.equal(defaultClusterGap(6), 1.5);
+  const r = compareDocs(sheet(600, 300), sheet(600, 300, [...edits(100000, 100000), ...edits(110800, 100000)]), { tol: 1 });
+  assert.equal(r.added.length, 6);
+  assert.equal(r.clusters.length, 2);
+  assert.deepEqual(r.clusters.map((c) => c.added), [3, 3]);
+  // a larger group distance joins them
+  assert.equal(compareDocs(sheet(600, 300), sheet(600, 300, [...edits(100000, 100000), ...edits(110800, 100000)]), { tol: 1, clusterGap: 12000 }).clusters.length, 1);
+});
+
+test('clusters: one long edit along a 60 m duct on a 120 m sheet is cut into at most 3 boxes of at most 20 % of the sheet', () => {
+  const duct = [];
+  for (let i = 0; i < 60; i++) duct.push(makeLine({ x: 30000 + i * 1000, y: 50000 }, { x: 31000 + i * 1000, y: 50000 }), makeLine({ x: 30000 + i * 1000, y: 50600 }, { x: 31000 + i * 1000, y: 50600 }));
+  const r = compareDocs(sheet(120, 100), sheet(120, 100, duct), { tol: 1 });
+  assert.equal(r.added.length, 120);
+  assert.ok(r.clusters.length >= 2 && r.clusters.length <= 3, `${r.clusters.length} clusters`);
+  for (const c of r.clusters) assert.ok(c.box.maxx - c.box.minx <= 24000 + 1e-6, JSON.stringify(c.box));
+  assert.equal(r.clusters.reduce((n, c) => n + c.added, 0), 120);
+  assert.deepEqual(r.clusters.map((c) => c.box.minx), [...r.clusters.map((c) => c.box.minx)].sort((p, q) => p - q), 'one row: left to right');
+});
+
+test('clusters: reading order is rows from the top, left to right in a row', () => {
+  // top row: left (10, 50 m) and right (60, 48.5 m); bottom row: left (10, 20 m) and right (60, 21 m: higher than its left)
+  const at = [[60, 21], [10, 20], [60, 48.5], [10, 50]];
+  const r = compareDocs(sheet(100, 80), sheet(100, 80, at.map(([x, y]) => makeCircle({ x: x * 1000, y: y * 1000 }, 300))), { tol: 1 });
+  assert.deepEqual(r.clusters.map((c) => [Math.round((c.box.minx + 300) / 1000), Math.round((c.box.miny + 300) / 1000 * 10) / 10]), [[10, 50], [60, 48.5], [10, 20], [60, 21]]);
+});
+
+test('clusters: at most 200; the smallest are merged into their neighbours', () => {
+  const dots = [];
+  for (let i = 0; i < 300; i++) dots.push(makeCircle({ x: 5000 + (i % 20) * 3000, y: 5000 + Math.floor(i / 20) * 3000 }, 100));
+  const r = compareDocs(sheet(100, 100), sheet(100, 100, dots), { tol: 1 });
+  assert.equal(r.clusters.length, 200);
+  assert.equal(r.clusters.reduce((n, c) => n + c.added, 0), 300);
+});
+
+test('compare ignoreLayers: pieces on an ignored layer (or drawn by an INSERT on it) are left out', () => {
+  const mk = (rev) => {
+    const d = sheet(50, 50, [makeCircle({ x: 1000, y: 1000 }, 200)]);
+    addBlock(d, 'REVTAB', { x: 0, y: 0 }, [makeText({ x: 0, y: 0 }, 250, `REV ${rev}`)]);
+    addEntity(d, makeInsert('REVTAB', { x: 40000, y: 2000 }, { layer: 'Rev-Table' }));
+    addEntity(d, makeText({ x: 40000, y: 5000 }, 250, `DATE ${rev}`, { layer: 'REV-TABLE' }));
+    return d;
+  };
+  const all = compareDocs(mk('00'), mk('01'), { tol: 1 });
+  assert.ok(all.added.length + all.changed.length > 0);
+  const r = compareDocs(mk('00'), mk('01'), { tol: 1, ignoreLayers: ['rev-table'] });
+  assert.equal(r.added.length + r.removed.length + r.changed.length, 0);
+  assert.equal(r.same.length, 5);
+  assert.equal(r.clusters.length, 0);
+});

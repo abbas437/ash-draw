@@ -7,7 +7,7 @@ import { OPEN_FILTERS, loadDrawing } from './files.js';
 import { Tool } from './tools.js';
 import { el, modal, message, toast } from './ui.js';
 
-const { compareDocs, buildCompareDoc, defaultTolerance, setCompareView } = core;
+const { compareDocs, buildCompareDoc, defaultTolerance, defaultClusterGap, setCompareView } = core;
 const VIEWS = [['differences', 'Differences'], ['overlay', 'Overlay'], ['a', 'A only'], ['b', 'B only']];
 const UNIT_NAMES = { 1: 'in', 2: 'ft', 4: 'mm', 5: 'cm', 6: 'm' };
 const num = (v) => String(+(+v).toFixed(4) + 0);
@@ -25,6 +25,14 @@ export function offsetText(c) {
   if (c.align === 'auto') t += ` (automatic; match ${(o.confidence ?? 0) >= 0.5 ? 'good' : 'weak'})`;
   else if (c.align === 'pick') t += ' (picked points)';
   return t;
+}
+
+/** one line per group of A aligned on its own (r.realigned), so the reviewer knows a group moved */
+export function realignedLines(r) {
+  return (r.realigned ?? []).map((g) => {
+    const how = `${Math.abs(g.rot) > 1e-9 ? `rotated ${num(g.rot)}°, ` : ''}moved ${num(g.dx)}, ${num(g.dy)}`;
+    return g.name === '*Model_Space' ? `The other objects of A were aligned separately (${how}).` : `Background block ${g.name} was aligned separately (${how}).`;
+  });
 }
 
 export class ComparePanel {
@@ -55,7 +63,7 @@ export class ComparePanel {
     if (!c || this.shown === c) return;
     this.shown = c; this.cur = -1;
     const sw = (cls, label, n) => el('span', { class: `cmp-n ${cls}`, 'data-kind': cls }, el('i'), `${label} ${n}`);
-    this.offset.textContent = offsetText(c);
+    this.offset.replaceChildren(el('div', { text: offsetText(c) }), ...realignedLines(c.r).map((t) => el('div', { class: 'cmp-realigned', text: t })));
     this.view.value = c.view ?? 'differences';
     this.counts.replaceChildren(el('div', { class: 'cmp-files', text: `A: ${c.nameA}  →  B: ${c.nameB}` }),
       el('div', { class: 'cmp-files', text: 'Pieces (blocks counted by their parts):' }),
@@ -126,19 +134,36 @@ async function chooseDrawings(app) {
   };
   selB.addEventListener('change', tolDefault);
   tolDefault();
+  const gap = el('input', { id: 'cmp-gap', type: 'number', step: 'any', min: '0', style: 'width:8em' });
+  const gapUnit = el('span');
+  let gapEdited = false;
+  gap.addEventListener('input', () => { gapEdited = true; });
+  const ignore = el('select', { id: 'cmp-ignore', multiple: true, size: 5, title: 'Layers of B left out of the compare (Ctrl+click to choose several), e.g. a revision table' });
+  const bDefaults = () => {
+    const d = sources[Number(selB.value)]?.doc;
+    gapUnit.textContent = ' drawing units (1.5 m): changes closer than this form one group';
+    if (!gapEdited) gap.value = String(+defaultClusterGap(d?.units).toPrecision(6));
+    const keep = new Set([...ignore.selectedOptions].map((o) => o.value));
+    ignore.replaceChildren(...[...(d?.layers?.keys() ?? [])].sort((p, q) => p.localeCompare(q)).map((n) => el('option', { value: n, text: n, selected: keep.has(n) })));
+  };
+  selB.addEventListener('change', bDefaults);
+  bDefaults();
   const ok = await modal('Compare drawings', el('div', { class: 'cmp-pick' },
     el('label', {}, 'Original (A) — shown red where removed', el('div', {}, selA, browse(selA))),
     el('label', {}, 'Revised (B) — shown green where added', el('div', {}, selB, browse(selB))),
     el('label', {}, 'Align A to B', el('div', {}, align)),
     el('label', {}, 'Tolerance', el('div', {}, tol, tolUnit)),
+    el('label', {}, 'Group distance', el('div', {}, gap, gapUnit)),
+    el('label', {}, 'Ignore layers…', el('div', {}, ignore)),
     el('p', { text: 'Changed objects are amber, unchanged grey; each group of changes is framed by a dotted rectangle.' })),
   [{ label: 'Compare', value: true, primary: true }, { label: 'Cancel', value: false }]);
   if (!ok) return null;
   const A = sources[Number(selA.value)], B = sources[Number(selB.value)];
   if (!A || !B) return null;
   if (A === B) { toast('Choose two different drawings.'); return null; }
-  const t = Number(tol.value);
-  return { A, B, align: align.value, tol: t > 0 ? t : defaultTolerance(B.doc.units) };
+  const t = Number(tol.value), g = Number(gap.value);
+  return { A, B, align: align.value, tol: t > 0 ? t : defaultTolerance(B.doc.units), clusterGap: g > 0 ? g : defaultClusterGap(B.doc.units),
+    ignoreLayers: [...ignore.selectedOptions].map((o) => o.value) };
 }
 
 // ---- Pick points: a temporary tool asks for a base point (and an optional second point) in A's tab, then in B's ----
@@ -194,12 +219,13 @@ function pickPoints(app, A, B) {
 }
 
 /** compareDocs options for the chosen alignment; pts = [a1, a2, b1, b2] picked points (a2/b2 may be null) */
-export function compareOptions(align, tol, pts) {
-  if (align === 'auto') return { tol, align: 'auto' };
-  if (align !== 'pick') return { tol };
+export function compareOptions(align, tol, pts, extra = {}) {
+  const o = (x) => ({ ...x, ...extra });
+  if (align === 'auto') return o({ tol, align: 'auto' });
+  if (align !== 'pick') return o({ tol });
   const [a1, a2, b1, b2] = pts;
-  if (typeof core.transformFromPoints === 'function') return { tol, transform: core.transformFromPoints(a1, a2 && b2 ? a2 : null, b1, a2 && b2 ? b2 : null) };
-  return { tol, dx: b1.x - a1.x, dy: b1.y - a1.y }; // translation only (core without transformFromPoints)
+  if (typeof core.transformFromPoints === 'function') return o({ tol, transform: core.transformFromPoints(a1, a2 && b2 ? a2 : null, b1, a2 && b2 ? b2 : null) });
+  return o({ tol, dx: b1.x - a1.x, dy: b1.y - a1.y }); // translation only (core without transformFromPoints)
 }
 
 /** COMPARE: choose the drawings, compare, and show the result in a new tab */
@@ -211,7 +237,7 @@ export async function runCompare(app) {
     pts = await pickPoints(app, pick.A, pick.B);
     if (!pts) { toast('Compare cancelled.', 2000); return; }
   }
-  await showComparison(app, pick.A.doc, pick.B.doc, pick.A.label, pick.B.label, { align: pick.align, opts: compareOptions(pick.align, pick.tol, pts) });
+  await showComparison(app, pick.A.doc, pick.B.doc, pick.A.label, pick.B.label, { align: pick.align, opts: compareOptions(pick.align, pick.tol, pts, { clusterGap: pick.clusterGap, ...(pick.ignoreLayers.length ? { ignoreLayers: pick.ignoreLayers } : {}) }) });
 }
 
 /** compare and show the result in a new tab. The work is synchronous (large pairs take 15-20 s): a progress toast is
