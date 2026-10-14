@@ -1,0 +1,30 @@
+LibreDWG 0.14.8597: fix false "buffer underflow" past 256 MiB on LLP64 (Windows)
+
+bit_advance_position() (src/bits.c:74) tests for a negative result with
+
+    else if ((long)(pos + advance) < 0)
+
+pos is a size_t bit position (dat->byte * 8 + dat->bit). On Windows x64
+(LLP64) long is 32 bits, so the cast truncates the 64-bit bit position:
+once the byte offset in the decompressed buffer reaches 2^28 (256 MiB,
+i.e. bit position 2^31) the truncated value is negative, the "buffer
+underflow" branch fires and the chain is reset to byte 0. Every following
+bit read (bit_read_B/BB/3B/RC all call bit_advance_position) then decodes
+garbage from the start of the buffer. On LP64 (Linux, macOS) long is
+64 bits, so the bug does not show there.
+
+Fix: detect underflow by comparing magnitudes instead of casting to long.
+On LP64 the condition is equivalent to the old one for all reachable
+positions, so Linux/macOS behaviour is unchanged.
+
+--- a/src/bits.c
++++ b/src/bits.c
+@@ -71,7 +71,7 @@
+                  ", advance by %ld",
+                  __FUNCTION__, dat->byte, dat->bit, dat->size, advance);
+     }
+-  else if ((long)(pos + advance) < 0)
++  else if (advance < 0 && pos < -(size_t)advance)
+     {
+       loglevel = dat->opts & DWG_OPTS_LOGLEVEL;
+       LOG_ERROR ("buffer underflow at pos %" PRIuSIZE ".%u, size %" PRIuSIZE

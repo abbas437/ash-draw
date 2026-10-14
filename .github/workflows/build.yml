@@ -17,20 +17,71 @@ on:
         default: false
 
 jobs:
+  libredwg-win64:
+    # Patched LibreDWG converters: the upstream 0.14.8597 Windows binaries misread drawings whose
+    # decompressed data passes 256 MiB (32-bit long in src/bits.c on Windows). Cross-build the pinned
+    # upstream source + tools/libredwg-win/libredwg-llp64-bitpos.patch with mingw-w64 and hand the
+    # zip to the windows job.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Cache the patched build (keyed on patch, build scripts and pins)
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/libredwg-llp64
+          key: libredwg-llp64-${{ runner.os }}-${{ env.ImageOS }}-${{ env.ImageVersion }}-${{ hashFiles('tools/libredwg-win/**', 'scripts/fetch-libredwg.mjs', '.github/workflows/build.yml') }}
+      - name: Install mingw-w64
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64 zip unzip xz-utils patch
+      - name: Download + SHA-256-verify the upstream source tarball and win64 zip (pinned)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: node scripts/fetch-libredwg.mjs --source .cache/libredwg-src
+      - name: Patch, cross-build and package
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: >-
+          sh tools/libredwg-win/build-patched.sh
+          .cache/libredwg-src/libredwg-0.14.8597.tar.xz
+          .cache/libredwg-0.14.8597-win64.zip
+          .cache/libredwg-build
+          .cache/libredwg-llp64
+      - name: Verify the patched zip (patch matches, dwg2dxf/dxf2dwg/libredwg-0/libiconv-2 present)
+        run: node scripts/fetch-libredwg.mjs --from .cache/libredwg-llp64/libredwg-0.14.8597-llp64-win64.zip --require-patched
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libredwg-llp64-win64
+          path: |
+            .cache/libredwg-llp64/libredwg-0.14.8597-llp64-win64.zip
+            .cache/libredwg-llp64/libredwg-0.14.8597-llp64-win64.zip.sha256
+          if-no-files-found: error
+
   windows:
+    needs: libredwg-win64
     runs-on: windows-latest
     permissions:
       contents: write   # needed only by the tag-build release step
+    env:
+      # fetch-libredwg.mjs (also run by `npm run dist`) takes the patched converters from here.
+      ASH_LIBREDWG_ZIP: ${{ github.workspace }}/.cache/libredwg-llp64/libredwg-0.14.8597-llp64-win64.zip
+      # Fail the build rather than ship the upstream (256 MiB-buggy) binaries.
+      ASH_LIBREDWG_REQUIRE_PATCHED: '1'
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: libredwg-llp64-win64
+          path: .cache/libredwg-llp64
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run licenses
-      # Download + SHA-256-verify the LibreDWG converters first so the DWG round-trip tests run on the real Windows binaries.
-      - run: npm run fetch:libredwg
+      # Verify + extract the patched LibreDWG converters first so the DWG round-trip tests run on the shipped Windows binaries.
+      - run: npm run fetch:libredwg -- --require-patched
       - name: npm test
         shell: bash
         env:
@@ -75,8 +126,14 @@ jobs:
             echo "::error title=electron-builder failed::$msg"
           fi
           exit $code
-      - name: LibreDWG corresponding source (GPL) for the release
-        run: node scripts/fetch-libredwg.mjs --source dist/
+      - name: Assert the shipped LibreDWG converters are the patched build
+        shell: bash
+        run: test -f build/libredwg/libredwg-llp64-bitpos.patch
+      - name: LibreDWG corresponding source (GPL) for the release - tarball, patch, build scripts
+        shell: bash
+        run: |
+          node scripts/fetch-libredwg.mjs --source dist/
+          tar -czf dist/libredwg-0.14.8597-win64-build-tools.tar.gz tools/libredwg-win
       - name: SHA256SUMS.txt
         shell: bash
         working-directory: dist
@@ -94,6 +151,8 @@ jobs:
             dist/ASH-Draw-Studio-Portable-*.exe
             dist/SHA256SUMS.txt
             dist/libredwg-*.tar.xz
+            dist/libredwg-*.patch
+            dist/libredwg-*-build-tools.tar.gz
           if-no-files-found: error
       - name: GitHub Release (tag builds only)
         if: startsWith(github.ref, 'refs/tags/v')
@@ -106,6 +165,8 @@ jobs:
             dist/ASH-Draw-Studio-Portable-*.exe \
             dist/SHA256SUMS.txt \
             dist/libredwg-*.tar.xz \
+            dist/libredwg-*.patch \
+            dist/libredwg-*-build-tools.tar.gz \
             --title "ASH Draw Studio $GITHUB_REF_NAME" \
             --generate-notes
       - name: GitHub Release (manual run with a version)
@@ -122,6 +183,8 @@ jobs:
             dist/ASH-Draw-Studio-Portable-*.exe \
             dist/SHA256SUMS.txt \
             dist/libredwg-*.tar.xz \
+            dist/libredwg-*.patch \
+            dist/libredwg-*-build-tools.tar.gz \
             --title "ASH Draw Studio $VERSION" \
             --generate-notes
 
