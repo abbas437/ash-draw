@@ -7,7 +7,7 @@
 // the line and numbers inside it stay left to right ("غرفة 123" plots as "123" to the left of the Arabic word).
 import bidiFactory from 'bidi-js';
 import {
-  PDFOperator, PDFOperatorNames, PDFHexString, beginText, endText, setFontAndSize, setTextMatrix,
+  PDFOperator, PDFOperatorNames, PDFHexString, PDFName, beginText, endText, setFontAndSize, setTextMatrix,
 } from 'pdf-lib';
 
 let bidi = null;
@@ -19,19 +19,22 @@ export const hasRtl = (t) => RTL.test(t);
 const STICKY = /^[\p{M}\p{Cf}\s]$/u;
 
 /**
- * textShaper(helv, uniFonts) -> shape(text, level?) => {width, runs, miss}: `text` laid out at size 1 in visual
+ * textShaper(helv, uniFonts) -> shape(text, level?, hf?) => {width, runs, miss}: `text` laid out at size 1 in visual
  * (left-to-right) order. helv: the standard Helvetica PDFFont; uniFonts: embedded subset PDFFonts, fallback order.
  * level: the bidi embedding level of every character (a piece of an already ordered line), else the line's own levels.
- * runs: {font, width, text} (Helvetica) or {font, width, glyphs: [{glyph, x, dx, dy}]} (font units, pen x before the glyph).
+ * hf: the Helvetica variant (bold / oblique) that draws the WinAnsi characters, default `helv`.
+ * runs: {font, width, text} (Helvetica) or {font, width, glyphs: [{glyph, x, dx, dy}], logical} (font units, pen x
+ * before the glyph; logical: the run's text in reading order, for /ActualText).
  * miss: characters no font has (drawn as '?').
  */
 export function textShaper(helv, uniFonts) {
   const helvChars = new Set(helv.getCharacterSet());
-  const has = (f, cp) => (f === helv ? helvChars.has(cp) : f.embedder.font.hasGlyphForCodePoint(cp));
-  const chain = [helv, ...uniFonts];
+  const isUni = new Set(uniFonts);
+  const has = (f, cp) => (!isUni.has(f) ? helvChars.has(cp) : f.embedder.font.hasGlyphForCodePoint(cp));
   const cache = new Map();
-  return function shape(text, level = null) {
-    const key = `${level}\u0000${text}`;
+  return function shape(text, level = null, hf = helv) {
+    const chain = [hf, ...uniFonts];
+    const key = `${level}\u0000${hf.name}\u0000${text}`;
     if (cache.has(key)) return cache.get(key);
     const levels = level == null ? bidiLevels(text) : null;
     const lv = (i) => (levels ? levels[i] : level);
@@ -41,23 +44,24 @@ export function textShaper(helv, uniFonts) {
     for (let i = 0; i < text.length;) {
       const cp = text.codePointAt(i), n = cp > 0xffff ? 2 : 1, l = lv(i);
       let ch = text.slice(i, i + n);
+      const orig = ch;
       if (l & 1) ch = BIDI().getMirroredCharacter(ch) ?? ch;
       const c = ch.codePointAt(0);
       let f = prev && STICKY.test(ch) && has(prev, c) ? prev : chain.find((x) => has(x, c));
-      if (!f) { f = helv; ch = '?'; miss++; }
+      if (!f) { f = hf; ch = '?'; miss++; }
       const last = segs.at(-1);
-      if (last && last.font === f && last.level === l) last.text += ch;
-      else segs.push({ font: f, level: l, text: ch });
+      if (last && last.font === f && last.level === l) { last.text += ch; last.orig += orig; }
+      else segs.push({ font: f, level: l, text: ch, orig });
       prev = f; i += n;
     }
     const order = visualOrder(segs);
     let width = 0;
     const runs = order.map((s) => {
       const rtl = (s.level & 1) === 1;
-      if (s.font === helv) {
-        const t = rtl ? [...s.text].reverse().join('') : s.text, w = helv.widthOfTextAtSize(t, 1);
+      if (!isUni.has(s.font)) {
+        const t = rtl ? [...s.text].reverse().join('') : s.text, w = s.font.widthOfTextAtSize(t, 1);
         width += w;
-        return { font: helv, text: t, width: w };
+        return { font: s.font, text: t, width: w };
       }
       // fontkit shapes in logical order and returns the glyphs in visual order for 'rtl'
       const fk = s.font.embedder.font, run = fk.layout(s.text, [], undefined, undefined, rtl ? 'rtl' : 'ltr');
@@ -69,7 +73,7 @@ export function textShaper(helv, uniFonts) {
       });
       const w = x / fk.unitsPerEm;
       width += w;
-      return { font: s.font, glyphs, width: w };
+      return { font: s.font, glyphs, width: w, logical: s.orig };
     });
     const out = { width, runs, miss };
     cache.set(key, out);
@@ -107,6 +111,16 @@ function subsetId(font, glyph) {
   return id;
 }
 
+/**
+ * BDC opening a /Span whose /ActualText is the run's text in reading order: a shaped glyph id can serve several letters
+ * (shared base shapes, dot marks), which the font's ToUnicode map cannot tell apart, so copy and search read this instead.
+ */
+function actualText(page, text) {
+  let h = 'FEFF';
+  for (let i = 0; i < text.length; i++) h += text.charCodeAt(i).toString(16).toUpperCase().padStart(4, '0');
+  return PDFOperator.of(PDFOperatorNames.BeginMarkedContentSequence, [PDFName.of('Span'), page.doc.context.obj({ ActualText: PDFHexString.of(h) })]);
+}
+
 const KEYS = new WeakMap();
 /** the page's resource name for `font` */
 function fontKey(page, font) {
@@ -125,6 +139,7 @@ export function textOps(page, shaped, size, x, y) {
   let pen = x;
   for (const r of shaped.runs) {
     ops.push(setFontAndSize(fontKey(page, r.font), size));
+    if (r.logical != null) ops.push(actualText(page, r.logical));
     if (r.text != null) {
       ops.push(setTextMatrix(1, 0, 0, 1, pen, y), PDFOperator.of(PDFOperatorNames.ShowText, [r.font.encodeText(r.text)]));
     } else {
@@ -148,6 +163,7 @@ export function textOps(page, shaped, size, x, y) {
       });
       flush();
     }
+    if (r.logical != null) ops.push(PDFOperator.of(PDFOperatorNames.EndMarkedContent));
     pen += r.width * size;
   }
   ops.push(endText());

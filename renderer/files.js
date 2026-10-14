@@ -233,11 +233,19 @@ export async function exportSvgBytes(doc, scene, opts = {}) {
 const UNICODE_FONTS = ['NotoSans-Regular.ttf', 'NotoSansArabic-Regular.ttf', 'NotoSansMath-Regular.ttf'];
 let unicodeFontBytes = null;
 export function unicodeFonts() {
+  // a font that fails to load is left out (the export plots its characters as '?' and warns); `failed` lists the names,
+  // and the result is not kept so the next export tries again
   unicodeFontBytes ??= Promise.all(UNICODE_FONTS.map(async (f) => {
-    const r = await fetch(new URL(`./assets/fonts/${f}`, import.meta.url));
-    if (!r.ok) throw new Error(`PDF font ${f} is missing`);
-    return new Uint8Array(await r.arrayBuffer());
-  })).catch((err) => { unicodeFontBytes = null; throw err; });
+    try {
+      const r = await fetch(new URL(`./assets/fonts/${f}`, import.meta.url));
+      return r.ok ? new Uint8Array(await r.arrayBuffer()) : null;
+    } catch { return null; }
+  })).then((all) => {
+    const ok = all.filter(Boolean);
+    ok.failed = UNICODE_FONTS.filter((_, i) => !all[i]);
+    if (ok.failed.length) unicodeFontBytes = null;
+    return ok;
+  });
   return unicodeFontBytes;
 }
 

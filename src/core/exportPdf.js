@@ -203,10 +203,25 @@ async function addPdfPage(pdf, doc, opts) {
   const needsUni = (t) => [...t].some((ch) => !helvChars.has(ch.codePointAt(0)));
   const loadUni = async () => {
     if (!fonts.shape) {
-      const src = typeof uniSource === 'function' ? await uniSource() : uniSource;
+      // a font that cannot be loaded or embedded is left out: its characters plot as '?' and a warning says so
+      let src = null;
+      try { src = typeof uniSource === 'function' ? await uniSource() : uniSource; } catch { fonts.loadFailed = true; }
+      if (src?.failed?.length) fonts.loadFailed = true;
       if (src?.length) pdf.registerFontkit((await import('@pdf-lib/fontkit')).default);
       fonts.uni = [];
-      for (const b of src ?? []) fonts.uni.push(await pdf.embedFont(b, { subset: true }));
+      for (const b of src ?? []) {
+        try {
+          const f = await pdf.embedFont(b, { subset: true });
+          // the ToUnicode map gets no entry for a glyph without a code point (a mark: it would be an empty <>)
+          const e = f.embedder, make = e.embedUnicodeCmap;
+          e.embedUnicodeCmap = function (ctx) {
+            const gc = this.glyphCache;
+            this.glyphCache = { access: () => gc.access().filter((g) => g?.codePoints.length) };
+            try { return make.call(this, ctx); } finally { this.glyphCache = gc; }
+          };
+          fonts.uni.push(f);
+        } catch { fonts.loadFailed = true; }
+      }
       fonts.shape = textShaper(helv, fonts.uni);
     }
     return fonts.shape;
@@ -251,7 +266,7 @@ async function addPdfPage(pdf, doc, opts) {
           let b = a + 1;
           while (b < g.text.length && levels[i + b] === levels[i + a]) b++;
           const text = g.text.slice(a, b), level = levels[i + a];
-          pieces.push({ ...g, text, level, w: loadedShape(text, level).width * g.h * (g.wf || 1) * (g.track || 1) });
+          pieces.push({ ...g, text, level, w: loadedShape(text, level, g).width * g.h * (g.wf || 1) * (g.track || 1) });
           a = b;
         }
         i += g.text.length;
@@ -263,7 +278,7 @@ async function addPdfPage(pdf, doc, opts) {
     }
     return moved.size ? glyphs.flatMap((g) => moved.get(g) ?? [g]) : glyphs;
   };
-  const loadedShape = (t, level) => fonts.shape(t, level);
+  const loadedShape = (t, level, p) => fonts.shape(t, level, HELV[variant(p)]);
 
   // box: the world window plotted, to which XLINE / RAY items are clipped (AutoCAD plots their visible part)
   const drawItems = async (scn, box, cull = null) => {
@@ -319,7 +334,7 @@ async function addPdfPage(pdf, doc, opts) {
         if (!g.text) continue;
         const frame = [g.wf || 1, 0, Math.tan((g.oblique || 0) * Math.PI / 180), 1, g.x * k, -g.y * k];
         if (g.level != null || needsUni(g.text)) {
-          shapedText(fonts.shape(g.text, g.level ?? null), frame, g.h * k, 0, 0, rc(g.color), it.style);
+          shapedText(fonts.shape(g.text, g.level ?? null, HELV[variant(g)]), frame, g.h * k, 0, 0, rc(g.color), it.style);
           page.pushOperators(...ops.splice(0));
           continue;
         }
@@ -376,6 +391,6 @@ async function addPdfPage(pdf, doc, opts) {
   await drawItems(scene, bb, layout ? null : region);
   if (ops.length) page.pushOperators(...ops.splice(0));
   if (cb) page.pushOperators(popGraphicsState());
-  if (missing) warnings.push(`${missing} text characters could not be drawn (no Unicode font)`);
+  if (missing) warnings.push(`${missing} text characters could not be drawn (${fonts.loadFailed ? 'the Unicode font could not be loaded' : 'no Unicode font'})`);
   return warnings;
 }
