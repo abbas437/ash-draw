@@ -11,7 +11,8 @@ import { readDxf } from '../src/core/dxfRead.js';
 import { newLayout } from '../src/core/layouts.js';
 import { newDocument, addEntity, makeXline, makeLine, makeCircle, makeArc, makeText } from '../src/core/model.js';
 import { exportSvg } from '../src/core/exportSvg.js';
-import { exportPdf, plotLayout, plotScale } from '../src/core/exportPdf.js';
+import { exportPdf, exportPdfPages, plotLayout, plotScale, pageFit } from '../src/core/exportPdf.js';
+import { plotSettingsFrom, plotSettingsToStore, PLOT_DEFAULTS } from '../src/core/plotSettings.js';
 
 const FIXTURES = ['basic', 'blocks', 'colors', 'dims', 'extrusion', 'hatch', 'polylines', 'splines', 'text', 'unsupported'];
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'ash-export-'));
@@ -171,4 +172,71 @@ test('layout PDF: an XLINE through a 1:100 viewport is plotted across the whole 
   // window = the viewport diagonal 223.6 mm; the 45 degree line crosses its square bounding box corner to corner: 223.6 * sqrt(2) mm
   const want = Math.hypot(200, 100) * Math.SQRT2 * 72 / 25.4;
   assert.ok(segs.some((l) => Math.abs(l - want) < 0.5), `no segment of ${want.toFixed(1)} pt in ${segs.map((l) => l.toFixed(1))}`);
+});
+
+// ---- layout sheets on other paper (fit to paper), PUBLISH --------------------------------------------------------
+const PT = 72 / 25.4, near = (a, b, tol = 0.01) => Math.abs(a - b) <= tol;
+
+test('pageFit: an A0 sheet fitted to A3 landscape inside 5 mm margins, centred', () => {
+  const f = pageFit(1189 * PT, 841 * PT, 'A3');
+  assert.equal(f.orientation, 'landscape');
+  assert.ok(near(f.pw, 1190.55) && near(f.ph, 841.89), `${f.pw} x ${f.ph}`);
+  // the binding side: (420 - 2*5) / 1189 across, (297 - 10) / 841 = 0.3413 up
+  assert.ok(near(f.scale, Math.min(410 / 1189, 287 / 841), 1e-6), String(f.scale)); // pdf-lib's A3 is rounded to 0.01 pt
+  assert.ok(near(f.ox, (f.pw - 1189 * PT * f.scale) / 2, 1e-9) && near(f.oy, (f.ph - 841 * PT * f.scale) / 2, 1e-9));
+  assert.ok(near(f.oy, 5 * PT, 1e-3), 'the height binds: 5 mm margin top and bottom');
+  assert.ok(f.fits);
+});
+
+test('pageFit: portrait sheet -> portrait paper; small sheet enlarged; no fit = 1:1 centred and may not fit', () => {
+  const p = pageFit(210 * PT, 297 * PT, 'A1');
+  assert.equal(p.orientation, 'portrait');
+  assert.ok(p.pw < p.ph && p.scale > 1, `${p.pw} x ${p.ph} at ${p.scale}`);
+  const one = pageFit(1189 * PT, 841 * PT, 'A3', { fit: false });
+  assert.equal(one.scale, 1);
+  assert.equal(one.fits, false);
+  assert.ok(near(one.ox, (1190.55 - 1189 * PT) / 2, 0.01));
+  const t = pageFit(1189 * PT, 841 * PT, 'Tabloid');
+  assert.deepEqual([t.pw, t.ph], [1224, 792]);
+  assert.throws(() => pageFit(1, 1, 'B5'), /Unknown page size/);
+});
+
+test('PUBLISH: the 2 layouts of layouts_r2000.dxf on A3 (fit) give a 2-page A3 landscape PDF; own paper keeps 420 x 297', async () => {
+  const doc = readDxf(fixture('layouts_r2000.dxf'));
+  assert.equal(doc.layouts.length, 2);
+  const sheets = doc.layouts.map((layout) => ({ doc, layout, label: layout.name }));
+  const a3 = await PDFDocument.load((await exportPdfPages(sheets, { paper: 'A3', fit: true, monochrome: true })).bytes);
+  assert.equal(a3.getPageCount(), 2);
+  for (const pg of a3.getPages()) { const { width, height } = pg.getSize(); assert.ok(near(width, 1190.55) && near(height, 841.89), `${width} x ${height}`); }
+  const a4 = await PDFDocument.load((await exportPdfPages([...sheets, { doc, layout: null, label: 'Model' }], { paper: 'A4', fit: true, pageSize: 'A4' })).bytes);
+  assert.equal(a4.getPageCount(), 3);
+  assert.deepEqual(a4.getPages().map((pg) => pg.getSize()).map(({ width, height }) => [+width.toFixed(2), +height.toFixed(2)]), [[841.89, 595.28], [841.89, 595.28], [841.89, 595.28]]);
+  const own = await PDFDocument.load((await exportPdf(doc, { layout: doc.layouts[0] })).bytes);
+  const { width, height } = own.getPage(0).getSize();
+  assert.ok(near(width, 420 * PT) && near(height, 297 * PT), `${width} x ${height}`);
+});
+
+test('layout on A1 (fit): paper geometry is enlarged by the fit scale', async () => {
+  const doc = readDxf(fixture('layouts_r2000.dxf')), layout = doc.layouts[0];
+  const segs = async (opts) => {
+    const pdf = await PDFDocument.load((await exportPdf(doc, { layout, ...opts })).bytes), c = pdf.getPage(0).node.Contents();
+    const streams = c instanceof PDFArray ? c.asArray().map((r) => pdf.context.lookup(r)) : [c];
+    const text = streams.map((st) => new TextDecoder().decode(decodePDFRawStream(st).decode())).join('\n');
+    return [...text.matchAll(/([-\d.]+) ([-\d.]+) m\s+([-\d.]+) ([-\d.]+) l/g)].map((m) => Math.hypot(m[3] - m[1], m[4] - m[2]));
+  };
+  // the model line (0,0)-(1000,0) through the 1:50 viewport: 20 mm of paper
+  const f = pageFit(420 * PT, 297 * PT, 'A1'), one = 20 * PT, big = one * f.scale;
+  assert.ok((await segs({})).some((l) => near(l, one, 0.05)), 'own paper: 20 mm');
+  const fitted = await segs({ paper: 'A1', fit: true });
+  assert.ok(fitted.some((l) => near(l, big, 0.05)), `A1 fit: ${big.toFixed(2)} pt in ${fitted.map((l) => l.toFixed(2))}`);
+});
+
+test('plot settings: stored values are validated, defaults fill the rest, the picked window is not stored', () => {
+  assert.deepEqual(plotSettingsFrom(undefined), { ...PLOT_DEFAULTS, window: null });
+  const s = plotSettingsFrom({ layoutPaper: 'A3', layoutFit: false, monochrome: true, pageSize: 'B9', n: -3, what: 'window', publishModel: 'yes' });
+  assert.equal(s.layoutPaper, 'A3'); assert.equal(s.layoutFit, false); assert.equal(s.monochrome, true);
+  assert.equal(s.pageSize, 'A3'); assert.equal(s.n, 100); assert.equal(s.what, 'extents'); assert.equal(s.publishModel, false);
+  const stored = plotSettingsToStore({ ...s, window: { minx: 0 } });
+  assert.equal('window' in stored, false);
+  assert.deepEqual(plotSettingsFrom(stored), s);
 });

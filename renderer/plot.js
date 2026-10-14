@@ -1,11 +1,34 @@
 // ASH Draw Studio - Print / Plot to PDF: one dialog (paper, orientation, what to print, scale, centring) that builds a
 // vector PDF with exportPdf, then either prints it (api.print -> system print dialog) or saves it.
-import { plotScale } from '../src/core/exportPdf.js';
-import { el, message, modal } from './ui.js';
+import { plotScale, pageFit, exportPdfPages } from '../src/core/exportPdf.js';
+import { layoutPage } from '../src/core/layouts.js';
+import { plotSettingsFrom, plotSettingsToStore, LAYOUT_PAPERS } from '../src/core/plotSettings.js';
+import { el, message, modal, toast } from './ui.js';
 import { exportPdfBytes, unitsPerMm } from './files.js';
 
 const options = (pairs) => pairs.map((s) => { const [v, l] = s.split('|'); return el('option', { value: v, text: l }); });
 const fmt = (v) => String(+v.toPrecision(6));
+const MONO = ' Monochrome (monochrome.ctb)';
+const PAPER_LABELS = { layout: "Layout's own paper (1:1)", Tabloid: 'Tabloid / ANSI B' };
+const paperSelect = (value) => { const e = el('select', { name: 'paper' }, LAYOUT_PAPERS.map((v) => el('option', { value: v, text: PAPER_LABELS[v] ?? v }))); e.value = value; return e; };
+
+/** the plot choices, loaded once from setting 'plot.settings' */
+async function settings(app) {
+  if (!app.plotSettings) {
+    const v = await window.api?.settingsGet?.('plot.settings')?.catch?.(() => undefined);
+    app.plotSettings ??= plotSettingsFrom(v);
+  }
+  return app.plotSettings;
+}
+const remember = (s) => window.api?.settingsSet?.('plot.settings', plotSettingsToStore(s))?.catch?.(() => {});
+
+/** scale readout of a layout sheet put on `paper` (1:n of the layout paper) */
+export function sheetScaleText(layout, paper, fit) {
+  if (paper === 'layout') return 'Scale 1:1 on the layout\'s own paper';
+  const lp = layoutPage(layout), f = pageFit(lp.pw, lp.ph, paper, { fit });
+  const r = f.scale <= 1 ? `1:${+(1 / f.scale).toFixed(2)}` : `${+f.scale.toFixed(2)}:1`;
+  return `${fit ? 'Fit' : 'Scale'}: ${r} of layout paper, ${paper} ${f.orientation}${f.fits ? '' : ' (sheet larger than the paper: edges cut off)'}`;
+}
 const rectOf = (a, b) => ({ minx: Math.min(a.x, b.x), miny: Math.min(a.y, b.y), maxx: Math.max(a.x, b.x), maxy: Math.max(a.y, b.y) });
 
 /** Let the user pick the two corners of a plot window on the drawing; resolves with the rectangle, or null if cancelled. */
@@ -45,7 +68,7 @@ function viewRect(vp) { return rectOf(vp.toWorld(0, vp.view.height), vp.toWorld(
 /** mode 'print' (Print button, system print dialog) or 'pdf' (Save button, Plot to PDF). Options persist per session. */
 export async function plotDialog(app, mode) {
   if (app.vp.layout) { await plotLayoutDialog(app, mode); return; }
-  const s = (app.plotSettings ??= { pageSize: 'A3', orientation: 'auto', monochrome: false, lineweights: true, transparency: true, what: 'extents', window: null, fit: true, n: 100, centre: true });
+  const s = await settings(app);
   for (;;) {
     const size = el('select', { name: 'pageSize' }, options(['fit|Fit to drawing', 'A4|A4', 'A3|A3', 'A2|A2', 'A1|A1', 'A0|A0', 'Letter|Letter']));
     const ori = el('select', { name: 'orientation' }, options(['auto|Automatic', 'landscape|Landscape', 'portrait|Portrait']));
@@ -61,7 +84,7 @@ export async function plotDialog(app, mode) {
       el('label', {}, 'What to print'), what, el('p', { class: 'plot-window', text: winText }),
       el('label', {}, fit, ' Fit to paper'), el('label', {}, 'Scale (paper : drawing)  1 : ', n),
       el('label', {}, centre, ' Centre the plot'),
-      el('label', {}, mono, ' Black and white'), el('label', {}, lw, ' Use lineweights'), el('label', {}, tp, ' Plot transparency'),
+      el('label', {}, mono, MONO), el('label', {}, lw, ' Use lineweights'), el('label', {}, tp, ' Plot transparency'),
       el('p', { text: 'The drawing is plotted as vector graphics. A 1 : N scale uses the drawing units (unitless drawings are taken as millimetres). Text outside the Western Latin character set (for example Arabic) cannot be drawn in this version.' })],
     [{ label: mode === 'print' ? 'Print' : 'Save', value: 'ok', primary: true }, { label: 'Pick window…', value: 'pick' }, { label: 'Cancel', value: null }]);
     if (r == null) return;
@@ -76,6 +99,7 @@ export async function plotDialog(app, mode) {
     }
     break;
   }
+  remember(s);
   const region = s.what === 'window' ? s.window : s.what === 'view' ? viewRect(app.vp) : null;
   try {
     const out = await exportPdfBytes(app.fileDoc, app.scene(), {
@@ -91,22 +115,28 @@ export async function plotDialog(app, mode) {
   } catch (err) { await message(mode === 'pdf' ? 'Export failed' : 'Print failed', err.message || String(err)); }
 }
 
-/** a layout tab plots the layout at 1:1 on its own paper (page = paper size, 1 paper unit = 1 mm or 1 inch) */
+/** a layout tab plots the layout sheet at 1:1 on its own paper, or on another paper (fitted, or 1:1 centred) */
 async function plotLayoutDialog(app, mode) {
-  const s = (app.plotSettings ??= { pageSize: 'A3', orientation: 'auto', monochrome: false, lineweights: true, transparency: true, what: 'extents', window: null, fit: true, n: 100, centre: true });
+  const s = await settings(app);
   const layout = app.vp.layout, p = layout.plot, swap = p.rotation === 1 || p.rotation === 3;
   const what = el('select', { name: 'what' }, options(['layout|Layout']));
+  const paperSel = paperSelect(s.layoutPaper), fit = el('input', { type: 'checkbox', name: 'fit', checked: s.layoutFit });
   const mono = el('input', { type: 'checkbox', name: 'monochrome', checked: s.monochrome }), lw = el('input', { type: 'checkbox', name: 'lineweights', checked: s.lineweights }), tp = el('input', { type: 'checkbox', name: 'transparency', checked: s.transparency });
-  const paper = `${p.paperName || 'Paper'}: ${fmt(swap ? p.paperH : p.paperW)} × ${fmt(swap ? p.paperW : p.paperH)} mm, scale 1:1 (${p.units === 0 ? 'inches' : 'millimetres'})`;
+  const own = `${p.paperName || 'Paper'}: ${fmt(swap ? p.paperH : p.paperW)} × ${fmt(swap ? p.paperW : p.paperH)} mm (${p.units === 0 ? 'inches' : 'millimetres'})`;
+  const readout = el('p', { class: 'plot-scale' });
+  const update = () => { fit.disabled = paperSel.value === 'layout'; readout.textContent = sheetScaleText(layout, paperSel.value, fit.checked); };
+  paperSel.onchange = update; fit.onchange = update; update();
   const r = await modal(mode === 'print' ? `Print ${layout.name}` : `Plot ${layout.name} to PDF`, [
-    el('label', {}, 'What to print'), what, el('p', { class: 'plot-paper', text: paper }),
-    el('label', {}, mono, ' Black and white'), el('label', {}, lw, ' Use lineweights'), el('label', {}, tp, ' Plot transparency'),
-    el('p', { text: 'The layout is plotted as vector graphics on its own paper size; viewports are clipped to their boundaries.' })],
+    el('label', {}, 'What to print'), what, el('p', { class: 'plot-paper', text: own }),
+    el('label', {}, 'Paper'), paperSel, el('label', {}, fit, ' Fit to paper'), readout,
+    el('label', {}, mono, MONO), el('label', {}, lw, ' Use lineweights'), el('label', {}, tp, ' Plot transparency'),
+    el('p', { text: 'The layout is plotted as vector graphics; viewports are clipped to their boundaries. Line weights keep their plotted width on any paper.' })],
   [{ label: mode === 'print' ? 'Print' : 'Save', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
   if (r == null) return;
-  Object.assign(s, { monochrome: mono.checked, lineweights: lw.checked, transparency: tp.checked });
+  Object.assign(s, { layoutPaper: paperSel.value, layoutFit: fit.checked, monochrome: mono.checked, lineweights: lw.checked, transparency: tp.checked });
+  remember(s);
   try {
-    const out = await exportPdfBytes(app.fileDoc, null, { layout, modelScene: app.vp.modelScene, monochrome: s.monochrome, lineweights: s.lineweights, transparency: s.transparency });
+    const out = await exportPdfBytes(app.fileDoc, null, { layout, modelScene: app.vp.modelScene, paper: s.layoutPaper, fit: s.layoutFit, monochrome: s.monochrome, lineweights: s.lineweights, transparency: s.transparency });
     if (mode === 'pdf') await app.saveBytes(out.bytes, 'pdf', 'PDF document');
     else {
       const res = await window.api.print(out.bytes);
@@ -114,4 +144,46 @@ async function plotLayoutDialog(app, mode) {
     }
     if (out.warnings.length) await message(mode === 'pdf' ? 'PDF exported with warnings' : 'Printed with warnings', out.warnings.join('\n'));
   } catch (err) { await message(mode === 'pdf' ? 'Export failed' : 'Print failed', err.message || String(err)); }
+}
+
+/** PUBLISH (File > Publish to PDF…): the chosen sheets of every open drawing, one page each in list order, in one PDF */
+export async function publishDialog(app) {
+  const s = await settings(app);
+  const rows = [];
+  for (const tab of app.tabs) {
+    const name = tab.file.name;
+    rows.push({ doc: tab.doc, layout: null, label: `${name} — Model`, on: s.publishModel });
+    for (const lo of [...(tab.doc.layouts ?? [])].sort((a, b) => a.tab - b.tab)) rows.push({ doc: tab.doc, layout: lo, label: `${name} — ${lo.name}`, on: true });
+  }
+  for (const r of rows) r.box = el('input', { type: 'checkbox', name: 'sheet', checked: r.on });
+  const list = el('div', { class: 'publish-list', style: 'max-height:40vh;overflow:auto;border:1px solid var(--line);padding:4px 8px;margin-bottom:8px' }, rows.map((r) => el('label', { style: 'display:block' }, r.box, ` ${r.label}`)));
+  const paperSel = paperSelect(s.layoutPaper), fit = el('input', { type: 'checkbox', name: 'fit', checked: s.layoutFit });
+  fit.disabled = paperSel.value === 'layout'; paperSel.onchange = () => { fit.disabled = paperSel.value === 'layout'; };
+  const mono = el('input', { type: 'checkbox', name: 'monochrome', checked: s.monochrome }), lw = el('input', { type: 'checkbox', name: 'lineweights', checked: s.lineweights }), tp = el('input', { type: 'checkbox', name: 'transparency', checked: s.transparency });
+  for (;;) {
+    const r = await modal('Publish to PDF', [
+      el('label', {}, 'Sheets (one page each, in this order)'), list,
+      el('label', {}, 'Paper'), paperSel, el('label', {}, fit, ' Fit to paper'),
+      el('label', {}, mono, MONO), el('label', {}, lw, ' Use lineweights'), el('label', {}, tp, ' Plot transparency'),
+      el('p', { text: "Model sheets are fitted to the drawing extents on the chosen paper (A3 with the layout's own paper)." })],
+    [{ label: 'Publish', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
+    if (r == null) return;
+    Object.assign(s, { layoutPaper: paperSel.value, layoutFit: fit.checked, monochrome: mono.checked, lineweights: lw.checked, transparency: tp.checked });
+    const model = rows.filter((x) => !x.layout);
+    if (model.length) s.publishModel = model.some((x) => x.box.checked);
+    remember(s);
+    const sheets = rows.filter((x) => x.box.checked);
+    if (!sheets.length) { await message('Nothing to publish', 'Tick at least one sheet.'); continue; }
+    try {
+      toast(`Publishing ${sheets.length} sheet${sheets.length > 1 ? 's' : ''}…`, 60000);
+      const out = await exportPdfPages(sheets.map((x) => ({ doc: x.doc, layout: x.layout, label: x.label })), {
+        paper: s.layoutPaper, fit: s.layoutFit, pageSize: s.layoutPaper === 'layout' ? 'A3' : s.layoutPaper, orientation: 'auto', margin: 10, scale: null, centre: true,
+        monochrome: s.monochrome, lineweights: s.lineweights, transparency: s.transparency,
+      });
+      toast(`Published ${sheets.length} sheet${sheets.length > 1 ? 's' : ''}`, 1500);
+      await app.saveBytes(out.bytes, 'pdf', 'PDF document');
+      if (out.warnings.length) await message('PDF published with warnings', out.warnings.join('\n'));
+    } catch (err) { await message('Publish failed', err.message || String(err)); }
+    return;
+  }
 }
