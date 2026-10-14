@@ -123,12 +123,20 @@ export function attribsAsText(ins) {
 /** Blocks whose definition has attributes (ATTSYNC "?"). */
 export const blocksWithAttdefs = (doc) => insertableBlocks(doc).filter((n) => attdefsOf(doc.blocks.get(n)).length);
 
+const sameNum = (a, b) => Math.abs((a ?? 0) - (b ?? 0)) <= 1e-9 * Math.max(1, Math.abs(a ?? 0), Math.abs(b ?? 0));
+/** two ATTRIBs agree in what ATTSYNC sets: tag, value, position, height, rotation, style, flags, invisibility (an
+ *  insert read from DXF carries other fields, and floats that went through text) */
+const sameAttrib = (a, b) => !!b && a.attrib?.tag === b.attrib?.tag && (a.text ?? '') === (b.text ?? '')
+  && sameNum(a.p?.x, b.p?.x) && sameNum(a.p?.y, b.p?.y) && sameNum(a.height, b.height) && sameNum(a.rot, b.rot)
+  && (a.style || 'Standard').toLowerCase() === (b.style || 'Standard').toLowerCase()
+  && (a.attrib?.flags ?? 0) === (b.attrib?.flags ?? 0) && !!a.invisible === !!b.invisible;
 /** ATTSYNC on one INSERT: ATTRIBs rebuilt from blk's ATTDEFs (placement, height, style, rotation, justification through
  *  the insert transform, as INSERT makes them), keeping the values of tags that are still defined. Null when unchanged. */
 export function syncAttribs(ins, blk) {
   const values = Object.fromEntries((ins.attribs ?? []).map((a) => [a.attrib.tag, a.text]));
   const fresh = instantiate(blk, ins.p, { sx: ins.sx ?? 1, sy: ins.sy ?? 1, rot: ins.rot ?? 0, values }).attribs ?? [];
-  if (JSON.stringify(fresh) === JSON.stringify(ins.attribs ?? [])) return null;
+  const cur = ins.attribs ?? [];
+  if (fresh.length === cur.length && fresh.every((a, i) => sameAttrib(a, cur[i]))) return null;
   const c = structuredClone(ins);
   if (fresh.length) c.attribs = fresh; else delete c.attribs;
   return c;

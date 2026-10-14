@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { newDocument, addEntity, addBlock, makeLine } from '../src/core/model.js';
 import { makeAttdef, instantiate, syncAttribs, attSync, blocksWithAttdefs } from '../src/core/blocks.js';
 import { Session } from '../src/core/edit.js';
+import { readDxf } from '../src/core/dxfRead.js';
+import { writeDxf } from '../src/core/dxfWrite.js';
 
 /** TAG block: a line, NAME and TYPE attributes; NEST block holds one TAG insert; model space holds one TAG and one NEST */
 function setup() {
@@ -66,4 +68,14 @@ test('attSync reaches layout (paper space) inserts and lists blocks with attribu
   assert.deepEqual(blocksWithAttdefs(doc), ['TAG']);
   s.undo();
   assert.deepEqual(vals(lay.entities[0]), { NAME: 'paper', TYPE: 'T?' });
+});
+
+test('attSync: inserts read from DXF that already match their definition are not counted', () => {
+  const { doc } = setup();
+  // ATTRIBs as AutoCAD writes them: width, oblique, justification codes and an alignment point, 16-digit coordinates
+  const text = writeDxf(doc).replace('AcDbText\r\n10\r\n98\r\n', 'AcDbText\r\n10\r\n97.99999999999999\r\n')
+    .replaceAll('\r\n7\r\nSTANDARD\r\n100\r\nAcDbAttribute\r\n', '\r\n7\r\nSTANDARD\r\n41\r\n1.0\r\n51\r\n0.0\r\n71\r\n0\r\n72\r\n0\r\n11\r\n0.0\r\n21\r\n0.0\r\n31\r\n0.0\r\n100\r\nAcDbAttribute\r\n');
+  assert.ok(text.includes('97.99999999999999') && text.includes('51\r\n0.0'));
+  const back = readDxf(new TextEncoder().encode(text));
+  assert.equal(attSync(new Session(back), 'TAG'), 0);
 });

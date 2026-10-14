@@ -7,6 +7,7 @@ import { imageCorners, transformImage, wipeoutRing } from './image.js';
 import { textFrame, textCorners } from './textMetrics.js';
 import { buildDimension } from './dims.js';
 import { drain } from './slice.js';
+import { clipOn, insertCellClips, clipPolyline, keepsPoint } from './xclip.js';
 import { resolveDimStyle } from './dimsStyle.js';
 import { nurbsOf, curveOfNurbs, curveCurveHits, nearestParam, slice as nurbsSlice, splineEntity, offsetNurbs, isClosed, derivsAt, domain, lineNurbs, joinCurves, subCurve } from './nurbs.js';
 
@@ -257,12 +258,25 @@ export function tessellate(e, doc = null, tol = 0) {
     case 'HATCH': return (e.loops || []).map((l) => hatchLoopPoints(l, tol)).filter((l) => l.length > 1);
     case 'INSERT':
     case 'DIMENSION': {
+      if (e.type === 'INSERT' && clipOn(e)) return clippedInsertPolylines(e, doc, tol);
       const out = [];
       for (const sub of explode(e, doc)) for (const pl of tessellate(sub, doc, tol)) out.push(pl);
       return out;
     }
     default: return [];
   }
+}
+/** XCLIP: an INSERT whose clip is on, tessellated and cut to the clip of each of its cells (as the scene builder draws
+ *  it): text and points are kept or dropped whole by their insertion point */
+function clippedInsertPolylines(e, doc, tol) {
+  const out = [];
+  for (const { view, clip } of insertCellClips(e, doc?.blocks.get(e.block)?.base)) {
+    for (const sub of explode(view, doc)) {
+      if ((sub.type === 'TEXT' || sub.type === 'MTEXT' || sub.type === 'POINT') && sub.p) { if (!keepsPoint(clip, sub.p.x, sub.p.y)) continue; for (const pl of tessellate(sub, doc, tol)) out.push(pl); continue; }
+      for (const pl of tessellate(sub, doc, tol)) for (const q of clipPolyline(pl, clip)) out.push(q);
+    }
+  }
+  return out;
 }
 export function polylinePoints(e, tol = 0) {
   const v = e.vertices;

@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { PDFDocument, PDFArray, decodePDFRawStream } from 'pdf-lib';
 import { newDocument, addEntity, makeLine, makeInsert } from '../src/core/model.js';
 import { buildScene } from '../src/core/render.js';
-import { worldClip, clipPathOps, clipFillOps, xclipInserts, worldToBlock } from '../src/core/xclip.js';
+import { worldClip, clipPathOps, clipFillOps, clipItem, xclipInserts, worldToBlock } from '../src/core/xclip.js';
+import { SpatialIndex, pickEntity, findSnap } from '../src/core/pick.js';
+import { bboxOf, docExtents } from '../src/core/geom.js';
 import { readDxf } from '../src/core/dxfRead.js';
 import { writeDxf } from '../src/core/dxfWrite.js';
 import { exportPdf } from '../src/core/exportPdf.js';
@@ -96,7 +98,7 @@ test('XCLIP new boundary, off and delete are one undo step each', () => {
 });
 
 /** a synthetic AutoCAD-style DXF: INSERT -> xdictionary -> ACAD_FILTER -> SPATIAL -> SPATIAL_FILTER */
-function syntheticDxf() {
+function syntheticDxf(on = 1) {
   const L = [];
   const p = (c, v) => L.push(String(c), String(v));
   p(0, 'SECTION'); p(2, 'BLOCKS');
@@ -111,7 +113,7 @@ function syntheticDxf() {
   p(0, 'DICTIONARY'); p(5, 'A1'); p(330, 'A0'); p(100, 'AcDbDictionary'); p(280, 1); p(281, 1); p(3, 'ACAD_FILTER'); p(360, 'A2');
   p(0, 'DICTIONARY'); p(5, 'A2'); p(330, 'A1'); p(100, 'AcDbDictionary'); p(280, 1); p(281, 1); p(3, 'SPATIAL'); p(360, 'A3');
   p(0, 'SPATIAL_FILTER'); p(5, 'A3'); p(330, 'A2'); p(100, 'AcDbFilter'); p(100, 'AcDbSpatialFilter'); p(70, 2); p(10, 20); p(20, -10); p(10, 60); p(20, 10);
-  p(210, 0); p(220, 0); p(230, 1); p(11, 0); p(21, 0); p(31, 0); p(71, 1); p(72, 0); p(73, 0);
+  p(210, 0); p(220, 0); p(230, 1); p(11, 0); p(21, 0); p(31, 0); p(71, on); p(72, 0); p(73, 0);
   for (const v of [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0]) p(40, v);
   p(0, 'ENDSEC'); p(0, 'EOF');
   return new TextEncoder().encode(L.join('\n') + '\n');
@@ -153,4 +155,65 @@ test('PDF export does not draw the clipped-away geometry', async () => {
   const horiz = segs.filter((q) => Math.abs(q[1] - q[3]) < 1e-3).map((q) => Math.abs(q[2] - q[0])).sort((a, b) => b - a);
   assert.equal(segs.length, 3); // the reference and the two cut lines; the frame is not plotted
   assert.ok(Math.abs(horiz[1] / horiz[0] - 0.4) < 0.01, String(horiz)); // 80 of the block line's 200 units are kept
+});
+
+test('geometry on the boundary is kept on all four edges and at the vertices, inside and inverted', () => {
+  const edges = [[0, 0, 10, 0], [10, 0, 10, 10], [10, 10, 0, 10], [0, 10, 0, 0]];
+  for (const inv of [false, true]) for (const [ax, ay, bx, by] of edges) {
+    const ops = [0, ax, ay, 1, bx, by];
+    assert.deepEqual(clipPathOps(ops, rect(inv)).ops, ops, `${inv} ${ax},${ay}-${bx},${by}`);
+  }
+  // along the top edge and beyond it: the part on the edge is kept (inside clip)
+  const r = clipPathOps([0, -5, 10, 1, 15, 10], rect());
+  assert.deepEqual(pts(r.ops).map((p) => p.map((v) => +v.toFixed(9))), [[0, 10], [10, 10]]);
+  // touching a vertex only: nothing kept; the diagonal between two vertices: kept whole
+  assert.deepEqual(clipPathOps([0, -5, 5, 1, 5, 15], rect()).ops, []);
+  assert.deepEqual(clipPathOps([0, 0, 0, 1, 10, 10], rect()).ops, [0, 0, 0, 1, 10, 10]);
+  // a point / text on the right and top edges is kept, by an inside and an inverted clip
+  for (const inv of [false, true]) for (const p of [{ x: 10, y: 5 }, { x: 5, y: 10 }, { x: 10, y: 10 }]) {
+    assert.ok(clipItem({ kind: 'point', p, ops: [] }, rect(inv), null), `${inv} ${p.x},${p.y}`);
+  }
+});
+
+test('pick, snaps and extents of a clipped insert see only the clipped geometry', () => {
+  // world clip: x 1040..1120, y -20..20; the horizontal line 1000..1200 and the vertical one at x 1100 (y -100..100)
+  const { doc, ins } = clippedDoc(CLIP);
+  const index = new SpatialIndex(doc);
+  assert.equal(pickEntity(index, { x: 1010, y: 0 }, 1), null); // a hidden part of the line
+  assert.equal(pickEntity(index, { x: 1100, y: 60 }, 1), null);
+  assert.equal(pickEntity(index, { x: 1060, y: 0 }, 1)?.id, ins.id); // a shown part
+  const end = new Set(['end']);
+  for (const p of [{ x: 1000, y: 0 }, { x: 1200, y: 0 }, { x: 1100, y: 100 }, { x: 1100, y: -100 }]) assert.equal(findSnap(index, p, 2, { kinds: end }), null, `${p.x},${p.y}`);
+  const b = bboxOf(ins, doc);
+  for (const [k, v] of Object.entries({ minx: 1040, miny: -20, maxx: 1120, maxy: 20 })) assert.ok(Math.abs(b[k] - v) < 1e-6, `${k} ${b[k]}`);
+  const x = docExtents(doc);
+  assert.ok(Math.abs(x.minx - 1040) < 1e-6 && Math.abs(x.maxx - 1120) < 1e-6);
+  // the same insert without a clip: picked there, its endpoints snap
+  const plain = clippedDoc(null), pi = new SpatialIndex(plain.doc);
+  assert.equal(pickEntity(pi, { x: 1010, y: 0 }, 1)?.id, plain.ins.id);
+  assert.equal(findSnap(pi, { x: 1000, y: 0 }, 2, { kinds: end })?.kind, 'end');
+});
+
+test('MINSERT: every cell is cut to its own clip', () => {
+  const { doc, ins } = clippedDoc(CLIP);
+  Object.assign(ins, { cols: 3, colSp: 300 }); // cells at x 1000, 1300, 1600: clips 1040..1120, 1340..1420, 1640..1720
+  const sc = buildScene(doc), seen = new Set();
+  for (const it of drawn(sc)) for (const [x, y] of pts(it.ops)) {
+    const k = [0, 1, 2].find((c) => x >= 1040 + 300 * c - 1e-6 && x <= 1120 + 300 * c + 1e-6);
+    assert.ok(k !== undefined && y >= -20 - 1e-6 && y <= 20 + 1e-6, `${x},${y}`);
+    seen.add(k);
+  }
+  assert.deepEqual([...seen].sort(), [0, 1, 2]);
+  const b = bboxOf(ins, doc);
+  assert.ok(Math.abs(b.minx - 1040) < 1e-6 && Math.abs(b.maxx - 1720) < 1e-6);
+});
+
+test('DXF: code 71 is the clip on / off flag; $XCLIPFRAME round-trips in the header', () => {
+  assert.equal(readDxf(syntheticDxf(0)).entities.find((e) => e.type === 'INSERT').clip.enabled, false);
+  assert.equal(readDxf(syntheticDxf(1)).entities.find((e) => e.type === 'INSERT').clip.enabled, true);
+  const { doc } = clippedDoc({ ...CLIP, enabled: false });
+  doc.header.xclipframe = 1;
+  const back = readDxf(new TextEncoder().encode(writeDxf(doc)));
+  assert.equal(back.entities.find((e) => e.type === 'INSERT').clip.enabled, false);
+  assert.equal(back.header.xclipframe, 1);
 });

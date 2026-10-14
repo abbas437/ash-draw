@@ -2,6 +2,7 @@
 // Pure module: world coordinates (Y up); every tolerance is in WORLD units (caller: pixels / zoom).
 import { bboxOf, isInfinite, clipInfinite, growBox, unionBox, distanceToEntity, nearestPoint, snapPoints, intersections, primsIntersections, toPrims, distToSegment, explode, tessellate, ccwSweep, DEG } from './geom.js';
 import { drain } from './slice.js';
+import { clipOn, insertCellClips, keepsPoint } from './xclip.js';
 import { tangentPoints, parallelPoint, geometricCenter } from './osnap.js';
 
 const TAU = Math.PI * 2;
@@ -91,7 +92,7 @@ export class SpatialIndex {
   /** bboxOf(e) of an INSERT of a big block (counting nested blocks through), computed about BOX_CHUNK leaf entities
    *  per step (yielding `frac` in between) and cached: the same pieces bboxOf would tessellate in one go */
   *_insertBoxSteps(e, frac) {
-    if (this._leafCount(e.block) <= BOX_CHUNK) return;
+    if (this._leafCount(e.block) <= BOX_CHUNK || clipOn(e)) return; // a clipped insert: bboxOf (cut to the clip)
     const st = { work: 0 };
     const b = yield* this._boxSteps(e, frac, st, new Set());
     this._boxCache.set(e.id, { e, box: finiteBox(b) ? b : null });
@@ -321,7 +322,11 @@ function entitySnapPoints(index, e) {
       const n = blk ? blk.entities.length * Math.max(1, e.cols || 1) * Math.max(1, e.rows || 1) : 0;
       sub = [];
       if (n > 0 && n <= INSERT_SNAP_LIMIT) {
-        for (const c of safe(() => explode(e, doc), [])) {
+        if (clipOn(e)) { // XCLIP: only the snap points the clip of their cell keeps
+          for (const { view, clip } of insertCellClips(e, blk.base)) for (const c of safe(() => explode(view, doc), [])) {
+            for (const q of safe(() => snapPoints(c, doc), [])) if (q.kind !== 'ins' && keepsPoint(clip, q.x, q.y)) sub.push(q);
+          }
+        } else for (const c of safe(() => explode(e, doc), [])) {
           for (const q of safe(() => snapPoints(c, doc), [])) if (q.kind !== 'ins') sub.push(q);
         }
       }

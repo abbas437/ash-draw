@@ -11,6 +11,7 @@
 //     when the boundary is not convex, against each triangle of it (the pieces are disjoint, so the even-odd fill of
 //     all of them is the exact intersection). Inverted: the fill plus its inside part, under even-odd = the outside part
 //   - text, points: kept whole when the insertion point is kept, otherwise dropped
+//   - on the boundary (within a tolerance scaled to its size) counts as kept, for an inside clip and an inverted one
 //   - images: an inside clip becomes (or narrows) the image's clip polygon; an inverted clip drops an image wholly
 //     inside the boundary and keeps any other whole
 //   - XLINE / RAY: cut to the boundary for an inside clip; kept whole by an inverted one
@@ -92,12 +93,62 @@ export function clipRingConvex(ring, conv) {
   return pts.length >= 3 ? pts : [];
 }
 
-/** a clip prepared for the scene builder: world polygon, convex parts, inverted flag */
+/** distance from (x, y) to the polygon's outline is at most tol */
+function onOutline(x, y, poly, tol) {
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[j], b = poly[i], dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+    const t = l2 > 0 ? Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / l2)) : 0;
+    if (Math.hypot(x - a.x - dx * t, y - a.y - dy * t) <= tol) return true;
+  }
+  return false;
+}
+
+/** a clip prepared for the scene builder: world polygon, convex parts, inverted flag, on-boundary tolerance */
 export function worldClip(clip, P) {
   const poly = clipPolygon(clip).map(P);
-  return { poly, inverted: !!clip.inverted, convex: isConvex(poly), _parts: null };
+  let size = 0;
+  for (const p of poly) size = Math.max(size, Math.abs(p.x - poly[0].x), Math.abs(p.y - poly[0].y));
+  return { poly, inverted: !!clip.inverted, convex: isConvex(poly), tol: EPS * Math.max(size, 1e-300), _parts: null };
 }
 const partsOf = (c) => (c._parts ??= c.convex ? [c.poly] : triangulate(c.poly));
+/** the point is kept by the clip: inside an inside clip, outside an inverted one; on the boundary, kept by both */
+export const keepsPoint = (c, x, y) => onOutline(x, y, c.poly, c.tol) || insidePoly(x, y, c.poly) !== c.inverted;
+/** the point is within the boundary (inside or on it) */
+const within = (c, x, y) => insidePoly(x, y, c.poly) || onOutline(x, y, c.poly, c.tol);
+
+/** the insert's clip is on (XCLIP boundary set and not turned off) */
+export const clipOn = (e) => !!e.clip && e.clip.enabled !== false && e.clip.pts?.length >= 2;
+
+/** an INSERT with a clip as one single-cell view per MINSERT cell with that cell's world clip ({ view, clip }); the
+ *  attributes go with the first cell (the scene builder cuts them to that one) */
+export function insertCellClips(e, base = { x: 0, y: 0 }) {
+  const cols = Math.max(1, e.cols || 1), rows = Math.max(1, e.rows || 1), rot = (e.rot || 0) * DEG;
+  const co = Math.cos(rot), si = Math.sin(rot), out = [];
+  for (let r = 0; r < rows; r++) for (let k = 0; k < cols; k++) {
+    const ox = k * (e.colSp || 0), oy = r * (e.rowSp || 0);
+    const { clip, attribs, ...rest } = e;
+    const view = { ...rest, p: { x: e.p.x + ox * co - oy * si, y: e.p.y + ox * si + oy * co }, cols: 1, rows: 1 };
+    if (!r && !k && attribs) view.attribs = attribs;
+    const m = insertMatrix(view, base);
+    out.push({ view, clip: worldClip(clip, (p) => ({ x: m[0] * p.x + m[2] * p.y + m[4], y: m[1] * p.x + m[3] * p.y + m[5] })) });
+  }
+  return out;
+}
+
+/** a polyline (points; one point = a point) cut to a world clip: the kept polylines */
+export function clipPolyline(pl, c) {
+  if (pl.length === 1) return keepsPoint(c, pl[0].x, pl[0].y) ? [pl] : [];
+  const ops = [];
+  pl.forEach((p, i) => ops.push(i ? OP_L : OP_M, p.x, p.y));
+  const r = clipPathOps(ops, c);
+  if (!r.cut) return [pl];
+  const out = [];
+  for (let i = 0; i < r.ops.length; i += 3) {
+    const p = { x: r.ops[i + 1], y: r.ops[i + 2] };
+    if (r.ops[i] === OP_M) out.push([p]); else out[out.length - 1].push(p);
+  }
+  return out.filter((q) => q.length > 1);
+}
 
 // --- path ops ------------------------------------------------------------------------------------------------------
 
@@ -141,7 +192,7 @@ const arcPt = (cx, cy, rx, ry, rot, t) => {
 
 /** path ops cut to the clip: { ops, cut } (cut false = nothing crossed); ops empty when nothing is kept */
 export function clipPathOps(ops, c) {
-  const keep = (x, y) => insidePoly(x, y, c.poly) !== c.inverted;
+  const keep = (x, y) => keepsPoint(c, x, y);
   const out = [];
   let cut = false, px = 0, py = 0, sx = 0, sy = 0, lx = NaN, ly = NaN, anyOut = false;
   const moveIfNeeded = (x, y) => { if (!(Math.abs(x - lx) <= EPS && Math.abs(y - ly) <= EPS)) out.push(OP_M, x, y); };
@@ -233,13 +284,13 @@ const polyBox = (poly) => opsBox(poly.flatMap((p) => [OP_L, p.x, p.y]));
 
 /** a scene item cut to a world clip: the item, a cut copy, or null when nothing of it is left */
 export function clipItem(it, c, clipInfinite) {
-  const keepPt = (p) => insidePoly(p.x, p.y, c.poly) !== c.inverted;
+  const keepPt = (p) => keepsPoint(c, p.x, p.y);
   if (it.kind === 'text' || it.kind === 'point') return keepPt(it.p) ? it : null;
   if (it.strokeText) return keepPt(it.strokeText.p) ? it : null;
   if (it.kind === 'clipFrame') return it;
   if (it.kind === 'image') {
     const q = it.ops.length >= 12 ? [1, 4, 7, 10].map((k) => ({ x: it.ops[k], y: it.ops[k + 1] })) : [];
-    if (c.inverted) return q.length && q.every((p) => insidePoly(p.x, p.y, c.poly)) ? null : it;
+    if (c.inverted) return q.length && q.every((p) => within(c, p.x, p.y)) ? null : it;
     const own = it.image.clipPts;
     let pts = c.poly;
     if (own?.length >= 3 && c.convex) pts = clipRingConvex(own, c.poly);
@@ -256,7 +307,7 @@ export function clipItem(it, c, clipInfinite) {
   if (it.kind === 'fill' || it.kind === 'hatch' || it.kind === 'wipeout') {
     const b = it.bbox;
     // wholly inside a convex boundary: unchanged (inside clip) or gone (inverted)
-    if (b && c.convex && [[b.minx, b.miny], [b.maxx, b.miny], [b.maxx, b.maxy], [b.minx, b.maxy]].every(([x, y]) => insidePoly(x, y, c.poly))) return c.inverted ? null : it;
+    if (b && c.convex && [[b.minx, b.miny], [b.maxx, b.miny], [b.maxx, b.maxy], [b.minx, b.maxy]].every(([x, y]) => within(c, x, y))) return c.inverted ? null : it;
     const ops = clipFillOps(it.ops, c);
     if (!ops.length) return null;
     const { _loops, _ccw, ...rest } = it;
@@ -274,9 +325,10 @@ export function clipItem(it, c, clipInfinite) {
 // --- DXF: SPATIAL_FILTER ------------------------------------------------------------------------------------------
 // INSERT 102 {ACAD_XDICTIONARY 360 -> DICTIONARY "ACAD_FILTER" -> DICTIONARY "SPATIAL" -> SPATIAL_FILTER:
 //   100 AcDbFilter, 100 AcDbSpatialFilter, 70 count, 10/20 per point (2 = rectangle corners), 210/220/230 normal,
-//   11/21/31 origin, 71 display boundary, 72 front clip (40 distance), 73 back clip (41 distance), 290 inverted
+//   11/21/31 origin, 71 clipping enabled, 72 front clip (40 distance), 73 back clip (41 distance), 290 inverted
 //   (newer AutoCAD; written only when set), then 12 x 40 inverse block transform and 12 x 40 clip transform (3 x 4,
-//   row by row). The points are read and written as block definition coordinates.
+//   row by row). The points are read and written as block definition coordinates. Frame display is the drawing's
+//   $XCLIPFRAME header variable (doc.header.xclipframe), not part of the filter.
 
 /** the insert's block -> world matrix (2D affine), base point included */
 const insertMatrix = (e, base = { x: 0, y: 0 }) => compose(translation(e.p.x, e.p.y), compose(rotation((e.rot || 0) * DEG),
@@ -286,7 +338,7 @@ const mat34 = (m) => [m[0], m[2], 0, m[4], m[1], m[3], 0, m[5], 0, 0, 1, 0];
 export function spatialFilterTags(e, base) {
   const c = e.clip, t = [[100, 'AcDbFilter'], [100, 'AcDbSpatialFilter'], [70, c.pts.length]];
   for (const p of c.pts) t.push([10, p.x], [20, p.y]);
-  t.push([210, 0], [220, 0], [230, 1], [11, 0], [21, 0], [31, 0], [71, c.showFrame === false ? 0 : 1], [72, 0], [73, 0]);
+  t.push([210, 0], [220, 0], [230, 1], [11, 0], [21, 0], [31, 0], [71, c.enabled === false ? 0 : 1], [72, 0], [73, 0]);
   if (c.inverted) t.push([290, 1]);
   let inv;
   try { inv = invert(insertMatrix(e, base)); } catch { inv = [1, 0, 0, 1, 0, 0]; }
@@ -296,11 +348,11 @@ export function spatialFilterTags(e, base) {
 }
 
 /** the clip of a SPATIAL_FILTER's tags ([code, value] strings or numbers); null when it has no usable boundary.
- *  `enabled`: AutoCAD keeps a clip that is turned off out of the filter (the filter is removed by XCLIP Delete only);
- *  the DXF has no off flag in the classic form, so a read clip is enabled. */
+ *  `enabled` is code 71 (XCLIP Off keeps the filter with 71 = 0); showFrame is the in-app default (the frame is the
+ *  header's $XCLIPFRAME). */
 export function clipFromSpatialFilter(tags) {
   const pts = [];
-  let inSF = false, n = 0, x = null, show = 1, inverted = false, mats = [];
+  let inSF = false, n = 0, x = null, on = 1, inverted = false, mats = [];
   for (const [code, raw] of tags) {
     if (code === 100) { inSF = raw === 'AcDbSpatialFilter'; continue; }
     if (!inSF) continue;
@@ -308,7 +360,7 @@ export function clipFromSpatialFilter(tags) {
     if (code === 70) n = v;
     else if (code === 10) x = v;
     else if (code === 20 && x !== null) { pts.push({ x, y: v }); x = null; }
-    else if (code === 71) show = v;
+    else if (code === 71) on = v;
     else if (code === 290) inverted = v !== 0;
     else if (code === 40) mats.push(v);
   }
@@ -318,7 +370,7 @@ export function clipFromSpatialFilter(tags) {
   const m = ct && [ct[0], ct[4], ct[1], ct[5], ct[3], ct[7]];
   const ident = !m || (Math.abs(m[0] - 1) + Math.abs(m[1]) + Math.abs(m[2]) + Math.abs(m[3] - 1) + Math.abs(m[4]) + Math.abs(m[5]) < 1e-12);
   const P = ident ? pts : pts.map((p) => ({ x: m[0] * p.x + m[2] * p.y + m[4], y: m[1] * p.x + m[3] * p.y + m[5] }));
-  return { pts: P, enabled: true, inverted, showFrame: show !== 0 };
+  return { pts: P, enabled: on !== 0, inverted, showFrame: true };
 }
 
 // --- editing ------------------------------------------------------------------------------------------------------

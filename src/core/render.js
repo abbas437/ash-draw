@@ -28,7 +28,7 @@ import { strokeLayout, shxSubstitute } from './shx.js';
 import { isGdtFont, gdtText, gdtModel } from './gdt.js';
 import { textFrame, textCorners, textAdvance } from './textMetrics.js';
 import { isPaperViewport } from './layouts.js';
-import { worldClip, clipItem } from './xclip.js';
+import { worldClip, clipItem, clipOn } from './xclip.js';
 
 const TAU = Math.PI * 2;
 const OP_M = 0, OP_L = 1, OP_A = 2, OP_E = 3, OP_Z = 4;
@@ -146,26 +146,29 @@ class Builder {
     const cols = Math.max(1, e.cols || 1), rows = Math.max(1, e.rows || 1);
     const rot = (e.rot || 0) * DEG;
     // XCLIP: everything this insert emits (nested inserts and attributes included) is cut to the boundary, given in
-    // block coordinates and placed by the first cell's transform; the frame is an item of its own (kind 'clipFrame')
-    // shown with the selection only, never plotted
-    const clip = e.clip?.pts?.length >= 2 ? worldClip(e.clip, (p) => apply(compose(m, compose(translation(e.p.x, e.p.y), compose(rotation(rot),
-      compose(scaling(e.sx ?? 1, e.sy ?? 1), translation(-blk.base.x, -blk.base.y))))), p)) : null;
+    // block coordinates and placed by each MINSERT cell's own transform (the attributes by the first cell's); the
+    // frame is an item of its own (kind 'clipFrame') shown with the selection only, never plotted
+    const clipOf = clipOn(e) ? (mm) => worldClip(e.clip, (p) => apply(mm, p)) : null;
     const outer = this.clips;
-    if (clip && e.clip.enabled !== false) this.clips = outer ? [...outer, clip] : [clip];
-    try { yield* this.insertCells(e, m, style, rootId, depth, blk, cols, rows, rot); } finally { this.clips = outer; }
-    if (clip && e.clip.enabled !== false) {
+    let frames = null;
+    try { frames = yield* this.insertCells(e, m, style, rootId, depth, blk, cols, rows, rot, clipOf); } finally { this.clips = outer; }
+    for (const clip of frames ?? []) {
       const ops = []; clip.poly.forEach((p, i) => ops.push(i ? OP_L : OP_M, p.x, p.y)); ops.push(OP_Z);
       let bbox = null; for (const p of clip.poly) bbox = growBox(bbox, p);
       this.push({ kind: 'clipFrame', ops, style, bbox }, rootId);
     }
   }
 
-  *insertCells(e, m, style, rootId, depth, blk, cols, rows, rot) {
+  /** the cells of an INSERT; clipOf(cell matrix): that cell's world clip (XCLIP), pushed on this.clips while the cell
+   *  is emitted. Returns the cells' clips (none without one). */
+  *insertCells(e, m, style, rootId, depth, blk, cols, rows, rot, clipOf = null) {
+    const outer = this.clips, clips = [];
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const local = compose(translation(e.p.x, e.p.y), compose(rotation(rot),
           compose(translation(c * (e.colSp || 0), r * (e.rowSp || 0)), compose(scaling(e.sx ?? 1, e.sy ?? 1), translation(-blk.base.x, -blk.base.y)))));
         const mm = compose(m, local);
+        if (clipOf) { const k = clipOf(mm); clips.push(k); this.clips = outer ? [...outer, k] : [k]; }
         for (const be of blk.entities) {
           const v = blockContentView(be);
           if (v) { if (v.type === 'INSERT') yield* this.emitSteps(v, mm, style, rootId, depth + 1); else this.emit(v, mm, style, rootId, depth + 1); }
@@ -174,7 +177,9 @@ class Builder {
       }
     }
     // ATTRIBs live in the INSERT's own space (not the block's); invisible ones (flag 1) are hidden
+    if (clips.length) this.clips = outer ? [...outer, clips[0]] : [clips[0]];
     for (const at of e.attribs ?? []) if (!(at.attrib.flags & 1)) this.emit(at, m, style, rootId, depth + 1);
+    return clips;
   }
 
   emitBlockContent(ents, m, style, rootId, depth) {
