@@ -1,6 +1,7 @@
 // ASH Draw Studio - application controller: wires the viewport, tools, panels, menus and files together.
 import { newDocument } from '../src/core/model.js';
-import { eraseEntities, copyToClipboard, pasteEntities, setDrawingUnits } from '../src/core/edit.js';
+import { eraseEntities, setDrawingUnits } from '../src/core/edit.js';
+import { copyClip, pasteClip } from './clipboard-ui.js';
 import { INSUNITS, unitLabel, lengthPrecision, looksLikeMapMetres } from '../src/core/measure.js';
 import { setShowLegs, refreshMeasureResults, clearMeasureResults } from './tools-measure.js';
 import { parseCoordinate } from '../src/core/coords.js';
@@ -51,7 +52,7 @@ class App {
     this.tabs = [];              // open drawings (file tabs); see tabs.js createDocState
     this.active = null;          // the tab shown
     this.defaults = { textHeight: null, hatchPattern: 'ANSI31', hatchScale: 1, hatchAngle: 0 };
-    this.clip = [];
+    this.clip = null;            // the last copied fragment (DXF text), for hosts without a system clipboard
     this.lastTool = 'line';
     this.theme = 'light';        // UI theme; light by default, the choice is saved as setting 'theme'
     this.vp = new Viewport(document.getElementById('cv'));
@@ -197,7 +198,7 @@ class App {
     if (t.text?.(s)) { this.refreshPrompt(); return; }
     const low = s.toLowerCase();
     if (TOOL_ALIASES[low]) { this.setTool(TOOL_ALIASES[low]); return; }
-    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => { this.viewHistory.breakGesture(this.viewKey()); this.vp.zoomExtents(); }, all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), publish: () => this.publish(), find: () => this.find.open(), compare: () => this.compare(), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), units: () => this.unitsDialog(), un: () => this.unitsDialog(), ddunits: () => this.unitsDialog(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), qselect: () => qselectDialog(this), selectsimilar: () => selectSimilarCommand(this), purge: () => purgeDialog(this), pu: () => purgeDialog(this), osnap: () => draftingSettings(this), os: () => draftingSettings(this), dsettings: () => draftingSettings(this), ds: () => draftingSettings(this), ...this.panelCommands(), ...this.layerCommands(), ...this.layoutCommands };
+    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => { this.viewHistory.breakGesture(this.viewKey()); this.vp.zoomExtents(); }, all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), publish: () => this.publish(), find: () => this.find.open(), compare: () => this.compare(), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), copyclip: () => this.copySel(), copybase: () => this.copySel(true), pasteclip: () => this.paste(), pasteblock: () => this.paste('block'), pasteorig: () => this.paste('orig'), units: () => this.unitsDialog(), un: () => this.unitsDialog(), ddunits: () => this.unitsDialog(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), qselect: () => qselectDialog(this), selectsimilar: () => selectSimilarCommand(this), purge: () => purgeDialog(this), pu: () => purgeDialog(this), osnap: () => draftingSettings(this), os: () => draftingSettings(this), dsettings: () => draftingSettings(this), ds: () => draftingSettings(this), ...this.panelCommands(), ...this.layerCommands(), ...this.layoutCommands };
     if (sys[low]) { sys[low](); return; }
     const last = this.vp.lastPoint ?? { x: 0, y: 0 };
     const dir = this.vp.lastPoint ? { x: this.vp.cursor.x - last.x, y: this.vp.cursor.y - last.y } : null;
@@ -249,13 +250,8 @@ class App {
   redo() { commitViewportView(this); if (this.session.redo()) toast(`Redo`, 1200); }
   selectAll() { this.vp.setSelection(this.doc.entities.filter((e) => this.vp.index.bboxOf(e)).map((e) => e.id)); }
   deleteSelection() { if (this.vp.selection.size) { eraseEntities(this.session, [...this.vp.selection]); } }
-  copySel() { this.clip = copyToClipboard(this.doc, [...this.vp.selection]); if (this.clip.length) toast(`${this.clip.length} object(s) copied`, 1500); }
-  paste() {
-    if (!this.clip.length) return;
-    const k = this.vp.view.zoom;
-    const made = pasteEntities(this.session, this.clip, 20 / k, -20 / k);
-    this.vp.setSelection(made.map((e) => e.id));
-  }
+  copySel(base = false) { copyClip(this, { base }); }
+  paste(mode = 'clip') { pasteClip(this, mode); }
 
   // ---- new / open / save -------------------------------------------------------------------------
   /** asks to save a drawing with unsaved changes (shown first). The choice: 'clean' (nothing to save), 'save' (saved -
@@ -656,7 +652,7 @@ class App {
     const M = [
       ['File', [['New', 'Ctrl+N', () => this.newDrawing()], ['Open…', 'Ctrl+O', () => this.open()], ['Recent files…', '', () => this.sessionStore.showRecent().catch((err) => message('Could not open the file', err.message || String(err)))], ['Close', 'Ctrl+W', () => this.closeTab()], '-', ['Compare…', 'COMPARE', () => this.compare()], '-', ['Save', 'Ctrl+S', () => this.save()], ['Save as DXF…', '', () => this.saveAs('dxf')], [() => (this.odaWrite ? 'Save as DWG…' : 'Save as DWG… (experimental)'), '', () => this.saveAs('dwg'), null, () => this.allowDwgSave || this.odaWrite], '-',
         ['Print…', 'Ctrl+P', () => this.print()], ['Plot to PDF…', '', () => this.exportPdf()], ['Publish to PDF…', 'PUBLISH', () => this.publish()], ['Export SVG…', '', () => this.exportSvg()], ['Export PNG image…', '', () => this.exportPng()]]],
-      ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Paste', 'Ctrl+V', () => this.paste()], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()], ['Quick Select…', 'QSELECT', () => qselectDialog(this)], ['Select Similar', 'SELECTSIMILAR', () => selectSimilarCommand(this)], ['Find and replace…', 'Ctrl+F', () => this.find.open()], '-', ['Preferences…', '', () => this.preferences()]]],
+      ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Copy with Base Point', 'Ctrl+Shift+C', () => this.copySel(true)], ['Paste', 'Ctrl+V', () => this.paste()], ['Paste as Block', 'Ctrl+Shift+V', () => this.paste('block')], ['Paste to Original Coordinates', 'PASTEORIG', () => this.paste('orig')], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()], ['Quick Select…', 'QSELECT', () => qselectDialog(this)], ['Select Similar', 'SELECTSIMILAR', () => selectSimilarCommand(this)], ['Find and replace…', 'Ctrl+F', () => this.find.open()], '-', ['Preferences…', '', () => this.preferences()]]],
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-',
         ['Command history', 'F2', () => this.toggleHistory(), () => this.histView.open],
         ['Side panel', 'Ctrl+3', () => this.setSidePanel(!this.sideShown), () => this.sideShown], '-',
@@ -912,7 +908,7 @@ class App {
         if (e.key === 'Tab') { e.preventDefault(); this.cycleTab(e.shiftKey ? -1 : 1); return; }
         if (e.key === 'F4') { e.preventDefault(); this.closeTab(); return; }
         if (typing && !['s', 'o', 'n', 'w', 'f', 'p'].includes(k)) return;
-        const map = { z: () => this.undo(), y: () => this.redo(), a: () => this.selectAll(), c: () => this.copySel(), v: () => this.paste(), s: () => this.save(), o: () => this.open(), n: () => this.newDrawing(), w: () => this.closeTab(), f: () => this.find.open(), p: () => this.print(), 3: () => this.setSidePanel(!this.sideShown) };
+        const map = { z: () => this.undo(), y: () => this.redo(), a: () => this.selectAll(), c: () => this.copySel(e.shiftKey), v: () => this.paste(e.shiftKey ? 'block' : 'clip'), s: () => this.save(), o: () => this.open(), n: () => this.newDrawing(), w: () => this.closeTab(), f: () => this.find.open(), p: () => this.print(), 3: () => this.setSidePanel(!this.sideShown) };
         if (map[k]) { e.preventDefault(); map[k](); }
         return;
       }

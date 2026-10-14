@@ -49,6 +49,9 @@
     readFile: () => Promise.reject(new Error('readFile ' + NO_DESKTOP)),
     xrefRead: () => Promise.resolve(null), // no folder access in the browser: xrefs stay "Not found"
     imageRead: () => Promise.resolve(null), // likewise raster images
+    // drawing fragments as DXF text through the browser clipboard; rejects without one (the window keeps its own copy)
+    clipboardWriteDxf: (dxf) => (navigator.clipboard?.writeText ? navigator.clipboard.writeText(dxf).then(() => true) : Promise.reject(new Error('no clipboard'))),
+    clipboardReadDxf: () => (navigator.clipboard?.readText ? navigator.clipboard.readText() : Promise.resolve(null)),
 
     saveFile,
     writeFile: () => Promise.reject(new Error('writeFile ' + NO_DESKTOP)),
