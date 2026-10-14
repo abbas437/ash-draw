@@ -46,6 +46,10 @@ try {
   const info = await win.evaluate(() => ({ n: window.app.doc.entities.length, name: window.app.file.name, electron: window.api.isElectron }));
   assert.ok(info.electron);
   console.log('opened', info.name, info.n, 'objects');
+  // the Symbols IPC is wired: the stored folders come back, and an unknown folder id is refused by main
+  const sym = await win.evaluate(async () => ({ folders: Array.isArray(await window.api.symbolsFolders()), bad: await window.api.symbolsList('0000000000000000').then(() => 'listed', (e) => e.message) }));
+  assert.ok(sym.folders, JSON.stringify(sym));
+  assert.match(sym.bad, /unknown symbol folder/);
   await win.waitForTimeout(300);
   if (process.env.E2E_SHOTS) await win.screenshot({ path: path.join(process.env.E2E_SHOTS, 'electron_dwg.png') });
 

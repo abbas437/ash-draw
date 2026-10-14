@@ -11,6 +11,7 @@ import { createHandoffStore } from './handoff.js';
 import { createClipboardBridge } from './clipboard.js';
 import { createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isOdaExeName, ODA_DOWNLOAD_URL, ODA_DWG_VERSIONS } from './odaConverter.js';
 import { saveDialogDefault } from './savePath.js';
+import { createSymbolLibrary } from './symbols.js';
 import { cleanSession, isPathString, pushRecent, startupModeOf } from './sessionLists.js';
 import { xrefCandidates } from '../src/core/xref.js';
 
@@ -102,6 +103,13 @@ async function loadJson(n) { try { return JSON.parse(await fs.readFile(storePath
 async function saveJson(n, obj) { await fs.mkdir(app.getPath('userData'), { recursive: true }); await atomicWrite(storePath(n), JSON.stringify(obj, null, 2)); }
 let settings = null;
 const autosave = createAutosaveStore({ dir: () => path.join(app.getPath('userData'), 'autosave'), appVersion: app.getVersion() });
+// Symbols panel folders: only a folder chosen in the dialog becomes a root (its own store, not settings.json)
+const symbols = createSymbolLibrary({
+  dir: () => app.getPath('userData'),
+  pickFolder: async () => { const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'] }); return r.canceled ? null : r.filePaths[0] ?? null; },
+  toDxf: (bytes) => dwg.toDxf(bytes),
+  newId: () => randomBytes(8).toString('hex'),
+});
 
 // ---- launch files (argv / second instance / macOS open-file) ----
 function drawingArgs(argv, cwd) {
@@ -309,6 +317,14 @@ function registerIpc() {
   handle('autosave:list', () => autosave.list());
   handle('autosave:read', (id) => autosave.read(id));
   handle('autosave:discard', (id) => autosave.discard(id));
+  // ---- Symbols panel: folders by opaque id, files by a path relative to one (electron/symbols.js validates both)
+  handle('symbols:addFolder', () => symbols.addFolder());
+  handle('symbols:folders', () => symbols.folders());
+  handle('symbols:removeFolder', (id) => symbols.removeFolder(id));
+  handle('symbols:list', (id) => symbols.list(id));
+  handle('symbols:read', (id, rel) => symbols.read(id, rel));
+  handle('symbols:thumbGet', (id, rel) => symbols.thumbGet(id, rel));
+  handle('symbols:thumbPut', (id, rel, png) => symbols.thumbPut(id, rel, png));
   handle('app:launchFiles', () => { rendererReady = true; return pendingFiles.splice(0); });
   // Print a plot: the renderer builds the PDF; it is written to a private temp folder, shown in a hidden window by
   // Electron's PDF viewer and printed from there with the system print dialog (printer, copies). Never the app window.
