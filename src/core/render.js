@@ -10,6 +10,7 @@
 // drawing coordinates would otherwise lose precision when zoomed in).
 import { blockContentView } from './blocks.js';
 import { imageCorners, imageClipWorld, wipeoutRing } from './image.js';
+import { olePreviewOf } from './ole.js';
 import { resolveColor, runColor } from './aci.js';
 import { parseMText, layoutMText } from './mtext.js';
 import {
@@ -353,10 +354,21 @@ class Builder {
         this.push(mkItem('path'), rootId); return;
       }
       case 'OLE2FRAME': {
-        // the embedded object is not rendered: its frame, a light diagonal cross and a small label
+        // the object's saved preview picture (ole.js) as an 'image' item inside its frame; without one, the frame, a light
+        // diagonal cross and a small label
         const a = e.p1, b = e.p2;
         const q = [{ x: a.x, y: a.y }, { x: b.x, y: a.y }, { x: b.x, y: b.y }, { x: a.x, y: b.y }].map(P);
         M(q[0]); L(q[1]); L(q[2]); L(q[3]); ops.push(OP_Z);
+        const pv = olePreviewOf(e);
+        if (pv.rgba) {
+          // box: the picture's part of the frame, as fractions from the frame's top-left corner (p1)
+          const [x0, y0, x1, y1] = pv.box, at = (fx, fy) => P({ x: a.x + (b.x - a.x) * fx, y: a.y + (b.y - a.y) * fy });
+          const ll = at(x0, y1), lr = at(x1, y1), ul = at(x0, y0);
+          const u = { x: (lr.x - ll.x) / pv.width, y: (lr.y - ll.y) / pv.width }, v = { x: (ul.x - ll.x) / pv.height, y: (ul.y - ll.y) / pv.height };
+          this.push(mkItem('image', { image: { p: ll, u, v, size: { x: pv.width, y: pv.height }, ole: pv } }), rootId);
+          this.push({ kind: 'path', ops: ops.slice(), style, bbox }, rootId);
+          return;
+        }
         this.push(mkItem('path'), rootId);
         const cross = { ...style, alpha: (style.alpha ?? 1) * 0.4 };
         const cOps = [OP_M, q[0].x, q[0].y, OP_L, q[2].x, q[2].y, OP_M, q[1].x, q[1].y, OP_L, q[3].x, q[3].y];
@@ -1157,6 +1169,7 @@ function wipeoutLevels(scene) {
  *  the clip boundary (world points) clips it, fade 0..100 lowers its opacity */
 function drawImageItem(ctx, it, bmp, sx, sy, z) {
   const { p, u, v, size, clipPts, fade } = it.image;
+  bmp ??= it.image.ole && oleSource(it.image.ole, ctx);
   if (!bmp) return;
   ctx.save();
   if (clipPts?.length >= 3) {
@@ -1421,4 +1434,17 @@ export function drawLayout(ctx, paperScene, view, layout, paperRectsOf, modelSce
     const sel = opts.highlight instanceof Set && opts.highlight.has(v.id);
     ctx.strokeStyle = sel ? (opts.highlightColor ?? '#0a6fd1') : '#333'; ctx.lineWidth = v === opts.activeVp ? 3 : sel ? 2 : 1; ctx.strokeRect(sx(v.c.x - v.width / 2), sy(v.c.y + v.height / 2), v.width * z, v.height * z);
   }
+}
+
+/** a drawable canvas holding an OLE preview's pixels (made once per preview), or null where none can be made */
+function oleSource(pv, ctx) {
+  if (pv.canvas !== undefined) return pv.canvas;
+  let c = null;
+  try {
+    c = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(pv.width, pv.height) : new ctx.canvas.constructor(pv.width, pv.height);
+    const g = c.getContext('2d'), id = g.createImageData(pv.width, pv.height);
+    id.data.set(pv.rgba); g.putImageData(id, 0, 0);
+  } catch { c = null; }
+  pv.canvas = c;
+  return c;
 }

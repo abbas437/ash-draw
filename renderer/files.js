@@ -8,6 +8,7 @@ import { buildScene, buildSceneSteps, drawScene, fitView } from '../src/core/ren
 import { SpatialIndex } from '../src/core/pick.js';
 import { runSliced } from '../src/core/slice.js';
 import { docAssembler } from '../src/core/docBatches.js';
+import { olePreviewOf } from '../src/core/ole.js';
 
 export const OPEN_FILTERS = [
   { name: 'Drawings (DWG, DXF)', extensions: ['dwg', 'dxf'] },
@@ -146,8 +147,10 @@ export async function loadDrawing(api, name, bytes, { onProgress = null, signal 
   const rep = doc.header?.repairedValues;
   if (rep) notes.push(`${rep} damaged text value${rep === 1 ? ' was' : 's were'} repaired (split over several lines in the file).`);
   const sk = Object.entries(doc.skipped || {});
-  const ole = [doc.entities, ...[...doc.blocks.values()].map((b) => b.entities)].reduce((n, l) => n + l.filter((x) => x.type === 'OLE2FRAME').length, 0);
-  if (ole) notes.push(`${ole} OLE object${ole === 1 ? '' : 's'} shown as frames (content not displayed).`);
+  const oles = [doc.entities, ...[...doc.blocks.values()].map((b) => b.entities)].flatMap((l) => l.filter((x) => x.type === 'OLE2FRAME'));
+  const shown = oles.filter((x) => olePreviewOf(x).rgba).length, bare = oles.length - shown;
+  if (shown) notes.push(`${shown} OLE object${shown === 1 ? '' : 's'} drawn from ${shown === 1 ? 'its' : 'their'} saved preview.`);
+  if (bare) notes.push(`${bare} OLE object${bare === 1 ? '' : 's'} shown as frames (no preview picture it can show).`);
   if (sk.length) notes.push(`Not displayed (unsupported object types): ${sk.map(([k, v]) => `${v} ${k}`).join(', ')}.`);
   const conversion = conv && { converter: conv.converter, errorCount: conv.errorCount, log: conv.log, objects: objectsRead(doc), skipped: { ...(doc.skipped || {}) }, dwgHeader: conv.dwgHeader };
   return { doc, format, notes, warnings, conversion };

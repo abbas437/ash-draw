@@ -23,6 +23,7 @@ import { mleaderFromTags, mleaderStyleFromTags } from './mleader.js';
 import { mlineFromTags, mlineStyleFromTags } from './mline.js';
 import { parseLayoutObject, readViewport, markPaperViewport } from './layouts.js';
 import { imageDefFromTags, imageFromTags } from './image.js';
+import { oleFrameCorners } from './ole.js';
 
 const DEG = Math.PI / 180;
 
@@ -648,10 +649,13 @@ function buildEntity(rec, doc, extra) {
       break;
     }
     case 'OLE2FRAME': {
-      // frame only; the embedded object's binary data (310) is kept as read for a lossless write
+      // the embedded object's binary data (310) is kept as read for a lossless write; its header holds the frame's
+      // corners, which win over 10 / 11 (LibreDWG writes fixed placeholder points there)
       const tags = rec.tags();
-      e = { ...o, id: 0, type: 'OLE2FRAME', p1: pt(rec, 10), p2: pt(rec, 11), version: rec.int(70), kind: rec.int(71), tile: rec.int(72),
-        desc: rec.has(3) ? rec.str(3) : '', data: tags.filter(([c]) => c === 310).map(([, v]) => v) };
+      const data = tags.filter(([c]) => c === 310).map(([, v]) => v);
+      const hc = oleFrameCorners(data);
+      e = { ...o, id: 0, type: 'OLE2FRAME', p1: hc?.p1 ?? pt(rec, 10), p2: hc?.p2 ?? pt(rec, 11), version: rec.int(70), kind: rec.int(71), tile: rec.int(72),
+        desc: rec.has(3) ? rec.str(3) : '', data };
       break;
     }
     case 'INSERT': e = buildInsert(rec, o); break;
