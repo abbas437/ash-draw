@@ -323,8 +323,8 @@ export function clipFromSpatialFilter(tags) {
 
 // --- editing ------------------------------------------------------------------------------------------------------
 
-/** XCLIP on the INSERTs `ids` of session `s`, one undo step: `change(clip | undefined)` returns the insert's new clip
- *  (null deletes it). New boundary: () => ({ pts, enabled: true, inverted, showFrame: true }); Off / On:
+/** XCLIP on the INSERTs `ids` of session `s`, one undo step: `change(clip | undefined, insert)` returns the insert's new
+ *  clip (null deletes it; undefined leaves the insert alone). New boundary: () => ({ pts, enabled: true, inverted, showFrame: true }); Off / On:
  *  (c) => c && { ...c, enabled }; Delete: () => null. Returns the number of inserts changed. */
 export function xclipInserts(s, ids, change, label = 'XCLIP') {
   const want = new Set(ids);
@@ -333,7 +333,7 @@ export function xclipInserts(s, ids, change, label = 'XCLIP') {
   if (!targets.length) return 0;
   s.transact(label, (tx) => {
     for (const e of targets) {
-      const nu = change(e.clip);
+      const nu = change(e.clip, e);
       if (nu === undefined || (nu === null && !e.clip)) continue;
       const c = structuredClone(e);
       if (nu) c.clip = nu; else delete c.clip;
