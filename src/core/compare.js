@@ -7,10 +7,11 @@
 //     moved ...) or an identical shape translated by at most `moveRadius` (moved).
 //  3. what is left over is "removed" (A only) or "added" (B only).
 // Matching works on drawn pieces: INSERTs (not xrefs, nested ones too) and DIMENSIONs are expanded to their world
-// geometry (expandEntities), so a block in A that was exploded or renamed in B still matches. A can first be moved by
-// an offset (opts.dx/dy, or opts.align 'auto' = estimateOffset) so a plan redrawn elsewhere still lines up.
+// geometry (expandEntities), so a block in A that was exploded or renamed in B still matches. A can first be turned and
+// moved (opts.transform, opts.dx/dy, or opts.align 'auto' = estimateTransform, block by block where that fits better)
+// so a plan redrawn elsewhere, or turned by quarter turns, still lines up.
 import { newDocument, addLayer, addEntity } from './model.js';
-import { bboxOf, unionBox, explode, transformEntity, translation } from './geom.js';
+import { bboxOf, unionBox, explode, transformEntity, compose, translation, DEG } from './geom.js';
 
 const MAX_DEPTH = 16; // nested blocks expanded at most this deep (guards self-referencing blocks)
 
@@ -41,86 +42,178 @@ export function expandEntities(doc, ents = doc.entities) {
 }
 
 // ---- alignment ----------------------------------------------------------------------------------
-/** translation-invariant signature (k) and position of a piece, or null; w = vote weight (long lines count more) */
-function offsetFeature(e, q, longLine) {
+// Transforms are geom.js matrices [m0..m5]: x' = m0*x + m2*y + m4, y' = m1*x + m3*y + m5. Alignment only ever finds
+// a rotation (about the origin) followed by a translation: m = [c, s, -s, c, dx, dy].
+
+/** cos / sin of a rotation in degrees, exact for quarter turns (so rotated keys are bit-identical to drawn ones) */
+function cosSin(deg) {
+  const n = ((deg % 360) + 360) % 360;
+  return n === 0 ? [1, 0] : n === 90 ? [0, 1] : n === 180 ? [-1, 0] : n === 270 ? [0, -1] : [Math.cos(n * DEG), Math.sin(n * DEG)];
+}
+const deg360 = (v) => ((Math.round(v) % 360) + 360) % 360;
+
+/** signature (k) and position of a piece as it would be after turning by `deg` about the origin, or null.
+ *  The signature holds what a rotation keeps (lengths, radii, sweeps, texts, block names) plus the orientation after the
+ *  turn (line direction, arc start, insert rotation), so only pieces consistent with that rotation pair up.
+ *  w = vote weight (long lines count more). */
+function alignFeature(e, q, longLine, deg = 0) {
   const r = (v) => Math.round(v / q);
+  const [c, s] = cosSin(deg);
+  const P = (p) => ({ x: c * p.x - s * p.y, y: s * p.x + c * p.y });
   switch (e.type) {
     case 'LINE': {
-      const len = Math.hypot(e.p2.x - e.p1.x, e.p2.y - e.p1.y);
+      const p1 = P(e.p1), p2 = P(e.p2);
+      const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
       if (len < q) return null;
-      let ang = Math.atan2(e.p2.y - e.p1.y, e.p2.x - e.p1.x); if (ang < 0) ang += Math.PI; if (ang >= Math.PI - 1e-9) ang = 0;
-      return { k: `L|${r(len)}|${Math.round(ang * 1e3)}`, x: (e.p1.x + e.p2.x) / 2, y: (e.p1.y + e.p2.y) / 2, w: Math.min(4, 1 + len / longLine) };
+      let ang = Math.atan2(p2.y - p1.y, p2.x - p1.x); if (ang < 0) ang += Math.PI; if (ang >= Math.PI - 1e-9) ang = 0;
+      return { k: `L|${r(len)}|${Math.round(ang * 1e3)}`, ...P({ x: (e.p1.x + e.p2.x) / 2, y: (e.p1.y + e.p2.y) / 2 }), w: Math.min(4, 1 + len / longLine) };
     }
-    case 'CIRCLE': return { k: `C|${r(e.r)}`, x: e.c.x, y: e.c.y, w: 1 };
-    case 'ARC': return { k: `A|${r(e.r)}|${Math.round(e.a0)}|${Math.round(e.a1)}`, x: e.c.x, y: e.c.y, w: 1 };
-    case 'INSERT': return e.p ? { k: `I|${e.block}|${Math.round(e.rot || 0)}|${e.sx ?? 1}|${e.sy ?? 1}`, x: e.p.x, y: e.p.y, w: 1 } : null;
-    case 'TEXT': case 'MTEXT': return e.p ? { k: `T|${e.text}|${r(e.height || 0)}`, x: e.p.x, y: e.p.y, w: 1 } : null;
+    case 'CIRCLE': return { k: `C|${r(e.r)}`, ...P(e.c), w: 1 };
+    case 'ARC': return { k: `A|${r(e.r)}|${deg360(e.a0 + deg)}|${deg360(e.a1 - e.a0)}`, ...P(e.c), w: 1 };
+    case 'INSERT': return e.p ? { k: `I|${e.block}|${deg360((e.rot || 0) + deg)}|${e.sx ?? 1}|${e.sy ?? 1}`, ...P(e.p), w: 1 } : null;
+    case 'TEXT': case 'MTEXT': return e.p ? { k: `T|${e.text}|${r(e.height || 0)}`, ...P(e.p), w: 1 } : null;
     case 'LWPOLYLINE': {
       const v = e.vertices; if (!v?.length) return null;
       let per = 0, sx = 0, sy = 0;
       for (let i = 0; i < v.length; i++) { sx += v[i].x; sy += v[i].y; if (i) per += Math.hypot(v[i].x - v[i - 1].x, v[i].y - v[i - 1].y); }
-      return { k: `P|${v.length}|${e.closed ? 1 : 0}|${r(per)}`, x: sx / v.length, y: sy / v.length, w: 1 };
+      return { k: `P|${v.length}|${e.closed ? 1 : 0}|${r(per)}`, ...P({ x: sx / v.length, y: sy / v.length }), w: 1 };
     }
     default: return null;
   }
 }
 
-const MAX_KEY_PAIRS = 1024;   // a signature shared by more A x B pairs than this is too common to vote
+const MAX_KEY_PAIRS = 8192;   // a signature shared by more A x B pairs than this is too common to vote
 const MAX_VOTES = 4e6;
 
-/** translation (dx, dy) that best moves pieces pa onto pb: pairs of pieces with the same signature vote for their
- *  offset; the densest vote cell is searched coarse to fine (each level 8x finer) down to the tolerance */
-function offsetOf(pa, pb, tol) {
+/** what every vote needs, computed once: the signature quantum, B's features grouped by signature */
+function alignContext(pa, pb, tol) {
   let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
-  const fa = [], fb = [];
-  const ext = (f) => { if (f.x < minx) minx = f.x; if (f.x > maxx) maxx = f.x; if (f.y < miny) miny = f.y; if (f.y > maxy) maxy = f.y; };
-  // first pass: extents of the anchor points, to size the signature quantum and the coarse cells
-  for (const p of [...pa, ...pb]) { const e = p.e; const pt = e.p1 ?? e.c ?? e.p ?? e.vertices?.[0]; if (pt) ext(pt); }
+  for (const p of [...pa, ...pb]) {
+    const e = p.e, pt = e.p1 ?? e.c ?? e.p ?? e.vertices?.[0];
+    if (pt) { if (pt.x < minx) minx = pt.x; if (pt.x > maxx) maxx = pt.x; if (pt.y < miny) miny = pt.y; if (pt.y > maxy) maxy = pt.y; }
+  }
   const diag = Math.hypot(maxx - minx, maxy - miny) || 1;
-  const q = Math.max(tol, diag * 2e-5);
-  for (const [ps, fs] of [[pa, fa], [pb, fb]]) for (const p of ps) { const f = offsetFeature(p.e, q, diag * 0.02); if (f && Number.isFinite(f.x) && Number.isFinite(f.y)) fs.push(f); }
+  const ctx = { tol, diag, q: Math.max(tol, diag * 2e-5), longLine: diag * 0.02, fb: [], byKey: new Map() };
+  for (const p of pb) {
+    const f = alignFeature(p.e, ctx.q, ctx.longLine);
+    if (!f || !Number.isFinite(f.x) || !Number.isFinite(f.y)) continue;
+    const l = ctx.byKey.get(f.k); if (l) l.push(ctx.fb.length); else ctx.byKey.set(f.k, [ctx.fb.length]);
+    ctx.fb.push(f);
+  }
+  return ctx;
+}
+
+/** offset votes of pieces pa turned by `deg`: every pair of an A and a B piece sharing a signature votes for B - A */
+function gatherVotes(ctx, pa, deg) {
+  const fa = [];
+  for (const p of pa) { const f = alignFeature(p.e, ctx.q, ctx.longLine, deg); if (f && Number.isFinite(f.x) && Number.isFinite(f.y)) fa.push(f); }
   const byKey = new Map();
-  fa.forEach((f, i) => { let g = byKey.get(f.k); if (!g) byKey.set(f.k, g = { a: [], b: [] }); g.a.push(i); });
-  fb.forEach((f, j) => { const g = byKey.get(f.k); if (g) g.b.push(j); });
-  const groups = [...byKey.values()].filter((g) => g.b.length && g.a.length * g.b.length <= MAX_KEY_PAIRS)
+  fa.forEach((f, i) => { const b = ctx.byKey.get(f.k); if (!b) return; let g = byKey.get(f.k); if (!g) byKey.set(f.k, g = { a: [], b }); g.a.push(i); });
+  const groups = [...byKey.values()].filter((g) => g.a.length * g.b.length <= MAX_KEY_PAIRS)
     .sort((g, h) => g.a.length * g.b.length - h.a.length * h.b.length); // rarest signatures first
-  const vx = [], vy = [], vw = [], vi = [];
+  const vx = [], vy = [], vw = [], vi = [], fb = ctx.fb;
   for (const g of groups) {
     if (vx.length + g.a.length * g.b.length > MAX_VOTES) break;
     for (const i of g.a) for (const j of g.b) { vx.push(fb[j].x - fa[i].x); vy.push(fb[j].y - fa[i].y); vw.push(Math.min(fa[i].w, fb[j].w)); vi.push(i); }
   }
-  const none = { dx: 0, dy: 0, votes: 0, confidence: 0 };
-  if (!vx.length) return none;
-  // coarse to fine: in the current window, the cell whose 3x3 neighbourhood holds the most weight; window = that 3x3
-  let idx = vx.map((_, k) => k), cell = diag / 64, cx = 0, cy = 0;
-  for (;;) {
+  return { vx, vy, vw, vi, n: fa.length };
+}
+
+/** weighted mean of the votes within tol of (cx, cy), and how many A pieces agree with it */
+function votesNear(V, idx, cx, cy, tol, nb) {
+  let sw = 0, sx = 0, sy = 0; const agree = new Set();
+  for (const k of idx) if (Math.abs(V.vx[k] - cx) <= tol && Math.abs(V.vy[k] - cy) <= tol) { sw += V.vw[k]; sx += V.vx[k] * V.vw[k]; sy += V.vy[k] * V.vw[k]; agree.add(V.vi[k]); }
+  if (!sw) return { dx: 0, dy: 0, votes: 0, confidence: 0 };
+  return { dx: sx / sw, dy: sy / sw, votes: agree.size, confidence: Math.min(1, agree.size / Math.max(1, Math.min(V.n, nb))) };
+}
+
+const PEAK_SEEDS = 8; // coarse cells refined: noise from common signatures can outweigh the true peak at coarse size
+
+/** the vote peak: the PEAK_SEEDS heaviest coarse cells are each searched coarse to fine (each level 8x finer) down to
+ *  the tolerance; the one most A pieces agree with wins */
+function peak(ctx, V) {
+  const { vx, vy, vw } = V, tol = ctx.tol;
+  let best = { dx: 0, dy: 0, votes: 0, confidence: 0 };
+  if (!vx.length) return best;
+  // the cells (with their 3x3 neighbourhood weight) of one level, heaviest first
+  const cells = (idx, cell) => {
     const h = new Map();
     for (const k of idx) { const key = `${Math.floor(vx[k] / cell)},${Math.floor(vy[k] / cell)}`; h.set(key, (h.get(key) ?? 0) + vw[k]); }
-    let best = -1, bx = 0, by = 0;
+    const out = [];
     for (const key of h.keys()) {
       const [i, j] = key.split(',').map(Number);
       let s = 0; for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) s += h.get(`${i + a},${j + b}`) ?? 0;
-      if (s > best || (s === best && (i < bx || (i === bx && j < by)))) { best = s; bx = i; by = j; }
+      out.push({ s, i, j });
     }
-    cx = (bx + 0.5) * cell; cy = (by + 0.5) * cell;
-    idx = idx.filter((k) => Math.abs(vx[k] - cx) <= cell * 1.5 && Math.abs(vy[k] - cy) <= cell * 1.5);
-    if (cell <= tol) break;
-    cell = Math.max(cell / 8, tol);
+    return out.sort((p, q) => q.s - p.s || p.i - q.i || p.j - q.j);
+  };
+  const all = vx.map((_, k) => k), cell0 = ctx.diag / 64;
+  for (const seed of cells(all, cell0).slice(0, PEAK_SEEDS)) {
+    // window = the 3x3 around the chosen cell; then the heaviest cell inside it, 8x finer
+    let cell = cell0, cx = (seed.i + 0.5) * cell, cy = (seed.j + 0.5) * cell;
+    let idx = all.filter((k) => Math.abs(vx[k] - cx) <= cell * 1.5 && Math.abs(vy[k] - cy) <= cell * 1.5);
+    while (cell > tol && idx.length) {
+      cell = Math.max(cell / 8, tol);
+      const c = cells(idx, cell)[0];
+      cx = (c.i + 0.5) * cell; cy = (c.j + 0.5) * cell;
+      idx = idx.filter((k) => Math.abs(vx[k] - cx) <= cell * 1.5 && Math.abs(vy[k] - cy) <= cell * 1.5);
+    }
+    const o = votesNear(V, idx, cx, cy, tol, ctx.fb.length);
+    if (o.votes > best.votes) best = o;
   }
-  // final: weighted mean of the votes within tol of the peak cell, counted once per A piece
-  let sw = 0, sx = 0, sy = 0; const agree = new Set();
-  for (const k of idx) if (Math.abs(vx[k] - cx) <= tol && Math.abs(vy[k] - cy) <= tol) { sw += vw[k]; sx += vx[k] * vw[k]; sy += vy[k] * vw[k]; agree.add(vi[k]); }
-  if (!sw) return none;
-  return { dx: sx / sw, dy: sy / sw, votes: agree.size, confidence: Math.min(1, agree.size / Math.max(1, Math.min(fa.length, fb.length))) };
+  return best;
+}
+
+const rotMatrix = (deg, dx, dy) => { const [c, s] = cosSin(deg); return [c, s, -s, c, dx, dy]; };
+/** rotation of a matrix's linear part in degrees, 0 <= rot < 360 */
+const rotOf = (m) => { const d = Math.atan2(m[1], m[0]) / DEG; const n = ((d % 360) + 360) % 360; return Math.abs(n - 360) < 1e-9 ? 0 : n; };
+
+/** best rotation + translation of pieces pa onto the context's B: one vote per candidate rotation, most agreeing wins
+ *  (ties: the earlier rotation in the list). `at` (optional matrix): also count how many of pa agree with it. */
+function bestTransform(ctx, pa, rotations, at = null) {
+  let best = null, atVotes = 0;
+  const atRot = at ? rotOf(at) : null;
+  for (const deg of rotations) {
+    const V = gatherVotes(ctx, pa, deg);
+    const o = peak(ctx, V);
+    if (at && Math.abs(deg360(deg) - atRot) < 1e-6) atVotes = votesNear(V, V.vx.map((_, k) => k), at[4], at[5], ctx.tol, ctx.fb.length).votes;
+    if (!best || o.votes > best.votes) best = { ...o, rot: deg360(deg) };
+  }
+  if (!best || !best.votes) best = { dx: 0, dy: 0, votes: 0, confidence: 0, rot: 0 };
+  return { m: rotMatrix(best.rot, best.dx, best.dy), rot: best.rot, dx: best.dx, dy: best.dy, votes: best.votes, confidence: best.confidence, atVotes };
 }
 
 /**
- * Estimate the translation that moves drawing `a` onto drawing `b` (only translation: no rotation or scale), from the
- * pieces' feature points (line midpoints, arc / circle centres, insertion points, polyline centroids) voting coarse to
- * fine. opts.tol: final resolution in drawing units (default 1). Returns { dx, dy, votes, confidence 0..1 }.
+ * Estimate the rotation + translation that moves drawing `a` onto drawing `b` (no scale, no mirror). Each candidate
+ * rotation (opts.rotations, degrees, default the quarter turns) turns A's feature points (line midpoints, arc / circle
+ * centres, insertion points, polyline centroids) with their orientations; pieces sharing a signature then vote for the
+ * offset coarse to fine; the rotation whose peak gathers the most agreeing pieces wins. opts.tol: final resolution in
+ * drawing units (default 1). Returns { m: [c, s, -s, c, dx, dy] (geom.js convention: x' = m0*x + m2*y + m4,
+ * y' = m1*x + m3*y + m5, i.e. A turned by rot about the origin, then moved by dx, dy), rot (degrees), dx, dy, votes,
+ * confidence 0..1 }.
  */
+export function estimateTransform(a, b, opts = {}) {
+  const pa = expandEntities(a), pb = expandEntities(b);
+  const { atVotes, ...t } = bestTransform(alignContext(pa, pb, Math.max(opts.tol ?? 1, 1e-9)), pa, opts.rotations ?? [0, 90, 180, 270]);
+  return t;
+}
+
+/** Estimate the translation only that moves drawing `a` onto drawing `b` (estimateTransform without rotation).
+ *  Returns { dx, dy, votes, confidence 0..1 }. */
 export function estimateOffset(a, b, opts = {}) {
-  return offsetOf(expandEntities(a), expandEntities(b), Math.max(opts.tol ?? 1, 1e-9));
+  const { dx, dy, votes, confidence } = estimateTransform(a, b, { tol: opts.tol, rotations: [0] });
+  return { dx, dy, votes, confidence };
+}
+
+/**
+ * The rotation + translation (no scale) that puts point a1 on b1 and turns direction a1->a2 onto b1->b2; with one pair
+ * only (a2 or b2 null), the translation a1 -> b1. Returns a geom.js matrix.
+ */
+export function transformFromPoints(a1, a2, b1, b2) {
+  if (!a2 || !b2) return [1, 0, 0, 1, b1.x - a1.x, b1.y - a1.y];
+  const t = Math.atan2(b2.y - b1.y, b2.x - b1.x) - Math.atan2(a2.y - a1.y, a2.x - a1.x);
+  const c = Math.cos(t), s = Math.sin(t);
+  return [c, s, -s, c, b1.x - (c * a1.x - s * a1.y), b1.y - (s * a1.x + c * a1.y)];
 }
 
 /** 1 mm in the drawing's units ($INSUNITS; unitless taken as mm): the default compare tolerance */
@@ -192,22 +285,68 @@ class Grid {
 const MAX_PTS = 16; // points of one entity indexed for the in-place search (long polylines: the first ones)
 const MAX_CAND = 256; // partners examined per object in the changed search (dense repeated patterns)
 
+const MIN_GROUP = 200, GROUP_SHARE = 0.02; // a top-level INSERT this big (pieces; share of A) is aligned on its own
+const MIN_REALIGN_VOTES = 20;
+
+/**
+ * Piecewise alignment: each big top-level INSERT of A (and, as one group named '*Model_Space', everything else) is
+ * aligned on its own; a group whose best transform is not the global one `M` and is backed by at least twice the
+ * pieces that agree with `M` gets it. Returns { realigned: [{ name, rot, dx, dy, m, votes, confidence }],
+ * topM: Map(top-level entity -> matrix) } (only the groups that differ from M).
+ */
+function realign(ctx, pa, M, rotations) {
+  const groups = new Map();
+  for (const p of pa) if (p.top !== p.e && p.top.type === 'INSERT') { const l = groups.get(p.top); if (l) l.push(p); else groups.set(p.top, [p]); }
+  const big = [...groups].filter(([, l]) => l.length >= Math.max(MIN_GROUP, pa.length * GROUP_SHARE));
+  const realigned = [], topM = new Map();
+  if (!big.length) return { realigned, topM };
+  const inBig = new Set(big.map(([t]) => t));
+  const rest = pa.filter((p) => !inBig.has(p.top));
+  const rotM = rotOf(M);
+  for (const [top, l] of [...big, [null, rest]]) {
+    if (!l.length) continue;
+    const t = bestTransform(ctx, l, rotations, M);
+    const differs = Math.abs(t.rot - rotM) > 1e-6 || Math.hypot(t.dx - M[4], t.dy - M[5]) > 2 * ctx.tol;
+    if (!differs || t.votes < Math.max(MIN_REALIGN_VOTES, 2 * t.atVotes)) continue;
+    realigned.push({ name: top ? top.block : '*Model_Space', rot: t.rot, dx: t.dx, dy: t.dy, m: t.m, votes: t.votes, confidence: t.confidence });
+    for (const p of top ? [{ top }] : l) topM.set(p.top, t.m);
+  }
+  return { realigned, topM };
+}
+
+const isIdentity = (m) => m[0] === 1 && m[1] === 0 && m[2] === 0 && m[3] === 1 && !m[4] && !m[5];
+
 /**
  * Compare drawing `a` (original) with `b` (revised), model space.
  * opts: tol (geometry tolerance, drawing units, default 1e-6), moveRadius (largest move still reported as "changed",
  * default 5 % of the drawings' anchor extents), clusterGap (changes closer than this form one cluster, default 2 %),
- * expand (compare drawn pieces, blocks expanded: default true), dx/dy (move A by this first) or align: 'auto'
- * (estimateOffset).
+ * expand (compare drawn pieces, blocks expanded: default true), transform (geom.js matrix applied to A's pieces first)
+ * and/or dx/dy (then move A by this), or align: 'auto' (estimateTransform; opts.rotations as there), which by default
+ * (piecewise: false to skip) also aligns each big top-level INSERT, and the rest of A as one group, on its own when
+ * that fits clearly better than the global transform.
  * Returns { added: [B pieces], removed: [A pieces], changed: [{a, b}], same: [{a, b}], clusters: [{box, added, removed,
- * changed}], offset: {dx, dy, votes?, confidence?}, topOf: Map(piece -> model-space entity) } — A's pieces already moved.
+ * changed}], offset: { m, rot, dx, dy, votes?, confidence? } (the global A->B transform; dx, dy = m[4], m[5]),
+ * realigned: [{ name (block, or '*Model_Space' for the other objects), rot, dx, dy, m, votes, confidence }] (groups moved
+ * by their own transform instead), topM: Map(model-space entity of A -> its matrix, when not offset.m),
+ * topOf: Map(piece -> model-space entity) } — A's pieces already transformed.
  */
 export function compareDocs(a, b, opts = {}) {
   const tol = Math.max(opts.tol ?? 1e-6, 1e-12);
   const expand = opts.expand ?? true;
   const pa = expand ? expandEntities(a) : a.entities.map((e) => ({ e, top: e }));
   const pb = expand ? expandEntities(b) : b.entities.map((e) => ({ e, top: e }));
-  const offset = opts.align === 'auto' ? offsetOf(pa, pb, tol) : { dx: opts.dx ?? 0, dy: opts.dy ?? 0 };
-  if (offset.dx || offset.dy) { const m = translation(offset.dx, offset.dy); for (const p of pa) p.e = transformEntity(p.e, m); }
+  let offset, realigned = [], topM = new Map();
+  if (opts.align === 'auto') {
+    const ctx = alignContext(pa, pb, tol), rotations = opts.rotations ?? [0, 90, 180, 270];
+    const { atVotes, ...t } = bestTransform(ctx, pa, rotations);
+    offset = t;
+    if (opts.piecewise ?? true) ({ realigned, topM } = realign(ctx, pa, t.m, rotations));
+  } else {
+    let m = opts.transform ? [...opts.transform] : [1, 0, 0, 1, 0, 0];
+    if (opts.dx || opts.dy) m = compose(translation(opts.dx ?? 0, opts.dy ?? 0), m);
+    offset = { m, rot: rotOf(m), dx: m[4], dy: m[5] };
+  }
+  for (const p of pa) { const m = topM.get(p.top) ?? offset.m; if (!isIdentity(m)) p.e = transformEntity(p.e, m); }
   const topOf = new Map();
   for (const p of pa) topOf.set(p.e, p.top);
   for (const p of pb) topOf.set(p.e, p.top);
@@ -289,7 +428,7 @@ export function compareDocs(a, b, opts = {}) {
   const removed = fa.filter((f, i) => !usedA[i]).map((f) => f.e);
   const added = fb.filter((f, j) => !usedB[j]).map((f) => f.e);
   const clusters = clusterChanges(a, b, { added, removed, changed }, opts.clusterGap ?? diag * 0.02);
-  return { added, removed, changed, same, clusters, offset, topOf };
+  return { added, removed, changed, same, clusters, offset, realigned, topM, topOf };
 }
 
 /** group nearby changes; each cluster = { box, added, removed, changed } (counts), in reading order (top-left first) */
@@ -362,7 +501,7 @@ function blocksUsed(src, ents) {
   return used;
 }
 
-/** a drawing showing both overlaid in the compare colours (A moved by r.offset), with dotted rectangles around the
+/** a drawing showing both overlaid in the compare colours (A moved by r.offset / r.topM), with dotted rectangles around the
  *  change clusters. A model-space entity whose pieces all share one status is drawn whole (an INSERT stays an INSERT);
  *  otherwise its pieces are drawn one by one. */
 export function buildCompareDoc(a, b, r) {
@@ -375,6 +514,7 @@ export function buildCompareDoc(a, b, r) {
   }
   const topOf = r.topOf ?? new Map();
   const off = r.offset ?? { dx: 0, dy: 0 };
+  const mOff = off.m ?? translation(off.dx ?? 0, off.dy ?? 0);
   // the status of every piece of each expanded model-space entity: one status -> draw the entity whole
   const statusA = new Map(), statusB = new Map();
   const note = (m, piece, kind) => { const t = topOf.get(piece); if (!t || t === piece) return; const s = m.get(t); m.set(t, s === undefined || s === kind ? kind : null); };
@@ -384,8 +524,7 @@ export function buildCompareDoc(a, b, r) {
   for (const e of r.added) note(statusB, e, 'added');
   const whole = (m, kind) => [...m].filter(([, s]) => s === kind).map(([t]) => t);
   const sameB = new Set(whole(statusB, 'same')), addedB = new Set(whole(statusB, 'added')), removedA = new Set(whole(statusA, 'removed'));
-  const moveA = off.dx || off.dy ? translation(off.dx, off.dy) : null;
-  const topsA = [...removedA].map((t) => (moveA ? transformEntity(t, moveA) : t));
+  const topsA = [...removedA].map((t) => { const m = r.topM?.get(t) ?? mOff; return isIdentity(m) ? t : transformEntity(t, m); });
   // blocks drawn whole: B's under their names, A's too unless B has one of that name (then A's is "<name>|A")
   const usedB = blocksUsed(b, [...sameB, ...addedB]), usedA = blocksUsed(a, topsA);
   const rename = new Map();

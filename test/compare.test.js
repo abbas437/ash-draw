@@ -152,3 +152,86 @@ test('compare views: Overlay / A only / B only change which entities are drawn a
   n = drawn();
   assert.ok(has(n, 'same') && has(n, 'added') && has(n, 'changed') && !has(n, 'removed') && !has(n, 'changedA'));
 });
+
+// ---- rotation alignment, picked points, piecewise alignment -----------------------------------------
+import { estimateTransform, transformFromPoints } from '../src/core/compare.js';
+import { apply, compose, rotation } from '../src/core/geom.js';
+
+/** A = plan + edits; B = the plan turned by `rad` about (250000, 50000), moved by (1000, -2000), with edits */
+function turnedPair(rad) {
+  const base = plan(), M = compose(translation(1000, -2000), rotation(rad, 250000, 50000));
+  const A = [...base, makeCircle({ x: 250000, y: 50000 }, 300), makeText({ x: 260000, y: 60000 }, 250, 'NOTE')];
+  const B = [...shuffle(base.map((e) => transformEntity(e, M))), makeLine({ x: 200000, y: 30000 }, { x: 201000, y: 30000 }),
+    transformEntity(makeText({ x: 260003, y: 60002 }, 250, 'NOTE'), M)];
+  return { base, M, a: docOf(A), b: docOf(B) };
+}
+const near = (m1, m2, pts) => pts.every((p) => { const q1 = apply(m1, p), q2 = apply(m2, p); return Math.hypot(q1.x - q2.x, q1.y - q2.y) < 0.5; });
+const probes = [{ x: 220000, y: 20000 }, { x: 290000, y: 80000 }, { x: 0, y: 0 }];
+
+test('estimateTransform: B = A turned 180 deg about a point and moved -> rot 180, points mapped within 0.5 mm, only the edits reported', () => {
+  const { base, M, a, b } = turnedPair(Math.PI);
+  const t = estimateTransform(a, b, { tol: 1 });
+  assert.equal(t.rot, 180, JSON.stringify(t));
+  assert.ok(near(t.m, M, probes), JSON.stringify(t));
+  assert.ok(Math.abs(t.m[4] - t.dx) < 1e-9 && Math.abs(t.m[5] - t.dy) < 1e-9 && t.confidence > 0.9);
+  const r = compareDocs(a, b, { align: 'auto', tol: 1 });
+  assert.equal(r.offset.rot, 180);
+  assert.ok(near(r.offset.m, M, probes));
+  assert.deepEqual([r.same.length, r.added.length, r.removed.length, r.changed.length], [base.length, 1, 1, 1]);
+  assert.equal(r.removed[0].type, 'CIRCLE'); assert.equal(r.changed[0].a.text, 'NOTE');
+  assert.deepEqual(r.realigned, []);
+  // a translation-only estimate cannot line it up
+  const o = estimateOffset(a, b, { tol: 1 });
+  assert.ok(o.confidence < 0.5, JSON.stringify(o));
+});
+
+test('estimateTransform: a 90 deg turn', () => {
+  const { base, M, a, b } = turnedPair(Math.PI / 2);
+  const t = estimateTransform(a, b, { tol: 1 });
+  assert.equal(t.rot, 90, JSON.stringify(t));
+  assert.ok(near(t.m, M, probes), JSON.stringify(t));
+  const r = compareDocs(a, b, { align: 'auto', tol: 1 });
+  assert.deepEqual([r.same.length, r.added.length, r.removed.length, r.changed.length], [base.length, 1, 1, 1]);
+});
+
+test('transformFromPoints: two picked pairs give rotation + translation, one pair a translation; compare applies it', () => {
+  const M = compose(translation(1000, -2000), rotation(Math.PI / 5, 250000, 50000));
+  const a1 = { x: 230000, y: 40000 }, a2 = { x: 260000, y: 70000 };
+  const m = transformFromPoints(a1, a2, apply(M, a1), apply(M, a2));
+  assert.ok(near(m, M, [...probes, a1, a2]), JSON.stringify(m));
+  assert.ok(Math.abs(Math.hypot(m[0], m[1]) - 1) < 1e-12, 'no scale');
+  // picked B points a bit off along the direction: still no scale, a1 still lands on b1
+  const b1 = apply(M, a1), b2 = apply(M, { x: 290000, y: 100000 });
+  const m2 = transformFromPoints(a1, a2, b1, b2), p = apply(m2, a1);
+  assert.ok(Math.hypot(p.x - b1.x, p.y - b1.y) < 1e-6 && Math.abs(Math.hypot(m2[0], m2[1]) - 1) < 1e-12);
+  assert.deepEqual(transformFromPoints({ x: 10, y: 20 }, null, { x: 15, y: 18 }, null), [1, 0, 0, 1, 5, -2]);
+  const { base, a, b } = turnedPair(Math.PI / 5);
+  const r = compareDocs(a, b, { transform: m, tol: 1 });
+  assert.ok(Math.abs(r.offset.rot - 36) < 1e-9 && r.offset.dx === m[4] && r.offset.dy === m[5]);
+  assert.deepEqual([r.same.length, r.added.length, r.removed.length, r.changed.length], [base.length, 1, 1, 1]);
+  // dx/dy alone are the translation special case
+  const t = compareDocs(a, a, { dx: 5, dy: -2 }).offset;
+  assert.deepEqual([t.m, t.rot, t.dx, t.dy], [[1, 0, 0, 1, 5, -2], 0, 5, -2]);
+});
+
+test('compare align auto, piecewise: a big background block left in place while the plan is turned is aligned on its own', () => {
+  let s = 777; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  const bg = [];
+  for (let i = 0; i < 300; i++) { const x = rnd() * 60000, y = rnd() * 50000, L = 300 + rnd() * 3000; bg.push(makeLine({ x, y }, { x: x + L * (i % 2), y: y + L * ((i + 1) % 2) })); }
+  const base = plan(), M = compose(translation(1000, -2000), rotation(Math.PI, 250000, 50000));
+  const a = newDocument(), b = newDocument();
+  for (const d of [a, b]) addBlock(d, 'BG', { x: 0, y: 0 }, structuredClone(bg));
+  addEntity(a, makeInsert('BG', { x: 225000, y: 25000 }));
+  for (const e of base) addEntity(a, structuredClone(e));
+  addEntity(b, makeInsert('BG', { x: 225000, y: 25000 }));
+  for (const e of shuffle(base)) addEntity(b, transformEntity(e, M));
+  const r = compareDocs(a, b, { align: 'auto', tol: 1 });
+  assert.equal(r.offset.rot, 180);
+  assert.equal(r.realigned.length, 1, JSON.stringify(r.realigned));
+  const g = r.realigned[0];
+  assert.ok(g.name === 'BG' && g.rot === 0 && Math.abs(g.dx) < 0.5 && Math.abs(g.dy) < 0.5, JSON.stringify(g));
+  assert.deepEqual([r.same.length, r.added.length, r.removed.length, r.changed.length], [base.length + bg.length, 0, 0, 0]);
+  // without the second pass the block's pieces do not line up
+  const r1 = compareDocs(a, b, { align: 'auto', tol: 1, piecewise: false });
+  assert.equal(r1.same.length, base.length);
+});
