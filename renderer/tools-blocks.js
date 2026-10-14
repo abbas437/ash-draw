@@ -9,7 +9,8 @@ import { getEntity } from '../src/core/model.js';
 import { tessellate, explode, boxOfPoints } from '../src/core/geom.js';
 import { attachXref, uniqueXrefName } from '../src/core/xref.js';
 import { pickXref } from './xref-panel.js';
-import { el, modal } from './ui.js';
+import { el, modal, promptDialog } from './ui.js';
+import { dimTextEdit } from './grips.js';
 
 const num = (s) => { const v = Number(String(s).trim().replace(',', '.')); return Number.isFinite(v) && String(s).trim() !== '' ? v : null; };
 const fmt = (v) => String(Math.round(v * 1e6) / 1e6);
@@ -41,9 +42,17 @@ export async function editAttributes(h, ins) {
 export function blockDoubleClick(h, ev) {
   const r = h.vp.canvas.getBoundingClientRect();
   const hit = h.vp.pick(h.vp.toWorld(ev.clientX - r.left, ev.clientY - r.top));
+  if (hit?.type === 'DIMENSION' && hit.def) { editDimensionText(h, hit); return true; }
   if (hit?.type !== 'INSERT' || !hit.attribs?.length) return false;
   editAttributes(h, hit);
   return true;
+}
+
+/** DDEDIT / TEXTEDIT on a dimension: edits the text override; "<>" stands for the measured value, empty = measured */
+export async function editDimensionText(h, e) {
+  const v = await promptDialog('Dimension text override ("<>" = measured value, empty = measured)', e.def.text ?? '');
+  if (v == null) return false;
+  return dimTextEdit(h.session, e.id, v);
 }
 
 /** Small preview of a block definition on a canvas. */
@@ -222,6 +231,22 @@ export function createBlockTools(h, { Tool, ModifyTool }) {
     }
   }
 
+  // ---- TEXTEDIT / DDEDIT / ED on a dimension: edit its text override ---------------------------------
+  class DimTextEditTool extends Tool {
+    get prompt() { return 'TEXTEDIT  select a dimension'; }
+    activate() {
+      super.activate();
+      const sel = this.vp.selectedEntities();
+      if (sel.length === 1 && sel[0].type === 'DIMENSION' && sel[0].def) this.run(sel[0]);
+    }
+    async run(e) { this.h.setTool('select'); await editDimensionText(this.h, e); }
+    click(p, ev) {
+      const hit = this.vp.pick(ev?.raw ?? p);
+      if (hit?.type === 'DIMENSION' && hit.def) this.run(hit);
+      else this.h.toast('TEXTEDIT: select a dimension (double-click a text or multiline text to edit it).');
+    }
+  }
+
   // ---- XATTACH: pick a DXF/DWG, then the point; one undo step adds the xref block (+ its layers/blocks) and the INSERT ----
   class XAttachTool extends Tool {
     get prompt() { return this.x ? `XATTACH  ${this.x.name}: specify insertion point` : 'XATTACH'; }
@@ -252,5 +277,5 @@ export function createBlockTools(h, { Tool, ModifyTool }) {
     }
   }
 
-  return { block: new BlockTool(h), attdef: new AttdefTool(h), insert: new InsertTool(h), eattedit: new AttEditTool(h), xattach: new XAttachTool(h) };
+  return { block: new BlockTool(h), attdef: new AttdefTool(h), insert: new InsertTool(h), eattedit: new AttEditTool(h), textedit: new DimTextEditTool(h), xattach: new XAttachTool(h) };
 }

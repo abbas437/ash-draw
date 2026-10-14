@@ -4,7 +4,7 @@ import { tessellate, dist, DEG } from '../src/core/geom.js';
 import { aciToRgb } from '../src/core/aci.js';
 import { transparencyText, parseTransparency, percentFromAlpha } from '../src/core/model.js';
 import { viewportFields } from './layouts-ui.js';
-import { editEntity } from './grips.js';
+import { editEntity, dimTextEdit } from './grips.js';
 
 export function el(tag, attrs = {}, ...kids) {
   const n = document.createElement(tag);
@@ -273,6 +273,13 @@ export function renderProperties(app) {
     const ta = el('textarea', { rows: 3 }); ta.value = e.text.replace(/\\P/g, '\n');
     ta.onchange = () => { setText(session, e.id, { text: e.type === 'MTEXT' ? ta.value.replace(/\n/g, '\\P') : ta.value.replace(/\n/g, ' ') }); };
     kids.push(el('label', {}, 'Text', ta));
+  }
+  if (ents.length === 1 && ents[0].type === 'DIMENSION' && ents[0].def) { // text override ('<>' = measured value) and the read-only measurement
+    const e = ents[0], ang = e.def.kind === 'angular' || e.def.kind === 'angular3';
+    const inp = el('input', { type: 'text', 'data-prop': 'Text override', value: e.def.text ?? '' });
+    inp.onchange = () => { dimTextEdit(session, e.id, inp.value); };
+    kids.push(el('label', {}, 'Text override', inp),
+      el('div', { class: 'info', 'data-prop': 'Measurement' }, el('span', { text: 'Measurement' }), el('b', { text: Number.isFinite(e.measurement) ? (ang ? `${fmtField(e.measurement * 180 / Math.PI)}°` : fmtField(e.measurement)) : '' })));
   }
   box.replaceChildren(...kids);
 }

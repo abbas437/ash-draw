@@ -5,6 +5,7 @@
 //   gripEdit(session, id, i, p)-> one undo step; DIMENSIONs are regenerated into a fresh *D block
 //   gripsStretch(session, [{id,i}], d) -> several grips moved by d, one undo step
 //   editEntity(session, id, fn, label) -> one undo step replacing the entity by fn(copy)
+//   dimTextEdit(session, id, text) -> set a DIMENSION's text override (group 1; '' or '<>' = measured) and regenerate it, one undo step
 //   matchPropsEdit(session, src, ids, settings) -> MATCHPROP as one undo step (dimensions get a regenerated block)
 //   matchProps(src, dst, settings) -> copy of dst carrying the property groups of src that `settings` (MATCH_SETTINGS keys) leave on
 //   GRIP_MODES / nextGripMode(m) / gripMatrix(mode, base, arg) / gripModeEdit(s, ids, mode, base, arg, opts) -> grip MOVE/ROTATE/SCALE/MIRROR
@@ -210,6 +211,12 @@ export function gripsStretch(s, picks, d) {
 }
 
 export const gripEdit = (s, id, i, p) => editEntity(s, id, (c) => applyGrip(c, i, p), 'Grip edit');
+/** DDEDIT on a dimension: new override text; the block is rebuilt from the definition points (file-read ones too) */
+export const dimTextEdit = (s, id, text) => editEntity(s, id, (c) => {
+  if (c.type !== 'DIMENSION' || !c.def || (c.def.text ?? '') === text) return null;
+  c.def = { ...c.def, text };
+  return c;
+}, 'Edit dimension text');
 
 // ---- grip modes (AutoCAD: Space / Enter cycles STRETCH -> MOVE -> ROTATE -> SCALE -> MIRROR) ------------------
 export const GRIP_MODES = ['STRETCH', 'MOVE', 'ROTATE', 'SCALE', 'MIRROR'];

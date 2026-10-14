@@ -695,6 +695,7 @@ export const TOOL_ALIASES = {
   b: 'block', block: 'block', bmake: 'block', att: 'attdef', attdef: 'attdef', i: 'insert', insert: 'insert', ddinsert: 'insert',
   xa: 'xattach', xattach: 'xattach',
   ate: 'eattedit', eattedit: 'eattedit', attedit: 'eattedit', ddatte: 'eattedit',
+  ed: 'textedit', ddedit: 'textedit', textedit: 'textedit',
   mkc: 'mkc', mkr: 'mkr', mkt: 'mkt',
   z: 'zoom', zoom: 'zoom', id: 'id', li: 'list', ls: 'list', list: 'list', lts: 'ltscale', ltscale: 'ltscale', zoomfactor: 'zoomfactor',
 };
