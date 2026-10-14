@@ -1,5 +1,6 @@
 // ASH Draw Studio - Drafting Settings dialog (OSNAP / DSETTINGS; right-click on SNAP or POLAR in the status bar):
-// running object snap modes and polar tracking. Saved as settings 'osnap.on', 'osnap.modes', 'polar.step', 'polar.extra'.
+// running object snap modes and polar tracking. Saved as settings 'osnap.on', 'osnap.modes', 'polar.step', 'polar.extra'
+// ('otrack.on', the OTRACK toggle, is saved by the status bar button).
 import { el, modal } from './ui.js';
 import { OSNAP_MODES, POLAR_STEPS, cleanModes, parseAngles, snapGlyph } from '../src/core/osnap.js';
 import { glyphPath } from './viewport.js';
@@ -9,8 +10,9 @@ const api = window.api;
 /** read the saved snap / polar settings into vp.settings (start-up) */
 export async function loadDraftingSettings(app) {
   const st = app.vp.settings, get = (k) => api.settingsGet?.(k)?.catch?.(() => undefined);
-  const [on, modes, step, extra] = await Promise.all([get('osnap.on'), get('osnap.modes'), get('polar.step'), get('polar.extra')]);
+  const [on, modes, step, extra, otrack] = await Promise.all([get('osnap.on'), get('osnap.modes'), get('polar.step'), get('polar.extra'), get('otrack.on')]);
   if (typeof on === 'boolean') st.snap = on;
+  if (typeof otrack === 'boolean') st.otrack = otrack;
   const m = cleanModes(modes); if (m) st.kinds = new Set(m);
   if (POLAR_STEPS.includes(step)) st.polarStep = step;
   if (Array.isArray(extra)) st.polarExtra = parseAngles(extra.join(','));

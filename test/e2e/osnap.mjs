@@ -51,11 +51,11 @@ try {
   for (const s of ['C', '0,0', '5', 'L', '20,20', '30,25', '']) await typeCmd(s);
   await page.evaluate(() => window.app.vp.zoomExtents());
 
-  step = 'OSNAP opens the dialog; Extension is listed disabled; tick Tangent, polar 30, OK';
+  step = 'OSNAP opens the dialog; Apparent intersection is listed disabled; tick Tangent, polar 30, OK';
   await typeCmd('OSNAP');
   await page.locator('#osnap-dialog').waitFor();
-  assert.equal(await page.locator('#osnap-ext').isDisabled(), true);
-  assert.match(await page.locator('label[for=osnap-ext]').textContent(), /not yet/);
+  assert.equal(await page.locator('#osnap-app').isDisabled(), true);
+  assert.match(await page.locator('label[for=osnap-app]').textContent(), /not yet/);
   await page.locator('#osnap-tan').check();
   await page.locator('#polar-step').selectOption('30');
   await dialogOk();
@@ -84,7 +84,7 @@ try {
   await typeCmd('OSNAP');
   await page.locator('#osnap-all').click();
   assert.equal(await page.locator('#osnap-par').isChecked(), true);
-  assert.equal(await page.locator('#osnap-ext').isChecked(), false, 'a not-yet mode stays off');
+  assert.equal(await page.locator('#osnap-app').isChecked(), false, 'a not-yet mode stays off');
   await dialogOk();
   await typeCmd('L'); await typeCmd('0,10');
   await hover(26, 23, 700); // on the line 20,20-30,25 (slope 1/2)
