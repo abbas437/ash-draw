@@ -183,12 +183,13 @@ test('PDF: shaped runs carry /ActualText with the logical text, and the ToUnicod
     const t = new TextDecoder('latin1').decode(decodePDFRawStream(o).decode());
     if (t.includes('beginbfchar')) assert.ok(!/<>/.test(t), 'no empty bfchar target');
   }
-  const probe = spawnSync('pdftotext', ['-v']);
-  if (probe.error) return; // poppler not installed
+  const probe = spawnSync('pdftotext', ['-v'], { encoding: 'utf8' });
+  // only poppler's pdftotext (the Windows runner ships an older xpdf one that extracts nothing from CID fonts)
+  if (probe.error || !/poppler/i.test(`${probe.stdout}${probe.stderr}`)) return;
   const dir = mkdtempSync(join(tmpdir(), 'ash-pdftotext-'));
   try {
     writeFileSync(join(dir, 'a.pdf'), r.bytes);
-    const out = spawnSync('pdftotext', [join(dir, 'a.pdf'), '-'], { encoding: 'utf8' });
+    const out = spawnSync('pdftotext', ['-enc', 'UTF-8', join(dir, 'a.pdf'), '-'], { encoding: 'utf8' });
     assert.equal(out.status, 0, out.stderr);
     // poppler lays right-to-left text out in visual order itself, so a word comes out as written or character-reversed;
     // either way it is whole (a shared glyph id no longer turns letters into other letters)
