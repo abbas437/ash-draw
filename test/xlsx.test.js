@@ -74,3 +74,10 @@ test('symcountSheet: the Symbol header cell is bold as well as the title row', a
   assert.match(sheet, /<c r="A2" s="1" t="inlineStr"><is><t xml:space="preserve">Symbol<\/t>/);
   assert.match(sheet, /<c r="A3" t="inlineStr"><is><t xml:space="preserve">VAV<\/t>/); // data rows stay regular
 });
+
+test('sheet names: tab and line breaks removed; the 31-character cut never splits a surrogate pair', () => {
+  const names = (ns) => [...new TextDecoder().decode(unzip(xlsxBytes(ns.map((name) => ({ name, rows: [] }))))['xl/workbook.xml'].data).matchAll(/<sheet name="([^"]*)"/g)].map((m) => m[1]);
+  assert.deepEqual(names(['A\tB\nC\rD']), ['ABCD']);
+  const [n] = names(['x'.repeat(30) + '\u{1F600}\u{1F600}']);
+  assert.equal([...n].length, 31); assert.ok(!/[\ud800-\udbff]$/.test(n) && n.endsWith('\u{1F600}'));
+});

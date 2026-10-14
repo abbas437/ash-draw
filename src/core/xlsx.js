@@ -14,11 +14,11 @@ const XML = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
 export const colName = (i) => { let s = ''; for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + ((n - 1) % 26)) + s; return s; };
 /** a sheet name Excel accepts: none of []:*?/\ , at most 31 characters, unique */
 const sheetName = (n, used) => {
-  let b = String(n ?? '').replace(/[^\t\n\r -\ud7ff\ue000-\ufffd\u{10000}-\u{10FFFF}]/gu, '').replace(/[[\]:*?/\\]/g, '_').trim()
-    .replace(/^'+|'+$/g, '').trim().slice(0, 31).replace(/^'+|'+$/g, '') || 'Sheet';
+  let b = [...String(n ?? '').replace(/[^ -\ud7ff\ue000-\ufffd\u{10000}-\u{10FFFF}]/gu, '').replace(/[[\]:*?/\\]/g, '_').trim()
+    .replace(/^'+|'+$/g, '').trim()].slice(0, 31).join('').replace(/^'+|'+$/g, '') || 'Sheet'; // no tab / line breaks; 31 code points
   if (b.toUpperCase() === 'HISTORY') b = 'History_1'; // Excel reserves the name
   let s = b;
-  for (let i = 2; used.has(s.toUpperCase()); i++) s = `${b.slice(0, 31 - String(i).length - 1)}_${i}`;
+  for (let i = 2; used.has(s.toUpperCase()); i++) s = `${[...b].slice(0, 31 - String(i).length - 1).join("")}_${i}`;
   used.add(s.toUpperCase());
   return s;
 };

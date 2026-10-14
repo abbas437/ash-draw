@@ -95,7 +95,7 @@ function dynDxf() {
   const ins = (name, x) => t(0, 'INSERT', 8, 'M-HVAC', 2, name, 10, x, 20, 0, 30, 0);
   return t(0, 'SECTION', 2, 'HEADER', 9, '$ACADVER', 1, 'AC1032', 0, 'ENDSEC',
     0, 'SECTION', 2, 'TABLES', 0, 'TABLE', 2, 'BLOCK_RECORD', 70, 5,
-    rec('1F', '*Model_Space'), rec('A0', 'VAV'), rec('B1', '*U1', '00a0'), rec('B2', '*U2', 'A0'), rec('B3', '*U3'),
+    rec('1F', '*Model_Space'), rec('A0', 'VAV'), rec('B1', '*U1', '00a0'), rec('B2', '*U2', 'A0'), rec('B3', '*U3', 'B1') /* tagged to another anonymous block: not a dynamic block name */,
     0, 'ENDTAB', 0, 'ENDSEC',
     0, 'SECTION', 2, 'BLOCKS', blk('*Model_Space'), blk('VAV', line), blk('*U1', line), blk('*U2', line), blk('*U3', line), 0, 'ENDSEC',
     0, 'SECTION', 2, 'ENTITIES', ins('*U1', 0), ins('*U1', 5), ins('*U2', 10), ins('VAV', 15), ins('*U3', 20), 0, 'ENDSEC', 0, 'EOF', '');

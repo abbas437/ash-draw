@@ -932,9 +932,13 @@ function parseTokens(tk, onProgress = null) {
     flush();
   }
   // dynamic blocks: an anonymous *U block made from one carries its effective (original) name
+  let upper = null; // name index for case-insensitive look-ups, built once (not a scan per record)
   for (const [name, h] of dynRefs) {
-    const orig = blockRecH.get(h), blk = doc.blocks.get(name) ?? [...doc.blocks.values()].find((b) => b.name.toUpperCase() === name.toUpperCase());
-    if (orig && blk && orig !== name) blk.effectiveName = orig;
+    const orig = blockRecH.get(h);
+    if (!orig || orig === name || orig.startsWith('*')) continue; // missing, itself, or another anonymous block
+    let blk = doc.blocks.get(name);
+    if (!blk) { upper ??= new Map([...doc.blocks.values()].map((b) => [b.name.toUpperCase(), b])); blk = upper.get(name.toUpperCase()); }
+    if (blk) blk.effectiveName = orig;
   }
 
   // ENTITIES
