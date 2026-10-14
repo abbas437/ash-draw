@@ -4,6 +4,7 @@ import { buildScene, updateScene, drawScene, drawSceneSteps, drawLayout, fitView
 import { wheelScale, ZOOMFACTOR_DEFAULT } from '../src/core/cmdline.js';
 import { SpatialIndex, findSnap, orthoPoint, polarPoint, pickEntity, selectInBox } from '../src/core/pick.js';
 import { bboxOf, growBox } from '../src/core/geom.js';
+import { snapGlyph, directionAt, OSNAP_LABEL } from '../src/core/osnap.js';
 import { gripsOf } from './grips.js';
 import { getEntity } from '../src/core/model.js';
 import { setTextMeasure } from '../src/core/textMetrics.js';
@@ -19,6 +20,8 @@ import { nextTask } from '../src/core/slice.js';
 
 const DEFAULT_KINDS = new Set(['end', 'int', 'mid', 'cen', 'quad', 'node', 'ins', 'per']);
 const SNAP_PX = 12;
+/** resting on a line this long acquires it for the parallel snap */
+const ACQUIRE_MS = 500;
 const PICK_PX = 6;
 /** a pan / wheel-zoom gesture shows the cached bitmap; the full render follows this long after it ends */
 const SETTLE_MS = 120;
@@ -46,8 +49,8 @@ export class Viewport {
     this.cursor = { x: 0, y: 0 };      // last resolved (snapped) world point
     this.rawCursor = { x: 0, y: 0 };
     this.snapMarker = null;
-    this.lastPoint = null;             // last point entered (for relative input and ortho)
-    this.settings = { snap: true, ortho: false, polar: false, polarStep: 45, lineweights: false, transparency: true, dark: false, zoomFactor: ZOOMFACTOR_DEFAULT, kinds: new Set(DEFAULT_KINDS) };
+    this._lastPoint = null;            // see the lastPoint accessor
+    this.settings = { snap: true, ortho: false, polar: false, polarStep: 45, polarExtra: [], lineweights: false, transparency: true, dark: false, zoomFactor: ZOOMFACTOR_DEFAULT, kinds: new Set(DEFAULT_KINDS) };
     this.preview = null;               // (ctx, view, vp) => void drawn above the scene
     this.rubber = null;                // selection rectangle {a,b,crossing} in world coordinates
     this.layout = null;                // the layout shown (paper space; see layouts-ui.js), null = model space
@@ -175,14 +178,16 @@ export class Viewport {
   // ---- point resolution (snap / ortho / polar) -------------------------------------------------
   resolve(sx, sy, { from = this.lastPoint, snap = this.settings.snap, exclude } = {}) {
     const raw = this.toWorld(sx, sy);
+    this._checkParallel();
     let p = raw, marker = null;
     if (snap && this.index) {
-      const s = findSnap(this.index, raw, this.tolWorld, { kinds: this.settings.kinds, from: from ?? undefined, exclude });
+      const par = from && this.settings.kinds.has('par') ? this.parallel?.dir : undefined;
+      const s = findSnap(this.index, raw, this.tolWorld, { kinds: this.settings.kinds, from: from ?? undefined, exclude, parallel: par });
       if (s) { p = { x: s.x, y: s.y }; marker = s; }
     }
     if (!marker && from) {
       if (this.settings.ortho) p = orthoPoint(from, raw);
-      else if (this.settings.polar) { const r = polarPoint(from, raw, this.settings.polarStep); p = { x: r.x, y: r.y }; }
+      else if (this.settings.polar) { const r = polarPoint(from, raw, this.settings.polarStep, 5, this.settings.polarExtra); p = { x: r.x, y: r.y }; }
     }
     return { p, raw, marker };
   }
@@ -227,6 +232,8 @@ export class Viewport {
     this._drawGrips();
     if (this.preview) { ctx.save(); this.preview(ctx, view, this); ctx.restore(); }
     if (this.rubber) this._drawRubber();
+    this._checkParallel();
+    if (this.parallel && this.lastPoint) this._drawParallelAcquired();
     if (this.snapMarker) this._drawSnapMarker();
     this._drawCrosshair();
   }
@@ -330,22 +337,47 @@ export class Viewport {
   }
   _drawSnapMarker() {
     const m = this.snapMarker, s = this.toScreen(m), c = this.ctx;
-    c.save(); c.strokeStyle = this.inkColor; c.lineWidth = 1.5; c.beginPath();
+    c.save(); c.strokeStyle = this.inkColor; c.lineWidth = 1.5;
     const r = 6;
-    switch (m.kind) {
-      case 'end': c.rect(s.x - r, s.y - r, 2 * r, 2 * r); break;
-      case 'mid': c.moveTo(s.x - r, s.y + r); c.lineTo(s.x + r, s.y + r); c.lineTo(s.x, s.y - r); c.closePath(); break;
-      case 'cen': c.arc(s.x, s.y, r, 0, Math.PI * 2); break;
-      case 'quad': c.moveTo(s.x, s.y - r); c.lineTo(s.x + r, s.y); c.lineTo(s.x, s.y + r); c.lineTo(s.x - r, s.y); c.closePath(); break;
-      case 'int': c.moveTo(s.x - r, s.y - r); c.lineTo(s.x + r, s.y + r); c.moveTo(s.x + r, s.y - r); c.lineTo(s.x - r, s.y + r); break;
-      case 'per': c.moveTo(s.x - r, s.y - r); c.lineTo(s.x - r, s.y + r); c.lineTo(s.x + r, s.y + r); break;
-      default: c.rect(s.x - r, s.y - r, 2 * r, 2 * r); c.moveTo(s.x - r, s.y - r); c.lineTo(s.x + r, s.y + r);
+    if (m.kind === 'par' && m.from) { // the tracking line: from the last point through the snap and on
+      const a = this.toScreen(m.from), dx = s.x - a.x, dy = s.y - a.y, l = Math.hypot(dx, dy) || 1;
+      c.save(); c.lineWidth = 1; c.setLineDash([3, 3]); c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(s.x + (dx / l) * 2000, s.y + (dy / l) * 2000); c.stroke(); c.restore();
     }
+    glyphPath(c, snapGlyph(m.kind), s.x, s.y, r);
     c.stroke();
-    c.fillStyle = this.inkColor; c.font = '11px "Segoe UI", sans-serif';
-    c.fillText(SNAP_LABEL[m.kind] ?? m.kind, s.x + r + 3, s.y - r - 2);
+    // the tooltip: the mode's name on a small box beside the marker
+    const label = OSNAP_LABEL[m.kind] ?? m.kind;
+    c.font = '11px "Segoe UI", sans-serif';
+    const w = c.measureText(label).width, bx = s.x + r + 6, by = s.y + r + 4;
+    c.fillStyle = this.settings.dark ? 'rgba(40,44,52,0.92)' : 'rgba(255,255,225,0.95)'; c.fillRect(bx, by, w + 8, 16);
+    c.lineWidth = 1; c.strokeRect(bx + 0.5, by + 0.5, w + 7, 15);
+    c.fillStyle = this.settings.dark ? '#e6e6e6' : '#222'; c.fillText(label, bx + 4, by + 12);
     c.restore();
   }
+  /** the line whose direction the parallel snap uses: a small parallel glyph at the point it was acquired */
+  _drawParallelAcquired() {
+    const s = this.toScreen(this.parallel.at), c = this.ctx;
+    c.save(); c.strokeStyle = this.inkColor; c.lineWidth = 1.5; glyphPath(c, snapGlyph('par'), s.x, s.y, 5); c.stroke(); c.restore();
+  }
+  /** Parallel snap: while there is a last point, resting on a straight line for ACQUIRE_MS acquires its direction */
+  _trackHover(raw) {
+    const want = this.settings.snap && this.settings.kinds.has('par') && this.lastPoint && this.index;
+    const e = want ? this.pick(raw) : null;
+    const dir = e ? directionAt(e, raw) : null;
+    const key = dir ? `${e.id}:${dir.x.toFixed(9)},${dir.y.toFixed(9)}` : null;
+    if (key === this._hoverKey) return;
+    clearTimeout(this._hoverT); this._hoverKey = key;
+    if (!key) return;
+    const at = { ...raw };
+    this._hoverT = setTimeout(() => { if (!this.lastPoint) return; this.parallel = { dir, at, id: e.id }; this.requestRender(); }, ACQUIRE_MS);
+  }
+  /** last point entered (for relative input and ortho); when it goes away the acquired parallel direction goes with it */
+  get lastPoint() { return this._lastPoint; }
+  set lastPoint(p) { this._lastPoint = p; if (!p) this.clearTracking(); }
+  /** drop the acquired direction once its entity no longer exists (deleted, or its creation undone) */
+  _checkParallel() { if (this.parallel && !getEntity(this.doc, this.parallel.id)) this.clearTracking(); }
+  /** forget the acquired parallel direction (a new tool, the end of a command sequence) */
+  clearTracking() { clearTimeout(this._hoverT); this._hoverKey = null; this.parallel = null; }
   /** the canvas CSS cursor: none only while the crosshair is drawn (it is not while busy, panning or in Pan) */
   _syncCursor() {
     this.canvas.style.cursor = this._pan ? 'grabbing' : this.busy ? 'wait' : this.panTool || this._spaceDown ? 'grab' : '';
@@ -434,6 +466,7 @@ export class Viewport {
     this.showCross = true;
     const res = this.resolve(sx, sy, resolveOpts);
     this.cursor = res.p; this.rawCursor = res.raw; this.snapMarker = res.marker;
+    this._trackHover(res.raw);
     if (this._down && Math.hypot(sx - this._down.sx, sy - this._down.sy) > 4) this._down.moved = true;
     this.tool?.move?.(res.p, mk(e, res.raw, sx, sy, { dragging: !!this._down?.moved }));
     this.emit('cursor', res.p);
@@ -444,4 +477,12 @@ export class Viewport {
 /** plain event object for tools (PointerEvent properties are prototype getters and do not survive a spread) */
 const mk = (e, raw, sx, sy, extra = {}) => ({ button: e.button, clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey, raw, sx, sy, ...extra });
 
-const SNAP_LABEL = { end: 'Endpoint', mid: 'Midpoint', cen: 'Center', quad: 'Quadrant', int: 'Intersection', node: 'Node', ins: 'Insertion', per: 'Perpendicular', near: 'Nearest' };
+/** add a snapGlyph (half-size 1, Y down) to the current path at x,y scaled by r */
+export function glyphPath(c, glyph, x, y, r) {
+  c.beginPath();
+  for (const g of glyph) {
+    if (g[0] === 'circle') { c.moveTo(x + g[1] * r, y); c.arc(x, y, g[1] * r, 0, Math.PI * 2); continue; }
+    g[1].forEach(([u, v], i) => (i ? c.lineTo(x + u * r, y + v * r) : c.moveTo(x + u * r, y + v * r)));
+    if (g[2]) c.closePath();
+  }
+}

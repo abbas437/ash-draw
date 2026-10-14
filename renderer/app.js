@@ -31,6 +31,7 @@ import { loadDrawingImages } from './images.js';
 import { CommandHistory } from '../src/core/cmdhist.js';
 import { CmdHistView } from './cmdhist-view.js';
 import { qselectDialog, selectSimilarCommand, purgeDialog } from './selclean.js';
+import { draftingSettings, loadDraftingSettings } from './osnap-ui.js';
 import { el, message, modal, confirmDialog, textDialog, listDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
 import {
   OPEN_FILTERS, loadDrawing, conversionSummary, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, savePathIn, extOf, UNIT_NAMES,
@@ -114,6 +115,7 @@ class App {
     api.settingsGet?.('view.zoomFactor').then((v) => { const n = parseZoomFactor(v); if (n !== null) this.setZoomFactor(n, false); }).catch(() => {});
     api.settingsGet?.('theme').then((t) => { if (t === 'dark') this.setTheme('dark', false); }).catch(() => {});
     api.version?.().then((v) => { this.version = v; this.refreshWindowTitle(); }).catch(() => {});
+    loadDraftingSettings(this).catch(() => {});
     api.settingsGet?.('measure.showLegs').then((v) => setShowLegs(v)).catch(() => {});
     api.onOpenFile?.((f) => this.openFromFile(f));
     // files given at start-up open first; then autosaved drawings are offered for recovery; then the previous session
@@ -172,6 +174,7 @@ class App {
     if (id !== 'select') this.lastTool = id;
     this.toolId = id;
     this.vp.tool = this.tool;
+    this.vp.clearTracking();
     this.tool.activate();
     if (kept) { const own = this.vp.preview; this.vp.preview = (c, v, vp) => { kept(c, v, vp); own?.(c, v, vp); }; }
     for (const b of document.querySelectorAll('#tools button')) b.classList.toggle('active', b.dataset.tool === id);
@@ -194,7 +197,7 @@ class App {
     if (t.text?.(s)) { this.refreshPrompt(); return; }
     const low = s.toLowerCase();
     if (TOOL_ALIASES[low]) { this.setTool(TOOL_ALIASES[low]); return; }
-    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => { this.viewHistory.breakGesture(this.viewKey()); this.vp.zoomExtents(); }, all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), publish: () => this.publish(), find: () => this.find.open(), compare: () => this.compare(), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), units: () => this.unitsDialog(), un: () => this.unitsDialog(), ddunits: () => this.unitsDialog(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), qselect: () => qselectDialog(this), selectsimilar: () => selectSimilarCommand(this), purge: () => purgeDialog(this), pu: () => purgeDialog(this), ...this.panelCommands(), ...this.layerCommands(), ...this.layoutCommands };
+    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => { this.viewHistory.breakGesture(this.viewKey()); this.vp.zoomExtents(); }, all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), publish: () => this.publish(), find: () => this.find.open(), compare: () => this.compare(), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), units: () => this.unitsDialog(), un: () => this.unitsDialog(), ddunits: () => this.unitsDialog(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), qselect: () => qselectDialog(this), selectsimilar: () => selectSimilarCommand(this), purge: () => purgeDialog(this), pu: () => purgeDialog(this), osnap: () => draftingSettings(this), os: () => draftingSettings(this), dsettings: () => draftingSettings(this), ds: () => draftingSettings(this), ...this.panelCommands(), ...this.layerCommands(), ...this.layoutCommands };
     if (sys[low]) { sys[low](); return; }
     const last = this.vp.lastPoint ?? { x: 0, y: 0 };
     const dir = this.vp.lastPoint ? { x: this.vp.cursor.x - last.x, y: this.vp.cursor.y - last.y } : null;
@@ -667,7 +670,7 @@ class App {
         ['Quick Access row', '', () => this.setToolLayout(setQuickRow(this.toolLayout, !this.toolLayout.quickRow)), () => this.toolLayout.quickRow], '-',
         ['Show markups', '', () => toggleMarkups(this), () => markupsShown(this.doc)], '-',
         ['External references…', 'XREF', () => xrefPanel(this)]]],
-      ['Format', [['Units…', 'UNITS', () => this.unitsDialog()], ['Purge…', 'PURGE', () => purgeDialog(this)]]],
+      ['Format', [['Units…', 'UNITS', () => this.unitsDialog()], ['Drafting settings…', 'DSETTINGS', () => draftingSettings(this)], ['Purge…', 'PURGE', () => purgeDialog(this)]]],
       ['Dimension', [...TOOL_BUTTONS.find(([g]) => g === 'Dimension')[2].map(([id, label, alias]) => [label, alias, () => this.setTool(id)]), '-', ['Dimension style…', 'D', () => this.dimStyles()]]],
       ['Help', [['What this program can and cannot do', '', () => this.limitations()], ['Converter log…', '', () => this.converterLog()], ['About', '', () => this.about()]]],
     ];
@@ -809,8 +812,12 @@ class App {
 
   buildStatus() {
     const s = document.getElementById('status');
-    const tog = (label, key, title) => { const b = el('button', { title, onclick: () => this.toggle(key) }, label); b.dataset.key = key; return b; };
-    s.append(el('span', { class: 'coord', id: 'coord' }), tog('SNAP', 'snap', 'Object snap (F3)'), tog('ORTHO', 'ortho', 'Ortho (F8)'), tog('POLAR', 'polar', 'Polar tracking 45° (F10)'), tog('LWT', 'lineweights', 'Show lineweights (F9)'), tog('TPY', 'transparency', 'Show transparency'),
+    const tog = (label, key, title, settings) => {
+      const b = el('button', { title, onclick: () => this.toggle(key) }, label); b.dataset.key = key;
+      if (settings) b.addEventListener('contextmenu', (e) => { e.preventDefault(); draftingSettings(this); });
+      return b;
+    };
+    s.append(el('span', { class: 'coord', id: 'coord' }), tog('SNAP', 'snap', 'Object snap (F3); right-click: snap settings', true), tog('ORTHO', 'ortho', 'Ortho (F8)'), tog('POLAR', 'polar', 'Polar tracking (F10); right-click: settings', true), tog('LWT', 'lineweights', 'Show lineweights (F9)'), tog('TPY', 'transparency', 'Show transparency'),
       el('span', { class: 'spacer' }),
       el('span', { id: 'conv', hidden: true, role: 'button', tabindex: '0', style: 'margin-right:12px;cursor:pointer', onclick: () => this.converterLog(), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.converterLog(); } } }),
       el('span', { id: 'sel' }), el('span', { id: 'units', style: 'margin-left:12px', role: 'button', tabindex: '0', title: 'Drawing units (Format > Units…)', onclick: () => this.unitsDialog(), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.unitsDialog(); } } }),
@@ -822,12 +829,15 @@ class App {
     if (key === 'dark') { this.setCanvasDark(!st.dark); api.settingsSet?.('canvas.background', st.dark ? 'dark' : 'light')?.catch?.(() => {}); return; }
     st[key] = !st[key];
     if (key === 'transparency') api.settingsSet?.('canvas.transparency', st[key])?.catch?.(() => {});
+    if (key === 'snap') api.settingsSet?.('osnap.on', st.snap)?.catch?.(() => {});
     if (key === 'ortho' && st.ortho) st.polar = false;
     if (key === 'polar' && st.polar) st.ortho = false;
     this.refreshToggles(); this.vp.requestRender();
   }
   refreshToggles() {
     for (const b of document.querySelectorAll('#status button[data-key]')) b.classList.toggle('on', !!this.vp.settings[b.dataset.key]);
+    const pb = document.querySelector('#status button[data-key="polar"]');
+    if (pb) pb.title = `Polar tracking ${this.vp.settings.polarStep}° (F10); right-click: settings`;
     document.getElementById('theme-btn')?.classList.toggle('on', this.theme === 'dark');
   }
   /** switch the UI theme; the model space background is a separate setting (dark by default) */

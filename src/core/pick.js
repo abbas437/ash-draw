@@ -2,6 +2,7 @@
 // Pure module: world coordinates (Y up); every tolerance is in WORLD units (caller: pixels / zoom).
 import { bboxOf, isInfinite, clipInfinite, growBox, unionBox, distanceToEntity, nearestPoint, snapPoints, intersections, primsIntersections, toPrims, distToSegment, explode, tessellate, ccwSweep, DEG } from './geom.js';
 import { drain } from './slice.js';
+import { tangentPoints, parallelPoint, geometricCenter } from './osnap.js';
 
 const TAU = Math.PI * 2;
 const MAX_CELLS_AXIS = 1024;
@@ -13,7 +14,7 @@ const INSERT_SNAP_LIMIT = 500; // explode INSERTs for snapping only when the blo
 const SNAP_CANDIDATES = 150;
 const SNAP_BUDGET_MS = 8;
 
-export const SNAP_KINDS = ['end', 'int', 'mid', 'cen', 'quad', 'node', 'ins', 'per', 'near']; // priority order
+export const SNAP_KINDS = ['end', 'int', 'mid', 'cen', 'gcen', 'quad', 'node', 'ins', 'per', 'tan', 'par', 'near']; // priority order
 const RANK = new Map(SNAP_KINDS.map((k, i) => [k, i]));
 
 /** block entities _insertBoxSteps bounds per step */
@@ -364,7 +365,9 @@ function outlineNearest(g, p) {
 }
 const boxDist = (b, p) => Math.hypot(Math.max(b.minx - p.x, 0, p.x - b.maxx), Math.max(b.miny - p.y, 0, p.y - b.maxy));
 
-/** Best object snap near p: {x,y,kind,id} or null. Priority end > int > mid > cen > quad > node > ins > per > near.
+/** Best object snap near p: {x,y,kind,id} or null. Priority end > int > mid > cen > gcen > quad > node > ins > per > tan > par > near.
+ *  opts.from: the last point (per, tan, par); opts.parallel: an acquired direction {x,y} for the parallel snap
+ *  (a 'par' result carries `from`, the start of its tracking line).
  *  Bounded work: only the opts.maxCandidates (150) entities nearest p by bbox are looked at; their snap points always,
  *  the outline steps (distance, then int / per / near) nearest first while opts.budgetMs (8 ms by opts.now, default
  *  performance.now) lasts; past it, the best snap found so far. */
@@ -388,7 +391,10 @@ export function findSnap(index, p, tol, opts = {}) {
   // nearest first (ties: query order); snap points are offered in query order, so ties between entities go as before
   const byDist = cand.slice().sort((a, b) => a.bd - b.bd || a.k - b.k);
   if (byDist.length > cap) { byDist.length = cap; cand = byDist.slice().sort((a, b) => a.k - b.k); }
-  for (const c of cand) for (const q of entitySnapPoints(index, c.e)) offer(q, q.kind, c.e.id);
+  for (const c of cand) {
+    for (const q of entitySnapPoints(index, c.e)) offer(q, q.kind, c.e.id);
+    if (want('gcen') && c.e.type === 'LWPOLYLINE') { const g = geometricCenter(c.e); if (g) offer(g, 'gcen', c.e.id); }
+  }
   const geom = (e) => (e.type === 'INSERT' ? insertOutline(index, e) : null);
   const near = []; // entities whose outline is within tol (for int / per / near)
   let out = false;
@@ -410,12 +416,15 @@ export function findSnap(index, p, tol, opts = {}) {
     }
   }
   if (want('per') && opts.from && !out) for (const { e } of near) for (const q of perpendicularFeet(e, opts.from)) offer(q, 'per', e.id);
+  if (want('tan') && opts.from && !out) for (const { e } of near) for (const q of tangentPoints(e, opts.from)) offer(q, 'tan', e.id);
+  if (want('par') && opts.from && opts.parallel) { const q = parallelPoint(opts.from, p, opts.parallel, tol); if (q) offer(q, 'par', undefined); }
   if (want('near') && !out) for (const { e } of near) {
     if ((out = spent())) break;
     const q = e.type === 'INSERT' ? outlineNearest(geom(e), p) : safe(() => nearestPoint(e, p, doc), null);
     if (q) offer(q, 'near', e.id);
   }
-  return best ? { x: best.x, y: best.y, kind: best.kind, id: best.id } : null;
+  if (!best) return null;
+  return best.kind === 'par' ? { x: best.x, y: best.y, kind: 'par', id: undefined, from: { ...opts.from } } : { x: best.x, y: best.y, kind: best.kind, id: best.id };
 }
 
 /** p projected onto the horizontal or vertical axis through base, whichever is nearer. */
@@ -423,13 +432,15 @@ export function orthoPoint(base, p) {
   return Math.abs(p.x - base.x) >= Math.abs(p.y - base.y) ? { x: p.x, y: base.y } : { x: base.x, y: p.y };
 }
 
-/** Snap p's direction from base to the nearest multiple of stepDeg when within tolDeg (distance kept). angle in [0,360). */
-export function polarPoint(base, p, stepDeg, tolDeg = 5) {
+/** Snap p's direction from base to the nearest multiple of stepDeg, or to one of the `extra` absolute angles, when
+ *  within tolDeg (distance kept). angle in [0,360). */
+export function polarPoint(base, p, stepDeg, tolDeg = 5, extra = []) {
   const dx = p.x - base.x, dy = p.y - base.y, d = Math.hypot(dx, dy);
   let ang = Math.atan2(dy, dx) / DEG;
   if (ang < 0) ang += 360;
   if (!(d > 0) || !(stepDeg > 0)) return { x: p.x, y: p.y, angle: ang, snapped: false };
-  const k = Math.round(ang / stepDeg) * stepDeg;
+  let k = Math.round(ang / stepDeg) * stepDeg;
+  for (const x of extra) { const a = (x - ang) - Math.round((x - ang) / 360) * 360; if (Math.abs(a) < Math.abs(ang - k)) k = ang + a; }
   if (Math.abs(ang - k) > tolDeg) return { x: p.x, y: p.y, angle: ang, snapped: false };
   const a = ((k % 360) + 360) % 360;
   return { x: base.x + d * Math.cos(a * DEG), y: base.y + d * Math.sin(a * DEG), angle: a, snapped: true };
