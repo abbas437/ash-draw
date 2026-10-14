@@ -142,6 +142,8 @@ export function initSymbolsPanel(app, api) {
     /** the INSERT scale of `sym` in the current drawing */
     scaleOf: (sym) => symbolScale(sym, app.doc.units, { scale: st.scale, drawingScale: st.drawingScale }),
     focus() { search.focus(); },
+    /** N of the drawing scale 1:N (setting 'symbols.drawingScale') */
+    get drawingScale() { return st.drawingScale; },
   };
 }
 

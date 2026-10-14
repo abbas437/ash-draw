@@ -28,6 +28,7 @@ import { TOOL_BUTTONS, buildToolPanel, iconButton, quickCommand, canvasDarkFrom,
 import { iconSvg } from './icons.js';
 import { initSidePanel, applySide, markHead, windowTitle } from './side-panel.js';
 import { initSymbolsPanel } from './symbols-ui.js';
+import { symcountDialog } from './symcount-ui.js';
 import { defaultLayout, cleanLayout, panelGroups, samePanel, quickRow, setQuickRow, compactKeys, foldMode, SEP } from './tool-layout.js';
 import { openCustomize, initToolContextMenu } from './tool-custom.js';
 import { loadDrawingImages } from './images.js';
@@ -76,6 +77,7 @@ class App {
     this.markupPanel = new MarkupPanel(this);
     initSidePanel(this, api);
     this.symbolsPanel = initSymbolsPanel(this, api);
+    document.getElementById('sym-count').onclick = () => symcountDialog(this);
     this.cmd = document.getElementById('cmd');
     this.cmd.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); const v = this.cmd.value; this.cmd.value = ''; this.vp.canvas.focus(); this.submit(v); }
@@ -203,7 +205,7 @@ class App {
     if (t.text?.(s)) { this.refreshPrompt(); return; }
     const low = s.toLowerCase();
     if (TOOL_ALIASES[low]) { this.setTool(TOOL_ALIASES[low]); return; }
-    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => { this.viewHistory.breakGesture(this.viewKey()); this.vp.zoomExtents(); }, all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), publish: () => this.publish(), find: () => this.find.open(), compare: () => this.compare(), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), copyclip: () => this.copySel(), copybase: () => this.copySel(true), pasteclip: () => this.paste(), pasteblock: () => this.paste('block'), pasteorig: () => this.paste('orig'), units: () => this.unitsDialog(), un: () => this.unitsDialog(), ddunits: () => this.unitsDialog(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), qselect: () => qselectDialog(this), selectsimilar: () => selectSimilarCommand(this), purge: () => purgeDialog(this), pu: () => purgeDialog(this), osnap: () => draftingSettings(this), os: () => draftingSettings(this), dsettings: () => draftingSettings(this), ds: () => draftingSettings(this), ...this.panelCommands(), ...this.layerCommands(), ...this.layoutCommands };
+    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => { this.viewHistory.breakGesture(this.viewKey()); this.vp.zoomExtents(); }, all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), publish: () => this.publish(), find: () => this.find.open(), compare: () => this.compare(), symcount: () => symcountDialog(this), bcount: () => symcountDialog(this), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), copyclip: () => this.copySel(), copybase: () => this.copySel(true), pasteclip: () => this.paste(), pasteblock: () => this.paste('block'), pasteorig: () => this.paste('orig'), units: () => this.unitsDialog(), un: () => this.unitsDialog(), ddunits: () => this.unitsDialog(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), qselect: () => qselectDialog(this), selectsimilar: () => selectSimilarCommand(this), purge: () => purgeDialog(this), pu: () => purgeDialog(this), osnap: () => draftingSettings(this), os: () => draftingSettings(this), dsettings: () => draftingSettings(this), ds: () => draftingSettings(this), ...this.panelCommands(), ...this.layerCommands(), ...this.layoutCommands };
     if (sys[low]) { sys[low](); return; }
     const last = this.vp.lastPoint ?? { x: 0, y: 0 };
     const dir = this.vp.lastPoint ? { x: this.vp.cursor.x - last.x, y: this.vp.cursor.y - last.y } : null;
