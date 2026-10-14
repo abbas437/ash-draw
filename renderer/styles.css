@@ -192,6 +192,19 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 .layer button.icon { width:18px; padding:0; }
 .layer .swatch { margin:0 2px; }
 .lay-search { display:flex; align-items:center; gap:2px; margin-bottom:4px; }
+.sym-row { display:flex; flex-wrap:wrap; align-items:center; gap:4px; margin-bottom:4px; }
+.sym-row select, .sym-row input[type=search] { flex:1 1 8em; min-width:0; }
+.sym-scales label { display:flex; align-items:center; gap:3px; font-size:12px; } .sym-scales input { width:4.5em; }
+#sym-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(74px, 1fr)); gap:4px; max-height:300px; overflow:auto; margin-bottom:4px; }
+.sym-cell { display:flex; flex-direction:column; align-items:center; gap:2px; padding:4px 2px; min-width:0; background:transparent; border:1px solid transparent; border-radius:4px; }
+.sym-cell:hover, .sym-cell:focus-visible { border-color:var(--accent); background:var(--hover); }
+.sym-pic { width:56px; height:56px; display:flex; align-items:center; justify-content:center; border-radius:3px; }
+.sym-cell.loading .sym-pic { background:var(--line); opacity:.5; }
+.sym-cell.nothumb .sym-pic::after { content:'?'; color:var(--dim); }
+.sym-thumb { width:56px; height:56px; display:none; } .sym-cell.ready .sym-thumb { display:block; }
+[data-theme="dark"] .sym-thumb { filter:invert(1); } /* thumbnails are drawn black on transparent */
+.sym-name { font-size:11px; line-height:1.2; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#sym-status { font-size:11px; color:var(--dim); }
 .lay-search input { flex:1; min-width:0; }
 .layer .lay-plot.off { opacity:.35; text-decoration:line-through; }
 .layer .lname-edit { flex:1 1 auto; min-width:160px; width:0; font:inherit; padding:0 2px; }

@@ -105,6 +105,11 @@ paths the user chose in a dialog or passed on the command line during this sessi
 | `dwgToDxf(bytes)` | Convert DWG bytes to DXF via `dwg2dxf.exe`. |
 | `dwgOpen(pathOrBytes)` | Open a DWG: main converts it (from a granted path, or from bytes) and returns `{url, size, warnings, engine}`; the DXF reader worker fetches the one-time `app://drawstudio/_open/<token>` URL, so the DXF is not cloned through IPC on the window thread. |
 | `dxfToDwg(dxfBytes, version)` | Convert DXF bytes to DWG via `dxf2dwg.exe`; `version` is `'r2000'` or `'r14'`. |
+| `symbolsAddFolder()` | Choose a symbol library folder in the folder dialog; main stores it (`symbol-folders.json`) and returns `{id, path, name, files, truncated}` (null when cancelled). |
+| `symbolsFolders()` / `symbolsRemoveFolder(id)` | The stored folders `[{id, path, name}]`; forget one. |
+| `symbolsList(id)` | `{files: [{rel, name, category, size, mtimeMs}], truncated}`: the .dxf/.dwg files under a stored folder. |
+| `symbolsRead(id, rel)` | A listed file as DXF `{name, format: 'dxf', sourceFormat, bytes}` (a DWG is converted). |
+| `symbolsThumbGet(id, rel)` / `symbolsThumbPut(id, rel, png)` | The cached PNG thumbnail (or null) / cache one (a PNG of at most 256 KB); keyed by the file's path, mtime and size. |
 
 ## Licence
 
