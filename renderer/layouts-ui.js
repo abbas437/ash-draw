@@ -5,7 +5,8 @@ import { buildScene, docWithFrozen, fitView, screenToWorld, viewportToPaper } fr
 import { makeViewport, viewportScale, modelViewThrough, viewportFromModelView, viewportAt, STANDARD_SCALES, isPaperViewport } from '../src/core/layouts.js';
 import { recordViewportView, viewportView } from '../src/core/edit.js';
 import { Tool, TOOL_ALIASES } from './tools.js';
-import { el, modal, toast } from './ui.js';
+import { el, modal, message, toast } from './ui.js';
+import { addLayout, copyLayout, renameLayout, deleteLayout, moveLayout, setPageSetup, findLayout, layoutsOf, layoutNameError } from '../src/core/layoutmgmt.js';
 
 /** the drawing seen through one layout: entities are the layout's, everything else is the drawing's */
 export function spaceDoc(doc, layout) {
@@ -29,7 +30,8 @@ export function setSpace(app, name) {
   exitMspace(app);
   sp.views[sp.cur] = { cx: vp.view.cx, cy: vp.view.cy, zoom: vp.view.zoom };
   if (app.toolId) app.setTool(app.toolId === 'select' ? 'select' : app.toolId); // drop a half-done command
-  tab.session.doc = layout ? (sp.docs[name] ??= spaceDoc(tab.doc, layout)) : tab.doc;
+  if (layout && sp.docs[name]?.layout !== layout) sp.docs[name] = spaceDoc(tab.doc, layout); // a name can move to another layout (rename, delete)
+  tab.session.doc = layout ? sp.docs[name] : tab.doc;
   sp.cur = name;
   vp.layout = layout;
   vp.setSession(tab.session, { fit: !sp.views[name], view: sp.views[name] ?? null });
@@ -46,8 +48,108 @@ export function renderSpaceBar(app) {
   const names = ['Model', ...[...(tab.doc.layouts ?? [])].sort((a, b) => a.tab - b.tab).map((l) => l.name)];
   app.spaceBar.replaceChildren(...names.map((n) => el('button', {
     type: 'button', role: 'tab', class: n === cur ? 'active' : '', 'data-space': n, 'aria-selected': String(n === cur), text: n,
-    onclick: () => setSpace(app, n),
+    onclick: () => setSpace(app, n), oncontextmenu: (e) => { e.preventDefault(); tabMenu(app, n, e); },
   })));
+}
+
+// ---- layout management (LAYOUT command, tab menu): src/core/layoutmgmt.js, one undo step per action ----------------
+
+/** after a layout change or its undo: follow a renamed shown layout, leave a deleted one for Model, redraw the tabs */
+function syncSpace(app) {
+  const tab = app.active;
+  if (!tab) return;
+  const sp = spaces(tab), lo = app.vp.layout;
+  if (sp.cur !== 'Model' && !layoutOf(tab, sp.cur)) {
+    if (lo && tab.doc.layouts?.includes(lo)) { sp.views[lo.name] = sp.views[sp.cur]; sp.docs[lo.name] = sp.docs[sp.cur]; sp.cur = lo.name; } else setSpace(app, 'Model');
+  }
+  renderSpaceBar(app);
+}
+
+async function askLayoutName(app, title, value, except = null) {
+  for (;;) {
+    const inp = el('input', { type: 'text', name: 'layoutName', value, style: 'width:20em' });
+    if ((await modal(title, [el('label', {}, 'Layout name ', inp)], [{ label: 'OK', value: 'ok', primary: true }, { label: 'Cancel', value: null }])) !== 'ok') return null;
+    const err = layoutNameError(app.active.doc, inp.value, except);
+    if (!err) return inp.value.trim();
+    await message('Invalid layout name', err); value = inp.value;
+  }
+}
+
+/** one layout action: new, copy, rename, delete, left, right, set, pagesetup; `name` the layout it applies to */
+export async function layoutAction(app, act, name) {
+  const s = app.active?.session, doc = app.active?.doc, lo = name && name !== 'Model' ? findLayout(doc, name) : null;
+  if (!s) return;
+  try {
+    if (act === 'new') { const n = await askLayoutName(app, 'New layout', addLayoutName(doc)); if (n) setSpace(app, addLayout(s, n).name); } else if (act === 'set') {
+      if (lo || name === 'Model') setSpace(app, lo ? lo.name : 'Model');
+    } else if (!lo) toast(name === 'Model' ? 'The Model tab cannot be changed.' : `There is no layout "${name}".`);
+    else if (act === 'copy') { const n = await askLayoutName(app, `Copy ${lo.name}`, copyName(doc, lo.name)); if (n) copyLayout(s, lo.name, n); } else if (act === 'rename') {
+      const n = await askLayoutName(app, `Rename ${lo.name}`, lo.name, lo); if (n) renameLayout(s, lo.name, n);
+    } else if (act === 'delete') {
+      if (layoutsOf(doc).length <= 1) { toast('A drawing keeps at least one layout.'); return; }
+      const ok = await modal('Delete layout', [el('p', { text: `The layout "${lo.name}" and everything on it will be deleted.` })], [{ label: 'Delete', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
+      if (ok === 'ok') deleteLayout(s, lo.name);
+    } else if (act === 'left' || act === 'right') moveLayout(s, lo.name, act === 'left' ? -1 : 1);
+    else if (act === 'pagesetup') await pageSetupDialog(app, lo);
+  } catch (err) { await message('Layout', err.message || String(err)); }
+  syncSpace(app);
+}
+const addLayoutName = (doc) => { for (let i = layoutsOf(doc).length + 1; ; i++) if (!findLayout(doc, `Layout${i}`)) return `Layout${i}`; };
+const copyName = (doc, n) => { let i = 2; while (findLayout(doc, `${n} (${i})`)) i++; return `${n} (${i})`; };
+
+const PAPERS = { A4: [297, 210], A3: [420, 297], A2: [594, 420], A1: [841, 594], A0: [1189, 841], Letter: [279.4, 215.9], Tabloid: [431.8, 279.4] };
+const paperKey = (p) => Object.keys(PAPERS).find((k) => Math.abs(Math.max(p.paperW, p.paperH) - PAPERS[k][0]) < 0.6 && Math.abs(Math.min(p.paperW, p.paperH) - PAPERS[k][1]) < 0.6) ?? '';
+
+/** PAGESETUP: paper, orientation, plot scale or fit, plot area, stored in the layout's PLOTSETTINGS fields
+ *  (4 paper name, 44/45 paper size mm, 73 rotation, 142/143 scale, 75 standard scale 0 = fit, 74 plot type) */
+async function pageSetupDialog(app, lo) {
+  const p = lo.plot, cur = paperKey(p);
+  const paper = el('select', { name: 'paper' }, [...(cur ? [] : [el('option', { value: '', text: `${p.paperName || 'Current'} (${+p.paperW.toFixed(1)} × ${+p.paperH.toFixed(1)} mm)` })]), ...Object.keys(PAPERS).map((k) => el('option', { value: k, text: k }))]);
+  paper.value = cur;
+  const ori = el('select', { name: 'orientation' }, [el('option', { value: '0', text: 'Landscape' }), el('option', { value: '1', text: 'Portrait' })]);
+  ori.value = (p.rotation === 1 || p.rotation === 3) !== (p.paperH > p.paperW) ? '1' : '0';
+  const fit = el('input', { type: 'checkbox', name: 'fit', checked: p.stdScale === 0 });
+  const n = el('input', { type: 'number', name: 'scale', min: '0.000001', step: 'any', value: String(+((p.scaleDen || 1) / (p.scaleNum || 1)).toPrecision(6)), style: 'width:7em' });
+  const area = el('select', { name: 'area' }, [el('option', { value: '5', text: 'Layout' }), el('option', { value: '1', text: 'Extents' }), el('option', { value: '4', text: 'Window (as stored)' })]);
+  area.value = [1, 4].includes(p.plotType) ? String(p.plotType) : '5';
+  const r = await modal(`Page setup — ${lo.name}`, [el('label', {}, 'Paper size '), paper, el('label', {}, 'Orientation '), ori,
+    el('label', {}, fit, ' Fit to paper'), el('label', {}, 'Plot scale (paper : layout)  1 : ', n), el('label', {}, 'Plot area '), area],
+  [{ label: 'OK', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
+  if (r !== 'ok') return;
+  const k = Number(n.value), dims = paper.value ? PAPERS[paper.value] : [Math.max(p.paperW, p.paperH), Math.min(p.paperW, p.paperH)];
+  if (!fit.checked && !(k > 0)) { await message('Invalid scale', 'Enter a scale greater than zero, for example 1 : 1.'); return; }
+  setPageSetup(app.active.session, lo.name, {
+    ...(paper.value ? { paperName: paper.value, paperW: dims[0], paperH: dims[1] } : {}),
+    rotation: ori.value === '1' ? (dims[0] >= dims[1] ? 1 : 0) : (dims[0] >= dims[1] ? 0 : 1),
+    stdScale: fit.checked ? 0 : 16, ...(fit.checked ? {} : { scaleNum: 1, scaleDen: k }), plotType: Number(area.value),
+  });
+}
+
+/** right-click on a Model / layout tab */
+function tabMenu(app, name, ev) {
+  document.querySelector('.popmenu')?.remove();
+  const model = name === 'Model', list = layoutsOf(app.active.doc), i = list.findIndex((l) => l.name === name);
+  const item = (act, text, off = false) => el('button', { 'data-act': act, disabled: off, onclick: () => { m.remove(); layoutAction(app, act, name); } }, text);
+  const m = el('div', { class: 'popmenu', style: `left:${ev.clientX}px;top:${ev.clientY}px` },
+    item('new', 'New layout'), item('copy', 'Copy', model), item('rename', 'Rename', model), item('delete', 'Delete', model || list.length <= 1),
+    item('left', 'Move left', model || i <= 0), item('right', 'Move right', model || i >= list.length - 1), item('pagesetup', 'Page setup…', model));
+  m.addEventListener('pointerdown', (e) => e.stopPropagation());
+  document.body.append(m);
+  if (ev.clientY + m.offsetHeight > innerHeight) m.style.top = `${Math.max(0, ev.clientY - m.offsetHeight)}px`; // the tabs sit at the bottom: open upwards
+  setTimeout(() => document.addEventListener('pointerdown', () => m.remove(), { once: true }), 0);
+}
+
+/** LAYOUT (LO): New / Copy / Delete / Rename / Set / ? as in AutoCAD (Template is not offered) */
+async function layoutCommand(app) {
+  const cur = spaces(app.active).cur;
+  const opts = [['new', 'New'], ['copy', 'Copy'], ['delete', 'Delete'], ['rename', 'Rename'], ['set', 'Set'], ['list', '?']];
+  const act = await modal('LAYOUT', [el('p', { text: `Current: ${cur}. Choose an option.` })], [...opts.map(([value, label]) => ({ label, value })), { label: 'Cancel', value: null }]);
+  if (!act) return;
+  if (act === 'list') { await message('Layouts', layoutsOf(app.active.doc).map((l) => l.name).join('\n')); return; }
+  if (act === 'new') { await layoutAction(app, 'new'); return; }
+  const sel = el('select', { name: 'layout' }, (act === 'set' ? ['Model'] : []).concat(layoutsOf(app.active.doc).map((l) => l.name)).map((n) => el('option', { value: n, text: n })));
+  if (cur !== 'Model' || act === 'set') sel.value = cur;
+  if ((await modal(`LAYOUT ${opts.find((o) => o[0] === act)[1]}`, [el('label', {}, 'Layout ', sel)], [{ label: 'OK', value: 'ok', primary: true }, { label: 'Cancel', value: null }])) === 'ok') await layoutAction(app, act, sel.value);
 }
 
 // ---- model space through a viewport (MSPACE / PSPACE) ----------------------------------------------------------------
@@ -256,7 +358,8 @@ export function initLayouts(app) {
     const v = vp.doc.entities.find((x) => x.type === 'VIEWPORT' && !isPaperViewport(x) && x.on !== false && x.width > 0 && x.height > 0);
     if (!v) toast('This layout has no viewport to enter.'); else enterMspace(app, v);
   };
-  app.layoutCommands = { vplock: () => vplock(app), ms, mspace: ms, ps: () => exitMspace(app), pspace: () => exitMspace(app) };
+  const lo = () => layoutCommand(app);
+  app.layoutCommands = { layout: lo, lo, pagesetup: () => (vp.layout ? layoutAction(app, 'pagesetup', vp.layout.name) : toast('PAGESETUP works on a layout tab.')), vplock: () => vplock(app), ms, mspace: ms, ps: () => exitMspace(app), pspace: () => exitMspace(app) };
   /** ZOOM nXP: viewport scale n paper units per model unit, centre kept; a locked viewport keeps its scale */
   app.zoomPaperScale = (k) => {
     const m = vp.mspace;
@@ -286,4 +389,5 @@ export function initLayouts(app) {
   const drop = () => { if (app.active) spaces(app.active).scenes.clear(); };
   vp.on('change', (info) => { if (!info.doc || info.doc === app.active?.doc || info.structure) drop(); });
   vp.on('structure', drop);
+  vp.on('change', (info) => { if (info.kind !== 'do') syncSpace(app); }); // undo / redo of a layout action
 }
