@@ -4,6 +4,7 @@
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
@@ -112,6 +113,41 @@ try {
   assert.equal(await editing(), true);
   await typeCmd('BCLOSE');
   assert.equal(await editing(), false);
+
+  step = 'Ctrl+S with unsaved block edits: Cancel keeps the editor, Discard closes it and saves without the change';
+  await typeCmd('BEDIT');
+  await dialogButton('OK');
+  for (const s2 of ['L', '0,77', '10,77', '']) await typeCmd(s2);
+  const lenBefore = await defLen();
+  let downloads = 0;
+  page.on('download', () => { downloads++; });
+  await page.keyboard.press('Control+s');
+  await page.locator('#dlg', { hasText: 'Save changes to BOX?' }).waitFor();
+  await dialogButton('Cancel');
+  assert.equal(await editing(), true, 'Cancel keeps the editor open');
+  assert.equal(downloads, 0);
+  const dl = page.waitForEvent('download');
+  await page.keyboard.press('Control+s');
+  await page.locator('#dlg', { hasText: 'Save changes to BOX?' }).waitFor();
+  await dialogButton('Discard');
+  const dxf = path.join(os.tmpdir(), `ash-bedit-${process.pid}.dxf`);
+  await (await dl).saveAs(dxf);
+  const text = await fs.readFile(dxf, 'utf8');
+  await fs.rm(dxf, { force: true });
+  assert.equal(await editing(), false, 'Discard closes the editor');
+  assert.equal(await defLen(), lenBefore);
+  assert.ok(text.includes('BOX') && !/\n\s*(20|21)\r?\n\s*77(\.0+)?\r?\n/.test(text), 'the saved drawing has no 77 coordinate from the discarded edit');
+
+  step = 'PURGE while the editor is open: toast, nothing changes';
+  await typeCmd('BEDIT');
+  await dialogButton('OK');
+  const undo0 = await page.evaluate(() => window.app.session.undoStack.length);
+  await typeCmd('PURGE');
+  await page.locator('#toast', { hasText: 'Close the block editor first (BCLOSE).' }).waitFor();
+  assert.equal(await page.locator('#dlg[open]').count(), 0, 'no Purge dialog');
+  assert.equal(await editing(), true);
+  assert.equal(await page.evaluate(() => window.app.session.undoStack.length), undo0);
+  await typeCmd('BCLOSE');
 
   assert.deepEqual(problems, []);
   console.log('bedit e2e: OK');

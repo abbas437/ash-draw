@@ -148,6 +148,17 @@ test('a block cannot contain a reference to itself', () => {
   assert.equal(s.undoStack.length, 0);
 });
 
+test('a nested cycle (BOX contains C, C contains B, B contains BOX) is refused at any depth, case-insensitively', () => {
+  const { doc, s } = setup();
+  const b = addBlock(doc, 'B', { x: 0, y: 0 }, [makeLine({ x: 0, y: 0 }, { x: 1, y: 1 })]);
+  const c = addBlock(doc, 'C', { x: 0, y: 0 }, [instantiate(b, { x: 0, y: 0 })]);
+  b.entities.push({ ...instantiate(doc.blocks.get('BOX'), { x: 0, y: 0 }), block: 'box' });
+  const ed = openBlockEdit(doc, 'BOX');
+  addEntities(ed.session, [instantiate(c, { x: 0, y: 0 })]);
+  assert.throws(() => saveBlockEdit(s, ed), { code: 'SELF_REF' });
+  assert.equal(s.undoStack.length, 0);
+});
+
 test('a saved definition is written to DXF and reads back', () => {
   const { doc, s } = setup();
   const ed = openBlockEdit(doc, 'BOX');

@@ -58,13 +58,31 @@ export const blockEditDirty = (edit) => edit.session.dirty;
 
 const attSig = (ents, base) => JSON.stringify([base.x, base.y, attdefsOf({ entities: ents }).map(({ id, ...d }) => d)]);
 
+/** does any INSERT in `entities` lead to block `name`, directly or through other blocks' definitions (case-insensitive, any depth)? */
+function reachesBlock(root, entities, name) {
+  const target = name.toLowerCase(), byName = new Map([...root.blocks].map(([k, b]) => [k.toLowerCase(), b])), seen = new Set();
+  const stack = [entities];
+  while (stack.length) {
+    for (const e of stack.pop()) {
+      if (e.type !== 'INSERT') continue;
+      const n = String(e.block).toLowerCase();
+      if (n === target) return true;
+      if (seen.has(n)) continue;
+      seen.add(n);
+      const b = byName.get(n);
+      if (b) stack.push(b.entities);
+    }
+  }
+  return false;
+}
+
 /** BSAVE: replace the definition with the working copy as ONE undo step "BEDIT <name>" on the drawing's session s.
  *  When the attribute definitions (or the base point, which places them) changed, every reference is synced (ATTSYNC)
  *  in the same step. Returns { synced }: the number of references whose attributes were rebuilt. */
 export function saveBlockEdit(s, edit) {
   const root = s.doc.modelDoc ?? s.doc, old = root.blocks.get(edit.name);
   if (!old) throw new Error(`Block "${edit.name}" no longer exists.`);
-  if (edit.doc.entities.some((e) => e.type === 'INSERT' && e.block === edit.name)) throw Object.assign(new Error(`Block "${edit.name}" cannot contain a reference to itself.`), { code: 'SELF_REF' });
+  if (reachesBlock(root, edit.doc.entities, edit.name)) throw Object.assign(new Error(`Block "${edit.name}" cannot contain a reference to itself.`), { code: 'SELF_REF' });
   const entities = edit.doc.entities.map((e) => ({ ...structuredClone(e), id: 0 }));
   const base = { x: edit.state.base.x, y: edit.state.base.y };
   const blk = { ...old, base, entities };

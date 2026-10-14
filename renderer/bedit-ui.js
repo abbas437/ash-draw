@@ -78,6 +78,24 @@ export async function closeBlockEditor(app) {
   return leave(app, r === 'save');
 }
 
+/** commands that change other blocks or the whole drawing are refused while the editor is open (tool ids and typed names) */
+const NOT_IN_EDITOR = new Set(['bedit', 'attsync', 'purge', 'pu', 'layout', 'pagesetup']);
+/** true (with a toast) when `name` is such a command and the block editor of the shown drawing is open */
+export function blockedByEditor(app, name) {
+  if (!app.active?.bedit || !NOT_IN_EDITOR.has(String(name).toLowerCase())) return false;
+  toast('Close the block editor first (BCLOSE).');
+  return true;
+}
+
+/** before saving, closing or quitting: unsaved block-editor changes of `tab` ask Save / Discard / Cancel (BCLOSE's prompt).
+ *  True when it is fine to go on (no unsaved editor changes, or Save / Discard done); false when cancelled */
+export async function settleBlockEdit(app, tab = app.active) {
+  if (!tab?.bedit || !blockEditDirty(tab.bedit.edit)) return true;
+  if (tab !== app.active) app.switchTo(tab);
+  return (await closeBlockEditor(app)) === true;
+}
+export const blockEditPending = (tab) => !!tab?.bedit && blockEditDirty(tab.bedit.edit);
+
 /** the editor bar above the Model / layout tabs, the base point marker, and the Model / layout tabs hidden while editing */
 function syncUi(app) {
   const be = editorOf(app);

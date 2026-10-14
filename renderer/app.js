@@ -20,7 +20,7 @@ import { initAutosave } from './autosave.js';
 import { AUTOSAVE_CHOICES, shouldDiscardAutosave } from '../src/core/autosave.js';
 import { FindPanel } from './find.js';
 import { plotDialog, publishDialog } from './plot.js';
-import { initBlockEditor } from './bedit-ui.js';
+import { initBlockEditor, blockedByEditor, settleBlockEdit, blockEditPending } from './bedit-ui.js';
 import { initLayouts, restoreSpace, renderSpaceBar, layoutDoubleClick, exitMspace, renderVpScale, commitViewportView } from './layouts-ui.js';
 import { ComparePanel, runCompare, compareUses } from './compare.js';
 import { viewCommands, viewMenuItems } from './views-ui.js';
@@ -106,7 +106,7 @@ class App {
     this.viewHistory = new ViewHistory();
     this.vp.on('view', () => this.viewHistory.observe(this.viewKey(), this.vp.view, performance.now()));
     this.vp.canvas.addEventListener('dblclick', (e) => { if (this.toolId === 'select' && !layoutDoubleClick(this, e)) blockDoubleClick(this, e); });
-    window.addEventListener('beforeunload', (e) => { if (!this.closeConfirmed && this.tabs.some((t) => t.session.dirty)) { e.preventDefault(); e.returnValue = ''; } });
+    window.addEventListener('beforeunload', (e) => { if (!this.closeConfirmed && this.tabs.some((t) => t.session.dirty || blockEditPending(t))) { e.preventDefault(); e.returnValue = ''; } });
     api.onCloseRequest?.(() => this.closeAll());
     this.newDrawing();
     this.setTool('select');
@@ -181,6 +181,7 @@ class App {
   }
 
   setTool(id) {
+    if (blockedByEditor(this, id)) id = 'select';
     this.vp.preview = null;
     if (this.toolId && this.tool) this.tool.deactivate(); // may leave a preview behind (Measure keeps its markers)
     const kept = id === 'select' ? this.vp.preview : null; // back to Select: the markers stay beside its own preview
@@ -209,6 +210,7 @@ class App {
     }
     if (t.text?.(s)) { this.refreshPrompt(); return; }
     const low = s.toLowerCase();
+    if (blockedByEditor(this, low)) return;
     if (TOOL_ALIASES[low]) { this.setTool(TOOL_ALIASES[low]); return; }
     const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => { this.viewHistory.breakGesture(this.viewKey()); this.vp.zoomExtents(); }, all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), publish: () => this.publish(), find: () => this.find.open(), compare: () => this.compare(), symcount: () => symcountDialog(this), bcount: () => symcountDialog(this), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), copyclip: () => this.copySel(), copybase: () => this.copySel(true), pasteclip: () => this.paste(), pasteblock: () => this.paste('block'), pasteorig: () => this.paste('orig'), units: () => this.unitsDialog(), un: () => this.unitsDialog(), ddunits: () => this.unitsDialog(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), qselect: () => qselectDialog(this), selectsimilar: () => selectSimilarCommand(this), purge: () => purgeDialog(this), pu: () => purgeDialog(this), osnap: () => draftingSettings(this), os: () => draftingSettings(this), dsettings: () => draftingSettings(this), ds: () => draftingSettings(this), ...this.panelCommands(), ...this.layerCommands(), ...this.layoutCommands, ...viewCommands(this) };
     if (sys[low]) { sys[low](); return; }
@@ -272,6 +274,7 @@ class App {
   /** asks to save a drawing with unsaved changes (shown first). The choice: 'clean' (nothing to save), 'save' (saved -
    *  a DWG that differs from the drawing leaves it unsaved), 'dont-save'; null = cancelled, or the save failed */
   async confirmDiscard(tab = this.active) {
+    if (!(await settleBlockEdit(this, tab))) return null; // unsaved block-editor changes first: Save / Discard / Cancel
     if (!tab?.session.dirty) return 'clean';
     if (tab !== this.active) this.switchTo(tab);
     const r = await confirmDialog('Unsaved changes', `Save changes to ${tab.file.name}?`, 'Save', "Don't save", 'Cancel');
@@ -327,7 +330,7 @@ class App {
   /** window close / quit: one save prompt per drawing with unsaved changes, then close */
   async closeAll() {
     const choices = new Map();
-    for (const tab of this.tabs.filter((t) => t.session.dirty)) {
+    for (const tab of this.tabs.filter((t) => t.session.dirty || blockEditPending(t))) {
       const choice = await this.confirmDiscard(tab);
       if (!choice) return false;
       choices.set(tab, choice);
@@ -449,6 +452,7 @@ class App {
   // One save at a time per tab: a second Save / Save As on a tab while its save runs is refused.
   /** run `fn(tab)` as the save of the shown tab; false (and a toast) when that tab is already being saved */
   async guardedSave(fn) {
+    if (!(await settleBlockEdit(this))) return false; // unsaved block-editor changes first: Save / Discard / Cancel
     const tab = this.active;
     if (!tab) return false;
     if (tab.saving) { toast('Still saving…', 2000); return false; }
@@ -682,7 +686,7 @@ class App {
         ['Quick Access row', '', () => this.setToolLayout(setQuickRow(this.toolLayout, !this.toolLayout.quickRow)), () => this.toolLayout.quickRow], '-',
         ['Show markups', '', () => toggleMarkups(this), () => markupsShown(this.doc)], '-',
         ['External references…', 'XREF', () => xrefPanel(this)]]],
-      ['Format', [['Units…', 'UNITS', () => this.unitsDialog()], ['Drafting settings…', 'DSETTINGS', () => draftingSettings(this)], ['Purge…', 'PURGE', () => purgeDialog(this)], '-',
+      ['Format', [['Units…', 'UNITS', () => this.unitsDialog()], ['Drafting settings…', 'DSETTINGS', () => draftingSettings(this)], ['Purge…', 'PURGE', () => blockedByEditor(this, 'purge') || purgeDialog(this)], '-',
         ['Load patterns from .pat file…', '', () => this.loadPatterns()], ['Hatch patterns…', '', () => patternsDialog(this, api)]]],
       ['Dimension', [...TOOL_BUTTONS.find(([g]) => g === 'Dimension')[2].map(([id, label, alias]) => [label, alias, () => this.setTool(id)]), '-', ['Dimension style…', 'D', () => this.dimStyles()]]],
       ['Help', [['What this program can and cannot do', '', () => this.limitations()], ['Converter log…', '', () => this.converterLog()], ['About', '', () => this.about()]]],
