@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { newDocument, addLayer, addLinetype, addTextStyle, addBlock, addEntity, makeLine, makeText, makeInsert, makeCircle } from '../src/core/model.js';
 import { Session } from '../src/core/edit.js';
+import { createDimension } from '../src/core/dims.js';
 import { buildFragment, fragmentDxf, readFragment, pasteFragment, unitScale } from '../src/core/clipboard.js';
 
 function source() {
@@ -102,4 +103,30 @@ test('PASTEBLOCK: everything inserted as one new block', () => {
   assert.equal(t.blocks.get(r.block).entities.length, 3);
   s.undo();
   assert.ok(!t.blocks.has(r.block) && t.entities.length === 0);
+});
+
+test('paste: a dimension is rebuilt on its own anonymous block - no unused copy, no rename message, undo removes it', () => {
+  const src = newDocument(); src.units = 4;
+  const de = createDimension(src, { kind: 'linear', p1: { x: 0, y: 0 }, p2: { x: 100, y: 0 }, at: { x: 50, y: 20 }, angle: 0 }, 'Standard');
+  const frag = readFragment(fragmentDxf(src, [de.id]));
+  assert.ok(frag.entities[0].def, 'the dimension keeps its definition through the fragment');
+  const t = newDocument(); t.units = 4;
+  createDimension(t, { kind: 'linear', p1: { x: 0, y: 0 }, p2: { x: 10, y: 0 }, at: { x: 5, y: 2 }, angle: 0 }, 'Standard'); // takes *D1
+  const before = [...t.blocks.keys()];
+  const s = new Session(t);
+  const r = pasteFragment(s, frag, { at: { x: 30, y: 30 } });
+  assert.deepEqual(r.renamed, []);
+  const used = new Set(t.entities.filter((e) => e.type === 'DIMENSION').map((e) => e.block));
+  assert.equal(r.entities[0].block, '*D2');
+  assert.deepEqual([...t.blocks.keys()].filter((n) => !used.has(n)), [], 'every block is in use');
+  assert.ok(t.blocks.get('*D2').entities.length > 0);
+  assert.equal(s.undoStack.length, 1);
+  s.undo();
+  assert.deepEqual([...t.blocks.keys()], before, 'undo restores the exact block list');
+  s.redo();
+  assert.ok(t.blocks.has('*D2'));
+  // pasted unscaled at the origin the dimension is rebuilt just the same
+  const r2 = pasteFragment(s, frag, { orig: true });
+  assert.equal(r2.entities[0].block, '*D3');
+  assert.deepEqual([...t.blocks.keys()].sort(), ['*D1', '*D2', '*D3']);
 });

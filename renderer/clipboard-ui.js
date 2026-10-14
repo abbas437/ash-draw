@@ -10,6 +10,7 @@ const unitName = (u) => INSUNITS.find((x) => x[0] === u)?.[1] ?? `units ${u}`;
 
 /** one point from the user, then fn(p); Esc / right click cancels */
 function pickPoint(app, prompt, fn) {
+  if (app.toolId === 'pickpoint') app.tools.pickpoint.cancel(); // a pick still open: leave it (restores the tool and lastTool) before replacing it
   const prev = app.toolId === 'pickpoint' ? 'select' : app.toolId, prevLast = app.lastTool;
   let done = false;
   const leave = (p) => { if (done) return; done = true; app.setTool(prev); app.lastTool = prevLast; if (p) fn(p); };
@@ -32,19 +33,27 @@ export function copyClip(app, { base = false } = {}) {
   const go = (bp) => {
     const text = fragmentDxf(app.doc, ids, bp);
     app.clip = text;
+    app.clipLocal = true; // app.clip is newer than whatever the system clipboard holds until a system write succeeds
     const done = () => app.toast(`${ids.length} object(s) copied`, 1500);
+    const ok = (written) => {
+      if (written === false) { app.toast('Selection too large for the system clipboard - copied inside ASH only.', 4000); return; }
+      if (app.clip === text) app.clipLocal = false;
+      done();
+    };
     const p = api.clipboardWriteDxf?.(text);
-    if (p?.then) p.then(done, done); else done();
+    if (p?.then) p.then(ok, done); else done();
   };
   if (base) pickPoint(app, 'COPYBASE  Specify base point:', go); else go(null);
 }
 
 /** PASTECLIP ('clip': asks for the insertion point), PASTEBLOCK ('block': as a new block), PASTEORIG ('orig') */
 export async function pasteClip(app, mode = 'clip') {
-  let text = null;
-  try { text = await api.clipboardReadDxf?.(); } catch { text = null; }
-  const frag = readFragment(text) ?? readFragment(app.clip);
-  if (!frag) { app.toast('The clipboard holds no drawing objects.'); return; }
+  let text = app.clip, system = false;
+  if (!(app.clipLocal && app.clip) && api.clipboardReadDxf) { // the system clipboard, unless ASH's own copy is newer than its last system write
+    try { text = await api.clipboardReadDxf(); system = true; } catch { text = app.clip; } // unavailable: the window's own copy
+  }
+  const frag = readFragment(text);
+  if (!frag) { app.toast(system ? 'Nothing to paste (the clipboard holds no drawing objects).' : 'The clipboard holds no drawing objects.'); return; }
   const place = (at) => {
     const r = pasteFragment(app.session, frag, { at, orig: mode === 'orig', asBlock: mode === 'block' });
     app.vp.setSelection(r.entities.map((e) => e.id));

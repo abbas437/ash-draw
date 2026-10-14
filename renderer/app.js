@@ -53,6 +53,7 @@ class App {
     this.active = null;          // the tab shown
     this.defaults = { textHeight: null, hatchPattern: 'ANSI31', hatchScale: 1, hatchAngle: 0 };
     this.clip = null;            // the last copied fragment (DXF text), for hosts without a system clipboard
+    this.clipLocal = false;      // true while this.clip is newer than the last successful system clipboard write
     this.lastTool = 'line';
     this.theme = 'light';        // UI theme; light by default, the choice is saved as setting 'theme'
     this.vp = new Viewport(document.getElementById('cv'));

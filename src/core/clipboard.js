@@ -10,9 +10,6 @@ import { parseDxf } from './dxfRead.js';
 import { transformEntity } from './geom.js';
 import { transformDimension } from './dims.js';
 
-/** the custom clipboard format the Electron host stores the fragment under (the only one it accepts) */
-export const CLIP_FORMAT = 'application/x-ash-dxf';
-
 const U = (s) => String(s ?? '').toUpperCase();
 const findCI = (m, name) => { if (m.has(name)) return name; const u = U(name); for (const k of m.keys()) if (U(k) === u) return k; return null; };
 
@@ -78,8 +75,11 @@ export function readFragment(text) {
   try { const f = parseDxf(t); return f.entities.length ? f : null; } catch { return null; }
 }
 
-/** the first free name "<name>$0", "$1"… (case-insensitive against `taken`) */
+/** the first free name "<name>$0", "$1"… (case-insensitive against `taken`); anonymous names (*D, *U, *X…) get the
+ *  next free anonymous number instead ("*D1", "*D2"…) */
 function freeName(name, taken) {
+  const anon = /^(\*[A-Za-z_]+)\d*$/.exec(name);
+  if (anon) { for (let i = 1; ; i++) { const n = `${anon[1]}${i}`; if (!findCI(taken, n)) return n; } }
   for (let i = 0; ; i++) { const n = `${name}$${i}`; if (!findCI(taken, n)) return n; }
 }
 
@@ -101,14 +101,19 @@ export function pasteFragment(s, frag, { at = null, orig = false, asBlock = fals
     for (const [n, st] of frag.textStyles) if (!findCI(doc.textStyles, n)) tx.set(doc.textStyles, n, structuredClone(st));
     for (const [n, st] of frag.dimStyles ?? []) if (!doc.dimStyles || !findCI(doc.dimStyles, n)) tx.dimStyle(n, structuredClone(st));
     // block names: a clash gets the first free "<name>$i"; references inside the fragment follow
+    // (the *D block of a dimension that is rebuilt below is not copied: the rebuild makes its own)
+    const rebuilt = new Set(frag.entities.filter((e) => e.type === 'DIMENSION' && e.def && e.block).map((e) => U(e.block)));
     const names = new Map();
     const taken = new Map([...doc.blocks.keys(), ...frag.blocks.keys()].map((n) => [n, true]));
     for (const n of frag.blocks.keys()) {
+      if (rebuilt.has(U(n))) continue;
       if (!findCI(doc.blocks, n)) { names.set(n, n); continue; }
-      const nn = freeName(n, taken); taken.set(nn, true); names.set(n, nn); renamed.push([n, nn]);
+      const nn = freeName(n, taken); taken.set(nn, true); names.set(n, nn);
+      if (!n.startsWith('*')) renamed.push([n, nn]);
     }
     const rename = (e) => { if (e.block && names.has(e.block)) e.block = names.get(e.block); return e; };
     for (const [n, b] of frag.blocks) {
+      if (rebuilt.has(U(n))) continue;
       const nb = structuredClone(b); nb.name = names.get(n);
       nb.entities = (nb.entities ?? []).map(rename);
       tx.block(nb.name, nb);
@@ -117,7 +122,13 @@ export function pasteFragment(s, frag, { at = null, orig = false, asBlock = fals
     const placed = [];
     for (const e of frag.entities) {
       const c = rename(structuredClone(e)); c.id = 0;
-      try { placed.push(k === 1 && !m[4] && !m[5] ? c : (c.type === 'DIMENSION' && c.def ? transformDimension(doc, c, m) : transformEntity(c, m))); } catch { /* not transformable: skipped */ }
+      try {
+        if (c.type === 'DIMENSION' && c.def) { // rebuilt onto a new *D block, registered in the transaction so undo removes it
+          const d = transformDimension(doc, c, m);
+          const blk = doc.blocks.get(d.block); doc.blocks.delete(d.block); tx.block(d.block, blk);
+          placed.push(d);
+        } else placed.push(k === 1 && !m[4] && !m[5] ? c : transformEntity(c, m));
+      } catch { /* not transformable: skipped */ }
     }
     for (const c of placed) c.id = 0;
     if (!asBlock) return { entities: placed.map((c) => tx.add(c)), scale: k, renamed, block: null };

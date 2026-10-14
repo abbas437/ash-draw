@@ -74,6 +74,32 @@ try {
   await page.keyboard.press('Control+z');
   await page.waitForFunction(() => window.app.doc.entities.length === 0 && !window.app.doc.layers.get('WALLS'), null, { timeout: 3000 });
 
+  step = 'Ctrl+V twice (a second pick replaces the first), then a point pastes; Esc leaves a pick';
+  await page.locator('#cv').focus();
+  await page.keyboard.press('Control+v');
+  await page.waitForFunction(() => window.app.toolId === 'pickpoint', null, { timeout: 5000 });
+  await page.keyboard.press('Control+v');
+  await page.waitForTimeout(300);
+  assert.equal(await page.evaluate(() => window.app.toolId), 'pickpoint');
+  await page.locator('#cmd').fill('100,50'); await page.locator('#cmd').press('Enter');
+  await page.waitForFunction(() => window.app.doc.entities.length === 3, null, { timeout: 5000 });
+  assert.equal(await page.evaluate(() => window.app.toolId), 'select');
+  await page.locator('#cv').focus();
+  await page.keyboard.press('Control+v');
+  await page.waitForFunction(() => window.app.toolId === 'pickpoint', null, { timeout: 5000 });
+  await page.keyboard.press('Control+v');
+  await page.waitForTimeout(300);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => window.app.toolId === 'select', null, { timeout: 3000 });
+  assert.equal(await page.evaluate(() => window.app.doc.entities.length), 3);
+
+  step = 'non-DXF text newer than the copy: nothing is pasted';
+  await page.evaluate(() => navigator.clipboard.writeText('just some text'));
+  await page.locator('#cv').focus();
+  await page.keyboard.press('Control+v');
+  await page.waitForTimeout(500);
+  assert.equal(await page.evaluate(() => window.app.toolId), 'select', 'no insertion point is asked for');
+
   assert.deepEqual(problems, []);
   console.log('clipboard e2e: OK');
 } catch (err) {

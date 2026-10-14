@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createClipboardBridge, CLIP_FORMAT } from './clipboard.js';
+import { createClipboardBridge, MAX_DXF_CHARS } from './clipboard.js';
 
 const DXF = '0\r\nSECTION\r\n2\r\nENTITIES\r\n0\r\nENDSEC\r\n0\r\nEOF\r\n';
 function fake() {
@@ -25,14 +25,25 @@ test('write: DXF text only, as plain text; anything else refused', () => {
   assert.equal(cb.calls.length, 1);
 });
 
-test('read: only the fixed custom format and plain text are read; non-DXF text gives null', () => {
+test('read: only plain text is read; non-DXF text gives null', () => {
   const cb = fake(), b = createClipboardBridge(cb);
   cb.store.text = 'hello';
   assert.equal(b.read(), null);
   cb.store.text = DXF;
   assert.equal(b.read(), DXF);
-  cb.store.buffers.set(CLIP_FORMAT, Buffer.from(DXF.replace('ENTITIES', 'BLOCKS')));
-  assert.match(b.read(), /BLOCKS/);
-  const formats = new Set(cb.calls.filter((c) => c[0] === 'readBuffer').map((c) => c[1]));
-  assert.deepEqual([...formats], [CLIP_FORMAT]);
+  assert.ok(cb.calls.every((c) => c[0] === 'readText'), 'no custom format is read');
+});
+
+test('size cap: a fragment over MAX_DXF_CHARS is neither written nor read', () => {
+  const cb = fake(), b = createClipboardBridge(cb);
+  const big = DXF + ' '.repeat(MAX_DXF_CHARS - DXF.length + 1);
+  assert.equal(big.length, MAX_DXF_CHARS + 1);
+  assert.equal(b.write(big), false);
+  assert.deepEqual(cb.calls, []);
+  const ok = DXF + ' '.repeat(MAX_DXF_CHARS - DXF.length);
+  assert.equal(b.write(ok), true, 'exactly the cap is accepted');
+  cb.store.text = big;
+  assert.equal(b.read(), null);
+  cb.store.text = ok;
+  assert.equal(b.read(), ok);
 });
