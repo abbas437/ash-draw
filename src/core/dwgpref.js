@@ -11,6 +11,15 @@ export const dwgOriginSaveText = (name) => `This drawing was opened from DWG. It
 // Reliable DWG saving through the ODA File Converter (when the user has installed it).
 /** one line added to the experimental-save refusal/confirm when ODA is not installed */
 export const ODA_SAVE_HINT = 'Install the free ODA File Converter for reliable DWG 2018 saving.';
+/** shown where a DWG save is refused or redirected to DXF because the ODA File Converter is missing */
+export const ODA_NEEDED_TEXT = 'Saving back to DWG needs the ODA File Converter (free, optional). Without it, save a DXF copy \u2014 AutoCAD and DWG TrueView open DXF directly.';
+/** Preferences note shown under the converter status when ODA is not available */
+export const ODA_OPTIONAL_NOTE = 'Optional: install the free ODA File Converter to save back to DWG (2000\u20132018) and to open drawings the built-in converter cannot read.';
+export const ODA_GET_LABEL = 'Get ODA File Converter';
+/** the "ODA File Converter: ..." clause of the Preferences status line, from the dwg:available answer */
+export const odaStatusText = (av) => `ODA File Converter: ${av?.oda?.available ? `${av.oda.version} at ${av.oda.path}` : av?.oda?.reason ?? 'not installed'}.`;
+/** whether the ODA note and download link are shown: the availability answer says ODA cannot be used */
+export const odaMissing = (av) => !av?.oda?.available;
 /** settings key of the last DWG version chosen in Save as DWG */
 export const DWG_SAVE_VERSION_KEY = 'dwg.saveVersion';
 /** DWG versions offered when ODA writes the file (ids accepted by dwg:fromDxf), newest first; the first is the default */
