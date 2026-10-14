@@ -51,11 +51,17 @@ export function walkOps(ops, sink) {
 
 const ACI_GREYS = [8, 9, 250, 251, 252, 253, 254].map((i) => aciToRgb(i).join(','));
 const isAciGrey = (rgb) => ACI_GREYS.includes(rgb.join(','));
+const ACI_AMBER = aciToRgb(40).join(','), MONO_CHANGED = [96, 96, 96];
 
 /** item colour as [r,g,b] 0..255; `auto` colours contrast with the background (black on white / no background) */
 export function colorRgb(style, { monochrome = false, darkBackground = false, keepGreys = false } = {}) {
   const c = style && style.color;
-  if (monochrome) return keepGreys && c && !c.auto && c.rgb && isAciGrey(c.rgb) ? c.rgb : [0, 0, 0]; // keepGreys (a compare drawing): the ACI greys 8, 9, 250-254 stay grey
+  if (monochrome) {
+    // keepGreys (a compare drawing): the ACI greys 8, 9, 250-254 stay grey, and the changed amber (ACI 40, COMPARE-CHANGED)
+    // prints mid grey, so a changed wall fill or wide polyline stays distinct from an added (black) one
+    if (keepGreys && c && !c.auto && c.rgb) { if (isAciGrey(c.rgb)) return c.rgb; if (c.rgb.join(',') === ACI_AMBER) return MONO_CHANGED; }
+    return [0, 0, 0];
+  }
   if (!c || c.auto || !c.rgb) return darkBackground ? [255, 255, 255] : [0, 0, 0];
   return c.rgb;
 }

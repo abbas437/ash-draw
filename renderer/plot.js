@@ -95,7 +95,7 @@ export async function plotDialog(app, mode) {
       el('label', {}, fit, ' Fit to paper'), el('label', {}, 'Scale (paper : drawing)  1 : ', n),
       el('label', {}, centre, ' Centre the plot'),
       el('label', {}, mono, MONO), el('label', {}, lw, ' Use lineweights'), el('label', {}, tp, ' Plot transparency'),
-      el('p', { text: 'The drawing is plotted as vector graphics. A 1 : N scale uses the drawing units (unitless drawings are taken as millimetres). Text outside the Western Latin character set (for example Arabic) cannot be drawn in this version.' })],
+      el('p', { text: 'The drawing is plotted as vector graphics. A 1 : N scale uses the drawing units (unitless drawings are taken as millimetres). Latin, Greek, Cyrillic and Arabic text is drawn with the bundled Noto fonts; Chinese, Japanese and Korean text cannot be drawn in this version.' })],
     [{ label: mode === 'print' ? 'Print' : 'Save', value: 'ok', primary: true }, { label: 'Pick window…', value: 'pick' }, { label: 'Cancel', value: null }]);
     if (r == null) return;
     const nv = Number(n.value);

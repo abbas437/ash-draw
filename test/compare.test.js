@@ -569,6 +569,26 @@ test('compare PDF in monochrome: added strokes heavier than removed, removed das
   assert.equal(heavy.rg, '0 0 0 RG'); assert.equal(dashed[0].rg, '0 0 0 RG');
 });
 
+test('compare PDF in monochrome: changed (amber) prints mid grey, distinct from added black and unchanged light grey', async () => {
+  const mk = (...ls) => docOf(ls.map(([y]) => makeLine({ x: 0, y }, { x: 1000, y })));
+  const a = mk([0]), b = mk([0], [200]); // y=0 unchanged, y=200 added
+  const d = buildCompareDoc(a, b, compareDocs(a, b));
+  d.entities = d.entities.filter((e) => e.layer !== COMPARE_LAYERS.legend.name && e.layer !== COMPARE_LAYERS.marks.name);
+  d.entities.push(makeLine({ x: 0, y: 400 }, { x: 1000, y: 400 }, { layer: COMPARE_LAYERS.changed.name, color: 256, linetype: 'BYLAYER', lineweight: -1 }));
+  const pdf = await PDFDocument.load((await exportPdf(d, { monochrome: true })).bytes), c = pdf.getPage(0).node.Contents();
+  const streams = c instanceof PDFArray ? c.asArray().map((r) => pdf.context.lookup(r)) : [c];
+  const text = streams.map((st) => new TextDecoder().decode(decodePDFRawStream(st).decode())).join('\n');
+  const rgs = []; let rg = null;
+  for (const line of text.split('\n').map((x) => x.trim())) { if (/ RG$/.test(line)) rg = line; else if (line === 'S') rgs.push(rg); }
+  const grey = (s) => Number(s.split(' ')[0]);
+  assert.equal(new Set(rgs).size, 3, JSON.stringify(rgs)); // three distinct tones: added, changed, unchanged
+  const tones = [...new Set(rgs)].map(grey).sort((x, y) => x - y);
+  assert.equal(tones[0], 0, 'added black');
+  assert.ok(tones[1] > 0.25 && tones[1] < 0.5, `changed mid grey (${tones[1]})`);
+  assert.ok(tones[2] > tones[1], 'unchanged lighter than changed');
+  for (const s of rgs) { const [r, g, bl] = s.split(' ').map(Number); assert.ok(r === g && g === bl, `grey only: ${s}`); }
+});
+
 // ---- review numbers and the legend on the sheet -----------------------------------------------------------
 test('compare doc: each cluster rectangle is numbered at its top-left; rebuildMarks follows a recluster', () => {
   const [a, b] = propsPair();
