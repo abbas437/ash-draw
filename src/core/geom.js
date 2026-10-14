@@ -6,6 +6,7 @@ import { mlineParts, transformMline } from './mline.js';
 import { imageCorners, transformImage, wipeoutRing } from './image.js';
 import { textFrame, textCorners } from './textMetrics.js';
 import { buildDimension } from './dims.js';
+import { drain } from './slice.js';
 import { resolveDimStyle } from './dimsStyle.js';
 import { nurbsOf, curveOfNurbs, curveCurveHits, nearestParam, slice as nurbsSlice, splineEntity, offsetNurbs, isClosed, derivsAt, domain, lineNurbs, joinCurves, subCurve } from './nurbs.js';
 
@@ -371,11 +372,17 @@ export function unionBox(a, b) {
   return { minx: Math.min(a.minx, b.minx), miny: Math.min(a.miny, b.miny), maxx: Math.max(a.maxx, b.maxx), maxy: Math.max(a.maxy, b.maxy) };
 }
 export function docExtents(doc) {
+  return drain(docExtentsSteps(doc));
+}
+/** step generator of docExtents (src/core/slice.js): yields after every entity (an INSERT's box tessellates its whole
+ *  block, so even a few hundred of them take long) */
+export function* docExtentsSteps(doc) {
   let b = null;
   for (const e of doc.entities) {
     const l = doc.layers.get(e.layer);
     if (l && (!l.visible || l.frozen)) continue;
     b = unionBox(b, bboxOf(e, doc));
+    yield;
   }
   return b;
 }

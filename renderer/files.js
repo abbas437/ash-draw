@@ -1,6 +1,6 @@
 // ASH Draw Studio - opening, saving and exporting drawings.
 import { readDxf } from '../src/core/dxfRead.js';
-import { writeDxf } from '../src/core/dxfWrite.js';
+import { writeDxf, writeDxfAsync } from '../src/core/dxfWrite.js';
 import { compareDocuments } from '../src/core/verify.js';
 import { exportSvg } from '../src/core/exportSvg.js';
 import { exportPdf } from '../src/core/exportPdf.js';
@@ -155,6 +155,32 @@ export async function loadDrawing(api, name, bytes, { onProgress = null, signal 
 function looksLikeDwg(b) { return b.length > 6 && b[0] === 0x41 && b[1] === 0x43 && b[2] === 0x31 && b[3] >= 0x30 && b[3] <= 0x39; } // "AC10.."
 
 export function dxfBytesOf(doc, opts) { return enc.encode(writeDxf(doc, opts)); }
+
+/** UTF-8 of a long text in pieces (a yield after each; a piece never ends inside a surrogate pair), then joined */
+export function* encodeSteps(text, piece = 1 << 22) {
+  const parts = [];
+  let size = 0;
+  for (let i = 0; i < text.length;) {
+    let j = Math.min(i + piece, text.length);
+    const c = text.charCodeAt(j - 1);
+    if (j < text.length && c >= 0xd800 && c <= 0xdbff) j++;
+    const b = enc.encode(text.slice(i, j));
+    parts.push(b); size += b.length; i = j;
+    yield;
+  }
+  if (parts.length === 1) return parts[0];
+  const bytes = new Uint8Array(size);
+  let o = 0;
+  for (const b of parts) { bytes.set(b, o); o += b.length; }
+  return bytes;
+}
+
+/** dxfBytesOf, time-sliced (writeDxfAsync, then the encoding in pieces): same bytes, the window keeps repainting.
+ *  `signal` (AbortSignal) rejects with Error{code:'CANCELLED'}. The document must not change until it settles. */
+export async function dxfBytesAsync(doc, opts, { signal = null, sliceMs = 30 } = {}) {
+  const text = await writeDxfAsync(doc, opts, { signal, sliceMs });
+  return runSliced(encodeSteps(text), { budgetMs: sliceMs, signal, cancelMessage: 'Writing the DXF was cancelled.' });
+}
 
 /** Write the document as DXF. path === null opens the save dialog. */
 export async function saveDxf(api, doc, { path, name, fromPath = null }) {

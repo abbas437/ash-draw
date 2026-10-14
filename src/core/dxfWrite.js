@@ -2,7 +2,7 @@
 // Output is plain ASCII (non-ASCII text is written as \U+XXXX), CRLF line ends.
 // doc.lastWriteReport = { version, entities, blocks, skipped:{TYPE:n}, notes:[...] } is set on every call.
 import { mlineTags } from './mline.js';
-import { docExtents, ccwSweep, DEG } from './geom.js';
+import { docExtentsSteps, ccwSweep, DEG } from './geom.js';
 import { textFrame } from './textMetrics.js';
 import { patternLines, hasPattern } from './patterns.js';
 
@@ -20,6 +20,7 @@ import { dimensionTags, arrowEntities, r2000DimensionTags } from './dims.js';
 import { mleaderTags, mleaderStyleTags, mleaderParts } from './mleader.js';
 import { viewportTags } from './layouts.js';
 import { imageTags, imageDefTags } from './image.js';
+import { drain, runSliced } from './slice.js';
 const encode = (s) => String(s ?? '').replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7e]/g, (c) => {
   const code = c.charCodeAt(0);
   return code < 32 ? ' ' : `\\U+${code.toString(16).toUpperCase().padStart(4, '0')}`;
@@ -42,13 +43,21 @@ const snapLw = (mm) => {
   return best;
 };
 
+// Lines are kept in segments: append() links the other writer's finished segments instead of copying millions of lines.
 class Out {
-  constructor() { this.lines = []; }
+  constructor() { this.lines = []; this.segs = [this.lines]; }
   p(code, v) { this.lines.push(String(code), typeof v === 'number' ? num(v) : String(v)); }
   s(code, v) { this.p(code, encode(v)); }
   pt(code, x, y, z = 0, hasZ = true) { this.p(code, x); this.p(code + 10, y); if (hasZ) this.p(code + 20, z); }
-  append(other) { for (let i = 0; i < other.lines.length; i++) this.lines.push(other.lines[i]); }
-  text() { return this.lines.join('\r\n') + '\r\n'; }
+  append(other) { this.segs.push(...other.segs); this.lines = []; this.segs.push(this.lines); }
+  /** step generator: the text (all lines joined by CRLF, CRLF at the end), joined in pieces with a yield between them */
+  *textSteps(piece = 65536) {
+    const parts = [];
+    for (const seg of this.segs) {
+      for (let i = 0; i < seg.length; i += piece) { parts.push(seg.slice(i, i + piece).join('\r\n')); yield; }
+    }
+    return parts.join('\r\n') + '\r\n';
+  }
 }
 
 /** opts.mleadersAsGeometry: MLEADERs as their lines, arrows and text only (DWG through ODA).
@@ -56,6 +65,20 @@ class Out {
  *  converter cannot handle every dimension type), and MLEADERs as their lines, arrows and text (R2000 has no
  *  multileaders, and LibreDWG drops the whole drawing when the DXF holds MLEADERSTYLE / MULTILEADER objects). */
 export function writeDxf(doc, opts = {}) {
+  return drain(writeDxfSteps(doc, opts));
+}
+
+/** writeDxf in time slices (src/core/slice.js runSliced): hands the event loop back about every sliceMs, so a large
+ *  drawing does not freeze the window. Same text as writeDxf (and sets doc.lastWriteReport too). `signal` (AbortSignal)
+ *  rejects with Error{code:'CANCELLED'}. The document must not change until the promise settles. */
+export function writeDxfAsync(doc, opts = {}, { signal = null, sliceMs = 30 } = {}) {
+  return runSliced(writeDxfSteps(doc, opts), { budgetMs: sliceMs, signal, cancelMessage: 'Writing the DXF was cancelled.' });
+}
+
+/** step generator behind writeDxf / writeDxfAsync: yields after every 1024 entities and every piece of the final text;
+ *  returns the DXF text */
+export function* writeDxfSteps(doc, opts = {}) {
+  let n = 0; // entities written, for the yields
   let reportedDim = false, reportedMleader = false;
   const report = { version: 'AC1015', entities: 0, blocks: 0, skipped: {}, notes: [] };
   let nextHandle = 0x30;
@@ -410,11 +433,19 @@ export function writeDxf(doc, opts = {}) {
     blocksOut.p(0, 'BLOCK'); blocksOut.p(5, H()); blocksOut.p(330, rec); blocksOut.p(100, 'AcDbEntity'); blocksOut.p(8, '0');
     blocksOut.p(100, 'AcDbBlockBegin'); blocksOut.s(2, name); blocksOut.p(70, blk.xref ? (blk.xref.flags ?? (blk.xref.overlay ? 12 : 4)) | 4 : name.startsWith('*') ? 1 : 0);
     blocksOut.pt(10, blk.base.x, blk.base.y); blocksOut.s(3, name); blocksOut.s(1, blk.xref ? blk.xref.path : '');
-    if (!blk.xref) for (const e of blk.entities) if (writeEntity(blocksOut, e, rec)) report.entities++;
+    if (!blk.xref) {
+      for (const e of blk.entities) {
+        if (writeEntity(blocksOut, e, rec)) report.entities++;
+        if ((++n & 1023) === 0) yield;
+      }
+    }
     blocksOut.p(0, 'ENDBLK'); blocksOut.p(5, H()); blocksOut.p(330, rec); blocksOut.p(100, 'AcDbEntity'); blocksOut.p(8, '0'); blocksOut.p(100, 'AcDbBlockEnd');
     report.blocks++;
   }
-  for (const e of doc.entities) if (writeEntity(entOut, e, hModelRec)) report.entities++;
+  for (const e of doc.entities) {
+    if (writeEntity(entOut, e, hModelRec)) report.entities++;
+    if ((++n & 1023) === 0) yield;
+  }
   // paper space: the first layout is the active one (*Paper_Space, entities in ENTITIES), the others own *Paper_SpaceN
   // blocks. Model viewports go last in each list.
   // The overall (paper) viewport goes first: AutoCAD takes the first viewport of a layout as its paper view.
@@ -426,16 +457,25 @@ export function writeDxf(doc, opts = {}) {
   paperMode = true;
   for (const pl of paperLayouts) {
     const ents = paperOrder(pl.lo.entities ?? []);
-    if (pl.rec === hPaperRec) { for (const e of ents) if (writeEntity(entOut, e, hPaperRec)) report.entities++; continue; }
+    if (pl.rec === hPaperRec) {
+      for (const e of ents) {
+        if (writeEntity(entOut, e, hPaperRec)) report.entities++;
+        if ((++n & 1023) === 0) yield;
+      }
+      continue;
+    }
     blocksOut.p(0, 'BLOCK'); blocksOut.p(5, H()); blocksOut.p(330, pl.rec); blocksOut.p(100, 'AcDbEntity'); blocksOut.p(67, 1); blocksOut.p(8, '0');
     blocksOut.p(100, 'AcDbBlockBegin'); blocksOut.s(2, pl.name); blocksOut.p(70, 0); blocksOut.pt(10, 0, 0); blocksOut.s(3, pl.name); blocksOut.p(1, '');
-    for (const e of ents) if (writeEntity(blocksOut, e, pl.rec)) report.entities++;
+    for (const e of ents) {
+      if (writeEntity(blocksOut, e, pl.rec)) report.entities++;
+      if ((++n & 1023) === 0) yield;
+    }
     blocksOut.p(0, 'ENDBLK'); blocksOut.p(5, H()); blocksOut.p(330, pl.rec); blocksOut.p(100, 'AcDbEntity'); blocksOut.p(67, 1); blocksOut.p(8, '0'); blocksOut.p(100, 'AcDbBlockEnd');
   }
   paperMode = false;
 
   // ---- header ----------------------------------------------------------------------------------
-  const ext = docExtents(doc);
+  const ext = yield* docExtentsSteps(doc);
   const out = new Out();
   out.p(0, 'SECTION'); out.p(2, 'HEADER');
   out.p(9, '$ACADVER'); out.p(1, 'AC1015');
@@ -659,7 +699,12 @@ export function writeDxf(doc, opts = {}) {
   out.p(0, 'EOF');
 
   const seed = Math.max(nextHandle, ...[...keptH].map((h) => parseInt(h, 16) + 1));
-  const text = out.text().replace('__HANDSEED__', seed.toString(16).toUpperCase()).replaceAll('\r\n__STDSTYLE__\r\n', `\r\n${styleHandle.get('STANDARD')}\r\n`);
+  // each pass over a large text takes tens of ms: a yield between them
+  let text = yield* out.textSteps();
+  yield;
+  text = text.replace('__HANDSEED__', seed.toString(16).toUpperCase());
+  yield;
+  text = text.replaceAll('\r\n__STDSTYLE__\r\n', `\r\n${styleHandle.get('STANDARD')}\r\n`);
 
   for (const [t, n] of Object.entries(doc.skipped)) report.skipped[`${t} (not read)`] = n;
   doc.lastWriteReport = report;

@@ -19,9 +19,10 @@ export function nextTask() {
 }
 
 /** run a step generator in slices of about budgetMs, yielding to the event loop in between.
- *  onProgress(fraction) after each slice; `signal` (AbortSignal) rejects with Error{code:'CANCELLED'} at a slice end. */
-export async function runSliced(gen, { budgetMs = 12, signal = null, onProgress = null } = {}) {
-  const cancelled = () => Object.assign(new Error('Opening was cancelled.'), { code: 'CANCELLED' });
+ *  onProgress(fraction) after each slice; `signal` (AbortSignal) rejects with Error{code:'CANCELLED', message:
+ *  cancelMessage} at a slice end. */
+export async function runSliced(gen, { budgetMs = 12, signal = null, onProgress = null, cancelMessage = 'Opening was cancelled.' } = {}) {
+  const cancelled = () => Object.assign(new Error(cancelMessage), { code: 'CANCELLED' });
   if (signal?.aborted) throw cancelled();
   let t = performance.now();
   for (;;) {
