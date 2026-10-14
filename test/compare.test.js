@@ -315,3 +315,44 @@ test('compare ignoreLayers: pieces on an ignored layer (or drawn by an INSERT on
   assert.equal(r.same.length, 5);
   assert.equal(r.clusters.length, 0);
 });
+
+// ---- time slicing: compareSteps / buildCompareSteps ----
+import { compareSteps, buildCompareSteps } from '../src/core/compare.js';
+import { drain, runSliced } from '../src/core/slice.js';
+
+test('compareSteps: a 50k-piece pair yields often, rising progress, the same result as compareDocs; buildCompareSteps too', async () => {
+  const base = common(50000), mv = translation(700, -300);
+  const extra = [makeCircle({ x: 5000, y: 0 }, 5), makeLine({ x: 5000, y: 100 }, { x: 5100, y: 100 })];
+  const a = docOf([...base, extra[0]]), b = docOf([...shuffle(base.map((e) => transformEntity(e, mv))), transformEntity(extra[1], mv)]);
+  const opts = { align: 'auto', tol: 1e-3, rotations: [0, 90] };
+  const sync = compareDocs(a, b, opts);
+  let yields = 0, last = 0, rising = true;
+  const gen = compareSteps(a, b, opts);
+  let r;
+  while (!(r = gen.next()).done) { yields++; if (r.value < last - 1e-12 || r.value > 1) rising = false; last = r.value; }
+  assert.ok(yields >= 200, `${yields} yields`);
+  assert.ok(rising, 'progress rises within 0..1');
+  const sliced = r.value;
+  assert.deepEqual([sliced.same.length, sliced.added.length, sliced.removed.length, sliced.changed.length], [50000, 1, 1, 0]);
+  const sum = (x) => JSON.stringify({ n: [x.same.length, x.added.length, x.removed.length, x.changed.length], m: x.offset.m, cl: x.clusters });
+  assert.equal(sum(sliced), sum(sync));
+  let byields = 0;
+  const g2 = buildCompareSteps(a, b, sliced);
+  while (!(r = g2.next()).done) byields++;
+  assert.ok(byields >= 50, `${byields} build yields`);
+  assert.equal(r.value.entities.length, buildCompareDoc(a, b, sync).entities.length);
+  assert.equal(drain(compareSteps(a, b, opts)).same.length, 50000);
+});
+
+test('compareSteps under runSliced: an aborted signal rejects with CANCELLED and stops the steps', async () => {
+  const base = common(20000);
+  const a = docOf(base), b = docOf(shuffle(base));
+  const ac = new AbortController();
+  let n = 0, after = 0;
+  const gen = compareSteps(a, b, { align: 'auto', tol: 1e-3 });
+  const counted = { next: () => { if (ac.signal.aborted) after++; return gen.next(); }, return: (v) => gen.return(v) };
+  await assert.rejects(runSliced(counted, { budgetMs: 0, signal: ac.signal, onProgress: () => { if (++n === 5) ac.abort(); }, cancelMessage: 'Compare was cancelled.' }),
+    (err) => err.code === 'CANCELLED' && /Compare was cancelled/.test(err.message));
+  assert.equal(after, 0, 'no step after the abort');
+  assert.equal(gen.next().done, true, 'the generator is closed');
+});

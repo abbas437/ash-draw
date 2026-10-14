@@ -10,8 +10,32 @@
 // geometry (expandEntities), so a block in A that was exploded or renamed in B still matches. A can first be turned and
 // moved (opts.transform, opts.dx/dy, or opts.align 'auto' = estimateTransform, block by block where that fits better)
 // so a plan redrawn elsewhere, or turned by quarter turns, still lines up.
+// The long passes are step generators (src/core/slice.js): compareSteps / buildCompareSteps yield a progress fraction
+// every few milliseconds of work, so the window's thread can run them with runSliced; compareDocs / buildCompareDoc drain
+// them straight through. Inner steps yield `undefined` (no progress of their own) or a fraction of their own work.
+
+/** re-yield a step generator's progress mapped into lo..hi (a non-number keeps the last fraction); returns its result */
+function* phase(gen, lo, hi) {
+  let r, f = 0;
+  while (!(r = gen.next()).done) { if (typeof r.value === 'number') f = r.value; yield lo + (hi - lo) * f; }
+  return r.value;
+}
+
+/** the indices k < n (0..n-1) for which keep(k), yielding every 32768 checked */
+function* indicesSteps(n, keep = null) {
+  const out = [];
+  for (let k = 0; k < n; k++) { if (!keep || keep(k)) out.push(k); if ((k & 32767) === 32767) yield; }
+  return out;
+}
+/** the members k of idx for which keep(k), yielding every 32768 checked */
+function* filterSteps(idx, keep) {
+  const out = [];
+  for (let n = 0; n < idx.length; n++) { const k = idx[n]; if (keep(k)) out.push(k); if ((n & 32767) === 32767) yield; }
+  return out;
+}
 import { newDocument, addLayer, addEntity } from './model.js';
-import { bboxOf, unionBox, explode, transformEntity, compose, translation, DEG } from './geom.js';
+import { bboxOf, unionBox, explodeSteps, transformEntity, compose, translation, DEG } from './geom.js';
+import { drain } from './slice.js';
 
 const MAX_DEPTH = 16; // nested blocks expanded at most this deep (guards self-referencing blocks)
 
@@ -21,23 +45,36 @@ const MAX_DEPTH = 16; // nested blocks expanded at most this deep (guards self-r
  * enclosing INSERT. Returns [{ e: piece, top: the model-space entity it comes from }] (top === e when not expanded).
  */
 export function expandEntities(doc, ents = doc.entities) {
-  const out = [];
-  const rec = (e, top, inh, depth) => {
-    if (inh) { // a fresh copy made by explode(): resolve what it inherits from the INSERT it was drawn by
-      if (e.layer === '0' || e.layer == null) e.layer = inh.layer;
-      if (e.color === 0) e.color = inh.color;
-      if (String(e.linetype).toUpperCase() === 'BYBLOCK') e.linetype = inh.linetype;
-      if (e.lineweight === -2) e.lineweight = inh.lineweight;
-      delete e.parent; delete e.handle;
+  return drain(expandSteps(doc, ents));
+}
+
+/** step generator behind expandEntities: yields (fraction of `ents` done) about every 1024 pieces or exploded children */
+export function* expandSteps(doc, ents = doc.entities) {
+  const out = [], stack = [];
+  let work = 0;
+  for (let t = 0; t < ents.length; t++) {
+    const top = ents[t];
+    stack.push({ e: top, inh: null, depth: 0 }); // depth first, children in order (as the recursion it replaces)
+    while (stack.length) {
+      if (work >= 1024) { work = 0; yield t / ents.length; }
+      const { e, inh, depth } = stack.pop();
+      if (inh) { // a fresh copy made by explode(): resolve what it inherits from the INSERT it was drawn by
+        if (e.layer === '0' || e.layer == null) e.layer = inh.layer;
+        if (e.color === 0) e.color = inh.color;
+        if (String(e.linetype).toUpperCase() === 'BYBLOCK') e.linetype = inh.linetype;
+        if (e.lineweight === -2) e.lineweight = inh.lineweight;
+        delete e.parent; delete e.handle;
+      }
+      const blk = (e.type === 'INSERT' || e.type === 'DIMENSION') && depth < MAX_DEPTH ? doc.blocks.get(e.block) : null;
+      if (blk && !blk.xref) {
+        const kids = yield* explodeSteps(e, doc);
+        work += kids.length;
+        if (kids.length || e.type === 'INSERT') { for (let i = kids.length - 1; i >= 0; i--) stack.push({ e: kids[i], inh: e, depth: depth + 1 }); continue; }
+      }
+      out.push({ e, top });
+      work++;
     }
-    const blk = (e.type === 'INSERT' || e.type === 'DIMENSION') && depth < MAX_DEPTH ? doc.blocks.get(e.block) : null;
-    if (blk && !blk.xref) {
-      const kids = explode(e, doc);
-      if (kids.length || e.type === 'INSERT') { for (const k of kids) rec(k, top, e, depth + 1); return; }
-    }
-    out.push({ e, top });
-  };
-  for (const e of ents) rec(e, e, null, 0);
+  }
   return out;
 }
 
@@ -86,16 +123,20 @@ const MAX_KEY_PAIRS = 8192;   // a signature shared by more A x B pairs than thi
 const MAX_VOTES = 4e6;
 
 /** what every vote needs, computed once: the signature quantum, B's features grouped by signature */
-function alignContext(pa, pb, tol) {
+function* alignContextSteps(pa, pb, tol) {
   let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
-  for (const p of [...pa, ...pb]) {
-    const e = p.e, pt = e.p1 ?? e.c ?? e.p ?? e.vertices?.[0];
-    if (pt) { if (pt.x < minx) minx = pt.x; if (pt.x > maxx) maxx = pt.x; if (pt.y < miny) miny = pt.y; if (pt.y > maxy) maxy = pt.y; }
+  for (const l of [pa, pb]) {
+    for (let i = 0; i < l.length; i++) {
+      const e = l[i].e, pt = e.p1 ?? e.c ?? e.p ?? e.vertices?.[0];
+      if (pt) { if (pt.x < minx) minx = pt.x; if (pt.x > maxx) maxx = pt.x; if (pt.y < miny) miny = pt.y; if (pt.y > maxy) maxy = pt.y; }
+      if ((i & 16383) === 16383) yield;
+    }
   }
   const diag = Math.hypot(maxx - minx, maxy - miny) || 1;
   const ctx = { tol, diag, q: Math.max(tol, diag * 2e-5), longLine: diag * 0.02, fb: [], byKey: new Map() };
-  for (const p of pb) {
-    const f = alignFeature(p.e, ctx.q, ctx.longLine);
+  for (let i = 0; i < pb.length; i++) {
+    if ((i & 2047) === 2047) yield i / pb.length;
+    const f = alignFeature(pb[i].e, ctx.q, ctx.longLine);
     if (!f || !Number.isFinite(f.x) || !Number.isFinite(f.y)) continue;
     const l = ctx.byKey.get(f.k); if (l) l.push(ctx.fb.length); else ctx.byKey.set(f.k, [ctx.fb.length]);
     ctx.fb.push(f);
@@ -104,25 +145,39 @@ function alignContext(pa, pb, tol) {
 }
 
 /** offset votes of pieces pa turned by `deg`: every pair of an A and a B piece sharing a signature votes for B - A */
-function gatherVotes(ctx, pa, deg) {
+function* gatherVotesSteps(ctx, pa, deg) {
   const fa = [];
-  for (const p of pa) { const f = alignFeature(p.e, ctx.q, ctx.longLine, deg); if (f && Number.isFinite(f.x) && Number.isFinite(f.y)) fa.push(f); }
+  for (let i = 0; i < pa.length; i++) {
+    const f = alignFeature(pa[i].e, ctx.q, ctx.longLine, deg); if (f && Number.isFinite(f.x) && Number.isFinite(f.y)) fa.push(f);
+    if ((i & 2047) === 2047) yield 0.5 * i / pa.length;
+  }
   const byKey = new Map();
-  fa.forEach((f, i) => { const b = ctx.byKey.get(f.k); if (!b) return; let g = byKey.get(f.k); if (!g) byKey.set(f.k, g = { a: [], b }); g.a.push(i); });
+  for (let i = 0; i < fa.length; i++) {
+    const f = fa[i], b = ctx.byKey.get(f.k);
+    if (b) { let g = byKey.get(f.k); if (!g) byKey.set(f.k, g = { a: [], b }); g.a.push(i); }
+    if ((i & 16383) === 16383) yield;
+  }
   const groups = [...byKey.values()].filter((g) => g.a.length * g.b.length <= MAX_KEY_PAIRS)
     .sort((g, h) => g.a.length * g.b.length - h.a.length * h.b.length); // rarest signatures first
+  yield 0.5;
   const vx = [], vy = [], vw = [], vi = [], fb = ctx.fb;
+  let since = 0;
   for (const g of groups) {
     if (vx.length + g.a.length * g.b.length > MAX_VOTES) break;
     for (const i of g.a) for (const j of g.b) { vx.push(fb[j].x - fa[i].x); vy.push(fb[j].y - fa[i].y); vw.push(Math.min(fa[i].w, fb[j].w)); vi.push(i); }
+    if ((since += g.a.length * g.b.length + 1) >= 65536) { since = 0; yield 0.5 + 0.5 * vx.length / MAX_VOTES; }
   }
   return { vx, vy, vw, vi, n: fa.length };
 }
 
 /** weighted mean of the votes within tol of (cx, cy), and how many A pieces agree with it */
-function votesNear(V, idx, cx, cy, tol, nb) {
+function* votesNearSteps(V, idx, cx, cy, tol, nb) {
   let sw = 0, sx = 0, sy = 0; const agree = new Set();
-  for (const k of idx) if (Math.abs(V.vx[k] - cx) <= tol && Math.abs(V.vy[k] - cy) <= tol) { sw += V.vw[k]; sx += V.vx[k] * V.vw[k]; sy += V.vy[k] * V.vw[k]; agree.add(V.vi[k]); }
+  for (let n = 0; n < idx.length; n++) {
+    const k = idx[n];
+    if (Math.abs(V.vx[k] - cx) <= tol && Math.abs(V.vy[k] - cy) <= tol) { sw += V.vw[k]; sx += V.vx[k] * V.vw[k]; sy += V.vy[k] * V.vw[k]; agree.add(V.vi[k]); }
+    if ((n & 32767) === 32767) yield;
+  }
   if (!sw) return { dx: 0, dy: 0, votes: 0, confidence: 0 };
   return { dx: sx / sw, dy: sy / sw, votes: agree.size, confidence: Math.min(1, agree.size / Math.max(1, Math.min(V.n, nb))) };
 }
@@ -131,34 +186,42 @@ const PEAK_SEEDS = 8; // coarse cells refined: noise from common signatures can 
 
 /** the vote peak: the PEAK_SEEDS heaviest coarse cells are each searched coarse to fine (each level 8x finer) down to
  *  the tolerance; the one most A pieces agree with wins */
-function peak(ctx, V) {
+function* peakSteps(ctx, V) {
   const { vx, vy, vw } = V, tol = ctx.tol;
   let best = { dx: 0, dy: 0, votes: 0, confidence: 0 };
   if (!vx.length) return best;
   // the cells (with their 3x3 neighbourhood weight) of one level, heaviest first
-  const cells = (idx, cell) => {
+  function* cells(idx, cell) {
     const h = new Map();
-    for (const k of idx) { const key = `${Math.floor(vx[k] / cell)},${Math.floor(vy[k] / cell)}`; h.set(key, (h.get(key) ?? 0) + vw[k]); }
+    for (let n = 0; n < idx.length; n++) {
+      const k = idx[n], key = `${Math.floor(vx[k] / cell)},${Math.floor(vy[k] / cell)}`; h.set(key, (h.get(key) ?? 0) + vw[k]);
+      if ((n & 16383) === 16383) yield;
+    }
     const out = [];
+    let n = 0;
     for (const key of h.keys()) {
       const [i, j] = key.split(',').map(Number);
       let s = 0; for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) s += h.get(`${i + a},${j + b}`) ?? 0;
       out.push({ s, i, j });
+      if ((++n & 4095) === 0) yield;
     }
     return out.sort((p, q) => q.s - p.s || p.i - q.i || p.j - q.j);
-  };
-  const all = vx.map((_, k) => k), cell0 = ctx.diag / 64;
-  for (const seed of cells(all, cell0).slice(0, PEAK_SEEDS)) {
+  }
+  const all = yield* indicesSteps(vx.length), cell0 = ctx.diag / 64;
+  const seeds = (yield* cells(all, cell0)).slice(0, PEAK_SEEDS);
+  for (let n = 0; n < seeds.length; n++) {
+    yield n / seeds.length;
+    const seed = seeds[n];
     // window = the 3x3 around the chosen cell; then the heaviest cell inside it, 8x finer
     let cell = cell0, cx = (seed.i + 0.5) * cell, cy = (seed.j + 0.5) * cell;
-    let idx = all.filter((k) => Math.abs(vx[k] - cx) <= cell * 1.5 && Math.abs(vy[k] - cy) <= cell * 1.5);
+    let idx = yield* filterSteps(all, (k) => Math.abs(vx[k] - cx) <= cell * 1.5 && Math.abs(vy[k] - cy) <= cell * 1.5);
     while (cell > tol && idx.length) {
       cell = Math.max(cell / 8, tol);
-      const c = cells(idx, cell)[0];
+      const c = (yield* cells(idx, cell))[0];
       cx = (c.i + 0.5) * cell; cy = (c.j + 0.5) * cell;
-      idx = idx.filter((k) => Math.abs(vx[k] - cx) <= cell * 1.5 && Math.abs(vy[k] - cy) <= cell * 1.5);
+      idx = yield* filterSteps(idx, (k) => Math.abs(vx[k] - cx) <= cell * 1.5 && Math.abs(vy[k] - cy) <= cell * 1.5);
     }
-    const o = votesNear(V, idx, cx, cy, tol, ctx.fb.length);
+    const o = yield* votesNearSteps(V, idx, cx, cy, tol, ctx.fb.length);
     if (o.votes > best.votes) best = o;
   }
   return best;
@@ -170,13 +233,14 @@ const rotOf = (m) => { const d = Math.atan2(m[1], m[0]) / DEG; const n = ((d % 3
 
 /** best rotation + translation of pieces pa onto the context's B: one vote per candidate rotation, most agreeing wins
  *  (ties: the earlier rotation in the list). `at` (optional matrix): also count how many of pa agree with it. */
-function bestTransform(ctx, pa, rotations, at = null) {
+function* bestTransformSteps(ctx, pa, rotations, at = null) {
   let best = null, atVotes = 0;
   const atRot = at ? rotOf(at) : null;
-  for (const deg of rotations) {
-    const V = gatherVotes(ctx, pa, deg);
-    const o = peak(ctx, V);
-    if (at && Math.abs(deg360(deg) - atRot) < 1e-6) atVotes = votesNear(V, V.vx.map((_, k) => k), at[4], at[5], ctx.tol, ctx.fb.length).votes;
+  for (let r = 0; r < rotations.length; r++) {
+    const deg = rotations[r], f = (x) => (r + x) / rotations.length;
+    const V = yield* phase(gatherVotesSteps(ctx, pa, deg), f(0), f(0.4));
+    const o = yield* phase(peakSteps(ctx, V), f(0.4), f(0.9));
+    if (at && Math.abs(deg360(deg) - atRot) < 1e-6) atVotes = (yield* votesNearSteps(V, yield* indicesSteps(V.vx.length), at[4], at[5], ctx.tol, ctx.fb.length)).votes;
     if (!best || o.votes > best.votes) best = { ...o, rot: deg360(deg) };
   }
   if (!best || !best.votes) best = { dx: 0, dy: 0, votes: 0, confidence: 0, rot: 0 };
@@ -194,7 +258,7 @@ function bestTransform(ctx, pa, rotations, at = null) {
  */
 export function estimateTransform(a, b, opts = {}) {
   const pa = expandEntities(a), pb = expandEntities(b);
-  const { atVotes, ...t } = bestTransform(alignContext(pa, pb, Math.max(opts.tol ?? 1, 1e-9)), pa, opts.rotations ?? [0, 90, 180, 270]);
+  const { atVotes, ...t } = drain(bestTransformSteps(drain(alignContextSteps(pa, pb, Math.max(opts.tol ?? 1, 1e-9))), pa, opts.rotations ?? [0, 90, 180, 270]));
   return t;
 }
 
@@ -294,18 +358,25 @@ const MIN_REALIGN_VOTES = 20;
  * pieces that agree with `M` gets it. Returns { realigned: [{ name, rot, dx, dy, m, votes, confidence }],
  * topM: Map(top-level entity -> matrix) } (only the groups that differ from M).
  */
-function realign(ctx, pa, M, rotations) {
+function* realignSteps(ctx, pa, M, rotations) {
   const groups = new Map();
-  for (const p of pa) if (p.top !== p.e && p.top.type === 'INSERT') { const l = groups.get(p.top); if (l) l.push(p); else groups.set(p.top, [p]); }
+  for (let i = 0; i < pa.length; i++) {
+    const p = pa[i];
+    if (p.top !== p.e && p.top.type === 'INSERT') { const l = groups.get(p.top); if (l) l.push(p); else groups.set(p.top, [p]); }
+    if ((i & 16383) === 16383) yield;
+  }
   const big = [...groups].filter(([, l]) => l.length >= Math.max(MIN_GROUP, pa.length * GROUP_SHARE));
   const realigned = [], topM = new Map();
   if (!big.length) return { realigned, topM };
   const inBig = new Set(big.map(([t]) => t));
   const rest = pa.filter((p) => !inBig.has(p.top));
-  const rotM = rotOf(M);
-  for (const [top, l] of [...big, [null, rest]]) {
+  const rotM = rotOf(M), todo = [...big, [null, rest]];
+  // progress: by pieces aligned
+  let done = 0;
+  for (const [top, l] of todo) {
     if (!l.length) continue;
-    const t = bestTransform(ctx, l, rotations, M);
+    const t = yield* phase(bestTransformSteps(ctx, l, rotations, M), done / pa.length, (done + l.length) / pa.length);
+    done += l.length;
     const differs = Math.abs(t.rot - rotM) > 1e-6 || Math.hypot(t.dx - M[4], t.dy - M[5]) > 2 * ctx.tol;
     if (!differs || t.votes < Math.max(MIN_REALIGN_VOTES, 2 * t.atVotes)) continue;
     realigned.push({ name: top ? top.block : '*Model_Space', rot: t.rot, dx: t.dx, dy: t.dy, m: t.m, votes: t.votes, confidence: t.confidence });
@@ -333,10 +404,18 @@ const isIdentity = (m) => m[0] === 1 && m[1] === 0 && m[2] === 0 && m[3] === 1 &
  * topOf: Map(piece -> model-space entity) } — A's pieces already transformed.
  */
 export function compareDocs(a, b, opts = {}) {
+  return drain(compareSteps(a, b, opts));
+}
+
+/** step generator behind compareDocs (same options and result): yields a progress fraction 0..1 about every
+ *  millisecond or so of work, for src/core/slice.js runSliced. A and B must not change until it is done. */
+export function* compareSteps(a, b, opts = {}) {
   const tol = Math.max(opts.tol ?? 1e-6, 1e-12);
   const expand = opts.expand ?? true;
-  let pa = expand ? expandEntities(a) : a.entities.map((e) => ({ e, top: e }));
-  let pb = expand ? expandEntities(b) : b.entities.map((e) => ({ e, top: e }));
+  // progress milestones: expand A, B | align (global; per group) | transform + features | match | clusters
+  const P = { a: 0.08, b: 0.16, global: 0.42, realign: 0.66, feat: 0.78, match: 0.95 };
+  let pa = expand ? yield* phase(expandSteps(a), 0, P.a) : a.entities.map((e) => ({ e, top: e }));
+  let pb = expand ? yield* phase(expandSteps(b), P.a, P.b) : b.entities.map((e) => ({ e, top: e }));
   if (opts.ignoreLayers?.length) {
     const ign = new Set([...opts.ignoreLayers].map((n) => String(n).toUpperCase()));
     const keep = (p) => !ign.has(String(p.e.layer ?? '0').toUpperCase()) && !ign.has(String(p.top.layer ?? '0').toUpperCase());
@@ -344,36 +423,51 @@ export function compareDocs(a, b, opts = {}) {
   }
   let offset, realigned = [], topM = new Map();
   if (opts.align === 'auto') {
-    const ctx = alignContext(pa, pb, tol), rotations = opts.rotations ?? [0, 90, 180, 270];
-    const { atVotes, ...t } = bestTransform(ctx, pa, rotations);
+    const ctx = yield* phase(alignContextSteps(pa, pb, tol), P.b, P.b + 0.02), rotations = opts.rotations ?? [0, 90, 180, 270];
+    const { atVotes, ...t } = yield* phase(bestTransformSteps(ctx, pa, rotations), P.b + 0.02, P.global);
     offset = t;
-    if (opts.piecewise ?? true) ({ realigned, topM } = realign(ctx, pa, t.m, rotations));
+    if (opts.piecewise ?? true) ({ realigned, topM } = yield* phase(realignSteps(ctx, pa, t.m, rotations), P.global, P.realign));
   } else {
     let m = opts.transform ? [...opts.transform] : [1, 0, 0, 1, 0, 0];
     if (opts.dx || opts.dy) m = compose(translation(opts.dx ?? 0, opts.dy ?? 0), m);
     offset = { m, rot: rotOf(m), dx: m[4], dy: m[5] };
   }
-  for (const p of pa) { const m = topM.get(p.top) ?? offset.m; if (!isIdentity(m)) p.e = transformEntity(p.e, m); }
+  const nAB = pa.length + pb.length || 1;
+  const step = (i, n, lo, hi) => lo + (hi - lo) * (i / Math.max(n, 1)); // progress of item i of n within lo..hi
+  for (let i = 0; i < pa.length; i++) {
+    const p = pa[i], m = topM.get(p.top) ?? offset.m; if (!isIdentity(m)) p.e = transformEntity(p.e, m);
+    if ((i & 1023) === 1023) yield step(i, nAB * 3, P.realign, P.feat);
+  }
   const topOf = new Map();
   for (const p of pa) topOf.set(p.e, p.top);
   for (const p of pb) topOf.set(p.e, p.top);
-  const fa = pa.map((p) => feature(p.e, a)), fb = pb.map((p) => feature(p.e, b));
+  const fa = [], fb = [];
+  for (const [ps, d, fs] of [[pa, a, fa], [pb, b, fb]]) {
+    for (let i = 0; i < ps.length; i++) {
+      fs.push(feature(ps[i].e, d));
+      if ((i & 511) === 511) yield step(pa.length + fa.length + fb.length, nAB * 3, P.realign, P.feat);
+    }
+  }
   let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
-  for (const f of [...fa, ...fb]) { if (f.ax < minx) minx = f.ax; if (f.ax > maxx) maxx = f.ax; if (f.ay < miny) miny = f.ay; if (f.ay > maxy) maxy = f.ay; }
+  for (const fs of [fa, fb]) for (const f of fs) { if (f.ax < minx) minx = f.ax; if (f.ax > maxx) maxx = f.ax; if (f.ay < miny) miny = f.ay; if (f.ay > maxy) maxy = f.ay; }
+  yield P.feat;
   const diag = fa.length + fb.length ? Math.hypot(maxx - minx, maxy - miny) : 0;
   const moveRadius = Math.max(opts.moveRadius ?? diag * 0.05, tol);
   const usedA = new Uint8Array(fa.length), usedB = new Uint8Array(fb.length);
   const same = [], changed = [];
 
   // 1. identical objects
+  const M1 = P.feat + (P.match - P.feat) * 0.3; // progress: identical objects up to here, then the partners
   const g = new Grid(tol * 2);
-  fb.forEach((f, j) => g.add(f.s + f.props, f.ax, f.ay, j));
-  fa.forEach((f, i) => {
+  for (let j = 0; j < fb.length; j++) { const f = fb[j]; g.add(f.s + f.props, f.ax, f.ay, j); if ((j & 4095) === 4095) yield; }
+  for (let i = 0; i < fa.length; i++) {
+    const f = fa[i];
     for (const j of g.near(f.s + f.props, f.ax, f.ay)) {
       if (usedB[j] || !within(f, fb[j], tol)) continue;
-      usedA[i] = usedB[j] = 1; same.push({ a: f.e, b: fb[j].e }); return;
+      usedA[i] = usedB[j] = 1; same.push({ a: f.e, b: fb[j].e }); break;
     }
-  });
+    if ((i & 1023) === 1023) yield step(i, fa.length, P.feat, M1);
+  }
 
   // 2a. same handle in both files (only when the files share handles, e.g. two saves of one drawing)
   const restA = () => fa.map((f, i) => i).filter((i) => !usedA[i]);
@@ -399,14 +493,16 @@ export function compareDocs(a, b, opts = {}) {
     for (let i = 0; i < Math.min(f.sc.length, MAX_PTS); i++) k += `|${Math.round(f.sc[i] / q)}`;
     return k;
   };
-  for (const j of rb) {
-    const f = fb[j], t = f.e.type;
+  for (let n = 0; n < rb.length; n++) {
+    const j = rb[n], f = fb[j], t = f.e.type;
     for (let k = 0; k < Math.min(f.pts.length, MAX_PTS * 2); k += 2) gp.add(t, f.pts[k], f.pts[k + 1], j);
     gm.add(shapeKey(f), f.ax, f.ay, j);
+    if ((n & 1023) === 1023) yield;
   }
   const cand = [];
-  for (const i of ra) {
-    const f = fa[i], seen = new Set(), paired = new Set();
+  for (let n = 0; n < ra.length; n++) {
+    if ((n & 127) === 127) yield step(n, ra.length, M1, P.match);
+    const i = ra[n], f = fa[i], seen = new Set(), paired = new Set();
     scan: for (let k = 0; k < Math.min(f.pts.length, MAX_PTS * 2); k += 2) {
       for (const j of gp.near(f.e.type, f.pts[k], f.pts[k + 1])) {
         if (seen.has(j)) continue; seen.add(j);
@@ -426,7 +522,9 @@ export function compareDocs(a, b, opts = {}) {
     moved.sort((p, q2) => p.d - q2.d);
     cand.push(...moved.slice(0, 4)); // the nearest twins only
   }
+  yield P.match;
   cand.sort((p, q) => p.rank - q.rank || p.score - q.score || p.d - q.d);
+  yield P.match;
   for (const c of cand) {
     if (usedA[c.i] || usedB[c.j]) continue;
     usedA[c.i] = usedB[c.j] = 1; changed.push({ a: fa[c.i].e, b: fb[c.j].e });
@@ -434,7 +532,7 @@ export function compareDocs(a, b, opts = {}) {
 
   const removed = fa.filter((f, i) => !usedA[i]).map((f) => f.e);
   const added = fb.filter((f, j) => !usedB[j]).map((f) => f.e);
-  const clusters = clusterChanges(a, b, { added, removed, changed }, opts.clusterGap ?? defaultClusterGap(b.units || a.units));
+  const clusters = yield* phase(clusterSteps(a, b, { added, removed, changed }, opts.clusterGap ?? defaultClusterGap(b.units || a.units)), P.match, 1);
   return { added, removed, changed, same, clusters, offset, realigned, topM, topOf };
 }
 
@@ -457,11 +555,20 @@ const boxGap = (p, q) => Math.max(p.minx - q.maxx, q.minx - p.maxx, p.miny - q.m
  *  4. reading order: rows from the top, left to right within a row.
  */
 export function clusterChanges(a, b, r, gap) {
-  const items = [
-    ...r.added.map((e) => ({ k: 'added', box: bboxOf(e, b) })),
-    ...r.removed.map((e) => ({ k: 'removed', box: bboxOf(e, a) })),
-    ...r.changed.map((p) => ({ k: 'changed', box: unionBox(bboxOf(p.a, a), bboxOf(p.b, b)) })),
-  ].filter((it) => it.box && Number.isFinite(it.box.minx + it.box.maxx + it.box.miny + it.box.maxy));
+  return drain(clusterSteps(a, b, r, gap));
+}
+
+/** step generator behind clusterChanges */
+function* clusterSteps(a, b, r, gap) {
+  const items = [], total = r.added.length + r.removed.length + r.changed.length;
+  const lists = [[r.added, (e) => bboxOf(e, b), 'added'], [r.removed, (e) => bboxOf(e, a), 'removed'], [r.changed, (p) => unionBox(bboxOf(p.a, a), bboxOf(p.b, b)), 'changed']];
+  for (const [l, boxOf, k] of lists) {
+    for (let i = 0; i < l.length; i++) {
+      const box = boxOf(l[i]);
+      if (box && Number.isFinite(box.minx + box.maxx + box.miny + box.maxy)) items.push({ k, box });
+      if ((i & 1023) === 1023) yield 0.4 * items.length / total;
+    }
+  }
   if (!items.length) return [];
   gap = Math.max(gap, 1e-9);
   const limit = CLUSTER_SPAN * gap;
@@ -473,8 +580,9 @@ export function clusterChanges(a, b, r, gap) {
   const parent = items.map((_, i) => i);
   const find = (i) => { while (parent[i] !== i) i = parent[i] = parent[parent[i]]; return i; };
   const cell = gap, cells = new Map();
-  items.forEach((it, i) => {
-    const B = it.box, h = gap / 2;
+  for (let i = 0; i < items.length; i++) {
+    if ((i & 1023) === 1023) yield 0.4 + 0.4 * i / items.length;
+    const it = items[i], B = it.box, h = gap / 2;
     let x0 = Math.floor((B.minx - h) / cell), x1 = Math.floor((B.maxx + h) / cell), y0 = Math.floor((B.miny - h) / cell), y1 = Math.floor((B.maxy + h) / cell);
     const border = (x1 - x0 + 1) * (y1 - y0 + 1) > 4096; // a huge box: its rim cells only (what is inside touches it anyway via others)
     for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
@@ -488,13 +596,14 @@ export function clusterChanges(a, b, r, gap) {
       }
       l.push(i);
     }
-  });
+  }
   const groups = new Map(huge.map((it, i) => [-1 - i, [it]]));
   items.forEach((it, i) => { const g = find(i), l = groups.get(g); if (l) l.push(it); else groups.set(g, [it]); });
   // 2. cut oversize clusters
   const boxOf = (l) => l.reduce((bx, it) => unionBox(bx, it.box), null);
   const parts = [], todo = [...groups.values()];
   while (todo.length) {
+    yield 0.8;
     const l = todo.pop(), B = boxOf(l);
     const wx = B.maxx - B.minx, wy = B.maxy - B.miny, side = Math.max(wx, wy);
     if (side <= limit || l.length < 2) { parts.push({ l, box: B }); continue; }
@@ -520,6 +629,7 @@ export function clusterChanges(a, b, r, gap) {
   // 3. cap the count: merge the smallest into its nearest neighbour
   let live = parts.map((p) => ({ box: p.box, n: p.l.length, l: p.l }));
   while (live.length > MAX_CLUSTERS) {
+    yield 0.9;
     let s = 0;
     for (let i = 1; i < live.length; i++) if (live[i].n < live[s].n) s = i;
     const S = live[s];
@@ -589,6 +699,11 @@ function blocksUsed(src, ents) {
  *  change clusters. A model-space entity whose pieces all share one status is drawn whole (an INSERT stays an INSERT);
  *  otherwise its pieces are drawn one by one. */
 export function buildCompareDoc(a, b, r) {
+  return drain(buildCompareSteps(a, b, r));
+}
+
+/** step generator behind buildCompareDoc: yields a progress fraction about every 256 objects copied */
+export function* buildCompareSteps(a, b, r) {
   const doc = newDocument();
   doc.units = b.units || a.units;
   for (const L of Object.values(COMPARE_LAYERS)) addLayer(doc, { name: L.name, color: L.color });
@@ -602,30 +717,39 @@ export function buildCompareDoc(a, b, r) {
   // the status of every piece of each expanded model-space entity: one status -> draw the entity whole
   const statusA = new Map(), statusB = new Map();
   const note = (m, piece, kind) => { const t = topOf.get(piece); if (!t || t === piece) return; const s = m.get(t); m.set(t, s === undefined || s === kind ? kind : null); };
-  for (const p of r.same) { note(statusA, p.a, 'same'); note(statusB, p.b, 'same'); }
+  let n = 0;
+  const total = 2 * (r.same.length + r.changed.length) + r.removed.length + r.added.length + 1; // pieces drawn at most
+  for (const p of r.same) { note(statusA, p.a, 'same'); note(statusB, p.b, 'same'); if ((++n & 8191) === 0) yield 0; }
   for (const p of r.changed) { note(statusA, p.a, 'changed'); note(statusB, p.b, 'changed'); }
   for (const e of r.removed) note(statusA, e, 'removed');
   for (const e of r.added) note(statusB, e, 'added');
   const whole = (m, kind) => [...m].filter(([, s]) => s === kind).map(([t]) => t);
   const sameB = new Set(whole(statusB, 'same')), addedB = new Set(whole(statusB, 'added')), removedA = new Set(whole(statusA, 'removed'));
-  const topsA = [...removedA].map((t) => { const m = r.topM?.get(t) ?? mOff; return isIdentity(m) ? t : transformEntity(t, m); });
+  const topsA = [];
+  for (const t of removedA) { const m = r.topM?.get(t) ?? mOff; topsA.push(isIdentity(m) ? t : transformEntity(t, m)); if ((topsA.length & 1023) === 0) yield 0; }
   // blocks drawn whole: B's under their names, A's too unless B has one of that name (then A's is "<name>|A")
   const usedB = blocksUsed(b, [...sameB, ...addedB]), usedA = blocksUsed(a, topsA);
   const rename = new Map();
   for (const k of usedA) if (b.blocks.has(k)) rename.set(k, `${k}|A`);
-  const copyBlocks = (src, used, ren) => {
+  function* copyBlocks(src, used, ren) {
     for (const k of used) {
+      yield 0;
       const blk = src.blocks.get(k);
-      const ents = structuredClone(blk.entities).map((e) => {
-        e.color = 0; e.layer = '0'; // children follow the insert's compare colour and layer
-        if (e.block && ren.has(e.block)) e.block = ren.get(e.block);
-        return e;
-      });
+      const ents = [];
+      for (let i = 0; i < blk.entities.length; i += 512) { // a huge block: cloned in slices
+        if (i) yield 0;
+        for (const e of structuredClone(blk.entities.slice(i, i + 512))) {
+          e.color = 0; e.layer = '0'; // children follow the insert's compare colour and layer
+          if (e.block && ren.has(e.block)) e.block = ren.get(e.block);
+          ents.push(e);
+        }
+      }
       doc.blocks.set(ren.get(k) ?? k, { ...structuredClone({ ...blk, entities: [] }), name: ren.get(k) ?? k, entities: ents });
     }
-  };
-  copyBlocks(b, usedB, new Map());
-  copyBlocks(a, usedA, rename);
+  }
+  yield* copyBlocks(b, usedB, new Map());
+  yield* copyBlocks(a, usedA, rename);
+  n = 0;
   const put = (e, kind, ren) => {
     const c = structuredClone(e);
     c.id = 0; c.layer = COMPARE_LAYERS[kind].name; c.color = 256;
@@ -633,13 +757,14 @@ export function buildCompareDoc(a, b, r) {
     return addEntity(doc, c);
   };
   const piecewise = (piece, set) => !set.has(topOf.get(piece));
-  for (const t of sameB) put(t, 'same');
-  for (const p of r.same) if (piecewise(p.b, sameB)) put(p.b, 'same');
-  for (const p of r.changed) { put(p.a, 'changedA'); put(p.b, 'changed'); }
-  for (const t of topsA) put(t, 'removed', rename);
-  for (const e of r.removed) if (piecewise(e, removedA)) put(e, 'removed');
-  for (const t of addedB) put(t, 'added');
-  for (const e of r.added) if (piecewise(e, addedB)) put(e, 'added');
+  const tick = () => (++n & 255) === 0;
+  for (const t of sameB) { put(t, 'same'); if (tick()) yield n / total; }
+  for (const p of r.same) { if (piecewise(p.b, sameB)) put(p.b, 'same'); if (tick()) yield n / total; }
+  for (const p of r.changed) { put(p.a, 'changedA'); put(p.b, 'changed'); if (tick()) yield n / total; }
+  for (const t of topsA) { put(t, 'removed', rename); if (tick()) yield n / total; }
+  for (const e of r.removed) { if (piecewise(e, removedA)) put(e, 'removed'); if (tick()) yield n / total; }
+  for (const t of addedB) { put(t, 'added'); if (tick()) yield n / total; }
+  for (const e of r.added) { if (piecewise(e, addedB)) put(e, 'added'); if (tick()) yield n / total; }
   doc.linetypes.set('COMPARE_DOT', { name: 'COMPARE_DOT', description: 'Compare marks . . .', pattern: [1, -1] });
   for (const c of r.clusters) {
     const w = c.box.maxx - c.box.minx, h = c.box.maxy - c.box.miny, pad = Math.max(w, h, 1e-3) * 0.15 + 1e-3;
