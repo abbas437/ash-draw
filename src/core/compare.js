@@ -434,12 +434,11 @@ export function compareDocs(a, b, opts = {}) {
 
   const removed = fa.filter((f, i) => !usedA[i]).map((f) => f.e);
   const added = fb.filter((f, j) => !usedB[j]).map((f) => f.e);
-  const clusters = clusterChanges(a, b, { added, removed, changed }, opts.clusterGap ?? defaultClusterGap(b.units || a.units),
-    fa.length + fb.length ? { minx, miny, maxx, maxy } : null);
+  const clusters = clusterChanges(a, b, { added, removed, changed }, opts.clusterGap ?? defaultClusterGap(b.units || a.units));
   return { added, removed, changed, same, clusters, offset, realigned, topM, topOf };
 }
 
-const CLUSTER_SHARE = 0.2;   // a cluster wider or taller than this share of the drawing is cut into smaller ones
+const CLUSTER_SPAN = 10;     // a cluster wider or taller than this many group distances is cut into smaller ones
 const MAX_CLUSTERS = 200;    // more clusters than this: the smallest are merged into their nearest neighbours
 const CELL_CHECKS = 64;      // members of one grid cell checked exactly; beyond that a shared cell is near enough
 
@@ -451,12 +450,13 @@ const boxGap = (p, q) => Math.max(p.minx - q.maxx, q.minx - p.maxx, p.miny - q.m
 /**
  * Group nearby changes; each cluster = { box, added, removed, changed } (counts).
  *  1. single linkage: changes whose boxes are at most `gap` apart share a cluster (grid of gap-wide cells: linear-ish);
- *  2. a cluster whose box is more than CLUSTER_SHARE of the drawing extent `ext` (its larger side) is cut along its longer
- *     side, at its largest empty gap, or (none visible) into equal parts, until each part fits;
+ *  2. a cluster whose box is more than CLUSTER_SPAN group distances (its larger side; 15 m at the default 1.5 m) is cut
+ *     along its longer side, at its largest empty gap, or (none visible) into equal parts, until each part fits; a single
+ *     change bigger than that is a cluster of its own;
  *  3. at most MAX_CLUSTERS: the smallest are merged into their nearest neighbours;
  *  4. reading order: rows from the top, left to right within a row.
  */
-export function clusterChanges(a, b, r, gap, ext = null) {
+export function clusterChanges(a, b, r, gap) {
   const items = [
     ...r.added.map((e) => ({ k: 'added', box: bboxOf(e, b) })),
     ...r.removed.map((e) => ({ k: 'removed', box: bboxOf(e, a) })),
@@ -464,7 +464,7 @@ export function clusterChanges(a, b, r, gap, ext = null) {
   ].filter((it) => it.box && Number.isFinite(it.box.minx + it.box.maxx + it.box.miny + it.box.maxy));
   if (!items.length) return [];
   gap = Math.max(gap, 1e-9);
-  const limit = ext ? CLUSTER_SHARE * Math.max(ext.maxx - ext.minx, ext.maxy - ext.miny) : Infinity;
+  const limit = CLUSTER_SPAN * gap;
   // a change bigger than a cluster may be (a long polyline, a hatch) is a cluster of its own: linked, it would hold
   // every change it spans in one box no cut can shrink
   const huge = items.filter((it) => Math.max(it.box.maxx - it.box.minx, it.box.maxy - it.box.miny) > limit);

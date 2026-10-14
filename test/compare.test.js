@@ -258,15 +258,31 @@ test('clusters: two edit groups 10 m apart on a 600 m sheet are two clusters (ga
   assert.equal(compareDocs(sheet(600, 300), sheet(600, 300, [...edits(100000, 100000), ...edits(110800, 100000)]), { tol: 1, clusterGap: 12000 }).clusters.length, 1);
 });
 
-test('clusters: one long edit along a 60 m duct on a 120 m sheet is cut into at most 3 boxes of at most 20 % of the sheet', () => {
+test('clusters: one long edit along a 60 m duct is cut into boxes of at most 10 group distances (15 m), whatever the sheet', () => {
   const duct = [];
   for (let i = 0; i < 60; i++) duct.push(makeLine({ x: 30000 + i * 1000, y: 50000 }, { x: 31000 + i * 1000, y: 50000 }), makeLine({ x: 30000 + i * 1000, y: 50600 }, { x: 31000 + i * 1000, y: 50600 }));
-  const r = compareDocs(sheet(120, 100), sheet(120, 100, duct), { tol: 1 });
-  assert.equal(r.added.length, 120);
-  assert.ok(r.clusters.length >= 2 && r.clusters.length <= 3, `${r.clusters.length} clusters`);
-  for (const c of r.clusters) assert.ok(c.box.maxx - c.box.minx <= 24000 + 1e-6, JSON.stringify(c.box));
-  assert.equal(r.clusters.reduce((n, c) => n + c.added, 0), 120);
-  assert.deepEqual(r.clusters.map((c) => c.box.minx), [...r.clusters.map((c) => c.box.minx)].sort((p, q) => p - q), 'one row: left to right');
+  for (const [w, h] of [[120, 100], [600, 300]]) {
+    const r = compareDocs(sheet(w, h), sheet(w, h, duct), { tol: 1 });
+    assert.equal(r.added.length, 120);
+    assert.ok(r.clusters.length >= 4 && r.clusters.length <= 5, `${r.clusters.length} clusters on a ${w} m sheet`);
+    for (const c of r.clusters) assert.ok(c.box.maxx - c.box.minx <= 15000 + 1e-6, JSON.stringify(c.box));
+    assert.equal(r.clusters.reduce((n, c) => n + c.added, 0), 120);
+    assert.deepEqual(r.clusters.map((c) => c.box.minx), [...r.clusters.map((c) => c.box.minx)].sort((p, q) => p - q), 'one row: left to right');
+  }
+  // the limit follows the group distance: at 3 m, boxes of up to 30 m
+  const r3 = compareDocs(sheet(120, 100), sheet(120, 100, duct), { tol: 1, clusterGap: 3000 });
+  assert.equal(r3.clusters.length, 2);
+  for (const c of r3.clusters) assert.ok(c.box.maxx - c.box.minx <= 30000 + 1e-6, JSON.stringify(c.box));
+});
+
+test('clusters: a single change longer than the limit is a cluster of its own; the edits it passes stay separate', () => {
+  const long = makeLine({ x: 10000, y: 20000 }, { x: 50000, y: 20000 }); // 40 m > 15 m
+  const r = compareDocs(sheet(100, 50), sheet(100, 50, [long, ...edits(15000, 20500), ...edits(40000, 20500)]), { tol: 1 });
+  assert.equal(r.added.length, 7);
+  assert.deepEqual(r.clusters.map((c) => c.added).sort(), [1, 3, 3]);
+  assert.ok(r.clusters.some((c) => c.added === 1 && c.box.maxx - c.box.minx === 40000));
+  // a group distance large enough for the line to fit (limit 120 m): one cluster
+  assert.equal(compareDocs(sheet(100, 50), sheet(100, 50, [long, ...edits(15000, 20500), ...edits(40000, 20500)]), { tol: 1, clusterGap: 12000 }).clusters.length, 1);
 });
 
 test('clusters: reading order is rows from the top, left to right in a row', () => {
