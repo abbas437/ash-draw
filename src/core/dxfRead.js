@@ -768,6 +768,17 @@ function readActiveView(rec) {
   return { cx, cy, height, aspect };
 }
 
+/** BLOCK_RECORD xdata AcDbBlockRepBTag (1070 version, 1005 handle of the dynamic block's BLOCK_RECORD): the
+ *  normalised handle, or '' */
+function blockRepTag(tags) {
+  let app = false;
+  for (const [c, v] of tags) {
+    if (c === 1001) app = v === 'AcDbBlockRepBTag';
+    else if (app && c === 1005) return normHandle(v);
+  }
+  return '';
+}
+
 /** a handle as one canonical string: upper case, no leading zeros (tables may write either) */
 function normHandle(v) { return String(v ?? '').trim().toUpperCase().replace(/^0+(?=.)/, ''); }
 /** reorder list in place by the table (entity handle -> sort handle); stable for equal keys. An entity without a
@@ -799,6 +810,7 @@ function parseTokens(tk, onProgress = null) {
   const doc = newDocument();
   const paperLists = new Map();
   const blockRecH = new Map();
+  const dynRefs = []; // [anonymous block name, handle of its dynamic block's BLOCK_RECORD] (AcDbBlockRepBTag)
   const stats = { errors: [], layerH: new Map(), tick: onProgress && ((i) => onProgress(i / tk.count)), paperList: (n) => paperLists.get(n.toUpperCase()) ?? paperLists.set(n.toUpperCase(), []).get(n.toUpperCase()) };
 
   // HEADER
@@ -828,7 +840,11 @@ function parseTokens(tk, onProgress = null) {
     const dimRecs = [], styleH = new Map();
     let vportSeen = false;
     for (const rec of records(tk, secs.TABLES.from, secs.TABLES.to)) {
-      if (rec.type === 'BLOCK_RECORD') blockRecH.set(normHandle(rec.str(5)), rec.str(2));
+      if (rec.type === 'BLOCK_RECORD') {
+        blockRecH.set(normHandle(rec.str(5)), rec.str(2));
+        const h = blockRepTag(rec.tags());
+        if (h && rec.str(2).startsWith('*')) dynRefs.push([rec.str(2), h]);
+      }
       if (rec.type === 'STYLE') styleH.set(rec.str(5), rec.str(2));
       if (rec.type === 'VPORT' && !vportSeen && rec.str(2).toLowerCase() === '*active') { vportSeen = true; const av = readActiveView(rec); if (av) doc.activeView = av; }
       if (rec.type === 'LAYER') {
@@ -914,6 +930,15 @@ function parseTokens(tk, onProgress = null) {
       else if (cur) list.push(rec);
     }
     flush();
+  }
+  // dynamic blocks: an anonymous *U block made from one carries its effective (original) name
+  let upper = null; // name index for case-insensitive look-ups, built once (not a scan per record)
+  for (const [name, h] of dynRefs) {
+    const orig = blockRecH.get(h);
+    if (!orig || orig === name || orig.startsWith('*')) continue; // missing, itself, or another anonymous block
+    let blk = doc.blocks.get(name);
+    if (!blk) { upper ??= new Map([...doc.blocks.values()].map((b) => [b.name.toUpperCase(), b])); blk = upper.get(name.toUpperCase()); }
+    if (blk) blk.effectiveName = orig;
   }
 
   // ENTITIES

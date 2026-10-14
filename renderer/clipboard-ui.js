@@ -9,7 +9,7 @@ const api = window.api;
 const unitName = (u) => INSUNITS.find((x) => x[0] === u)?.[1] ?? `units ${u}`;
 
 /** one point from the user, then fn(p); Esc / right click cancels */
-function pickPoint(app, prompt, fn) {
+export function pickPoint(app, prompt, fn) {
   if (app.toolId === 'pickpoint') app.tools.pickpoint.cancel(); // a pick still open: leave it (restores the tool and lastTool) before replacing it
   const prev = app.toolId === 'pickpoint' ? 'select' : app.toolId, prevLast = app.lastTool;
   let done = false;

@@ -161,6 +161,54 @@ try {
   await page.waitForFunction(() => document.getElementById('sym-source').value === 'builtin', null, { timeout: 5000 });
   assert.equal(await page.locator('#sym-source option').count(), 1);
 
+  step = 'SYMCOUNT: two Round Diffusers and one other built-in symbol counted 2 and 1';
+  await page.evaluate(() => { window.app.selectAll(); window.app.deleteSelection(); window.app.vp.setSelection([]); });
+  await page.waitForFunction(() => document.querySelectorAll('#sym-grid .sym-cell').length >= 30, null, { timeout: 5000 });
+  const placeSym = async (name, pts) => {
+    await page.locator('#sym-grid .sym-cell', { hasText: new RegExp(`^${name}$`) }).click();
+    for (const p of pts) { await clickWorld(p.x, p.y); await cmd(''); }
+    await page.locator('#cv').focus(); await page.keyboard.press('Escape');
+  };
+  const other = (await page.locator('#sym-grid .sym-name').allTextContents()).find((n) => n !== 'Round Diffuser');
+  await placeSym('Round Diffuser', [a, b]);
+  await placeSym(other, [{ x: v.cx, y: v.cy + v.w / 8 }]);
+  assert.equal((await inserts()).length, 3);
+  await cmd('SYMCOUNT');
+  const rowsShown = () => page.locator('#dlg .symc-table tbody tr').evaluateAll((trs) => trs.map((tr) => [...tr.cells].slice(0, 2).map((c) => c.textContent)));
+  assert.deepEqual((await rowsShown()).sort(), [['Round Diffuser', '2'], [other, '1']].sort());
+  assert.match(await page.locator('#dlg .symc-total').textContent(), /Total: 3/);
+
+  step = 'SYMCOUNT: Excel (.xlsx)… saves a zip (PK) named after the drawing';
+  const dl = page.waitForEvent('download');
+  await page.locator('#symc-xlsx').click();
+  const download = await dl;
+  assert.match(download.suggestedFilename(), /-symbol-count\.xlsx$/);
+  const xbytes = await fs.readFile(await download.path());
+  assert.equal(xbytes.subarray(0, 2).toString('latin1'), 'PK');
+
+  step = 'SYMCOUNT: Place in drawing adds the schedule on SYMBOL-SCHEDULE (2 INSERTs in the picture column); one undo removes it';
+  const before = await page.evaluate(() => window.app.doc.entities.length);
+  await page.locator('#dlg .dlg-btns button', { hasText: 'Place in drawing' }).click();
+  assert.equal(await page.evaluate(() => window.app.toolId), 'pickpoint');
+  await clickWorld(v.cx + v.w / 4, v.cy + v.w / 6);
+  const added = await page.evaluate((n) => window.app.doc.entities.slice(n).map((e) => ({ type: e.type, layer: e.layer, block: e.block, text: e.text })), before);
+  assert.ok(added.length > 10, `${added.length} entities added`);
+  assert.ok(added.every((e) => e.layer === 'SYMBOL-SCHEDULE'), 'all on SYMBOL-SCHEDULE');
+  assert.deepEqual(added.filter((e) => e.type === 'INSERT').map((e) => e.block).sort(), ['Round Diffuser', other].sort());
+  assert.ok(added.some((e) => e.type === 'LINE'), 'grid lines');
+  for (const t of ['SYMBOL SCHEDULE', 'Symbol', 'Description', 'Qty', 'Round Diffuser', '2', '1']) assert.ok(added.some((e) => e.type === 'TEXT' && e.text === t), `text ${t}`);
+  assert.equal(await page.evaluate(() => window.app.toolId), 'select');
+  await page.locator('#cv').focus();
+  await page.keyboard.press('Control+z');
+  assert.equal(await page.evaluate(() => window.app.doc.entities.length), before, 'one undo removed the whole schedule');
+  assert.equal(await page.evaluate(() => window.app.doc.entities.filter((e) => e.layer === 'SYMBOL-SCHEDULE').length), 0);
+
+  step = 'the Symbols panel Count… button opens the same count; Close dismisses it';
+  await page.locator('#sym-count').click();
+  assert.deepEqual((await rowsShown()).sort(), [['Round Diffuser', '2'], [other, '1']].sort());
+  await page.locator('#dlg .dlg-btns button', { hasText: 'Close' }).click();
+  assert.equal(await page.locator('#dlg').evaluate((d) => d.open), false);
+
   assert.deepEqual(problems, []);
   console.log('symbols e2e: OK');
 } catch (err) {

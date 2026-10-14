@@ -313,6 +313,11 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 .cmp-pick label { display:flex; flex-direction:column; gap:2px; margin-bottom:8px; }
 .cmp-pick label > div { display:flex; gap:6px; }
 .cmp-pick select { flex:1; }
+.symc { display:flex; flex-direction:column; gap:6px; min-width:26em; }
+.symc-list { max-height:50vh; overflow:auto; border:1px solid var(--line); }
+.symc-table { border-collapse:collapse; width:100%; font-size:12px; } .symc-table th, .symc-table td { padding:2px 8px; text-align:left; border-bottom:1px solid var(--line); }
+.symc-table th { position:sticky; top:0; background:var(--panel2); } .symc-table td.num { text-align:right; }
+.symc-total { font-weight:600; }
 
 /* External References panel (XREF) */
 .xref-table { border-collapse:collapse; min-width:560px; background:var(--panel2); color:var(--text); }
