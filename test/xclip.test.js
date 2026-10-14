@@ -208,12 +208,20 @@ test('MINSERT: every cell is cut to its own clip', () => {
   assert.ok(Math.abs(b.minx - 1040) < 1e-6 && Math.abs(b.maxx - 1720) < 1e-6);
 });
 
-test('DXF: code 71 is the clip on / off flag; $XCLIPFRAME round-trips in the header', () => {
+test('DXF: code 71 is the clip on / off flag; $XCLIPFRAME is not written (its group code differs between versions)', () => {
   assert.equal(readDxf(syntheticDxf(0)).entities.find((e) => e.type === 'INSERT').clip.enabled, false);
   assert.equal(readDxf(syntheticDxf(1)).entities.find((e) => e.type === 'INSERT').clip.enabled, true);
   const { doc } = clippedDoc({ ...CLIP, enabled: false });
   doc.header.xclipframe = 1;
   const back = readDxf(new TextEncoder().encode(writeDxf(doc)));
   assert.equal(back.entities.find((e) => e.type === 'INSERT').clip.enabled, false);
-  assert.equal(back.header.xclipframe, 1);
+  assert.equal(back.header.xclipframe, undefined);
+  assert.ok(!writeDxf(doc).includes('$XCLIPFRAME'));
+});
+
+test('OTRACK: acquired points whose source entity is gone are dropped; points without a source stay', async () => {
+  const { pruneAcquired } = await import('../src/core/otrack.js');
+  const list = [{ at: { x: 0, y: 0 }, id: 5 }, { at: { x: 1, y: 1 } }, { at: { x: 2, y: 2 }, id: 7 }];
+  assert.deepEqual(pruneAcquired(list, (id) => id === 7).map((a) => a.at.x), [1, 2]);
+  assert.equal(pruneAcquired(list, () => true), list); // unchanged list kept (no re-render churn)
 });

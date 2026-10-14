@@ -5,7 +5,7 @@ import { wheelScale, ZOOMFACTOR_DEFAULT } from '../src/core/cmdline.js';
 import { SpatialIndex, findSnap, orthoPoint, polarPoint, pickEntity, selectInBox } from '../src/core/pick.js';
 import { bboxOf, growBox } from '../src/core/geom.js';
 import { snapGlyph, directionAt, OSNAP_LABEL } from '../src/core/osnap.js';
-import { extensionEnds, resolveTracking, trackAngles, toggleAcquired, trackLabel, ACQUIRE_KINDS } from '../src/core/otrack.js';
+import { extensionEnds, resolveTracking, trackAngles, toggleAcquired, pruneAcquired, trackLabel, ACQUIRE_KINDS } from '../src/core/otrack.js';
 import { gripsOf } from './grips.js';
 import { getEntity } from '../src/core/model.js';
 import { setTextMeasure } from '../src/core/textMetrics.js';
@@ -199,7 +199,7 @@ export class Viewport {
   /** drop the cached scene bitmap (scene edits, layer and theme changes are detected through frameKey) */
   invalidate() { this._frame = null; this._stopProgressive(); this.requestRender(); }
   /** pan / wheel-zoom gesture: frames reuse the cached bitmap until SETTLE_MS after endGesture() */
-  beginGesture(kind) { clearTimeout(this._settleT); this._settleT = 0; this._gesture = kind; }
+  beginGesture(kind) { clearTimeout(this._settleT); this._settleT = 0; this._gesture = kind; clearTimeout(this._acqT); this._acqKey = null; } // a pan / zoom never acquires a tracking point
   endGesture(ms = SETTLE_MS) {
     clearTimeout(this._settleT);
     this._settleT = setTimeout(() => { this._settleT = 0; this._gesture = null; this.requestRender(); }, ms);
@@ -377,7 +377,7 @@ export class Viewport {
     const st = this.settings, tol = this.tolWorld;
     let cand = null;
     if (st.snap && this.index && this.tool?.tracks) {
-      if (st.kinds.has('ext')) { const e = this.pick(raw); cand = (e && extensionEnds(e).find((x) => Math.hypot(x.at.x - raw.x, x.at.y - raw.y) <= tol)) || null; }
+      if (st.kinds.has('ext')) { const e = this.pick(raw); const x = e && extensionEnds(e).find((q) => Math.hypot(q.at.x - raw.x, q.at.y - raw.y) <= tol); cand = x ? { ...x, id: e.id } : null; }
       if (st.otrack && marker && ACQUIRE_KINDS.has(marker.kind) && !(cand && Math.hypot(cand.at.x - marker.x, cand.at.y - marker.y) < 1e-9)) cand = { at: { x: marker.x, y: marker.y }, path: null };
     }
     const key = cand ? `${cand.at.x},${cand.at.y}` : null;
@@ -401,7 +401,10 @@ export class Viewport {
   get lastPoint() { return this._lastPoint; }
   set lastPoint(p) { this._lastPoint = p; if (!p) this.clearTracking(); }
   /** drop the acquired direction once its entity no longer exists (deleted, or its creation undone) */
-  _checkParallel() { if (this.parallel && !getEntity(this.doc, this.parallel.id)) this._clearParallel(); }
+  _checkParallel() {
+    if (this.parallel && !getEntity(this.doc, this.parallel.id)) this._clearParallel();
+    if (this.acquired.length) this.acquired = pruneAcquired(this.acquired, (id) => !!getEntity(this.doc, id));
+  }
   _clearParallel() { clearTimeout(this._hoverT); this._hoverKey = null; this.parallel = null; }
   /** forget the acquired parallel direction and tracking points (a new tool, the end of a command sequence) */
   clearTracking() { this._clearParallel(); clearTimeout(this._acqT); this._acqKey = null; this.acquired = []; }

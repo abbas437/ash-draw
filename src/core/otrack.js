@@ -119,6 +119,10 @@ export function toggleAcquired(list, cand, eps = 1e-9) {
   return [...list, cand].slice(-MAX_ACQUIRED);
 }
 
+/** the acquired points whose source entity (`id`, when known) still exists — an extension path of a line whose
+ *  creation was undone, or which was erased, is dropped */
+export const pruneAcquired = (list, exists) => (list.some((a) => a.id != null && !exists(a.id)) ? list.filter((a) => a.id == null || exists(a.id)) : list);
+
 /** the tooltip of a tracking / extension snap: "Extension: 1234.5 < 0°" */
 export function trackLabel(m, fmt = (v) => String(+v.toFixed(4))) {
   if (m.kind === 'trackint') return `Tracking: <${fmt(m.lines[0].deg)}°, <${fmt(m.lines[1].deg)}°`;

@@ -510,7 +510,7 @@ export function* writeDxfSteps(doc, opts = {}) {
   out.p(9, '$EXTMIN'); if (ext) out.pt(10, ext.minx, ext.miny, 0); else out.pt(10, 1e20, 1e20, 1e20);
   out.p(9, '$EXTMAX'); if (ext) out.pt(10, ext.maxx, ext.maxy, 0); else out.pt(10, -1e20, -1e20, -1e20);
   out.p(9, '$LTSCALE'); out.p(40, doc.header.ltscale || 1);
-  if (doc.header.xclipframe != null) { out.p(9, '$XCLIPFRAME'); out.p(290, doc.header.xclipframe ? 1 : 0); } // R2000: on / off
+  // $XCLIPFRAME is read (doc.header.xclipframe) but not written: its group code differs between DXF versions
   out.p(9, '$TEXTSTYLE'); out.p(7, 'Standard');
   out.p(9, '$CLAYER'); out.p(8, '0');
   out.p(9, '$CELTYPE'); out.p(6, 'ByLayer');
