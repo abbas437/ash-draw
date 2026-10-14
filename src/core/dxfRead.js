@@ -15,7 +15,7 @@ import {
   makeSpline, makeSolid, makeInsert, makeHatch, makeDimension, makeLeader, makeXline,
 } from './model.js';
 import { transformEntity, applyVec, apply, det, matScale } from './geom.js';
-import { dimStyleFromTags } from './dimsStyle.js';
+import { dimStyleFromTags, dimOverridesFromXData } from './dimsStyle.js';
 import { decodeColor, aciToRgb } from './aci.js';
 import { dimDefFromTags } from './dims.js';
 import { mtextPlain } from './mtext.js';
@@ -494,6 +494,15 @@ function buildDimension(rec, o) {
   e.raw = hasSub ? raw : null;
   e.style = rec.str(3, 'Standard');
   if (hasSub) e.def = dimDefFromTags(raw);
+  // per-dimension style overrides: XDATA "ACAD" 1000 DSTYLE { 1070 <DIMVAR code> <value> ... }
+  const acad = [];
+  let inAcad = false;
+  for (let i = rec.a + 1; i < rec.b; i++) {
+    if (codes[i] === 1001) { inAcad = val(i) === 'ACAD'; continue; }
+    if (inAcad && codes[i] >= 1000) acad.push([codes[i], val(i)]);
+  }
+  const ov = acad.length ? dimOverridesFromXData(acad, dimHandleName) : null;
+  if (ov) e.dimOverrides = ov;
   return e;
 }
 
@@ -624,6 +633,7 @@ function readXData(rec) {
 
 // ---------------------------------------------------------------------------------------------
 let mlStyles = new Map(); // MLEADERSTYLE handle -> defaults (set per parse)
+let dimHandleName = () => undefined; // (DIMVAR, handle) -> block / text style name, for DSTYLE overrides (set per parse)
 let imageDefs = new Map(); // IMAGEDEF handle -> image definition (set per parse)
 function buildEntity(rec, doc, extra) {
   const o = common(rec);
@@ -812,6 +822,7 @@ function parseTokens(tk, onProgress = null) {
   }
 
   // TABLES
+  dimHandleName = () => undefined;
   if (secs.TABLES) {
     const dimRecs = [], styleH = new Map();
     let vportSeen = false;
@@ -852,6 +863,7 @@ function parseTokens(tk, onProgress = null) {
         st.fontFile = rec.str(3);
       }
     }
+    dimHandleName = (k, h) => (k === 'DIMTXSTY' ? styleH.get(h) : blockRecH.get(normHandle(h)));
     if (dimRecs.length) {
       const resolve = (k, h) => (k === 'DIMBLK' ? blockRecH.get(normHandle(h)) : styleH.get(h));
       doc.dimStyles = new Map(dimRecs.map((r) => { const st = dimStyleFromTags(r.tags(), resolve); return [st.name, st]; }));

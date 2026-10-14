@@ -11,7 +11,15 @@
 //   GRIP_MODES / nextGripMode(m) / gripMatrix(mode, base, arg) / gripModeEdit(s, ids, mode, base, arg, opts) -> grip MOVE/ROTATE/SCALE/MIRROR
 import { getEntity } from '../src/core/model.js';
 import { transformEntities } from '../src/core/edit.js';
-import { regenerateDimension, rebuildDimension } from '../src/core/dims.js';
+import { regenerateDimension, rebuildDimension, dimRegenNote } from '../src/core/dims.js';
+
+/** a file-read dimension that regeneration cannot reproduce exactly: the note goes to s.dimNote and the status bar */
+function noteDimRegen(s, e) {
+  const note = dimRegenNote(s.doc, e);
+  if (!note) return;
+  s.dimNote = note;
+  globalThis.app?.toast?.(note, 4000);
+}
 import { bulgeToArc, ccwSweep, DEG, compose, translation, rotation, scaling, invert, transformEntity, mirrorLine } from '../src/core/geom.js';
 
 const P = (p) => ({ x: p.x, y: p.y });
@@ -175,7 +183,7 @@ export function editEntity(s, id, fn, label = 'Properties') {
   const c = fn(structuredClone(e));
   if (!c) return false;
   c.id = e.id;
-  if (c.type === 'DIMENSION' && c.def) { c.block = freshDimBlock(s.doc); regenerateDimension(s.doc, c); } // old block stays for undo
+  if (c.type === 'DIMENSION' && c.def) { noteDimRegen(s, e); c.block = freshDimBlock(s.doc); regenerateDimension(s.doc, c); } // old block stays for undo
   if (c.type === 'INSERT' && e.attribs?.length) carryAttribs(e, c);
   s.transact(label, (tx) => { tx.replace(c); });
   return true;
@@ -201,7 +209,7 @@ export function gripsStretch(s, picks, d) {
       if (!c) return false;
     }
     c.id = e.id;
-    if (c.type === 'DIMENSION' && c.def) { c.block = freshDimBlock(s.doc); regenerateDimension(s.doc, c); }
+    if (c.type === 'DIMENSION' && c.def) { noteDimRegen(s, e); c.block = freshDimBlock(s.doc); regenerateDimension(s.doc, c); }
     if (c.type === 'INSERT' && e.attribs?.length) carryAttribs(e, c);
     out.push(c);
   }

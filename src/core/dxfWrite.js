@@ -14,7 +14,7 @@ const num = (n) => {
   const s = String(Number(n.toPrecision(15)));
   return s;
 };
-import { dimStyleTags } from './dimsStyle.js';
+import { dimStyleTags, dimOverridesXData } from './dimsStyle.js';
 import { decodeColor } from './aci.js';
 import { dimensionTags, arrowEntities, r2000DimensionTags } from './dims.js';
 import { mleaderTags, mleaderStyleTags, mleaderParts } from './mleader.js';
@@ -113,8 +113,12 @@ export function* writeDxfSteps(doc, opts = {}) {
   // arrowhead blocks named by dimension styles (DIMBLK) that the drawing does not define yet
   const allBlocks = new Map([...doc.blocks].filter(([, b]) => !b.xrefDep)); // xref content is not written
   const hasBlockCI = (n) => [...allBlocks.keys()].some((k) => k.toUpperCase() === String(n).toUpperCase());
-  for (const st of doc.dimStyles?.values() ?? []) {
-    if (st.DIMBLK && !hasBlockCI(st.DIMBLK)) allBlocks.set(st.DIMBLK, { name: st.DIMBLK, base: { x: 0, y: 0 }, entities: arrowEntities(st.DIMBLK, { x: 0, y: 0 }, { x: 1, y: 0 }, 1) });
+  const arrowNames = [...(doc.dimStyles?.values() ?? [])].map((st) => st.DIMBLK);
+  for (const list of [doc.entities, ...[...doc.blocks.values()].map((b) => b.entities)]) {
+    for (const e of list) if (e.type === 'DIMENSION' && e.dimOverrides) for (const k of ['DIMBLK', 'DIMBLK1', 'DIMBLK2']) arrowNames.push(e.dimOverrides[k]);
+  }
+  for (const n of arrowNames) {
+    if (n && !hasBlockCI(n)) allBlocks.set(n, { name: n, base: { x: 0, y: 0 }, entities: arrowEntities(n, { x: 0, y: 0 }, { x: 1, y: 0 }, 1) });
   }
   const blockNames = [...allBlocks.keys()];
   const blockRec = new Map(blockNames.map((n) => [n, H()]));
@@ -207,6 +211,16 @@ export function* writeDxfSteps(doc, opts = {}) {
         xdApps.add(app); o.s(1001, app);
         for (const [c, v] of tags) if (c >= 1000 && c <= 1009) o.s(c, v); else o.p(c, v);
       }
+    }
+    // per-dimension style overrides; a text style handle is filled in once the STYLE table has its handles
+    if (ok && e.type === 'DIMENSION' && e.dimOverrides && !asGeometry && (e.raw?.length || e.def)) {
+      const xd = dimOverridesXData(e.dimOverrides, (k, v) => {
+        const u = String(v).toUpperCase();
+        if (k === 'DIMTXSTY') return styleDefs.has(u) ? `__DIMTXSTY:${u}__` : undefined;
+        const bn = blockNames.find((b) => b.toUpperCase() === u);
+        return bn ? blockRec.get(bn) : undefined;
+      });
+      if (xd.length) { o.s(1001, 'ACAD'); for (const [c, v] of xd) if (c >= 1000 && c <= 1009) o.s(c, v); else o.p(c, v); }
     }
     return ok;
   }
@@ -707,6 +721,7 @@ export function* writeDxfSteps(doc, opts = {}) {
   text = text.replace('__HANDSEED__', seed.toString(16).toUpperCase());
   yield;
   text = text.replaceAll('\r\n__STDSTYLE__\r\n', `\r\n${styleHandle.get('STANDARD')}\r\n`);
+  if (text.includes('__DIMTXSTY:')) text = text.replace(/__DIMTXSTY:(.*?)__/g, (_, u) => styleHandle.get(u) ?? styleHandle.get('STANDARD'));
 
   for (const [t, n] of Object.entries(doc.skipped)) report.skipped[`${t} (not read)`] = n;
   doc.lastWriteReport = report;

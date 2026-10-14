@@ -25,10 +25,13 @@
 //   regenerateDimension(doc, e, style)      -> rebuilds e's block from e.def (drops the stored raw tags)
 //   rebuildDimension(doc, e, def) / transformDimension(doc, e, m) -> copy of e with a new *D block (undo-safe)
 //   dimensionTags(e) -> DXF group pairs after the common entity head;  dimDefFromTags(tags) -> def | null
-//   arrowEntities(kind, tip, dir, size, o)  -> arrowhead entities (DIMBLK names: '' closed filled, _ARCHTICK, _OBLIQUE, _DOT, _OPEN)
-import { makeLine, makeArc, makeSolid, makeMText, makeHatch, addBlock, addEntity } from './model.js';
+//   arrowEntities(kind, tip, dir, size, o, blockOf) -> arrowhead entities (DIMBLK names: '' closed filled, _ARCHTICK,
+//       _OBLIQUE, _DOT, _OPEN; any other name an INSERT of that block when blockOf(name) finds it, else closed filled)
+//   e.dimOverrides: per-dimension DSTYLE overrides (XDATA "ACAD"), applied on top of the style whenever the block is built
+//   dimRegenNote(doc, e) -> note when regenerating a file-read dimension cannot reproduce its original look, else null
+import { makeLine, makeArc, makeSolid, makeMText, makeHatch, makeInsert, addBlock, addEntity } from './model.js';
 import { decodeColor } from './aci.js';
-import { resolveDimStyle, ensureDimStyle } from './dimsStyle.js';
+import { resolveDimStyle, ensureDimStyle, withDimOverrides } from './dimsStyle.js';
 
 const TAU = Math.PI * 2;
 const DEG = 180 / Math.PI;
@@ -126,10 +129,14 @@ function composeText(measured, st, override) {
 
 // ---- arrowheads ------------------------------------------------------------------------------
 /** tip = arrow point; dir = unit direction the arrow points (from its body to the tip) */
-export function arrowEntities(kind, tip, dir, size, o = {}) {
+const DRAWN_ARROWS = new Set(['_', '_CLOSEDFILLED', '_ARCHTICK', '_OBLIQUE', '_OPEN', '_DOT', '_DOTSMALL', '_NONE']);
+export function arrowEntities(kind, tip, dir, size, o = {}, blockOf = null) {
   const px = perp(dir);
   const at = (x, y) => add(tip, add(mul(dir, x * size), mul(px, y * size)));
   const k = String(kind || '').toUpperCase().replace(/^_?/, '_');
+  // a user (or any other) arrow block: defined for the right end of a horizontal dimension line, tip at its origin
+  const blk = !DRAWN_ARROWS.has(k) && blockOf?.(kind);
+  if (blk) return [makeInsert(blk.name, tip, { ...o, sx: size, sy: size, rot: Math.atan2(dir.y, dir.x) * DEG })];
   if (k === '_ARCHTICK' || k === '_OBLIQUE') return [makeLine(at(-0.5, -0.5), at(0.5, 0.5), o)];
   if (k === '_OPEN') return [makeLine(at(-1, 1 / 6), tip, o), makeLine(at(-1, -1 / 6), tip, o)];
   if (k === '_DOT' || k === '_DOTSMALL') {
@@ -138,6 +145,12 @@ export function arrowEntities(kind, tip, dir, size, o = {}) {
   }
   if (k === '_NONE') return [];
   return [makeSolid([tip, at(-1, 1 / 6), at(-1, -1 / 6), at(-1, -1 / 6)], o)];
+}
+
+/** arrow at end i (0 first, 1 second): DIMBLK1 / DIMBLK2 when DIMSAH is on, else DIMBLK */
+function arrowAt(st, i, tip, dir, size, o) {
+  const name = st.DIMSAH ? (i ? st.DIMBLK2 : st.DIMBLK1) ?? st.DIMBLK : st.DIMBLK;
+  return arrowEntities(name, tip, dir, size, o.dim, o.blockOf);
 }
 
 // ---- geometry --------------------------------------------------------------------------------
@@ -203,8 +216,8 @@ function dimLine(d1, d2, st, z, text, out, o, arrows = [true, true]) {
   if (!inside) { segs.push([a, d1]); segs.push([d2, b]); }
   for (const [p, q] of segs) if (len(sub(q, p)) > 1e-12) out.push(makeLine(p, q, o.dim));
   const sgn = inside ? 1 : -1;
-  if (arrows[0]) out.push(...arrowEntities(st.DIMBLK, d1, mul(t, -sgn), z.asz, o.dim));
-  if (arrows[1]) out.push(...arrowEntities(st.DIMBLK, d2, mul(t, sgn), z.asz, o.dim));
+  if (arrows[0]) out.push(...arrowAt(st, 0, d1, mul(t, -sgn), z.asz, o));
+  if (arrows[1]) out.push(...arrowAt(st, 1, d2, mul(t, sgn), z.asz, o));
   return tp;
 }
 
@@ -259,8 +272,8 @@ function arcLengthGeom(def, st, out, o) {
       if (Math.abs(t) > 1e-9) out.push(makeLine(add(e, mul(wb, sg * z.exo)), add(e, mul(wb, t + sg * z.exe)), o.ext));
     } else if (Math.abs(r - R) > 1e-9) out.push(makeLine(add(c, mul(w, R + s * z.exo)), add(c, mul(w, r + s * z.exe)), o.ext));
   }
-  out.push(...arrowEntities(st.DIMBLK, polar(c, r, a0), { x: Math.sin(a0), y: -Math.cos(a0) }, z.asz, o.dim));
-  out.push(...arrowEntities(st.DIMBLK, polar(c, r, a1), { x: -Math.sin(a1), y: Math.cos(a1) }, z.asz, o.dim));
+  out.push(...arrowAt(st, 0, polar(c, r, a0), { x: Math.sin(a0), y: -Math.cos(a0) }, z.asz, o));
+  out.push(...arrowAt(st, 1, polar(c, r, a1), { x: -Math.sin(a1), y: Math.cos(a1) }, z.asz, o));
   const am = a0 + sweep / 2;
   return { length: R * sweep, tp: placeText(polar(c, r, am), { x: -Math.sin(am), y: Math.cos(am) }, st, z, true) };
 }
@@ -281,7 +294,7 @@ function joggedGeom(def, st, out, o) {
   const at = onLine(def.at), sAt = dot(sub(at, ch), w); // sAt > 0: text outside the curve, the line runs out to it
   const outer = sAt > 0 ? at : ch;
   for (const [p, q] of [[outer, j1], [j1, j2], [j2, def.override]]) if (len(sub(q, p)) > 1e-12) out.push(makeLine(p, q, o.dim));
-  out.push(...arrowEntities(st.DIMBLK, ch, w, z.asz, o.dim));
+  out.push(...arrowAt(st, 1, ch, w, z.asz, o));
   const tp = placeText(at, w, st, z, true), up = sub(tp.p, at);
   return { R: len(sub(ch, c)), tp: { p: add(at, mul(n, dot(up, n))), rot: tp.rot } };
 }
@@ -300,18 +313,19 @@ function angularGeom(def, st, text, out, o) {
     if (r > tmax + 1e-9) out.push(makeLine(add(c, mul(w, tmax + z.exo)), add(c, mul(w, r + z.exe)), o.ext));
     else if (r < tmin - 1e-9) out.push(makeLine(add(c, mul(w, tmin - z.exo)), add(c, mul(w, r - z.exe)), o.ext));
   }
-  out.push(...arrowEntities(st.DIMBLK, polar(c, r, a0), { x: Math.sin(a0), y: -Math.cos(a0) }, z.asz, o.dim));
-  out.push(...arrowEntities(st.DIMBLK, polar(c, r, a1), { x: -Math.sin(a1), y: Math.cos(a1) }, z.asz, o.dim));
+  out.push(...arrowAt(st, 0, polar(c, r, a0), { x: Math.sin(a0), y: -Math.cos(a0) }, z.asz, o));
+  out.push(...arrowAt(st, 1, polar(c, r, a1), { x: -Math.sin(a1), y: Math.cos(a1) }, z.asz, o));
   const am = a0 + sweep / 2;
   const tp = placeText(polar(c, r, am), { x: -Math.sin(am), y: Math.cos(am) }, st, z, true);
   void text;
   return { tp, sweep, P10: def.kind === 'angular3' ? def.at : def.l2[1] };
 }
 
-/** def + style -> measurement, text and the entities of the dimension block (block base 0,0 = WCS) */
-export function buildDimension(def, st) {
+/** def + style -> measurement, text and the entities of the dimension block (block base 0,0 = WCS);
+ *  blockOf(name) -> block or null: arrow blocks the engine does not draw itself are inserted from it */
+export function buildDimension(def, st, blockOf = null) {
   const colorOf = (c) => decodeColor(c) ?? 0; // raw CmColor -> ACI / true colour; unresolvable -> ByBlock
-  const o = { dim: { color: colorOf(st.DIMCLRD) }, ext: { color: colorOf(st.DIMCLRE) }, text: { color: colorOf(st.DIMCLRT) } };
+  const o = { dim: { color: colorOf(st.DIMCLRD) }, ext: { color: colorOf(st.DIMCLRE) }, text: { color: colorOf(st.DIMCLRT) }, blockOf };
   const entities = [];
   const lf = st.DIMLFAC || 1;
   let measurement, text, tp, P10;
@@ -431,8 +445,18 @@ function anonBlockName(doc) {
   return `*D${n}`;
 }
 
+/** block of a drawing by name, any case (null when missing) */
+function blockNamed(doc, name) {
+  if (!name) return null;
+  const b = doc.blocks.get(name);
+  if (b) return b;
+  const u = String(name).toUpperCase();
+  for (const [k, v] of doc.blocks) if (k.toUpperCase() === u) return v;
+  return null;
+}
+
 function applyBuild(doc, e, st) {
-  const r = buildDimension(e.def, st);
+  const r = buildDimension(e.def, withDimOverrides(st, e.dimOverrides), (n) => blockNamed(doc, n));
   let blk = doc.blocks.get(e.block);
   if (!blk) blk = addBlock(doc, e.block, { x: 0, y: 0 }, []);
   blk.entities.length = 0;
@@ -453,6 +477,18 @@ export function createDimension(doc, def, styleName = 'ISO-25', o = {}) {
   applyBuild(doc, e, st);
   addEntity(doc, e);
   return e;
+}
+
+/** a file-read dimension (raw tags, its own block) whose regenerated block will not look like the original: text moved
+ *  by the user (type bit 128) or an arrow block the drawing does not define */
+export function dimRegenNote(doc, e) {
+  if (!e.raw) return null;
+  const st = withDimOverrides(resolveDimStyle(doc, e.style), e.dimOverrides);
+  const moved = (e.dimType & 128) !== 0;
+  const names = st.DIMSAH ? [st.DIMBLK1 ?? st.DIMBLK, st.DIMBLK2 ?? st.DIMBLK] : [st.DIMBLK];
+  const arrow = names.some((n) => !DRAWN_ARROWS.has(String(n || '').toUpperCase().replace(/^_?/, '_')) && !blockNamed(doc, n));
+  if (!moved && !arrow) return null;
+  return `Dimension regenerated with ASH's ${[arrow && 'arrow', moved && 'text'].filter(Boolean).join('/')} placement.`;
 }
 
 /** rebuild the block from e.def (after the def or the style changed) */

@@ -20,6 +20,64 @@ export const DIMVARS = {
   DIMTXSTY: [340, 'h'], DIMBLK: [342, 'h'],
 };
 
+/** further variables a per-dimension DSTYLE override (XDATA "ACAD") may carry; read and written back, and those the
+ *  dimension engine knows (DIMSAH / DIMBLK1 / DIMBLK2 separate arrows, DIMTMOVE) are applied */
+export const DIMVARS_OVERRIDE = {
+  ...DIMVARS, DIMTSZ: [142, 'n'], DIMTVP: [145, 'n'], DIMTFAC: [146, 'n'], DIMALTF: [143, 'n'], DIMTP: [47, 'n'], DIMTM: [48, 'n'],
+  DIMTOL: [71, 'i'], DIMLIM: [72, 'i'], DIMSE1: [75, 'i'], DIMSE2: [76, 'i'], DIMALT: [170, 'i'], DIMALTD: [171, 'i'],
+  DIMSAH: [173, 'i'], DIMTIX: [174, 'i'], DIMSOXD: [175, 'i'], DIMTDEC: [272, 'i'], DIMFRAC: [276, 'i'], DIMTMOVE: [279, 'i'],
+  DIMATFIT: [289, 'i'], DIMLDRBLK: [341, 'h'], DIMBLK1: [343, 'h'], DIMBLK2: [344, 'h'], DIMLWD: [371, 'i'], DIMLWE: [372, 'i'],
+  DIMAPOST: [4, 's'],
+};
+const OVERRIDE_BY_CODE = new Map(Object.entries(DIMVARS_OVERRIDE).map(([k, [c, kind]]) => [c, [k, kind]]));
+const XD_CODE = { n: 1040, i: 1070, c: 1070, s: 1000, h: 1005 };
+
+/** ACAD XDATA [[code, value], ...] of a DIMENSION -> DSTYLE overrides { DIMSCALE: 50, DIMBLK: 'NAME', ... } or null.
+ *  resolve(kind, handle) -> name for handle variables (unresolvable ones are dropped); codes without a name here are
+ *  kept as G<code>: { x: xdata code, v: value } so they are written back unchanged */
+export function dimOverridesFromXData(tags, resolve = () => undefined) {
+  const at = tags.findIndex(([c, v]) => c === 1000 && String(v).toUpperCase() === 'DSTYLE');
+  if (at < 0 || tags[at + 1]?.[0] !== 1002) return null;
+  const out = {};
+  for (let i = at + 2; i + 1 < tags.length; i += 2) {
+    const [c, v] = tags[i];
+    if (c === 1002) break;
+    if (c !== 1070) break;
+    const code = parseInt(v, 10), [xc, xv] = tags[i + 1];
+    const known = OVERRIDE_BY_CODE.get(code);
+    if (!known) { if (xc !== 1005) out[`G${code}`] = { x: xc, v: xv }; continue; }
+    const [k, kind] = known;
+    if (kind === 'h') { const n = resolve(k, xv); if (n !== undefined) out[k] = /^_?closedfilled$/i.test(n) ? '' : n; } else if (kind === 's') out[k] = String(xv);
+    else if (kind === 'c') out[k] = aciField(xv, 0);
+    else { const x = kind === 'n' ? parseFloat(xv) : parseInt(xv, 10); if (Number.isFinite(x)) out[k] = x; }
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** DSTYLE overrides -> ACAD XDATA tags (after 1001 ACAD); handles(kind, name) -> handle or undefined (then omitted) */
+export function dimOverridesXData(ov, handles = () => undefined) {
+  const body = [];
+  for (const [k, v] of Object.entries(ov ?? {})) {
+    if (v && typeof v === 'object' && /^G\d+$/.test(k)) { body.push([1070, +k.slice(1)], [v.x, v.v]); continue; }
+    const d = DIMVARS_OVERRIDE[k];
+    if (!d) continue;
+    const [code, kind] = d;
+    if (kind === 'h') {
+      const h = handles(k, v === '' ? '_ClosedFilled' : v); // an empty arrow name is the default (closed filled) block
+      if (h) body.push([1070, code], [1005, h]);
+    } else body.push([1070, code], [XD_CODE[kind], kind === 'c' ? aciField(v) : v]);
+  }
+  return body.length ? [[1000, 'DSTYLE'], [1002, '{'], ...body, [1002, '}']] : [];
+}
+
+/** style with the per-dimension overrides applied (named variables only) */
+export function withDimOverrides(st, ov) {
+  if (!ov) return st;
+  const r = { ...st };
+  for (const [k, v] of Object.entries(ov)) if (k in DIMVARS_OVERRIDE) r[k] = v;
+  return r;
+}
+
 const STANDARD = {
   DIMPOST: '', DIMSCALE: 1, DIMASZ: 0.18, DIMEXO: 0.0625, DIMDLI: 0.38, DIMEXE: 0.18, DIMRND: 0, DIMTXT: 0.18, DIMCEN: 0.09,
   DIMLFAC: 1, DIMGAP: 0.09, DIMTIH: 1, DIMTOH: 1, DIMTAD: 0, DIMZIN: 0, DIMAZIN: 0, DIMTOFL: 0,
