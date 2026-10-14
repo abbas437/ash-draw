@@ -41,3 +41,16 @@ test('Ctrl+S routing: DXF overwrites; DWG with ODA writes back (tab version, the
   assert.deepEqual(back({ header: undefined }), { action: 'dwg-writeback', version: 'acad2018' });
   assert.deepEqual(back({ tabVersion: 'bogus', header: '' }), { action: 'dwg-writeback', version: 'acad2018' });
 });
+
+import { odaStatusText, odaMissing, ODA_NEEDED_TEXT, ODA_OPTIONAL_NOTE, ODA_GET_LABEL } from '../src/core/dwgpref.js';
+test('ODA status text and the missing-ODA note', () => {
+  assert.equal(odaStatusText({ oda: { available: true, version: '25.1', path: 'C:\\ODA\\x.exe' } }), 'ODA File Converter: 25.1 at C:\\ODA\\x.exe.');
+  assert.equal(odaStatusText({ oda: { available: false, reason: 'not found' } }), 'ODA File Converter: not found.');
+  assert.equal(odaStatusText({}), 'ODA File Converter: not installed.');
+  assert.equal(odaMissing({ oda: { available: true } }), false);
+  assert.equal(odaMissing({ oda: { available: false } }), true);
+  assert.equal(odaMissing(null), true);
+  assert.match(ODA_OPTIONAL_NOTE, /^Optional: install the free ODA File Converter to save back to DWG \(2000.2018\) and to open drawings the built-in converter cannot read\.$/);
+  assert.match(ODA_NEEDED_TEXT, /DXF copy .* AutoCAD and DWG TrueView open DXF directly\.$/);
+  assert.equal(ODA_GET_LABEL, 'Get ODA File Converter');
+});

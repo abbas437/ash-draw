@@ -142,6 +142,38 @@ try {
   assert.equal((await dwgItem().innerText()).trim(), 'Save as DWG… (experimental)');
   await page.mouse.click(700, 500);
 
+  step = 'without ODA: Preferences shows the optional note and a Get button that opens the fixed download';
+  await page.evaluate(() => {
+    window.__opened = 0;
+    Object.assign(window.api, {
+      dwgConfig: async () => ({ mode: 'auto', odaPath: '' }),
+      dwgAvailable: async () => ({ available: true, version: 'LibreDWG', write: { oda: false }, oda: { available: false, reason: 'not installed' } }),
+      openOdaDownload: async () => { window.__opened++; return true; },
+    });
+    window.app.preferences();
+  });
+  await page.waitForFunction(() => document.querySelector('#pref-oda-note'), null, { timeout: 5000 });
+  assert.match(await page.locator('#pref-dwg-status').innerText(), /ODA File Converter: not installed\./);
+  assert.match(await page.locator('#pref-oda-note').innerText(), /^Optional: install the free ODA File Converter to save back to DWG \(2000.2018\) and to open drawings the built-in converter cannot read\./);
+  await page.locator('#pref-oda-get').click();
+  assert.equal(await page.evaluate(() => window.__opened), 1);
+  await btn('Cancel').click();
+  await page.waitForFunction(() => !document.querySelector('#dlg')?.open, null, { timeout: 5000 });
+
+  step = 'without ODA: the DWG-origin Save confirm explains and offers Get ODA File Converter';
+  await page.evaluate(async () => {
+    const M = await import('/src/core/model.js');
+    window.app.installDoc(M.newDocument(), { path: '/j/C.dwg', name: 'C.dwg', format: 'dwg' });
+    window.__pC = window.app.save();
+  });
+  await page.waitForFunction(() => document.querySelector('#dlg')?.open, null, { timeout: 5000 });
+  assert.match(await dlgText(), /Saving back to DWG needs the ODA File Converter \(free, optional\)\. Without it, save a DXF copy/);
+  await btn('Get ODA File Converter').click();
+  await page.waitForFunction(() => window.__opened === 2, null, { timeout: 5000 });
+  await page.waitForFunction(() => document.querySelector('#dlg')?.open, null, { timeout: 5000 }); // the confirm is shown again
+  await btn('Cancel').click();
+  assert.equal(await page.evaluate(() => window.__pC), false);
+
   assert.deepEqual(problems, []);
   console.log('dwgpref e2e: OK');
 } catch (err) {

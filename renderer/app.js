@@ -9,7 +9,7 @@ import { layIsolate, layUnisolate, layFreeze, layOn, layThaw } from '../src/core
 import { Viewport, CANVAS_BG } from './viewport.js';
 import { createDocState, findTabByPath, indexAfterClose, cycleIndex, isBlankTab } from './tabs.js';
 import { createTools, TOOL_ALIASES } from './tools.js';
-import { DWG_SAVE_PREF_KEY, DWG_SAVE_PREF_LABEL, DWG_SAVE_DISABLED_TEXT, dwgSaveAllowed, dwgOriginSaveText, ODA_SAVE_HINT, DWG_SAVE_VERSION_KEY, DWG_SAVE_VERSIONS, dwgSaveVersionFrom, ctrlSaveRoute } from '../src/core/dwgpref.js';
+import { DWG_SAVE_PREF_KEY, DWG_SAVE_PREF_LABEL, DWG_SAVE_DISABLED_TEXT, dwgSaveAllowed, dwgOriginSaveText, ODA_SAVE_HINT, ODA_NEEDED_TEXT, ODA_OPTIONAL_NOTE, ODA_GET_LABEL, odaStatusText, odaMissing, DWG_SAVE_VERSION_KEY, DWG_SAVE_VERSIONS, dwgSaveVersionFrom, ctrlSaveRoute } from '../src/core/dwgpref.js';
 import { ViewHistory, parseZoomFactor, ZOOMFACTOR_MIN, ZOOMFACTOR_MAX } from '../src/core/cmdline.js';
 import { dimStyleManager, dimStyleNames, dimVarsOf, setCurrentDimStyle } from './tools-dims.js';
 import { blockDoubleClick } from './tools-blocks.js';
@@ -465,11 +465,21 @@ class App {
     }
     // a drawing opened from DWG is saved as DXF: say so once per drawing (the save dialog then names the .dxf file)
     if (tab.file.format === 'dwg' && !tab.dwgSaveAcked) {
-      const ok = await confirmDialog('Save as DXF', dwgOriginSaveText(tab.file.name), 'Save as DXF', 'Cancel', null);
+      const ok = await this.modalWithOdaLink('Save as DXF', [el('p', { text: dwgOriginSaveText(tab.file.name) }), el('p', { text: ODA_NEEDED_TEXT })],
+        [{ label: 'Save as DXF', value: 'yes', primary: true }, { label: 'Cancel', value: null }]);
       if (ok !== 'yes') return false;
       tab.dwgSaveAcked = true;
     }
     return this.saveTabAs(tab, 'dxf');
+  }
+  /** a modal that also offers "Get ODA File Converter" (desktop app only); that choice opens the download page and shows the modal again */
+  async modalWithOdaLink(title, body, buttons) {
+    const withLink = api.openOdaDownload ? [...buttons.slice(0, -1), { label: ODA_GET_LABEL, value: 'oda' }, buttons.at(-1)] : buttons;
+    for (;;) {
+      const r = await modal(title, body, withLink);
+      if (r !== 'oda') return r;
+      await api.openOdaDownload().catch(() => {});
+    }
   }
   async writeDxfTo(tab, path) {
     try {
@@ -525,9 +535,10 @@ class App {
           const version = await this.chooseDwgVersion();
           return version ? this.writeDwg(tab, { version }) : false;
         }
-        if (!this.allowDwgSave) { await message('Save as DWG is turned off', `${DWG_SAVE_DISABLED_TEXT} ${ODA_SAVE_HINT}`); return false; }
-        const ok = await confirmDialog('Save as DWG (experimental)',
-          `DWG is written through the free LibreDWG converter. Layouts and viewports may appear empty when the file is opened in AutoCAD, and text rotation and some hatch details can be lost. The program re-reads the saved file and tells you if anything differs. DXF keeps everything this program supports. ${ODA_SAVE_HINT} Save as DWG anyway?`, 'Save as DWG', 'Cancel', null);
+        if (!this.allowDwgSave) { await this.modalWithOdaLink('Save as DWG is turned off', [el('p', { text: DWG_SAVE_DISABLED_TEXT }), el('p', { text: ODA_NEEDED_TEXT })], [{ label: 'OK', value: true, primary: true }]); return false; }
+        const ok = await this.modalWithOdaLink('Save as DWG (experimental)', el('p', { text:
+          `DWG is written through the free LibreDWG converter. Layouts and viewports may appear empty when the file is opened in AutoCAD, and text rotation and some hatch details can be lost. The program re-reads the saved file and tells you if anything differs. DXF keeps everything this program supports. ${ODA_SAVE_HINT} Save as DWG anyway?` }),
+          [{ label: 'Save as DWG', value: 'yes', primary: true }, { label: 'Cancel', value: 'no' }]);
         if (ok !== 'yes') return false;
         const r = await saveDwg(api, tab.doc, {
           name: tab.recoveredFrom?.name ?? tab.file.name, fromPath: tab.file.path ?? tab.recoveredFrom?.path ?? null,
@@ -609,11 +620,13 @@ class App {
     mode.value = cfg.mode;
     const odaPath = el('input', { id: 'pref-oda-path', type: 'text', value: cfg.odaPath, placeholder: av?.oda?.source === 'auto' ? av.oda.path : 'Detected automatically in C:\\Program Files\\ODA', style: 'width:100%' });
     const browse = el('button', { type: 'button', text: 'Browse…', onclick: async () => { const p = await api.dwgBrowseOda(); if (p) odaPath.value = p; } });
-    const status = av ? `In use: ${av.available ? av.version : `none (${av.reason})`}. ODA File Converter: ${av.oda?.available ? `${av.oda.version} at ${av.oda.path}` : av.oda?.reason ?? 'not installed'}.` : '';
+    const status = av ? `In use: ${av.available ? av.version : `none (${av.reason})`}. ${odaStatusText(av)}` : '';
+    const odaNote = odaMissing(av) ? el('p', { id: 'pref-oda-note' }, [ODA_OPTIONAL_NOTE, ' ',
+      ...(api.openOdaDownload ? [el('button', { type: 'button', id: 'pref-oda-get', text: ODA_GET_LABEL, onclick: () => api.openOdaDownload().catch(() => {}) })] : [])]) : null;
     const r = await modal('Preferences', el('div', {}, zoomRow, dwgSaveRow, autosaveRow,
       el('label', { text: 'DWG converter ' }, mode),
       el('p', {}, el('label', { text: 'ODA File Converter (ODAFileConverter.exe), leave empty to detect it: ' }), odaPath, browse),
-      el('p', { id: 'pref-dwg-status', text: status })),
+      el('p', { id: 'pref-dwg-status', text: status }), odaNote),
     [{ label: 'Save', value: 'save', primary: true }, { label: 'Cancel', value: null }]);
     if (r !== 'save') return;
     applyDwgSave(); applyAutosave();
@@ -628,6 +641,7 @@ class App {
         'Not shown: 3D solids (3DSOLID), BODY, REGION and proxy objects (ACAD_PROXY_ENTITY, for example Civil 3D objects); OLE objects are shown as a frame only. Any other object type this program does not know is skipped too. Skipped objects are reported when you open the file, and they are not written when you save.',
         'Dimensions are displayed from their stored drawing, but cannot be edited as dimensions; they can be moved, copied or exploded.',
         'Saving as DXF is the reliable option. With the free ODA File Converter installed, DWG is saved in AutoCAD 2018 format (or an older version you choose), and Save writes a drawing opened from DWG back to its file in its own version, keeping the previous file as a .bak copy. Without it, saving as DWG is experimental and off by default (Edit > Preferences); layouts and viewports may appear empty in AutoCAD, and text rotation and some hatches can be lost.',
+        'The ODA File Converter is optional and installed separately: it adds saving to DWG (2000 to 2018) and opening drawings the built-in converter cannot read. Everything else works without it.',
         'Fonts: text is drawn with a system font, so widths differ slightly from the original CAD fonts.',
       ].map((t) => el('li', { text: t }))));
   }
