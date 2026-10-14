@@ -45,6 +45,24 @@ try {
   assert.equal(await shown('#props'), true);
   assert.equal(await page.locator('#side-toggle').textContent(), '\u00BB');
 
+  step = 'resize: drag the left edge; min 220 px, max half the window; width kept across a reload';
+  const sideW = () => page.evaluate(() => document.getElementById('side').getBoundingClientRect().width);
+  const dragTo = async (x) => {
+    const g = await page.locator('#side-grip').boundingBox();
+    await page.mouse.move(g.x + 2, g.y + 100); await page.mouse.down(); await page.mouse.move(x, g.y + 100, { steps: 5 }); await page.mouse.up();
+  };
+  assert.ok(Math.abs((await sideW()) - 340) <= 1, `default width ${await sideW()}`);
+  await dragTo(1400 - 420);
+  assert.ok(Math.abs((await sideW()) - 420) <= 2, `dragged width ${await sideW()}`);
+  await dragTo(1400 - 100);
+  assert.equal(Math.round(await sideW()), 220, 'min width');
+  await dragTo(5);
+  assert.equal(Math.round(await sideW()), 700, 'max half the window');
+  await dragTo(1400 - 380);
+  await page.reload({ waitUntil: 'load' });
+  await ready();
+  await page.waitForFunction(() => Math.abs(document.getElementById('side').getBoundingClientRect().width - 380) <= 2, null, { timeout: 5000 });
+
   step = 'title shows the product and the build version';
   await page.waitForFunction(() => /ASH Draw Studio web$/.test(document.title), null, { timeout: 5000 }); // shim.js answers api.version() with 'web'
   assert.match(await page.title(), /ASH Draw Studio/);

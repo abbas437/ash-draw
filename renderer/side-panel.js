@@ -9,6 +9,11 @@ export const sideFoldedFrom = (saved) => (Array.isArray(saved) ? SIDE_SECTIONS.f
 /** "• plan.dxf — ASH Draw Studio 0.2.0-beta.22": the build version tells test builds apart; left out while unknown */
 export const windowTitle = (name, dirty, version) => `${dirty ? '• ' : ''}${name} — ASH Draw Studio${version ? ` ${version}` : ''}`;
 
+/** side panel width in px: default 340 shows a ~20 character layer name in full; user range 220 .. half the window; saved as setting 'side.width' */
+export const SIDE_W_DEFAULT = 340, SIDE_W_MIN = 220;
+export const sideWidthClamp = (w, winW = window.innerWidth) => Math.round(Math.max(SIDE_W_MIN, Math.min(Number(w), Math.max(SIDE_W_MIN, winW / 2))));
+export const sideWidthFrom = (saved) => (Number.isFinite(Number(saved)) && saved !== null && saved !== '' && saved !== false ? sideWidthClamp(saved) : SIDE_W_DEFAULT);
+
 const STRIP_TITLE = { shown: 'Hide the side panel (Ctrl+3)', hidden: 'Show the side panel: Layers, Markups, Properties (Ctrl+3)' };
 
 /** wire the strip toggle and the section headers; restores the saved state through api.settingsGet */
@@ -30,6 +35,23 @@ export function initSidePanel(app, api) {
     const k = foldKey(e); if (!k) return;
     e.preventDefault(); e.stopPropagation(); app.foldSideSection(k);
   });
+  const grip = document.createElement('div');
+  grip.id = 'side-grip'; grip.title = 'Drag to resize the side panel';
+  side.append(grip);
+  const appEl = document.getElementById('app');
+  const setWidth = (w) => { app.sideWidth = sideWidthClamp(w); appEl.style.setProperty('--side-user', `${app.sideWidth}px`); };
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); grip.setPointerCapture(e.pointerId); grip.classList.add('drag');
+    const move = (ev) => setWidth(window.innerWidth - ev.clientX);
+    const up = () => {
+      grip.classList.remove('drag'); grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', up); grip.removeEventListener('pointercancel', up);
+      api.settingsSet?.('side.width', app.sideWidth)?.catch?.(() => {});
+    };
+    grip.addEventListener('pointermove', move); grip.addEventListener('pointerup', up); grip.addEventListener('pointercancel', up);
+  });
+  window.addEventListener('resize', () => setWidth(app.sideWidth)); // half the window shrinks with it
+  setWidth(SIDE_W_DEFAULT);
+  api.settingsGet?.('side.width').then((v) => { if (v != null) setWidth(sideWidthFrom(v)); }).catch(() => {});
   app.sideShown = true;
   app.sideFolded = [];
   applySide(app);

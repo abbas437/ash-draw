@@ -1328,7 +1328,7 @@ try {
   const redAt = (x, y) => page.evaluate(([x, y]) => {
     const vp = window.app.vp, s = vp.toScreen({ x, y }), d = vp.dpr;
     const px = vp.ctx.getImageData(Math.round(s.x * d) - 3, Math.round(s.y * d) - 3, 7, 7).data;
-    let n = 0; for (let i = 0; i < px.length; i += 4) if (px[i] > 180 && px[i + 1] < 90 && px[i + 2] < 90) n++;
+    let n = 0; for (let i = 0; i < px.length; i += 4) if (px[i] > 90 && px[i + 1] < px[i] / 4 && px[i + 2] < px[i] / 4) n++; // red-dominant: a 1 px diagonal split over two pixels peaks near r=170 at some sub-pixel offsets
     return n;
   }, [x, y]);
   await page.mouse.move(mid.x, mid.y);
@@ -1730,8 +1730,9 @@ try {
     // layer transparency
     const hatch2 = await px(80, 20);
     assert.deepEqual(hatch2, [255, 0, 0], 'ByLayer hatch on an opaque layer');
-    await page.locator('#layers .layer', { has: page.locator('.lname', { hasText: /^TL$/ }) }).locator('.lay-tr').click();
-    await page.locator('#dlg input').fill('50'); await page.locator('#dlg input').press('Enter');
+    await page.locator('#layers .layer', { has: page.locator('.lname', { hasText: /^TL$/ }) }).locator('.lay-ltlw').click();
+    await page.locator('#dlg input.lay-tr').fill('50'); await page.locator('#dlg input.lay-tr').press('Enter');
+    await page.locator('#dlg button.primary').click(); // Close
     assert.equal(await page.evaluate(() => window.app.doc.layers.get('TL').alpha), 127, 'layer TL alpha 127');
     const lb = await px(80, 20);
     assert.ok(lb[0] < 200 && lb[1] > 0, `ByLayer entity blends with the layer transparency: ${lb}`);
