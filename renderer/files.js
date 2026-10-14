@@ -4,6 +4,7 @@ import { writeDxf, writeDxfAsync } from '../src/core/dxfWrite.js';
 import { compareDocuments } from '../src/core/verify.js';
 import { exportSvg } from '../src/core/exportSvg.js';
 import { exportPdf } from '../src/core/exportPdf.js';
+import { mmPerUnit } from '../src/core/model.js';
 import { buildScene, buildSceneSteps, drawScene, fitView } from '../src/core/render.js';
 import { SpatialIndex } from '../src/core/pick.js';
 import { runSliced } from '../src/core/slice.js';
@@ -29,9 +30,9 @@ export function savePathIn(filePath, fileName) {
 }
 export const baseName = (name) => String(name || 'drawing').replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '');
 
-/** INSUNITS -> drawing units per millimetre (unitless drawings are assumed to be millimetres) */
+/** INSUNITS -> drawing units per millimetre, e.g. 0.001 for metres (unitless drawings are assumed to be millimetres) */
 export function unitsPerMm(doc) {
-  return ({ 1: 1 / 25.4, 2: 1 / 304.8, 4: 1, 5: 10, 6: 1000, 7: 1e6, 8: 1 / 0.0254, 10: 914.4, 13: 0.001 })[doc.units] ?? 1;
+  return 1 / mmPerUnit(doc.units);
 }
 export const UNIT_NAMES = { 0: 'unitless', 1: 'inches', 2: 'feet', 4: 'mm', 5: 'cm', 6: 'm', 7: 'km', 13: 'microns' };
 

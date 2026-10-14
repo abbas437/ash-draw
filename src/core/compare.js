@@ -33,7 +33,7 @@ function* filterSteps(idx, keep) {
   for (let n = 0; n < idx.length; n++) { const k = idx[n]; if (keep(k)) out.push(k); if ((n & 32767) === 32767) yield; }
   return out;
 }
-import { newDocument, addLayer, addEntity, makeText, makeLine } from './model.js';
+import { newDocument, addLayer, addEntity, makeText, makeLine, mmPerUnit } from './model.js';
 import { bboxOf, unionBox, docExtentsSteps, explodeSteps, transformEntity, compose, translation, apply, DEG } from './geom.js';
 import { drain } from './slice.js';
 
@@ -289,7 +289,7 @@ export function transformFromPoints(a1, a2, b1, b2) {
 
 /** 1 mm in the drawing's units ($INSUNITS; unitless taken as mm): the default compare tolerance */
 export function defaultTolerance(units) {
-  return { 1: 1 / 25.4, 2: 1 / 304.8, 4: 1, 5: 0.1, 6: 0.001 }[units] ?? 1;
+  return 1 / mmPerUnit(units);
 }
 
 // keys that are properties (compared for "changed") or bookkeeping, not geometry
