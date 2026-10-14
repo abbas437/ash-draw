@@ -136,6 +136,12 @@ try {
   await typeCmd('lo'); await btn('New'); await nameAs('Sheet X');
   assert.equal(await tabs(), `${t0},Sheet X`);
   assert.equal(await page.evaluate(() => window.app.vp.layout?.name), 'Sheet X');
+  assert.equal(await page.evaluate(() => window.app.vp.layout.plot.stdScale), undefined, 'a new layout has no page-setup scale');
+  await page.locator('#menubar .menu > button', { hasText: 'File' }).click();
+  await page.locator('#menubar .drop button', { hasText: 'Plot to PDF…' }).click();
+  assert.equal(await page.locator('#dlg select[name=paper]').inputValue(), 'A4', 'no page setup: the paper last plotted a layout on');
+  assert.equal(await page.locator('#dlg input[name=fit]').isChecked(), true, 'and its fit');
+  await btn('Cancel');
 
   step = 'tab menu Rename';
   await menu('Sheet X', 'rename'); await nameAs('Sheet Y');

@@ -3,7 +3,7 @@
 import { plotScale, pageFit, placeOnPage, exportPdfPages } from '../src/core/exportPdf.js';
 import { screenToWorld } from '../src/core/render.js';
 import { layoutPage, layoutPlotRegion, layoutPlotWindow, layoutMmPerUnit } from '../src/core/layouts.js';
-import { plotSettingsFrom, plotSettingsToStore, LAYOUT_PAPERS } from '../src/core/plotSettings.js';
+import { plotSettingsFrom, plotSettingsToStore, LAYOUT_PAPERS, layoutPlotStart } from '../src/core/plotSettings.js';
 import { el, message, modal, toast } from './ui.js';
 import { exportPdfBytes, unitsPerMm, unicodeFonts } from './files.js';
 import { bitmapRgba } from './images.js';
@@ -148,7 +148,8 @@ async function plotLayoutDialog(app, mode) {
   const area = el('select', { name: 'area' }, options(['layout|Layout', 'extents|Extents', 'window|Window']));
   area.querySelector('option[value=window]').disabled = !hasWindow;
   area.value = p.plotType === 1 ? 'extents' : p.plotType === 4 && hasWindow ? 'window' : 'layout';
-  const paperSel = paperSelect('layout'), fit = el('input', { type: 'checkbox', name: 'fit', checked: p.stdScale === 0 });
+  const start = layoutPlotStart(p, s);
+  const paperSel = paperSelect(start.paper), fit = el('input', { type: 'checkbox', name: 'fit', checked: start.fit });
   const n0 = p.scaleNum > 0 && p.scaleDen > 0 ? p.scaleDen / p.scaleNum : 1;
   const n = el('input', { type: 'number', name: 'scale', min: '0.000001', step: 'any', value: String(+n0.toPrecision(6)), style: 'width:7em' });
   const mono = el('input', { type: 'checkbox', name: 'monochrome', checked: cmp ? false : s.monochrome }), lw = el('input', { type: 'checkbox', name: 'lineweights', checked: s.lineweights }), tp = el('input', { type: 'checkbox', name: 'transparency', checked: s.transparency });
@@ -167,7 +168,7 @@ async function plotLayoutDialog(app, mode) {
       el('label', {}, 'Plot area'), area, el('p', { class: 'plot-paper', text: own }),
       el('label', {}, 'Paper'), paperSel, el('label', {}, fit, ' Fit to paper'), el('label', {}, 'Scale (paper : layout)  1 : ', n), readout,
       el('label', {}, mono, MONO), el('label', {}, lw, ' Use lineweights'), el('label', {}, tp, ' Plot transparency'),
-      el('p', { text: 'The layout is plotted as vector graphics; viewports are clipped to their boundaries. Line weights keep their plotted width on any paper. The plot area, fit and scale start from the layout\'s page setup.' })],
+      el('p', { text: 'The layout is plotted as vector graphics; viewports are clipped to their boundaries. Line weights keep their plotted width on any paper. The plot area, fit and scale start from the layout\'s page setup (a new layout without one starts from the paper and fit last used).' })],
     [{ label: mode === 'print' ? 'Print' : 'Save', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
     if (r == null) return;
     if (fit.disabled || fit.checked || Number(n.value) > 0) break;
@@ -175,7 +176,7 @@ async function plotLayoutDialog(app, mode) {
   }
   const monoNow = mono.checked, sheet11 = fit.disabled, fitNow = !sheet11 && fit.checked;
   const layoutScale = sheet11 || fitNow ? null : layoutMmPerUnit(p) / Number(n.value);
-  Object.assign(s, { monochrome: cmp ? storedMono : monoNow, lineweights: lw.checked, transparency: tp.checked });
+  Object.assign(s, { layoutPaper: paperSel.value, layoutFit: fit.checked, monochrome: cmp ? storedMono : monoNow, lineweights: lw.checked, transparency: tp.checked });
   remember(s);
   try {
     const out = await exportPdfBytes(app.fileDoc, null, { layout, modelScene: app.vp.modelScene, paper: paperSel.value, area: area.value, fit: fitNow, layoutScale, monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency });

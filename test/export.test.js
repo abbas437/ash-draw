@@ -14,7 +14,7 @@ import { newDocument, addEntity, addLayer, makeXline, makeLine, makeCircle, make
 import { exportSvg } from '../src/core/exportSvg.js';
 import { buildScene } from '../src/core/render.js';
 import { exportPdf, exportPdfPages, plotLayout, plotScale, pageFit } from '../src/core/exportPdf.js';
-import { plotSettingsFrom, plotSettingsToStore, PLOT_DEFAULTS } from '../src/core/plotSettings.js';
+import { plotSettingsFrom, plotSettingsToStore, PLOT_DEFAULTS, layoutPlotStart } from '../src/core/plotSettings.js';
 
 const FIXTURES = ['basic', 'blocks', 'colors', 'dims', 'extrusion', 'hatch', 'polylines', 'splines', 'text', 'unsupported'];
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'ash-export-'));
@@ -435,4 +435,13 @@ test('layout PDF: the sheet on its own paper ignores area-only options; publish 
   const a3 = await exportPdf(doc, { layout, paper: 'A3', fit: true, scale: null });
   const a3Area = await exportPdf(doc, { layout, paper: 'A3', fit: true, area: 'layout', layoutScale: null });
   assert.equal(await pageText(a3Area.bytes), await pageText(a3.bytes));
+});
+
+test('layout plot starts from the page setup when it has one, else from the paper and fit last used', () => {
+  const s = plotSettingsFrom({ layoutPaper: 'A4', layoutFit: false });
+  const fresh = newLayout('Layout2', 2).plot; // a new ASH layout: default A3 paperName, no standard-scale choice
+  assert.deepEqual(layoutPlotStart(fresh, s), { paper: 'A4', fit: false });
+  assert.deepEqual(layoutPlotStart(fresh, plotSettingsFrom({})), { paper: PLOT_DEFAULTS.layoutPaper, fit: PLOT_DEFAULTS.layoutFit });
+  assert.deepEqual(layoutPlotStart({ ...fresh, stdScale: 0 }, s), { paper: 'layout', fit: true }, 'page setup: fit');
+  assert.deepEqual(layoutPlotStart({ ...fresh, stdScale: 16 }, s), { paper: 'layout', fit: false }, 'page setup (AutoCAD file): 1:1');
 });

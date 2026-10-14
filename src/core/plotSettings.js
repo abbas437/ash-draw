@@ -26,4 +26,11 @@ export function plotSettingsFrom(v) {
 }
 
 /** the settings to store (without the picked window) */
+/** where the layout Plot dialog starts ({ paper, fit }). A page setup with a standard-scale choice (group 75: every AutoCAD
+ *  file, and PAGESETUP) is followed: the layout's own paper, fitted when its scale is "fit". A new ASH layout has none
+ *  (its paperName is only the default A3), so the paper and fit the user last plotted a layout with (`s`) are used. */
+export function layoutPlotStart(plot, s) {
+  return plot?.stdScale != null ? { paper: 'layout', fit: plot.stdScale === 0 } : { paper: s.layoutPaper, fit: s.layoutFit };
+}
+
 export const plotSettingsToStore = (s) => Object.fromEntries(Object.keys(PLOT_DEFAULTS).map((k) => [k, s[k]]));
