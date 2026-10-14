@@ -24,6 +24,7 @@ import { mlineFromTags, mlineStyleFromTags } from './mline.js';
 import { parseLayoutObject, readViewport, markPaperViewport } from './layouts.js';
 import { imageDefFromTags, imageFromTags } from './image.js';
 import { oleFrameCorners } from './ole.js';
+import { readLayerStates } from './layerstates.js';
 
 const DEG = Math.PI / 180;
 
@@ -836,6 +837,7 @@ function parseTokens(tk, onProgress = null) {
 
   // TABLES
   dimHandleName = () => undefined;
+  let lsXdict = null;
   if (secs.TABLES) {
     const dimRecs = [], styleH = new Map();
     let vportSeen = false;
@@ -846,6 +848,7 @@ function parseTokens(tk, onProgress = null) {
         if (h && rec.str(2).startsWith('*')) dynRefs.push([rec.str(2), h]);
       }
       if (rec.type === 'STYLE') styleH.set(rec.str(5), rec.str(2));
+      if (rec.type === 'TABLE' && rec.str(2) === 'LAYER') lsXdict = rec.get(360); // layer states live in its extension dictionary
       if (rec.type === 'VPORT' && !vportSeen && rec.str(2).toLowerCase() === '*active') { vportSeen = true; const av = readActiveView(rec); if (av) doc.activeView = av; }
       if (rec.type === 'LAYER') {
         const name = rec.str(2);
@@ -891,8 +894,10 @@ function parseTokens(tk, onProgress = null) {
   const sortents = [];
   mlStyles = new Map();
   imageDefs = new Map();
+  const lsObjs = new Map();
   if (secs.OBJECTS) {
     for (const rec of records(tk, secs.OBJECTS.from, secs.OBJECTS.to)) {
+      if (lsXdict && (rec.type === 'DICTIONARY' || rec.type === 'XRECORD')) lsObjs.set(normHandle(rec.str(5)), rec);
       if (rec.type === 'IMAGEDEF') imageDefs.set(rec.str(5), imageDefFromTags(rec.tags()));
       if (rec.type === 'WIPEOUTVARIABLES') doc.header.wipeoutFrame = rec.int(70); // WIPEOUTFRAME: 0 hidden, 1 shown + plotted, 2 shown only
       if (rec.type === 'MLINESTYLE') (doc.mlineStyles ??= new Map()).set(rec.str(5), mlineStyleFromTags(rec.tags()));
@@ -904,6 +909,8 @@ function parseTokens(tk, onProgress = null) {
     }
   }
 
+  const ls = lsXdict && readLayerStates(lsXdict, (h) => lsObjs.get(h)?.tags().map(([c, v]) => [c, isStringCode(c) ? decodeU(v) : v]));
+  if (ls?.size) doc.layerStates = ls;
   if (sortents.length) stats.handles = new Map();
 
   // BLOCKS
