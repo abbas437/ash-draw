@@ -187,7 +187,7 @@ class App {
 
   setTool(id) {
     if (blockedByEditor(this, id)) id = 'select';
-    this.vp.preview = null;
+    this.vp.preview = null; this.vp.gridMarker = null; // the grid-snap square belongs to the last pointer move of the old tool
     if (this.toolId && this.tool) this.tool.deactivate(); // may leave a preview behind (Measure keeps its markers)
     const kept = id === 'select' ? this.vp.preview : null; // back to Select: the markers stay beside its own preview
     if (id !== 'select') this.lastTool = id;
@@ -880,7 +880,7 @@ class App {
     if (key === 'snap') api.settingsSet?.('osnap.on', st.snap)?.catch?.(() => {});
     if (key === 'otrack') api.settingsSet?.('otrack.on', st.otrack)?.catch?.(() => {});
     if (key === 'grid') api.settingsSet?.('grid.on', st.grid)?.catch?.(() => {});
-    if (key === 'gridSnap') api.settingsSet?.('grid.snap', st.gridSnap)?.catch?.(() => {});
+    if (key === 'gridSnap') { api.settingsSet?.('grid.snap', st.gridSnap)?.catch?.(() => {}); if (!st.gridSnap) this.vp.gridMarker = null; }
     if (key === 'ortho' && st.ortho) st.polar = false;
     if (key === 'polar' && st.polar) st.ortho = false;
     this.refreshToggles(); this.vp.requestRender();

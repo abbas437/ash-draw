@@ -240,7 +240,7 @@ export class Viewport {
     if (this.layout) {
       this._frame = null; this._stopProgressive();
       drawLayout(ctx, ms ? ms.paperScene : this.scene, ms ? { ...ms.paperView, width: view.width, height: view.height } : view, this.layout, paperRects, this.modelScene,
-        { ...opts, highlightColor: '#0a6fd1', ...(ms && { highlight: null, modelHighlight: this.selection, activeVp: ms.vp }), ...(this.settings.grid && { paperGrid: (c, v) => this._grid(c, v, true) }) });
+        { ...opts, highlightColor: '#0a6fd1', ...(ms && { highlight: null, modelHighlight: this.selection, activeVp: ms.vp }), ...(this.settings.grid && (ms ? { modelGrid: (c, v) => this._grid(c, v, false, true) } : { paperGrid: (c, v) => this._grid(c, v, true) })) });
     }
     else this._sceneFrame(opts);
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -343,11 +343,12 @@ export class Viewport {
     ctx.fillStyle = background; ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (this.settings.grid) { ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); this._grid(ctx, this.view, false); ctx.setTransform(1, 0, 0, 1, 0, 0); }
   }
-  /** draw the grid of a view (CSS-pixel transform set); paper: a layout sheet, spacing in paper millimetres */
-  _grid(ctx, view, paper) {
+  /** draw the grid of a view (CSS-pixel transform set); paper: a layout sheet, spacing in paper millimetres;
+   *  onSheet: model spacing drawn on the white sheet (MSPACE, inside the active viewport) */
+  _grid(ctx, view, paper, onSheet = false) {
     const st = this.settings;
     const spacing = paper ? st.gridPaperSpacing / paperMmPerUnit(this.layout.plot) : st.gridSpacing;
-    this.gridDrawn = drawGrid(ctx, view, { spacing, major: st.gridMajor, style: st.gridStyle }, paper ? false : st.dark);
+    this.gridDrawn = drawGrid(ctx, view, { spacing, major: st.gridMajor, style: st.gridStyle }, paper || onSheet ? false : st.dark);
   }
 
   _drawGrips() {

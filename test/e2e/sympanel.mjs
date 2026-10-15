@@ -142,6 +142,14 @@ try {
   await page.waitForFunction(() => document.getElementById('app').classList.contains('sym-dock-right'), null, { timeout: 5000 });
   assert.equal(await parentId(), 'sym-dock');
   await canvasNear(w0 - 340, 4);
+  step = 'a narrow window narrows the column only while it is narrow: growing it back restores the chosen width';
+  const vs = page.viewportSize();
+  const dockPx = () => page.evaluate(() => Math.round(document.getElementById('sym-dock').getBoundingClientRect().width));
+  await page.setViewportSize({ width: 600, height: vs.height });
+  await page.waitForFunction(() => document.getElementById('sym-dock').getBoundingClientRect().width <= 301, null, { timeout: 5000 });
+  await page.setViewportSize(vs);
+  await page.waitForFunction(() => Math.abs(document.getElementById('sym-dock').getBoundingClientRect().width - 340) <= 2, null, { timeout: 5000 }).catch(() => {});
+  assert.ok(Math.abs(await dockPx() - 340) <= 2, `column back at its chosen 340 px (got ${await dockPx()})`);
   await dockTo('side');
   assert.equal(await inSide(), true);
 

@@ -207,7 +207,7 @@ export function initSymbolsPanel(app, api) {
   const grip = el('div', { id: 'sym-dock-grip', title: 'Drag to resize the Symbols panel' });
   const dockEl = el('aside', { id: 'sym-dock', 'aria-label': 'Symbols' }, foldBtn, grip);
   $('main').append(dockEl);
-  let view = 'grid', dock = 'side', lastDock = 'side', lastShown = 'side', folded = false, dockW = SYM_DOCK_W, rect = null, saveT = 0;
+  let view = 'grid', dock = 'side', lastDock = 'side', lastShown = 'side', folded = false, dockW = SYM_DOCK_W, wantW = SYM_DOCK_W, rect = null, saveT = 0;
   const viewBtns = SYMBOL_VIEWS.map((v) => {
     const b = $(`sym-view-${v}`);
     b.innerHTML = iconHtml(`view-${v}`, 16);
@@ -240,6 +240,7 @@ export function initSymbolsPanel(app, api) {
     folded = !!on; renderFold();
     if (save) api.settingsSet?.('symbols.dockFolded', folded)?.catch?.(() => {});
   }
+  // wantW: the width the user chose (saved); dockW: what fits the window now, so a small window at start-up does not shrink it for good
   const setWidth = (w) => { dockW = symDockWidthClamp(w, window.innerWidth); appEl.style.setProperty('--symdock-user', `${dockW}px`); };
   /** side / left / right / float / hidden, saved as 'symbols.dock'; the canvas follows through the viewport's ResizeObserver */
   function setDock(d, save = true) {
@@ -271,7 +272,7 @@ export function initSymbolsPanel(app, api) {
   grip.addEventListener('pointerdown', (e) => {
     e.preventDefault(); grip.setPointerCapture(e.pointerId); grip.classList.add('drag');
     const r = dockEl.getBoundingClientRect();
-    const move = (ev) => setWidth(dock === 'left' ? ev.clientX - r.left : r.right - ev.clientX);
+    const move = (ev) => { setWidth(dock === 'left' ? ev.clientX - r.left : r.right - ev.clientX); wantW = dockW; };
     const up = () => {
       grip.classList.remove('drag'); grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', up); grip.removeEventListener('pointercancel', up);
       api.settingsSet?.('symbols.dockWidth', dockW)?.catch?.(() => {});
@@ -305,14 +306,14 @@ export function initSymbolsPanel(app, api) {
     const w = box.offsetWidth, h = box.offsetHeight;
     if (w !== rect.w || h !== rect.h) { rect = { ...rect, w, h }; saveRect(); }
   }).observe(box);
-  window.addEventListener('resize', () => { setWidth(dockW); if (dock === 'float') { place(); saveRect(); } }); // snap back inside a smaller window
+  window.addEventListener('resize', () => { setWidth(wantW); if (dock === 'float') { place(); saveRect(); } }); // snap back inside a smaller window
   setWidth(SYM_DOCK_W);
   setView('grid', false);
   setDock('side', false);
   Promise.all(['symbols.float', 'symbols.view', 'symbols.dock', 'symbols.dockWidth', 'symbols.dockFolded'].map((k) => api.settingsGet?.(k)))
     .then(([r, v, d, w, f]) => {
       if (r && typeof r === 'object') rect = r;
-      if (w != null) setWidth(w);
+      if (w != null) { wantW = w; setWidth(w); }
       folded = f === true;
       setView(v === 'float' ? 'grid' : v, false);
       setDock(symbolDockFrom(d, v), false);

@@ -1467,6 +1467,7 @@ export function drawLayout(ctx, paperScene, view, layout, paperRectsOf, modelSce
     ctx.translate(cx, cy); ctx.rotate(-(v.twist || 0)); ctx.translate(-D / 2, -D / 2);
     drawScene(ctx, modelScene(v.frozen ?? []), { cx: v.viewCenter.x, cy: v.viewCenter.y, zoom: k, width: D, height: D },
       { ...opts, background: PAPER_COLOUR, noClear: true, baseTransform: ctx.getTransform(), highlight: v === opts.activeVp ? opts.modelHighlight : null });
+    if (opts.modelGrid && v === opts.activeVp) opts.modelGrid(ctx, { cx: v.viewCenter.x, cy: v.viewCenter.y, zoom: k, width: D, height: D }); // MSPACE: the model grid in the active viewport
     ctx.restore();
   }
   drawScene(ctx, paperScene, view, { ...opts, background: PAPER_COLOUR, noClear: true });

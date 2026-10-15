@@ -194,6 +194,18 @@ try {
   assert.deepEqual(await page.evaluate(() => [window.app.vp.settings.gridSpacing, window.app.vp.settings.gridPaperSpacing, window.app.vp.settings.gridSnap]), [2.5, 5, true], 'SNAP in MSPACE sets the model spacing');
   const r = await page.evaluate(() => { const vp = window.app.vp, c = vp.toScreen({ x: 3.7, y: -1.1 }); return vp.resolve(c.x, c.y, { snap: false, from: null, gridSnap: true }).p; });
   assert.ok(Math.abs(r.x - 2.5) < 1e-9 && Math.abs(r.y + 0) < 1e-9, `MSPACE point snapped to the 2.5 model grid: ${JSON.stringify(r)}`);
+  // what is snapped to is what is shown: in MSPACE the model grid is drawn (inside the active viewport), not the sheet's
+  const drawnAs = await page.evaluate(() => new Promise((res) => {
+    const vp = window.app.vp, orig = vp._grid, calls = [];
+    vp._grid = function (c, v, paper, onSheet) { calls.push({ paper: !!paper, onSheet: !!onSheet }); return orig.call(this, c, v, paper, onSheet); };
+    vp.requestRender(); requestAnimationFrame(() => requestAnimationFrame(() => { vp._grid = orig; res({ calls, drawn: vp.gridDrawn }); }));
+  }));
+  assert.ok(drawnAs.calls.length && drawnAs.calls.every((c) => !c.paper && c.onSheet), `MSPACE draws the model grid: ${JSON.stringify(drawnAs.calls)}`);
+  assert.ok(drawnAs.drawn > 0, 'grid marks drawn in the viewport');
+  // F9 off clears the grid-snap square at once (not on the next mouse move)
+  await page.evaluate(() => { window.app.vp.gridMarker = { x: 0, y: 0 }; });
+  await page.keyboard.press('F9');
+  assert.equal(await page.evaluate(() => [window.app.vp.settings.gridSnap, window.app.vp.gridMarker]).then(JSON.stringify), '[false,null]');
 
   assert.deepEqual(problems, []);
   console.log(`grid e2e: OK (dot counts while zooming out: ${counts.join(', ')})`);
