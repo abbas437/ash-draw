@@ -710,5 +710,5 @@ export const TOOL_ALIASES = {
   ed: 'textedit', ddedit: 'textedit', textedit: 'textedit',
   mkc: 'mkc', mkr: 'mkr', mkt: 'mkt',
   z: 'zoom', zoom: 'zoom', id: 'id', li: 'list', ls: 'list', list: 'list', lts: 'ltscale', ltscale: 'ltscale', zoomfactor: 'zoomfactor',
-  grid: 'grid',
+  grid: 'grid', sn: 'gsnap', snap: 'gsnap', gsnap: 'gsnap',
 };

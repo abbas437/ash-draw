@@ -132,6 +132,69 @@ try {
   await fs.mkdir(path.join(ROOT, '.scratch'), { recursive: true });
   await page.screenshot({ path: path.join(ROOT, '.scratch', 'grid-dark.png') });
 
+  step = 'GSNAP: F9 toggles it, a mouse-drawn LINE lands on grid points, an endpoint wins, LWT keeps its button';
+  const on = (key) => page.evaluate((k) => document.querySelector(`#status button[data-key="${k}"]`).classList.contains('on'), key);
+  const mouseAt = async (x, y) => {
+    const s = await page.evaluate(([a, b]) => window.app.vp.toScreen({ x: a, y: b }), [x, y]), box = await page.locator('#cv').boundingBox();
+    await page.mouse.move(box.x + s.x, box.y + s.y); await page.waitForTimeout(80);
+    await page.mouse.click(box.x + s.x, box.y + s.y); await page.waitForTimeout(80);
+  };
+  const last = () => page.evaluate(() => { const e = window.app.doc.entities.at(-1); return { p1: e.p1, p2: e.p2 }; });
+  const pt = (p, x, y) => assert.ok(p && Math.abs(p.x - x) < 1e-9 && Math.abs(p.y - y) < 1e-9, JSON.stringify(p));
+  assert.equal(await on('gridSnap'), false);
+  await page.keyboard.press('F9');
+  assert.equal(await on('gridSnap'), true); assert.equal(await page.evaluate(() => window.app.vp.settings.gridSnap), true);
+  assert.equal(await on('lineweights'), false, 'F9 no longer toggles LWT');
+  await page.evaluate(() => { window.app.vp.settings.grid = false; window.app.vp.requestRender(); }); // grid snap works with the grid hidden
+  await cmd('GRID'); await cmd('7'); // 7 units: the endpoint (100,60) is off the grid, so the two snaps give different points
+  await cmd('LINE');
+  await mouseAt(-13.4, -7.3); await mouseAt(-27.4, -22.6);
+  await page.keyboard.press('Enter');
+  const l1 = await last(); pt(l1.p1, -14, -7); pt(l1.p2, -28, -21);
+  await cmd('LINE');
+  await mouseAt(100.7, 59.4); // the grid point would be (98,56); the endpoint wins
+  await mouseAt(-13.4, -27.3);
+  await page.keyboard.press('Enter');
+  const l2 = await last(); pt(l2.p1, 100, 60); pt(l2.p2, -14, -28);
+  await cmd('GRID'); await cmd('10');
+  await cmd('SNAP'); await cmd('off');
+  assert.equal(await page.evaluate(() => window.app.vp.settings.gridSnap), false);
+  await cmd('SN'); await cmd('on');
+  assert.equal(await page.evaluate(() => window.app.vp.settings.gridSnap), true);
+  await page.keyboard.press('F9');
+  assert.equal(await on('gridSnap'), false);
+  await page.locator('#status button[data-key="lineweights"]').click();
+  assert.equal(await on('lineweights'), true);
+  await page.locator('#status button[data-key="lineweights"]').click();
+  assert.equal(await on('lineweights'), false);
+
+  step = 'GSNAP on a layout: paper space snaps in paper mm, model space through a viewport (MSPACE) in the model spacing';
+  await page.evaluate(async () => {
+    const { readDxf } = await import('/src/core/dxfRead.js');
+    const bytes = new Uint8Array(await (await fetch('/test/fixtures/layouts_r2000.dxf')).arrayBuffer());
+    window.app.installDoc(readDxf(bytes), { path: null, name: 'layouts.dxf', format: 'dxf' });
+  });
+  await page.click('#spacebar button[data-space="Layout1"]');
+  assert.equal(await page.evaluate(() => window.app.vp.layout?.name), 'Layout1');
+  await cmd('GRID'); await cmd('5'); // paper spacing, mm
+  const snapSp = () => page.evaluate(() => window.app.vp.gridSnapSpacing());
+  const paperSp = await snapSp();
+  const sp = await page.evaluate(() => [window.app.vp.settings.gridSpacing, window.app.vp.settings.gridPaperSpacing]);
+  assert.deepEqual(sp, [10, 5], 'GRID on a layout sets the paper spacing, the model one is kept');
+  const paperClient = (x, y) => page.evaluate(([x, y]) => {
+    const vp = window.app.vp, v = vp.mspace ? { ...vp.mspace.paperView, width: vp.view.width, height: vp.view.height } : vp.view;
+    const r = vp.canvas.getBoundingClientRect();
+    return { x: r.left + v.width / 2 + (x - v.cx) * v.zoom, y: r.top + v.height / 2 - (y - v.cy) * v.zoom };
+  }, [x, y]);
+  const pIn = await paperClient(200, 150); await page.mouse.dblclick(pIn.x, pIn.y);
+  assert.ok(await page.evaluate(() => !!window.app.vp.mspace), 'entered the viewport');
+  assert.equal(await snapSp(), 10, 'MSPACE snaps in the model spacing');
+  assert.notEqual(paperSp, 10, 'paper space snapped in paper units');
+  await cmd('SNAP'); await cmd('2.5');
+  assert.deepEqual(await page.evaluate(() => [window.app.vp.settings.gridSpacing, window.app.vp.settings.gridPaperSpacing, window.app.vp.settings.gridSnap]), [2.5, 5, true], 'SNAP in MSPACE sets the model spacing');
+  const r = await page.evaluate(() => { const vp = window.app.vp, c = vp.toScreen({ x: 3.7, y: -1.1 }); return vp.resolve(c.x, c.y, { snap: false, from: null, gridSnap: true }).p; });
+  assert.ok(Math.abs(r.x - 2.5) < 1e-9 && Math.abs(r.y + 0) < 1e-9, `MSPACE point snapped to the 2.5 model grid: ${JSON.stringify(r)}`);
+
   assert.deepEqual(problems, []);
   console.log(`grid e2e: OK (dot counts while zooming out: ${counts.join(', ')})`);
 } catch (err) {
