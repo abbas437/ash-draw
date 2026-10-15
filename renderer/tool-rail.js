@@ -21,6 +21,8 @@ export const opacityFrom = (saved) => (typeof saved === 'number' && Number.isFin
 export const DOCK_SNAP = 24;
 /** the side a floating panel with rect `r` docks to when dropped over the canvas rect `s`: 'left', 'right' or null */
 export const dockSideAt = (r, s, snap = DOCK_SNAP) => (r.left <= s.left + snap ? 'left' : r.right >= s.right - snap ? 'right' : null);
+/** whether layout `mode` can sit at tool panel placement `place`: Full anywhere, Compact rail left, right or Top (a one-row band), Floating left or right (its dock side) */
+export const modeAllows = (mode, place) => mode === 'full' || place === 'left' || place === 'right' || (mode === 'rail' && place === 'top');
 
 /**
  * Wire the layouts to the app: `app.setTool`, `#tools` built by app.renderToolPanel, and `api.settingsGet/Set`.
@@ -56,8 +58,9 @@ export function initToolModes(app, api, el) {
   /** the group whose flyout also carries the Hatch pattern and scale: the one holding the Hatch tool, else Draw, else the first */
   const hatchHome = () => box.querySelector('button[data-tool="hatch"]')?.dataset.group ?? (groups().some((g) => g.dataset.group === 'draw') ? 'draw' : groups()[0]?.dataset.group);
 
-  /** rebuild the rail buttons from the panel's groups (after app.renderToolPanel) */
+  /** rebuild the rail buttons from the panel's groups (after app.renderToolPanel); a Top band lays them out in one row */
   function refresh() {
+    rail.setAttribute('aria-orientation', app.toolPlacement === 'top' ? 'horizontal' : 'vertical');
     rail.replaceChildren(...groups().map((tg) => {
       const key = tg.dataset.group, name = groupName(tg);
       if (S.last[key] && !toolBtn(key, S.last[key])) delete S.last[key]; // hidden or moved by Customize tools
@@ -69,11 +72,18 @@ export function initToolModes(app, api, el) {
       arrow.innerHTML = ARROW_SVG;
       return el('div', { class: 'rail-item' }, main, arrow);
     }));
+    mark();
+  }
+
+  /** press the rail button of the group holding the current tool, however that tool was chosen */
+  function mark() {
+    const key = box.querySelector(`button[data-tool="${CSS.escape(app.toolId ?? '')}"][data-group]`)?.dataset.group;
+    for (const b of rail.querySelectorAll('.rail-btn')) b.setAttribute('aria-pressed', String(b.dataset.rail === key));
   }
 
   function toggle(key, btn) { if (S.open?.key === key) close(true); else open(key, btn); }
 
-  /** open a group's flyout to the right of the rail: its tool buttons (and their settings) moved in from the Full panel */
+  /** open a group's flyout beside the rail (below it in a Top band): its tool buttons (and their settings) moved in from the Full panel */
   function open(key, btn) {
     close();
     const tg = groups().find((g) => g.dataset.group === key); if (!tg) return;
@@ -88,6 +98,12 @@ export function initToolModes(app, api, el) {
     fly.hidden = false;
     rail.querySelector(`[data-rail-more="${CSS.escape(key)}"]`)?.setAttribute('aria-expanded', 'true');
     const b = btn.getBoundingClientRect(), r = box.getBoundingClientRect(), h = fly.offsetHeight;
+    if (app.toolPlacement === 'top') { // under the band, starting at the group's button
+      fly.style.left = `${Math.max(4, Math.min(b.left, innerWidth - fly.offsetWidth - 4))}px`;
+      fly.style.top = `${r.bottom + 2}px`;
+      fly.style.maxHeight = `${innerHeight - r.bottom - 8}px`;
+      return;
+    }
     fly.style.left = `${app.toolPlacement === 'right' ? r.left - 2 - fly.offsetWidth : r.right + 2}px`; // a right-docked rail opens its flyouts to the left
     fly.style.top = `${Math.max(4, Math.min(b.top, innerHeight - h - 4))}px`;
     fly.style.maxHeight = `${innerHeight - 8}px`;
@@ -167,13 +183,13 @@ export function initToolModes(app, api, el) {
   }
   addEventListener('resize', () => { if (S.mode === 'float' && S.pos) place(S.pos.x, S.pos.y); });
 
-  /** switch layout; Compact rail and Floating keep a left or right dock side and put a Top band or hidden panel on the left (those are Full layouts) */
+  /** switch layout; a placement the layout cannot take (modeAllows) moves the panel to the left: a hidden panel always, a Top band for Floating */
   function setMode(mode, persist = true) {
     mode = modeFrom(mode);
     close();
     S.mode = mode;
     if (mode !== 'float') S.dock = mode;
-    if (mode !== 'full' && app.toolPlacement !== 'left' && app.toolPlacement !== 'right') app.setToolPlacement('left', persist);
+    if (!modeAllows(mode, app.toolPlacement)) app.setToolPlacement('left', persist);
     for (const m of TOOL_MODES) root.classList.toggle(`tools-${m}`, m === mode);
     if (mode === 'float') head.append(more); else box.insertBefore(more, fly); // floating: the ⋯ menu sits in the title strip
     if (mode === 'float') {
@@ -229,5 +245,5 @@ export function initToolModes(app, api, el) {
     if (mode != null) setMode(mode, false);
   }).catch(() => {});
 
-  return { get mode() { return S.mode; }, get opacity() { return S.op; }, setMode, setOpacity, refresh, close };
+  return { get mode() { return S.mode; }, get opacity() { return S.op; }, setMode, setOpacity, refresh, close, mark };
 }

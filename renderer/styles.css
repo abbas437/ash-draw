@@ -75,7 +75,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 #tools .g-select, #qat .g-select { --gc:var(--grp-select); } #tools .g-draw, #qat .g-draw { --gc:var(--grp-draw); } #tools .g-modify, #qat .g-modify { --gc:var(--grp-modify); } #tools .g-block, #qat .g-block { --gc:var(--grp-block); }
 #tools .g-annotate, #qat .g-annotate { --gc:var(--grp-annotate); } #tools .g-inquiry, #qat .g-inquiry { --gc:var(--grp-inquiry); } #tools .g-markup, #qat .g-markup { --gc:var(--grp-markup); }
 #app #tools.no-colours * { --gc:initial; }
-#tools button.active .ti { color:var(--accent-ink); }
+#tools button.active .ti, #qat button.active .ti { color:var(--accent-ink); }
 /* View > Tool labels off: icon-only buttons, group names become separators (the name stays in the tooltip) */
 #app.no-tool-labels #tools button { justify-content:center; padding:1px 0; }
 #app.no-tool-labels #tools button .lbl { display:none; }
@@ -447,6 +447,12 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 #tools .rail-fly > .gbody[hidden] { display:flex; }
 #app.no-tool-labels #tools .rail-fly > .gbody { display:grid; grid-template-columns:repeat(3, 1fr); gap:1px; }
 #tools .rail-fly > .xbody { display:flex; flex-direction:column; gap:2px; margin-top:4px; padding-top:4px; border-top:1px solid var(--line); }
+/* Compact rail in the Top band: one row of the group buttons; each flyout opens under its button (tool-rail.js open) */
+#app.tools-top.tools-rail #tools { height:auto; align-items:center; padding:3px 4px; }
+#app.tools-top.tools-rail #tools .rail { flex-direction:row; }
+#app.tools-top.tools-rail #tools .rail-btn { width:32px; }
+#app.tools-top.tools-rail #tools .rail-more svg { transform:rotate(90deg); }
+#app.tools-top.tools-rail #tools .tp-mode { align-self:center; margin:0 0 0 auto; }
 #app.tools-float { --tools-w:0px; }
 #app.tools-float #tools { position:fixed; z-index:25; width:100px; max-height:75vh; padding-top:0; border:1px solid var(--line); border-radius:4px; box-shadow:0 6px 18px var(--shadow); }
 #app.tools-float:not(.no-tool-labels) #tools { width:150px; }
@@ -508,5 +514,5 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 .ti .ac[fill="currentColor"] { fill:var(--gc, currentColor); }
 #tools button:active:not(:disabled), #qat button:active:not(:disabled), .rail-btn:active:not(:disabled) { background:var(--press); }
 #tools button:focus-visible, #qat button:focus-visible, .rail-btn:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
-#tools button.active, #tools button.active:hover { background:var(--accent2); border-color:var(--accent); color:var(--on-accent); }
-.rail-btn[aria-pressed=true], #tools .rail-pin[aria-pressed="true"] { background:var(--accent2); border-color:var(--accent); color:var(--accent-ink); }
+#tools button.active, #tools button.active:hover, #qat button.active, #qat button.active:hover { background:var(--accent2); border-color:var(--accent); color:var(--on-accent); }
+.rail-btn[aria-pressed=true], #tools .rail-btn[aria-pressed=true], #tools .rail-pin[aria-pressed="true"] { background:var(--accent2); border-color:var(--accent); color:var(--accent-ink); }
