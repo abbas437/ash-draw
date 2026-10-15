@@ -160,6 +160,12 @@ export async function loadDrawing(api, name, bytes, { onProgress = null, signal 
   if (bare) notes.push(`${bare} OLE object${bare === 1 ? '' : 's'} shown as frames (no preview picture it can show).`);
   const unknown = unknownPatterns(doc);
   if (unknown.length) notes.push(`Hatches drawn as ANSI31 (${unknown.map((n) => `unknown pattern ${n}`).join(', ')}). Load the pattern with Format > Load patterns from .pat file…`);
+  // objects kept from their saved graphics (dxfRead proxyEntity): drawn read-only, or kept for saving only
+  const proxies = [doc.entities, ...[...doc.blocks.values()].map((b) => b.entities)].flatMap((l) => l.filter((x) => x.type === 'PROXY'));
+  const byName = (l) => Object.entries(l.reduce((a, x) => ({ ...a, [x.name]: (a[x.name] ?? 0) + 1 }), {})).map(([k, v]) => `${v} ${k}`).join(', ');
+  const drawn = proxies.filter((x) => x.parts.length), kept = proxies.filter((x) => !x.parts.length);
+  if (drawn.length) notes.push(`Shown from ${drawn.length === 1 ? 'its' : 'their'} saved graphics, read-only (they can be erased but not moved or edited, and are left out when the drawing is saved): ${byName(drawn)}.`);
+  if (kept.length) sk.push(...Object.entries(kept.reduce((a, x) => ({ ...a, [x.name]: (a[x.name] ?? 0) + 1 }), {})).map(([k, v]) => [`${k} (not drawn; left out when saving)`, v]));
   if (sk.length) notes.push(`Not displayed (unsupported object types): ${sk.map(([k, v]) => `${v} ${k}`).join(', ')}.`);
   const conversion = conv && { converter: conv.converter, errorCount: conv.errorCount, log: conv.log, objects: objectsRead(doc), skipped: { ...(doc.skipped || {}) }, dwgHeader: conv.dwgHeader };
   return { doc, format, notes, warnings, conversion };

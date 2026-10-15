@@ -440,6 +440,12 @@ export function* writeDxfSteps(doc, opts = {}) {
         for (const [c, v] of mlineTags(e, ms ? ms.h : hMlineStyle, ms ? ms.st.name : 'Standard')) if (c === 2) o.s(c, v); else o.p(c, v);
         return true;
       }
+      case 'PROXY': {
+        // an object shown from its saved graphics (dxfRead proxyEntity) is not written: its own tags come from a newer
+        // file version with handle references that cannot be kept, which AutoCAD may refuse in this R2000 file. Saving
+        // leaves it out and the save report says so, as before it was shown.
+        report.skipped[e.name] = (report.skipped[e.name] ?? 0) + 1; return false;
+      }
       case 'VIEWPORT': {
         head(o, e, 'VIEWPORT', owner);
         for (const [c, v] of viewportTags(e, (n) => layerH.get(n))) o.p(c, v);

@@ -372,6 +372,7 @@ class Builder {
         this.build({ type: 'TEXT', p: { x: q[3].x + ux * h * 0.5 - vx * h * 1.2, y: q[3].y + uy * h * 0.5 - vy * h * 1.2 }, height: h, text: name, rot: Math.atan2(uy, ux) / DEG, ui: true }, null, red, rootId);
         return;
       }
+      case 'PROXY': for (const p of e.parts) this._build(p, m, style, rootId); return; // read-only parts (proxygfx.js)
       case '3DFACE': {
         const pls = tessellate(e);
         if (!pls.length) return;
