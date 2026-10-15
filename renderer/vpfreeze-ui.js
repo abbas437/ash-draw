@@ -5,6 +5,7 @@ import { screenToWorld } from '../src/core/render.js';
 import { vpFrozen, layoutViewports, matchLayerNames, setVpFreeze, resetVpFreeze } from '../src/core/vpfreeze.js';
 import { Tool, TOOL_ALIASES } from './tools.js';
 import { el, toast, renderLayers } from './ui.js';
+import { iconSvg } from './icons.js';
 
 /** the layout space doc the shown layout's viewports live in (the session shows the model doc in MSPACE) */
 const layoutSpace = (app) => { const sp = app.active?.spaces; return sp?.docs[sp.cur] ?? null; };
@@ -109,7 +110,7 @@ export function initVpFreeze(app) {
     const v = vpFreezeTarget(app);
     if (!v) return null;
     const on = vpFrozen(v, l.name);
-    return el('button', { class: 'icon lay-vpfrz', title: on ? 'Thaw in this viewport' : 'Freeze in this viewport', onclick: () => toggleVpFreeze(app, v, l.name) }, on ? '❄' : '☀');
+    return el('button', { class: 'icon lay-vpfrz', title: on ? 'Thaw in this viewport' : 'Freeze in this viewport', 'data-state': on ? 'frozen' : 'thawed', onclick: () => toggleVpFreeze(app, v, l.name) }, iconSvg(on ? 'layer-freeze' : 'layer-thaw', 14));
   };
   // selecting a viewport in paper space only refreshes the Properties panel: show or hide the VP column
   let shown = null;

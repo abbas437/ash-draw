@@ -80,11 +80,12 @@ try {
   await crow('A-WALL').locator('.lc-frz').click();
   await page.waitForFunction(() => window.app.doc.layers.get('A-WALL')?.frozen === true, null, { timeout: 5000 });
   assert.equal(await list.isVisible(), true, 'a toggle leaves the list open');
-  assert.equal(await crow('A-WALL').locator('.lc-frz').textContent(), '❄');
-  assert.equal(await page.locator('#layers .layer[data-layer="A-WALL"] .lay-frz').textContent(), '❄');
+  assert.equal(await crow('A-WALL').locator('.lc-frz').getAttribute('data-state'), 'frozen');
+  assert.equal(await crow('A-WALL').locator('.lc-frz').getAttribute('title'), 'Thaw layer');
+  assert.equal(await page.locator('#layers .layer[data-layer="A-WALL"] .lay-frz').getAttribute('data-state'), 'frozen');
   step = 'thaw from the side panel (a programmatic click, so the list stays open): the open combo follows';
   await page.evaluate(() => document.querySelector('#layers .layer[data-layer="A-WALL"] .lay-frz').click());
-  await page.waitForFunction(() => document.querySelector('#layer-combo-list .lc-row[data-layer="A-WALL"] .lc-frz')?.textContent === '☀', null, { timeout: 5000 });
+  await page.waitForFunction(() => document.querySelector('#layer-combo-list .lc-row[data-layer="A-WALL"] .lc-frz')?.dataset.state === 'thawed', null, { timeout: 5000 });
   step = 'freeze A-WALL again from the combo, then Esc';
   await crow('A-WALL').locator('.lc-frz').click();
   await page.waitForFunction(() => window.app.doc.layers.get('A-WALL')?.frozen === true, null, { timeout: 5000 });

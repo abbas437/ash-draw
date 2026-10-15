@@ -10,6 +10,7 @@ import { symbolScale, symbolPolylines, insertSymbol } from '../src/core/symbols-
 import { attdefsOf, ATT_CONSTANT, ATT_PRESET } from '../src/core/blocks.js';
 import { attribValuesDialog } from './tools-blocks.js';
 import { el, modal } from './ui.js';
+import { iconHtml } from './icons.js';
 import { applySide, closeSideFly } from './side-panel.js';
 
 /** cells drawn at most; the status line says when a filter would show more */
@@ -39,11 +40,6 @@ export const floatRectClamp = (r, winW, winH) => {
   const n = (v, d) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : d);
   const w = Math.round(Math.min(Math.max(n(r?.w, 320), 220), winW)), h = Math.round(Math.min(Math.max(n(r?.h, 460), 160), winH));
   return { x: Math.round(Math.min(Math.max(n(r?.x, winW - w - 60), 0), winW - w)), y: Math.round(Math.min(Math.max(n(r?.y, 90), 0), winH - h)), w, h };
-};
-const VIEW_ICONS = {
-  grid: '<path d="M3 3h6v6H3zM11 3h6v6h-6zM3 11h6v6H3zM11 11h6v6h-6z"/>',
-  list: '<path d="M3 4h3.5v3.5H3zM3 12.5h3.5V16H3zM9.5 5.7H17M9.5 14.2H17"/>',
-  float: '<path d="M2.5 7h11v9.5h-11z"/><path d="M6.5 7V3.5h11V13h-4"/>',
 };
 
 /** a library file with several symbols: pick one (null = cancelled) */
@@ -214,7 +210,7 @@ export function initSymbolsPanel(app, api) {
   let view = 'grid', dock = 'side', lastDock = 'side', lastShown = 'side', folded = false, dockW = SYM_DOCK_W, rect = null, saveT = 0;
   const viewBtns = SYMBOL_VIEWS.map((v) => {
     const b = $(`sym-view-${v}`);
-    b.innerHTML = `<svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">${VIEW_ICONS[v]}</svg>`;
+    b.innerHTML = iconHtml(`view-${v}`, 16);
     b.onclick = () => (v === 'float' ? setDock('float') : setView(v));
     return b;
   });

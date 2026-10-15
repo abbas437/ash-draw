@@ -1,7 +1,7 @@
 // The right-hand side panel (Layers, Markups, Symbols, Properties): collapse to a thin strip, fold single sections, window title.
 // State is saved like the other UI prefs: settings 'side.mode' (expanded / collapsed / hidden; older builds saved 'side.shown')
 // and 'side.folded' (section keys). Collapsed is a 40 px icon rail: a rail button opens its section as a flyout over the canvas.
-import { iconMarkup } from './icons.js';
+import { iconHtml } from './icons.js';
 
 /** the foldable sections, by the data-sec of their .panel in index.html */
 export const SIDE_SECTIONS = ['layers', 'markups', 'symbols', 'props'];
@@ -21,15 +21,13 @@ export const sideWidthClamp = (w, winW = window.innerWidth) => Math.round(Math.m
 export const sideWidthFrom = (saved) => (Number.isFinite(Number(saved)) && saved !== null && saved !== '' && saved !== false ? sideWidthClamp(saved) : SIDE_W_DEFAULT);
 
 const STRIP_TITLE = { shown: 'Collapse the side panel to icons (Ctrl+3)', hidden: 'Expand the side panel: Layers, Markups, Symbols, Properties (Ctrl+3)' };
-/** rail buttons: section key, name, icon markup (20x20, the icons.js style) */
+/** rail buttons: section key, name, icon id (icons.js) */
 const RAIL = [
-  ['layers', 'Layers', iconMarkup('layers')],
-  ['markups', 'Markups', iconMarkup('mkc')],
-  ['symbols', 'Symbols', '<circle cx="6" cy="6" r="3.2"/><path d="M11.5 2.8h5.7v6.4h-5.7z"/><path d="M2.8 17.2L6 11.4l3.2 5.8z"/><path d="M12 12l5 5M17 12l-5 5"/>'],
-  ['props', 'Properties', '<path d="M3 5h14M3 10h14M3 15h14"/><circle cx="7" cy="5" r="1.7" fill="currentColor"/><circle cx="13" cy="10" r="1.7" fill="currentColor"/><circle cx="9" cy="15" r="1.7" fill="currentColor"/>'],
+  ['layers', 'Layers', 'layers'],
+  ['markups', 'Markups', 'mkc'],
+  ['symbols', 'Symbols', 'rail-symbols'],
+  ['props', 'Properties', 'rail-props'],
 ];
-const PIN = '<path d="M7.5 2.8h5l-.6 5.2 3 3H5.1l3-3z"/><path d="M10 11v6.2"/>';
-const svgOf = (markup) => `<svg class="ti" width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${markup}</svg>`;
 let sideApi = null;
 
 /** wire the strip toggle and the section headers; restores the saved state through api.settingsGet */
@@ -46,7 +44,7 @@ export function initSidePanel(app, api) {
   for (const [key, label, icon] of RAIL) {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'rail-btn'; b.dataset.sec = key; b.title = `${label}: open over the drawing`; b.setAttribute('aria-label', label);
-    b.innerHTML = svgOf(icon);
+    b.innerHTML = iconHtml(icon, 20);
     b.addEventListener('click', () => (app.sideFly === key ? closeSideFly(app) : openSideFly(app, key)));
     rail.append(b);
   }
@@ -54,7 +52,7 @@ export function initSidePanel(app, api) {
   bar.id = 'side-flybar';
   const pin = document.createElement('button');
   pin.type = 'button'; pin.id = 'side-pin'; pin.title = 'Pin: keep the side panel open beside the drawing'; pin.setAttribute('aria-label', pin.title);
-  pin.innerHTML = svgOf(PIN);
+  pin.innerHTML = iconHtml('pin', 20);
   pin.addEventListener('click', () => app.setSideMode('expanded'));
   bar.append(Object.assign(document.createElement('span'), { className: 'fly-title' }), Object.assign(document.createElement('span'), { className: 'spacer' }), pin);
   side.append(rail, bar);

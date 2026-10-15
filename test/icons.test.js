@@ -22,13 +22,13 @@ test('every panel command is a real tool and every group has a colour key', () =
   }
 });
 
-test('icons are plain stroke shapes on the 20x20 grid; unknown commands get the fallback', () => {
+test('icons are plain stroke shapes on the 24x24 grid; unknown commands get the fallback', () => {
   for (const [id, svg] of Object.entries(ICONS)) {
     assert.ok(svg.length > 10, id);
     const tags = [...svg.matchAll(/<(\w+)/g)].map((m) => m[1]);
     assert.ok(tags.every((t) => ['path', 'circle', 'ellipse'].includes(t)), `${id}: ${tags}`);
     assert.doesNotMatch(svg, /stroke="(?!none)|stroke-width|<svg|on\w+=/, `${id} keeps the shared stroke and has no handlers`);
-    for (const n of svg.match(/-?\d*\.?\d+/g)) assert.ok(Math.abs(Number(n)) <= 20, `${id}: ${n} outside the grid`);
+    for (const n of svg.match(/-?\d*\.?\d+/g)) assert.ok(Math.abs(Number(n)) <= 24, `${id}: ${n} outside the grid`);
   }
   assert.equal(iconMarkup('no-such-command'), FALLBACK_ICON);
   assert.equal(iconMarkup('line'), ICONS.line);
@@ -37,4 +37,14 @@ test('icons are plain stroke shapes on the 20x20 grid; unknown commands get the 
 test('tooltips name the command and its alias', () => {
   assert.equal(toolTitle('Line', 'L'), 'Line (L)');
   assert.equal(toolTitle('Select'), 'Select');
+});
+
+test('panel and toolbar icons exist and draw in currentColor (no colour of their own)', async () => {
+  const { QUICK_ACCESS } = await import('../renderer/tool-panel.js');
+  const ids = [...TOOL_BUTTONS.flatMap(([, , items]) => items.map(([id]) => id)), ...QUICK_ACCESS.flatMap(([, list]) => list), ...TOOLBAR_ICONS];
+  for (const id of new Set(ids)) {
+    assert.ok(Object.hasOwn(ICONS, id), `${id} has an icon`);
+    for (const [, attr, v] of ICONS[id].matchAll(/\b(fill|stroke|color|style)="([^"]*)"/g)) assert.match(v, /^(currentColor|none)$/, `${id}: ${attr}="${v}"`);
+    assert.doesNotMatch(ICONS[id], /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i, `${id} has a hard-coded colour`);
+  }
 });

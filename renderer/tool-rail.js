@@ -1,7 +1,7 @@
 // ASH Draw Studio - the tool panel's three layouts: Full (the panel as built by tool-panel.js), Compact rail (one button per
 // group, each opening a flyout of the group's tools) and Floating (the Full panel in a small window dragged by its title strip).
 // The flyout borrows the group's own body from the Full panel and gives it back on close, so every tool and setting stays the same element.
-import { iconSvg } from './icons.js';
+import { iconSvg, iconHtml } from './icons.js';
 
 export const TOOL_MODES = ['full', 'rail', 'float'];
 export const MODE_LABELS = { full: 'Full', rail: 'Compact rail', float: 'Floating' };
@@ -9,10 +9,9 @@ export const modeFrom = (saved) => (TOOL_MODES.includes(saved) ? saved : 'full')
 /** the icon a group's rail button shows until one of its tools is used: the group's most typical tool */
 const GROUP_ICON = { select: 'select', draw: 'line', modify: 'move', block: 'insert', annotate: 'dimlinear', inquiry: 'measure', markup: 'mkc' };
 /** small icons of the layout controls (the panel's convention: every button carries an <svg>) */
-const svg = (inner, w = 14, h = w) => `<svg class="ti" width="${w}" height="${h}" viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
-const PIN_SVG = svg('<path d="M7 3h6M8 3v5l-3 4h10l-3-4V3M10 12v6"/>');
-const DOTS_SVG = svg(['4', '10', '16'].map((x) => `<circle cx="${x}" cy="10" r="1.3" fill="currentColor" stroke="none"/>`).join(''));
-const ARROW_SVG = svg('<path d="M8 5l5 5-5 5"/>', 8, 12);
+const PIN_SVG = iconHtml('pin', 14);
+const DOTS_SVG = iconHtml('dots', 14);
+const ARROW_SVG = iconHtml('chevron', 8, 12);
 
 /** keep a w x h box at (x, y) inside the window; returns the clamped [x, y] */
 export const clampPos = (x, y, w, h, W, H) => [Math.max(0, Math.min(x, W - w)), Math.max(0, Math.min(y, H - h))];
