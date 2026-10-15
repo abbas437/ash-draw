@@ -227,3 +227,16 @@ test('tool panel layouts: Compact rail may sit in the Top band; Floating only do
   assert.deepEqual(['left', 'right', 'top', 'hidden'].map((p) => modeAllows('rail', p)), [true, true, true, false]);
   assert.deepEqual(['left', 'right', 'top', 'hidden'].map((p) => modeAllows('float', p)), [true, true, false, false]);
 });
+
+test('tool panel layouts: Floating floats the Full panel unless "rail" was saved; the four layout choices', async () => {
+  const { floatLayoutFrom, layoutOf, LAYOUTS, LAYOUT_LABELS } = await import('../renderer/tool-rail.js');
+  assert.equal(floatLayoutFrom('rail'), 'rail');
+  for (const v of ['full', undefined, null, 'float', 3, '']) assert.equal(floatLayoutFrom(v), 'full', String(v));
+  assert.deepEqual(LAYOUTS, ['full', 'rail', 'float', 'float-rail']);
+  assert.equal(LAYOUT_LABELS['float-rail'], 'Floating compact');
+  assert.equal(layoutOf('float', 'rail'), 'float-rail');
+  assert.equal(layoutOf('float', 'full'), 'float');
+  assert.equal(layoutOf('rail', 'rail'), 'rail'); // the floating layout matters only when floating
+  assert.equal(layoutOf('full', 'rail'), 'full');
+  assert.equal(layoutOf('bogus', 'full'), 'full');
+});
