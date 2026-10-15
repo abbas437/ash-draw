@@ -15,9 +15,10 @@ import { setTextMeasure } from '../src/core/textMetrics.js';
   const mctx = document.createElement('canvas').getContext('2d');
   setTextMeasure((t, font, b, i) => { mctx.font = `${i ? 'italic ' : ''}${b ? 'bold ' : ''}100px "${font}", Arial, "Segoe UI", sans-serif`; return mctx.measureText(t).width / 100; });
 }
-import { paperRects } from '../src/core/layouts.js';
+import { paperRects, paperMmPerUnit } from '../src/core/layouts.js';
 import { frameKey, framePlan, exposedStrips, sameKey } from '../src/core/frameCache.js';
 import { nextTask } from '../src/core/slice.js';
+import { drawGrid, GRID_DEFAULTS } from '../src/core/grid.js';
 
 const DEFAULT_KINDS = new Set(['end', 'int', 'mid', 'cen', 'quad', 'node', 'ins', 'per']);
 const SNAP_PX = 12;
@@ -52,7 +53,9 @@ export class Viewport {
     this.snapMarker = null;
     this.acquired = [];                // object snap tracking / extension points: [{at, path?}] (otrack.js)
     this._lastPoint = null;            // see the lastPoint accessor
-    this.settings = { snap: true, ortho: false, polar: false, otrack: false, polarStep: 45, polarExtra: [], lineweights: false, transparency: true, dark: false, zoomFactor: ZOOMFACTOR_DEFAULT, kinds: new Set(DEFAULT_KINDS) };
+    this.settings = { snap: true, ortho: false, polar: false, otrack: false, polarStep: 45, polarExtra: [], lineweights: false, transparency: true, dark: false, zoomFactor: ZOOMFACTOR_DEFAULT, kinds: new Set(DEFAULT_KINDS),
+      // drawing grid (GRID / F7; renderer/grid-ui.js): model spacing in drawing units, layouts in paper millimetres
+      grid: GRID_DEFAULTS.on, gridSpacing: GRID_DEFAULTS.spacing, gridMajor: GRID_DEFAULTS.major, gridStyle: GRID_DEFAULTS.style, gridPaperSpacing: GRID_DEFAULTS.paperSpacing };
     this.preview = null;               // (ctx, view, vp) => void drawn above the scene
     this.rubber = null;                // selection rectangle {a,b,crossing} in world coordinates
     this.layout = null;                // the layout shown (paper space; see layouts-ui.js), null = model space
@@ -225,10 +228,11 @@ export class Viewport {
     const { ctx, view } = this;
     const opts = this.sceneOpts();
     const ms = this.mspace;
+    this.gridDrawn = 0;               // dots or lines of grid in this frame (tests)
     if (this.layout) {
       this._frame = null; this._stopProgressive();
       drawLayout(ctx, ms ? ms.paperScene : this.scene, ms ? { ...ms.paperView, width: view.width, height: view.height } : view, this.layout, paperRects, this.modelScene,
-        { ...opts, highlightColor: '#0a6fd1', ...(ms && { highlight: null, modelHighlight: this.selection, activeVp: ms.vp }) });
+        { ...opts, highlightColor: '#0a6fd1', ...(ms && { highlight: null, modelHighlight: this.selection, activeVp: ms.vp }), ...(this.settings.grid && { paperGrid: (c, v) => this._grid(c, v, true) }) });
     }
     else this._sceneFrame(opts);
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -280,6 +284,9 @@ export class Viewport {
   _sceneFrame(opts) {
     const { ctx, view, canvas } = this;
     const key = frameKey({ scene: this.scene, dark: this.settings.dark, lineweights: this.settings.lineweights, transparency: this.settings.transparency, selection: this.selection, dpr: this.dpr, pxWidth: canvas.width, pxHeight: canvas.height });
+    // grid on: the bitmap is transparent and _underlay draws the background and grid under it; off: opaque as before
+    key.grid = !!this.settings.grid;
+    if (key.grid) opts = { ...opts, noClear: true };
     const plan = framePlan(this._frame, key, view, this._gesture);
     let buf = this._buf;
     const p = this._prog;
@@ -287,19 +294,21 @@ export class Viewport {
     if (plan.mode === 'full' && (this._prog || this.scene.items.length >= PROGRESSIVE_ITEMS)) {
       if (!this._prog) this._startProgressive(key, view, opts);
       // in the making: show what is drawn so far; finished at once: the cached frame
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      this._underlay(opts.background);
       ctx.drawImage(this._prog ? this._prog.buf : this._buf, 0, 0);
       return;
     }
     if (plan.mode === 'full') {
       if (buf.width !== canvas.width || buf.height !== canvas.height) { buf.width = canvas.width; buf.height = canvas.height; }
-      drawScene(buf.getContext('2d'), this.scene, view, opts);
+      const bc = buf.getContext('2d');
+      bc.setTransform(1, 0, 0, 1, 0, 0); bc.clearRect(0, 0, buf.width, buf.height);
+      drawScene(bc, this.scene, view, opts);
       this._frame = { key, view, exact: true };
     } else if (plan.mode === 'shift') {
       // move the bitmap into the spare buffer, then render only the exposed strips, each clipped to itself
       const nb = this._buf2, c = nb.getContext('2d'), d = this.dpr, f = plan.view;
       if (nb.width !== buf.width || nb.height !== buf.height) { nb.width = buf.width; nb.height = buf.height; }
-      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, nb.width, nb.height);
       c.drawImage(buf, plan.dx, plan.dy);
       for (const [x, y, w, h] of exposedStrips(plan.dx, plan.dy, nb.width, nb.height)) {
         const sv = { cx: f.cx + ((x + w / 2) / d - f.width / 2) / f.zoom, cy: f.cy - ((y + h / 2) / d - f.height / 2) / f.zoom, zoom: f.zoom, width: w / d, height: h / d };
@@ -310,12 +319,26 @@ export class Viewport {
       this._buf2 = buf; this._buf = buf = nb;
       this._frame = { key, view: f, exact: false };
     }
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this._underlay(opts.background);
     if (plan.mode === 'scale') {
-      ctx.fillStyle = opts.background; ctx.fillRect(0, 0, canvas.width, canvas.height);
       const d = this.dpr;
       ctx.drawImage(buf, plan.ox * d, plan.oy * d, buf.width * plan.s, buf.height * plan.s);
     } else ctx.drawImage(buf, 0, 0);
+  }
+
+  /** model space: the background and the grid for the current view, under the (transparent) scene bitmap; drawn every
+   *  frame, so the grid follows a pan or zoom gesture exactly while the bitmap is shifted or scaled */
+  _underlay(background) {
+    const { ctx, canvas } = this;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = background; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (this.settings.grid) { ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); this._grid(ctx, this.view, false); ctx.setTransform(1, 0, 0, 1, 0, 0); }
+  }
+  /** draw the grid of a view (CSS-pixel transform set); paper: a layout sheet, spacing in paper millimetres */
+  _grid(ctx, view, paper) {
+    const st = this.settings;
+    const spacing = paper ? st.gridPaperSpacing / paperMmPerUnit(this.layout.plot) : st.gridSpacing;
+    this.gridDrawn = drawGrid(ctx, view, { spacing, major: st.gridMajor, style: st.gridStyle }, paper ? false : st.dark);
   }
 
   _drawGrips() {
