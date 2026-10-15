@@ -20,6 +20,7 @@
   --danger:#ff6b61;
 }
 ::selection { background:var(--selection); color:var(--text); }
+input[type=range], input[type=checkbox], input[type=radio] { accent-color:var(--accent); } /* brass, not the browser's blue */
 * { scrollbar-color:var(--scroll-thumb) transparent; }
 * { box-sizing: border-box; }
 html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font:13px "Segoe UI", system-ui, sans-serif; overflow:hidden; }
