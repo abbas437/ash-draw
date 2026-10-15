@@ -96,18 +96,10 @@ test('kept objects: drawn read-only from their graphics; the solid is kept but n
   assert.deepEqual(doc.skipped, {});
 });
 
-test('kept objects write back their own tags as read (handle references as null handles)', () => {
+test('objects shown from their graphics are left out when saving, and the save report counts them', () => {
   const doc = parseDxf(drawing());
-  const before = kept(doc).map((e) => e.tags);
-  const out = writeDxf(doc);
-  const again = kept(parseDxf(out));
-  assert.deepEqual(again.map((e) => e.name), ['ACAD_PROXY_ENTITY', 'AECC_THING', '3DSOLID']);
-  assert.deepEqual(again.map((e) => e.tags), before);
-  // exact text of the 3DSOLID's own part, and the proxy's object id written as a null handle
-  assert.ok(out.includes('100\r\nAcDbModelerGeometry\r\n70\r\n1\r\n1\r\nmnn m o n\r\n1\r\n ^*^ \r\n3\r\n-- [\r\n100\r\nAcDb3dSolid\r\n350\r\n0\r\n'));
-  assert.ok(out.includes('310\r\n0102030405060708\r\n330\r\n0\r\n94\r\n0\r\n'));
-  assert.equal(again[0].layer, 'P'); assert.equal(again[0].color, 3);
-  // DWG output (through the converter) leaves them out, as before
-  writeDxf(doc, { dimensionsAsGeometry: true });
+  const again = kept(parseDxf(writeDxf(doc)));
+  assert.deepEqual(again, []);
   assert.equal(doc.lastWriteReport.skipped.ACAD_PROXY_ENTITY, 1);
+  assert.equal(doc.lastWriteReport.skipped.AECC_THING, 1);
 });

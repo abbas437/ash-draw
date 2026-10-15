@@ -164,8 +164,8 @@ export async function loadDrawing(api, name, bytes, { onProgress = null, signal 
   const proxies = [doc.entities, ...[...doc.blocks.values()].map((b) => b.entities)].flatMap((l) => l.filter((x) => x.type === 'PROXY'));
   const byName = (l) => Object.entries(l.reduce((a, x) => ({ ...a, [x.name]: (a[x.name] ?? 0) + 1 }), {})).map(([k, v]) => `${v} ${k}`).join(', ');
   const drawn = proxies.filter((x) => x.parts.length), kept = proxies.filter((x) => !x.parts.length);
-  if (drawn.length) notes.push(`Shown from ${drawn.length === 1 ? 'its' : 'their'} saved graphics, read-only (they can be erased but not moved or edited): ${byName(drawn)}.`);
-  if (kept.length) sk.push(...Object.entries(kept.reduce((a, x) => ({ ...a, [x.name]: (a[x.name] ?? 0) + 1 }), {})).map(([k, v]) => [`${k} (kept for saving)`, v]));
+  if (drawn.length) notes.push(`Shown from ${drawn.length === 1 ? 'its' : 'their'} saved graphics, read-only (they can be erased but not moved or edited, and are left out when the drawing is saved): ${byName(drawn)}.`);
+  if (kept.length) sk.push(...Object.entries(kept.reduce((a, x) => ({ ...a, [x.name]: (a[x.name] ?? 0) + 1 }), {})).map(([k, v]) => [`${k} (not drawn; left out when saving)`, v]));
   if (sk.length) notes.push(`Not displayed (unsupported object types): ${sk.map(([k, v]) => `${v} ${k}`).join(', ')}.`);
   const conversion = conv && { converter: conv.converter, errorCount: conv.errorCount, log: conv.log, objects: objectsRead(doc), skipped: { ...(doc.skipped || {}) }, dwgHeader: conv.dwgHeader };
   return { doc, format, notes, warnings, conversion };

@@ -441,12 +441,10 @@ export function* writeDxfSteps(doc, opts = {}) {
         return true;
       }
       case 'PROXY': {
-        // an object kept from the file (dxfRead proxyEntity): its own tags as read, after a fresh common part.
-        // DWG output leaves them out (the converter cannot take them), as before they were kept.
-        if (asGeometry || !e.tags?.length) { report.skipped[e.name] = (report.skipped[e.name] ?? 0) + 1; return false; }
-        head(o, e, e.name, owner);
-        for (const [c, v] of e.tags) { if (c === 1001) xdApps.add(String(v).trim()); o.p(c, v); }
-        return true;
+        // an object shown from its saved graphics (dxfRead proxyEntity) is not written: its own tags come from a newer
+        // file version with handle references that cannot be kept, which AutoCAD may refuse in this R2000 file. Saving
+        // leaves it out and the save report says so, as before it was shown.
+        report.skipped[e.name] = (report.skipped[e.name] ?? 0) + 1; return false;
       }
       case 'VIEWPORT': {
         head(o, e, 'VIEWPORT', owner);
