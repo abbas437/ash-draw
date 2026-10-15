@@ -61,13 +61,13 @@ export const ICONS = {
   break: p('M3 12h7', 'M14 12h7') + a('M9 15l2-6M13 15l2-6'),
   breakatpoint: p('M3 12h7', 'M14 12h7') + a(cp(12, 12, 2)),
   pedit: p('M3.5 18l5-10 3.9 4.5', 'M16.2 12.5l4.3-6.5') + a('M12 12.5h5v5h-5z'),
-  join: p('M2 10h5M13 10h5', 'M6 7l3 3-3 3M14 7l-3 3 3 3'),
-  lengthen: p('M2 7v6', 'M2 10h13', 'M13 6.5l3.5 3.5-3.5 3.5'),
-  stretch: `<path d="M2 4h8v12H2"${DOTTED}/>` + p('M10 10h7', 'M14 7l3 3-3 3'),
-  arrayrect: p('M3 3h5v5H3z', 'M12 3h5v5h-5z', 'M3 12h5v5H3z', 'M12 12h5v5h-5z'),
-  arraypolar: c(10, 3.5, 1.8) + c(16.5, 10, 1.8) + c(10, 16.5, 1.8) + c(3.5, 10, 1.8) + dot(10, 10),
-  arraypath: p('M2 17C8 17 10 4 18 4', 'M3 14h3v3H3z', 'M8.5 8.5h3v3h-3z', 'M14.5 2.5h3v3h-3z'),
-  matchprop: p('M11 3l6 6-5 5-6-6z', 'M7.5 9.5L3 14v3h3l4.5-4.5'),
+  join: p('M3 12h7', 'M14 12h7') + a('M7.5 9.5L10 12l-2.5 2.5M16.5 9.5L14 12l2.5 2.5'),
+  lengthen: p('M3.5 16H13', 'M3.5 6.5v6', 'M3.5 9.5H20', 'M17.5 7L20 9.5 17.5 12') + a('M13 16h7.5'),
+  stretch: `<path d="M3.5 10.5h10v10"${DOTTED}/>` + p('M3.5 10.5v10h10') + a('M3.5 10.5L20 4l-6.5 16.5'),
+  arrayrect: p('M14 3.5h6.5V10H14z', 'M3.5 14H10v6.5H3.5z', 'M14 14h6.5v6.5H14z') + a('M3.5 3.5H10V10H3.5z'),
+  arraypolar: c(18.7, 9.8, 2) + c(16.1, 17.7, 2) + c(7.9, 17.7, 2) + c(5.3, 9.8, 2) + a(cp(12, 5, 2)) + dot(12, 12),
+  arraypath: p('M2.5 20C11 21 13 3 21.5 4', 'M10 10h4v4h-4z', 'M14.75 3.75h4v4h-4z') + a('M5.25 16.25h4v4h-4z'),
+  matchprop: p('M20.5 3.5l-6 6', 'M12.7 7.7l3.6 3.6-2.5 2.5-3.6-3.6z') + a('M10.2 10.2l-6.1 5.2a3.2 3.2 0 0 0 4.5 4.5l5.2-6.1'),
   // blocks and references
   block: p('M3 6l7-3 7 3v8l-7 3-7-3z', 'M3 6l7 3 7-3', 'M10 9v8'),
   insert: p('M10 2v8', 'M7 7l3 3 3-3', 'M3 12.5l7 4 7-4', 'M6.5 10.5L3 12.5'),
@@ -141,13 +141,6 @@ export const LEGACY_20 = new Set([
   'xref',
   // --- group B: modify (one id per line; remove an id when its icon is redrawn on the 24 grid)
   // ---
-  'join',
-  'lengthen',
-  'stretch',
-  'arrayrect',
-  'arraypolar',
-  'arraypath',
-  'matchprop',
   // --- group C: block, annotate, inquiry (one id per line; remove an id when its icon is redrawn on the 24 grid)
   // ---
   'block',
