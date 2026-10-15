@@ -96,26 +96,38 @@ function select(options, current, onchange, extraClass = '') {
 
 // ---------------------------------------------------------------------------------------------
 // layers panel
+/** layer order and filter match of the Layers panel, shared with the toolbar layer combo (layer-combo.js) */
+export const sortedLayers = (doc) => [...doc.layers.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+export const layerMatches = (l, filter) => l.name.toUpperCase().includes(filter.toUpperCase());
+export const layerCss = (l) => cssOfAci(Math.abs(l.color));
+/** the Layers panel operations, shared with the toolbar layer combo: each toggle is one undo step */
+export const layerOps = {
+  makeCurrent(app, name) { app.state.layer = name; app.refreshPanels(); },
+  // On/Off and Freeze/Thaw are independent flags (AutoCAD): toggling one never touches the other
+  toggleOn(app, l) { setLayerProps(app.session, l.name, { visible: l.visible === false }); },
+  toggleFreeze(app, l) { setLayerProps(app.session, l.name, { frozen: !l.frozen }); },
+  toggleLock(app, l) { setLayerProps(app.session, l.name, { locked: !l.locked }); },
+};
+
 export function renderLayers(app) {
   const box = document.getElementById('layers');
   const { doc, session } = app;
   const filter = layerFilterUi(app);
-  const all = [...doc.layers.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-  const rows = filter ? all.filter((l) => l.name.toUpperCase().includes(filter.toUpperCase())) : all;
+  const all = sortedLayers(doc);
+  const rows = filter ? all.filter((l) => layerMatches(l, filter)) : all;
   const used = new Map();
   for (const e of doc.entities) used.set(e.layer, (used.get(e.layer) ?? 0) + 1);
-  const current = (n) => { app.state.layer = n; app.refreshPanels(); };
+  const current = (n) => layerOps.makeCurrent(app, n);
   const lwText = (w) => (w >= 0 ? `${w.toFixed(2)} mm` : 'Default');
   box.replaceChildren(...rows.map((l) => {
     const row = el('div', { class: `layer${app.state.layer === l.name ? ' current' : ''}`, tabindex: '0', 'data-layer': l.name,
       onkeydown: (e) => { if (e.key === 'F2' && e.target === row) { e.preventDefault(); e.stopPropagation(); startRename(app, row, l); } },
       oncontextmenu: (e) => { e.preventDefault(); popMenu(e, [['Rename', () => startRename(app, row, l)], ['Make current', () => current(l.name)], ['Linetype / lineweight…', () => layerPropsDialog(app, l)]]); } },
-    // On/Off and Freeze/Thaw are independent flags (AutoCAD): toggling one never touches the other
-    el('button', { class: 'icon lay-on', title: l.visible !== false ? 'Turn layer off' : 'Turn layer on', onclick: () => { setLayerProps(session, l.name, { visible: l.visible === false }); } }, l.visible !== false ? '◉' : '○'),
-    el('button', { class: 'icon lay-frz', title: l.frozen ? 'Thaw layer' : 'Freeze layer', onclick: () => { setLayerProps(session, l.name, { frozen: !l.frozen }); } }, l.frozen ? '❄' : '☀'),
+    el('button', { class: 'icon lay-on', title: l.visible !== false ? 'Turn layer off' : 'Turn layer on', onclick: () => layerOps.toggleOn(app, l) }, l.visible !== false ? '◉' : '○'),
+    el('button', { class: 'icon lay-frz', title: l.frozen ? 'Thaw layer' : 'Freeze layer', onclick: () => layerOps.toggleFreeze(app, l) }, l.frozen ? '❄' : '☀'),
     // VP freeze: frozen in the current layout viewport only (MSPACE, or one viewport selected); hidden elsewhere
     ...[app.layerVpButton?.(l)].filter(Boolean),
-    el('button', { class: 'icon', title: l.locked ? 'Unlock layer' : 'Lock layer', onclick: () => { setLayerProps(session, l.name, { locked: !l.locked }); } }, l.locked ? '🔒' : '🔓'),
+    el('button', { class: 'icon', title: l.locked ? 'Unlock layer' : 'Lock layer', onclick: () => layerOps.toggleLock(app, l) }, l.locked ? '🔒' : '🔓'),
     // Plot / No plot: a non-plotting layer is drawn on screen but left out of Print and Plot to PDF
     el('button', { class: `icon lay-plot${l.plot === false ? ' off' : ''}`, title: l.plot === false ? 'Not plotted (click to plot this layer)' : 'Plotted (click to stop plotting this layer)', onclick: () => { setLayerProps(session, l.name, { plot: l.plot === false }); } }, '🖶'),
     el('span', { class: 'swatch', style: `background:${cssOfAci(Math.abs(l.color))}`, title: 'Layer colour (click to change)', onclick: (e) => colorMenu(e, (c) => setLayerProps(session, l.name, { color: c })) }),
@@ -247,11 +259,18 @@ function transparencyField(shown, set) {
   return el('label', {}, 'Transparency', inp);
 }
 
+/** a Properties change: on the selection as one undo step or, with nothing selected, on the defaults for new objects */
+export function applyProps(app, props) {
+  const ents = app.vp.selectedEntities();
+  if (ents.length) setEntityProps(app.session, ents.map((e) => e.id), props); else Object.assign(app.state, props);
+  app.refreshPanels();
+}
+
 export function renderProperties(app) {
   const box = document.getElementById('props');
   const { doc, session, vp } = app;
   const ents = vp.selectedEntities();
-  const apply = (props) => { if (ents.length) setEntityProps(session, ents.map((e) => e.id), props); else Object.assign(app.state, props); app.refreshPanels(); };
+  const apply = (props) => applyProps(app, props);
   const common = (k, dflt) => (ents.length ? (ents.every((e) => colorKey(e[k]) === colorKey(ents[0][k])) ? ents[0][k] : null) : app.state[k] ?? dflt);
   const layerNames = [...doc.layers.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   const layerVal = ents.length ? (ents.every((e) => e.layer === ents[0].layer) ? ents[0].layer : null) : app.state.layer;

@@ -355,3 +355,23 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 .mt-edit .mt-nbsp { background:rgba(59,130,246,.18); }
 .match-settings { display:grid; gap:4px; }
 .cmp-offset { color:var(--text); }
+/* layer combo in the Quick Access row, beside the Layers button (layer-combo.js); its list is #layer-combo-list on <body> */
+#layer-combo { flex:none; display:flex; margin-left:2px; }
+#qat #layer-combo .lc-head { display:flex; align-items:center; gap:3px; width:210px; height:22px; padding:0 4px; border:1px solid var(--line); background:var(--input); text-align:left; }
+#layer-combo .lc-head > span[class^="lc-"]:not(.lc-name):not(.lc-arrow) { flex:none; width:14px; text-align:center; font-size:11px; opacity:.85; }
+#layer-combo .swatch, #layer-combo-list .swatch { flex:none; width:12px; height:12px; cursor:default; }
+#layer-combo .lc-name, #layer-combo-list .lc-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#layer-combo .lc-arrow { flex:none; color:var(--dim); }
+#layer-combo-list { position:fixed; z-index:50; width:300px; display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--line); box-shadow:0 4px 14px rgba(0,0,0,.25); padding:4px; }
+#layer-combo-list[hidden] { display:none; }
+#layer-combo-list .lc-filter { margin-bottom:4px; }
+#layer-combo-list .lc-scroll { position:relative; overflow-y:auto; }
+#layer-combo-list .lc-spacer { position:relative; }
+#layer-combo-list .lc-row { position:absolute; left:0; right:0; height:22px; display:flex; align-items:center; gap:3px; padding:0 4px; box-sizing:border-box; }
+#layer-combo-list .lc-row.current { background:var(--current-bg); }
+#layer-combo-list .lc-row.active { outline:1px solid var(--accent); outline-offset:-1px; }
+#layer-combo-list .lc-row:hover { background:var(--hover); }
+#layer-combo-list .lc-row button { flex:none; width:20px; height:18px; padding:0; border-color:transparent; background:none; font-size:11px; }
+#layer-combo-list .lc-row button:hover { border-color:var(--line); }
+#layer-combo-list .lc-row .lc-name { cursor:pointer; padding-left:2px; }
+#layer-combo-list .lc-none { padding:4px; color:var(--dim); }
