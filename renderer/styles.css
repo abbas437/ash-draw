@@ -217,6 +217,20 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 .sym-thumb { width:56px; height:56px; display:none; } .sym-cell.ready .sym-thumb { display:block; }
 [data-theme="dark"] .sym-thumb { filter:invert(1); } /* thumbnails are drawn black on transparent */
 .sym-name { font-size:11px; line-height:1.2; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* Symbols layouts (setting 'symbols.view'): list = one row per symbol; float = own window (#sym-float), dragged by
+   its title strip, resized at its corner, kept inside the app window; the ⋯ menu holds Add folder / Remove folder */
+.sym-views { display:flex; gap:1px; } .sym-views button, #sym-float-close { padding:0 3px; height:22px; display:flex; align-items:center; }
+.sym-views button[aria-pressed=true] { border-color:var(--accent); background:var(--hover); }
+.sym-src { flex-wrap:nowrap; } #sym-more { flex:none; padding:0 8px; }
+#sym-panel.view-list #sym-grid { grid-template-columns:1fr; gap:1px; }
+#sym-panel.view-list .sym-cell { flex-direction:row; justify-content:flex-start; gap:8px; padding:2px 4px; }
+#sym-panel.view-list .sym-pic, #sym-panel.view-list .sym-thumb { width:28px; height:28px; flex:none; }
+#sym-panel.view-list .sym-name { font-size:12px; }
+#sym-float { position:fixed; z-index:45; display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--line); border-radius:4px; box-shadow:0 6px 18px var(--shadow); resize:both; overflow:hidden; min-width:220px; min-height:160px; box-sizing:border-box; }
+#sym-float[hidden] { display:none; }
+#sym-float #sym-panel { flex:1; min-height:0; display:flex; flex-direction:column; border-bottom:none; }
+#sym-float #sym-grid { flex:1; min-height:60px; max-height:none; }
+#sym-float .phead { cursor:move; } #sym-float .phead::before { display:none; }
 #sym-status { font-size:11px; color:var(--dim); }
 .lay-search input { flex:1; min-width:0; }
 .layer .lay-plot.off { opacity:.35; text-decoration:line-through; }

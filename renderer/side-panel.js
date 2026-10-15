@@ -109,6 +109,7 @@ export function setSideMode(app, mode, save = true) {
 }
 /** collapsed or hidden: show one section as a flyout over the canvas (unfolded); expanded: just unfold it */
 export function openSideFly(app, key) {
+  if (key === 'symbols' && app.symbolsPanel?.floating) { closeSideFly(app); app.symbolsPanel.focus(); return; }
   if (app.sideFolded.includes(key)) app.foldSideSection(key, false);
   app.sideFly = app.sideMode === 'expanded' ? null : key;
   applySide(app);
