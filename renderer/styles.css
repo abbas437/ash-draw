@@ -472,6 +472,13 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 #app.tools-ophover.tools-float #tools:hover, #app.tools-ophover.tools-rail #tools .rail-fly:hover { opacity:1; }
 #app.tools-float #tools .float-head { display:flex; align-items:center; justify-content:space-between; gap:4px; }
 #app.tools-float #tools .float-head .tp-mode { align-self:center; padding:0 3px; }
+/* Floating compact: the Compact rail's strip floats; its title strip is a dotted grip beside the ⋯ menu, flyouts open beside it */
+#app.tools-float.tools-float-rail #tools { width:48px; }
+#app.tools-float-rail #tools > .tgroup, #app.tools-float-rail #tools > .lbl-toggle { display:none; }
+#app.tools-float-rail #tools .rail { display:flex; flex-direction:column; gap:3px; }
+#app.tools-float.tools-float-rail #tools .float-head { padding:3px 3px 3px 4px; }
+#app.tools-float-rail #tools .float-head > span { flex:1; height:10px; font-size:0; background-image:radial-gradient(currentColor 1px, transparent 1.3px); background-size:4px 4px; background-position:center; }
+.dock-hint.narrow { width:44px; }
 .dock-hint { position:absolute; top:0; bottom:0; width:138px; z-index:24; pointer-events:none; background:var(--accent); opacity:.22; border:2px dashed var(--accent); box-sizing:border-box; }
 .dock-hint[hidden] { display:none; } .dock-hint[data-side=left] { left:0; } .dock-hint[data-side=right] { right:0; }
 .tp-menu .tp-sep { height:1px; margin:4px 0; background:var(--line); }
