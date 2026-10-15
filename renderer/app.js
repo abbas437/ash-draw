@@ -28,7 +28,7 @@ import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
 import { loadDrawingXrefs, xrefPanel } from './xref-panel.js';
 import { TOOL_BUTTONS, buildToolPanel, iconButton, quickCommand, canvasDarkFrom, labelsFrom, placementFrom, PLACEMENTS, collapsedFrom, applyCollapsed, toolTitle, moreButton, fitToolBand, initToolBand } from './tool-panel.js';
 import { iconSvg } from './icons.js';
-import { initSidePanel, applySide, markHead, windowTitle } from './side-panel.js';
+import { initSidePanel, applySide, markHead, windowTitle, setSideMode, revealSection } from './side-panel.js';
 import { initSymbolsPanel } from './symbols-ui.js';
 import { symcountDialog } from './symcount-ui.js';
 import { layerStatesDialog } from './layerstates-ui.js';
@@ -167,12 +167,10 @@ class App {
     renderProperties(this);
     markHead(document.querySelector('#side .panel[data-sec="props"]')); // its header is rebuilt on each render
   }
-  /** the side panel shown or collapsed to its strip (View > Side panel, Ctrl+3, the strip's button), saved as 'side.shown' */
-  setSidePanel(shown, save = true) {
-    this.sideShown = !!shown;
-    applySide(this);
-    if (save) api.settingsSet?.('side.shown', this.sideShown)?.catch?.(() => {});
-  }
+  /** the side panel expanded or collapsed to its icon rail (Ctrl+3, the edge chevron, Quick Access), saved as 'side.mode' */
+  setSidePanel(shown, save = true) { setSideMode(this, shown ? 'expanded' : 'collapsed', save); }
+  /** View > Side panel: 'expanded' / 'collapsed' (icon rail) / 'hidden' (no rail) */
+  setSideMode(mode, save = true) { setSideMode(this, mode, save); }
   /** fold or unfold one side panel section ('layers', 'markups', 'symbols', 'props'), saved as 'side.folded' */
   foldSideSection(key, folded = !this.sideFolded.includes(key)) {
     this.sideFolded = folded ? [...new Set([...this.sideFolded, key])] : this.sideFolded.filter((k) => k !== key);
@@ -227,8 +225,7 @@ class App {
   panelCommands() {
     const show = (id) => () => {
       const panel = document.getElementById(id).closest('.panel');
-      this.setSidePanel(true);
-      if (this.sideFolded.includes(panel.dataset.sec)) this.foldSideSection(panel.dataset.sec, false);
+      revealSection(this, panel.dataset.sec);
       panel.scrollIntoView({ block: 'nearest' });
     };
     const regen = () => { this.vp.refreshStructure(); this.vp.invalidate(); toast('Regenerating model.', 1500); };
@@ -688,7 +685,7 @@ class App {
       ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Copy with Base Point', 'Ctrl+Shift+C', () => this.copySel(true)], ['Paste', 'Ctrl+V', () => this.paste()], ['Paste as Block', 'Ctrl+Shift+V', () => this.paste('block')], ['Paste to Original Coordinates', 'PASTEORIG', () => this.paste('orig')], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()], ['Quick Select…', 'QSELECT', () => qselectDialog(this)], ['Select Similar', 'SELECTSIMILAR', () => selectSimilarCommand(this)], ['Find and replace…', 'Ctrl+F', () => this.find.open()], '-', ['Preferences…', '', () => this.preferences()]]],
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-', ...viewMenuItems(this), '-',
         ['Command history', 'F2', () => this.toggleHistory(), () => this.histView.open],
-        ['Side panel', 'Ctrl+3', () => this.setSidePanel(!this.sideShown), () => this.sideShown], '-',
+        ...[['Expanded', 'Ctrl+3'], ['Collapsed', ''], ['Hidden', '']].map(([m, key]) => [`Side panel: ${m}`, key, () => this.setSideMode(m.toLowerCase()), () => this.sideMode === m.toLowerCase()]), '-',
         ['Show lineweights', 'F9', () => this.toggle('lineweights')], ['Model space background: dark', '', () => this.toggle('dark'), () => this.vp.settings.dark], '-',
         ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark'],
         ...PLACEMENTS.map((p) => [`Tool panel: ${p[0].toUpperCase()}${p.slice(1)}`, '', () => this.setToolPlacement(p), () => this.toolPlacement === p]),
