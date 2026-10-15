@@ -22,13 +22,13 @@ test('every panel command is a real tool and every group has a colour key', () =
   }
 });
 
-test('icons are plain stroke shapes on the 20x20 grid; unknown commands get the fallback', () => {
+test('icons are plain stroke shapes on the 24x24 grid; unknown commands get the fallback', () => {
   for (const [id, svg] of Object.entries(ICONS)) {
     assert.ok(svg.length > 10, id);
     const tags = [...svg.matchAll(/<(\w+)/g)].map((m) => m[1]);
     assert.ok(tags.every((t) => ['path', 'circle', 'ellipse'].includes(t)), `${id}: ${tags}`);
     assert.doesNotMatch(svg, /stroke="(?!none)|stroke-width|<svg|on\w+=/, `${id} keeps the shared stroke and has no handlers`);
-    for (const n of svg.match(/-?\d*\.?\d+/g)) assert.ok(Math.abs(Number(n)) <= 20, `${id}: ${n} outside the grid`);
+    for (const n of svg.match(/-?\d*\.?\d+/g)) assert.ok(Math.abs(Number(n)) <= 24, `${id}: ${n} outside the grid`);
   }
   assert.equal(iconMarkup('no-such-command'), FALLBACK_ICON);
   assert.equal(iconMarkup('line'), ICONS.line);

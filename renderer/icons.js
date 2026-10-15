@@ -1,18 +1,32 @@
-// ASH Draw Studio - original 20x20 line icons for the tool panel and toolbars (inline SVG, drawn in currentColor).
-// Every icon is the inner markup of a <svg viewBox="0 0 20 20"> whose stroke (1.5 px, round caps and joins) is set once by
-// iconSvg(); a shape that needs its own look (dotted markup outlines, a filled dot) says so on the element.
+// ASH Draw Studio - the app's own line icon set for the tool panel, toolbars and panels (inline SVG, drawn in currentColor).
 // The module has no DOM access at import time, so tests can check the set from Node.
+//
+// Design rules (every icon follows them; check new ones on the contact sheet, scripts/icon-sheet.mjs):
+// - One 24x24 grid, drawn at 20 px (16 px in menus, 14 px in layer rows). Keep shapes inside 2.5 .. 21.5.
+// - Stroke 1.75, round caps and joins, set once by the renderer (iconSvg / iconHtml); shapes never set their own stroke width.
+// - Open geometric forms (lines, arcs, circles, plain polygons) with one optical size: a full-width shape spans about
+//   16-17 units, a round one about 16. No fills except small grip dots; details at least 3 units apart so they read at 16 px.
+// - CAD meaning first: the icon shows what the command does to the drawing. Dotted = the original or a ghost (move,
+//   trim, stretch) or a markup outline; arrowheads are open 90-degree V's.
+// - At most one small accent mark per icon, class="ac" (styles.css draws it in the tool group's hue, also on active
+//   buttons): the moved part of move, the trimmed piece's cross, the fillet arc, a dimension's text dot. All else currentColor.
 
 const p = (...d) => d.map((x) => `<path d="${x}"/>`).join('');
+/** the accent mark (one per icon) */
+const a = (d, extra = '') => `<path class="ac" d="${d}"${extra}/>`;
 const c = (cx, cy, r, extra = '') => `<circle cx="${cx}" cy="${cy}" r="${r}"${extra}/>`;
-const dot = (cx, cy) => c(cx, cy, 1.1, ' fill="currentColor" stroke="none"');
-const DOTTED = ' stroke-dasharray="2 2.4"';
+/** a small grip dot (fill plus the shared stroke: about 3.5 units across) */
+const dot = (cx, cy) => c(cx, cy, 0.9, ' fill="currentColor"');
+const adot = (cx, cy) => `<circle class="ac" cx="${cx}" cy="${cy}" r="0.9" fill="currentColor"/>`;
+/** a circle as path data, so several circles can share one accent element */
+const cp = (cx, cy, r) => `M${cx - r} ${cy}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0`;
+const DOTTED = ' stroke-dasharray="2.2 2.8"';
 
-/** command id -> SVG inner markup (viewBox 0 0 20 20) */
+/** command id -> SVG inner markup (viewBox 0 0 24 24) */
 export const ICONS = {
   // select
-  select: p('M5 3l10 6.5-4.6 1.1L8.4 15z', 'M10.4 10.6l3.4 5.4'),
-  pan: p('M7 10V5a1.2 1.2 0 0 1 2.4 0v4', 'M9.4 9V3.8a1.2 1.2 0 0 1 2.4 0V9', 'M11.8 9V4.8a1.2 1.2 0 0 1 2.4 0V11c0 3-1.8 5.5-4.6 5.5-2 0-3-.8-4.2-2.6L3.6 10.6a1.2 1.2 0 0 1 2-1.3L7 11'),
+  select: p('M6.5 3.5L17.5 13.7 12.7 14.2 15.4 19.6 13.2 20.7 10.5 15.3 6.5 18.9z'),
+  pan: p('M8.5 12.5V5.5a1.5 1.5 0 0 1 3 0v5', 'M11.5 10V4a1.5 1.5 0 0 1 3 0v6', 'M14.5 10V5.5a1.5 1.5 0 0 1 3 0V13c0 4.2-2.6 7.5-6.3 7.5-2.5 0-3.8-1-5.3-3.2l-1.3-4.7a1.5 1.5 0 0 1 2.6-1.4L8.5 13'),
   // draw
   line: p('M4.5 15.5l11-11') + dot(4.5, 15.5) + dot(15.5, 4.5),
   xline: p('M2 16L18 4') + dot(10, 10),
@@ -87,31 +101,46 @@ export const ICONS = {
   compare: p('M3 3h6v14H3z', 'M11 3h6v14h-6z', 'M5 7h2M13 9h2M5 11h2M13 13h2'),
   xref: p('M13 6.5l-5.5 5.5a1.8 1.8 0 0 0 2.5 2.5l6-6a3.5 3.5 0 0 0-5-5l-6 6a5.2 5.2 0 0 0 7.4 7.4l5-5'),
   // view
-  new: p('M5 2.5h7l3.5 3.5v11.5H5z', 'M12 2.5V6h3.5', 'M10 9v6M7 12h6'),
-  open: p('M2.5 16V4h5l1.5 2h7v3', 'M2.5 16l3-7h12l-3 7z'),
-  save: p('M3 3h11l3 3v11H3z', 'M6 3v5h7V3', 'M6 17v-5h8v5'),
-  undo: p('M7 4L3 8l4 4', 'M3 8h9a5 5 0 0 1 0 10H8'),
-  redo: p('M13 4l4 4-4 4', 'M17 8H8a5 5 0 0 0 0 10h4'),
-  layers: p('M10 3l8 4-8 4-8-4z', 'M2 10.5l8 4 8-4', 'M2 14l8 4 8-4'),
-  zoomin: c(8.5, 8.5, 5.5) + p('M12.5 12.5l5 5', 'M6 8.5h5M8.5 6v5'),
-  zoomout: c(8.5, 8.5, 5.5) + p('M12.5 12.5l5 5', 'M6 8.5h5'),
-  zoomfit: p('M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4', 'M7.5 7.5h5v5h-5z'),
+  new: p('M6 3h8l4 4v14H6z', 'M14 3v4h4') + a('M12 10.5v7M8.5 14h7'),
+  open: p('M3 19V5h6l2 2.5h8V11', 'M3 19l3.2-8H21.5l-3.2 8z'),
+  save: p('M4 4h12.5L20 7.5V20H4z', 'M8 4v5h7V4') + a('M8 20v-6h8v6'),
+  undo: p('M4 9.5h10a5.5 5.5 0 0 1 0 11h-4') + a('M8.5 5L4 9.5 8.5 14'),
+  redo: p('M20 9.5H10a5.5 5.5 0 0 0 0 11h4') + a('M15.5 5L20 9.5 15.5 14'),
+  layers: p('M3 12l9 4.5 9-4.5', 'M3 16l9 4.5 9-4.5') + a('M12 3.5l9 4.5-9 4.5L3 8z'),
+  zoomin: c(10.5, 10.5, 6.5) + p('M15.2 15.2l5.3 5.3') + a('M8 10.5h5M10.5 8v5'),
+  zoomout: c(10.5, 10.5, 6.5) + p('M15.2 15.2l5.3 5.3') + a('M8 10.5h5'),
+  zoomfit: p('M3.5 8.5v-5h5M15.5 3.5h5v5M20.5 15.5v5h-5M8.5 20.5h-5v-5') + a('M8.5 8.5h7v7h-7z'),
 };
 
+/** ids still drawn on the old 20x20 grid (redraw in progress): rendered with that viewBox and a matching stroke until redrawn */
+export const LEGACY_20 = new Set(['xline', 'ray', 'pline', 'rect', 'circle', 'arc', 'ellipse', 'polygon', 'spline', 'donut', 'divide', 'point', 'text',
+  'mtext', 'hatch', 'line', 'move', 'copy', 'rotate', 'align', 'scale', 'mirror', 'offset', 'trim', 'extend', 'explode', 'erase', 'fillet', 'chamfer',
+  'break', 'breakatpoint', 'pedit', 'join', 'lengthen', 'stretch', 'arrayrect', 'arraypolar', 'arraypath', 'matchprop', 'block', 'insert', 'attdef',
+  'eattedit', 'xattach', 'dimlinear', 'dimaligned', 'dimangular', 'dimarc', 'dimradius', 'dimjogged', 'dimcenter', 'dimdiameter', 'dimordinate',
+  'dimcontinue', 'dimbaseline', 'mleader', 'dimstyle', 'measure', 'area', 'mkc', 'mkr', 'mkt', 'layout', 'viewport', 'compare', 'xref']);
+const LEGACY_ATTRS = { viewBox: '0 0 20 20', 'stroke-width': '1.46' };
+
 /** shown for a command without its own icon: a framed question mark */
-export const FALLBACK_ICON = p('M4 4h12v12H4z', 'M8.2 8.2a1.9 1.9 0 1 1 2.6 1.7c-.5.3-.8.7-.8 1.2', 'M10 13.6h.01');
+export const FALLBACK_ICON = p('M5 5h14v14H5z', 'M9.7 9.8a2.3 2.3 0 1 1 3.1 2.1c-.6.3-.8.8-.8 1.4', 'M12 16.2h.01');
 
 /** inner markup for a command id (the fallback when the set has none) */
 export function iconMarkup(id) { return Object.hasOwn(ICONS, id) ? ICONS[id] : FALLBACK_ICON; }
 
-/** a 20x20 <svg> element for a command id, stroked in currentColor; decorative (the button carries the name) */
+/** the shared <svg> attributes: one grid, one stroke for every icon in the app */
+const SVG_ATTRS = { class: 'ti', viewBox: '0 0 24 24', 'aria-hidden': 'true', focusable: 'false',
+  fill: 'none', stroke: 'currentColor', 'stroke-width': '1.75', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
+
+/** an <svg> element (size px, default 20) for a command id, stroked in currentColor; decorative (the button carries the name) */
 export function iconSvg(id, size = 20) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  for (const [k, v] of Object.entries({
-    class: 'ti', width: size, height: size, viewBox: '0 0 20 20', 'aria-hidden': 'true', focusable: 'false',
-    fill: 'none', stroke: 'currentColor', 'stroke-width': '1.5', 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
-  })) svg.setAttribute(k, v);
+  for (const [k, v] of Object.entries({ ...SVG_ATTRS, ...(LEGACY_20.has(id) ? LEGACY_ATTRS : {}), width: size, height: size })) svg.setAttribute(k, v);
   if (!Object.hasOwn(ICONS, id)) svg.dataset.fallback = '';
   svg.innerHTML = iconMarkup(id);
   return svg;
+}
+
+/** the same icon as an HTML string, for markup built as text; w x h px (a non-square box centres the 24x24 grid) */
+export function iconHtml(id, w = 20, h = w) {
+  const attrs = Object.entries({ ...SVG_ATTRS, ...(LEGACY_20.has(id) ? LEGACY_ATTRS : {}), width: w, height: h }).map(([k, v]) => `${k}="${v}"`).join(' ');
+  return `<svg ${attrs}>${iconMarkup(id)}</svg>`;
 }
