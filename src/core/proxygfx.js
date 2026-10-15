@@ -16,6 +16,7 @@ import { decodeColor } from './aci.js';
 
 const DEG = Math.PI / 180;
 const TAU = Math.PI * 2;
+export const MAX_POINTS = 200000; // points in all the parts of one proxy
 const IDENT = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
 /** concatenated binary of the first run of 310 chunks that follows a 92 / 160 size, cut to that size */
@@ -99,9 +100,18 @@ export function parseProxyGraphics(u8, opts = {}) {
   const attr = { ...own, lineweight: -1, ltscale: 1 };
   let m = IDENT;
   const stack = [];
+  // a part with a non-finite coordinate, radius or angle is dropped; past MAX_POINTS in all the parts the parse stops (truncated)
+  const finiteIn = (v) => (typeof v === 'number' ? Number.isFinite(v) : Array.isArray(v) ? v.every(finiteIn) : v && typeof v === 'object' ? Object.values(v).every(finiteIn) : true);
+  let npts = 0, stop = false;
+  const add = (part) => {
+    if (!finiteIn(part)) return;
+    npts += part.vertices?.length ?? 1;
+    if (npts > MAX_POINTS) { out.truncated = true; stop = true; return; }
+    out.push(part);
+  };
   const o = () => ({ layer: attr.layer, color: attr.color, linetype: attr.linetype, lineweight: attr.lineweight, ...(attr.ltscale !== 1 ? { ltscale: attr.ltscale } : {}) });
   const total = Math.min(dv.byteLength, dv.getUint32(0, true) || dv.byteLength);
-  for (let at = 8; at + 8 <= total;) {
+  for (let at = 8; at + 8 <= total && !stop;) {
     const size = dv.getUint32(at, true), type = dv.getUint32(at + 4, true);
     if (size < 8 || at + size > dv.byteLength) break;
     const d = at + 8, end = at + size;
@@ -118,16 +128,16 @@ export function parseProxyGraphics(u8, opts = {}) {
       return s;
     };
     const P = (p) => { const w = xf(m, p); return { x: w.x, y: w.y }; };
-    const poly = (pts, closed) => { if (pts.length >= 2) out.push(makePolyline(pts.map(P), closed, o())); };
+    const poly = (pts, closed) => { if (pts.length >= 2) add(makePolyline(pts.map(P), closed, o())); };
     // circle / arc around c with normal n, starting along sv for `sweep` radians: native when it stays a plan circle
     const circ = (c, r, n, sv, sweep) => {
       const u = unit(sv ?? perp(n)), v = cross(unit(n), u);
       const U = xv(m, { x: u.x * r, y: u.y * r, z: u.z * r }), V = xv(m, { x: v.x * r, y: v.y * r, z: v.z * r }), C = P(c);
       const ru = Math.hypot(U.x, U.y), tol = 1e-9 * Math.max(ru, 1e-12);
       if (Math.abs(U.z) < tol && Math.abs(V.z) < tol && Math.abs(ru - Math.hypot(V.x, V.y)) < tol * 1e3 && Math.abs(U.x * V.x + U.y * V.y) < tol * ru * 1e3) {
-        if (sweep >= TAU - 1e-12) { out.push(makeCircle(C, ru, o())); return; }
+        if (sweep >= TAU - 1e-12) { add(makeCircle(C, ru, o())); return; }
         const a = Math.atan2(U.y, U.x) / DEG, s = sweep / DEG;
-        out.push(U.x * V.y - U.y * V.x > 0 ? makeArc(C, ru, a, a + s, o()) : makeArc(C, ru, a - s, a, o()));
+        add(U.x * V.y - U.y * V.x > 0 ? makeArc(C, ru, a, a + s, o()) : makeArc(C, ru, a - s, a, o()));
         return;
       }
       const k = Math.max(8, Math.ceil(48 * sweep / TAU)), pts = [];
@@ -153,7 +163,7 @@ export function parseProxyGraphics(u8, opts = {}) {
       const D = xv(m, dir), H = xv(m, { x: up.x * h, y: up.y * h, z: up.z * h });
       const height = Math.hypot(H.x, H.y);
       if (!(height > 0)) return;
-      out.push(makeText(P(p), height, s, { ...o(), rot: Math.atan2(D.y, D.x) / DEG, widthFactor: wf || 1, ...(obl ? { oblique: obl / DEG } : {}) }));
+      add(makeText(P(p), height, s, { ...o(), rot: Math.atan2(D.y, D.x) / DEG, widthFactor: wf || 1, ...(obl ? { oblique: obl / DEG } : {}) }));
     };
     try {
       switch (type) {
@@ -167,7 +177,7 @@ export function parseProxyGraphics(u8, opts = {}) {
           if (rows < 1 || cols < 1 || q + rows * cols * 24 > end) break;
           const g = []; for (let k = 0; k < rows * cols; k++) g.push(v3());
           for (let i = 0; i < rows; i++) poly(g.slice(i * cols, i * cols + cols), false);
-          for (let j = 0; j < cols; j++) poly(g.filter((_, k) => k % cols === j), false);
+          if (rows >= 2) for (let j = 0; j < cols; j++) { const col = []; for (let i = 0; i < rows; i++) col.push(g[i * cols + j]); poly(col, false); }
           break;
         }
         case 9: {
@@ -206,7 +216,7 @@ export function parseProxyGraphics(u8, opts = {}) {
           const n = rl();
           const { pts, closed } = lwpolylinePoints(u8.subarray(q, Math.min(end, q + n)), opts.version ?? '');
           // its points are in the polyline's own plane: the transform still applies
-          if (pts.length >= 2) out.push(makePolyline(pts.map((p) => ({ ...P({ x: p.x, y: p.y, z: 0 }), bulge: m[0] * m[5] - m[1] * m[4] < 0 ? -p.bulge : p.bulge })), closed, o()));
+          if (pts.length >= 2) add(makePolyline(pts.map((p) => ({ ...P({ x: p.x, y: p.y, z: 0 }), bulge: m[0] * m[5] - m[1] * m[4] < 0 ? -p.bulge : p.bulge })), closed, o()));
           break;
         }
         default: break;

@@ -92,6 +92,10 @@ const vplayerTool = (app) => new (class VplayerTool extends Tool {
     const space = layoutSpace(app), s = app.active.session;
     const n = this.mode === 'reset' ? resetVpFreeze(s, vps, this.names, space) : setVpFreeze(s, vps, this.names, this.mode === 'freeze', space);
     toast(`VPLAYER: ${this.names.join(', ')} ${this.mode === 'freeze' ? 'frozen' : 'thawed'} in ${n} viewport${n === 1 ? '' : 's'}.`, 2500);
+    const cur = app.state.layer;
+    if (this.mode === 'freeze' && this.names.includes(cur) && vps.includes(vpFreezeTarget(app))) {
+      toast(`The current layer ${cur} is frozen in this viewport; new objects on it won't show here.`, 4000);
+    }
     this.cancel();
   }
 })(app);

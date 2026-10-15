@@ -55,15 +55,17 @@ export function readDxfAsync(bytes, { onProgress = null, signal = null } = {}) {
     const asm = docAssembler();
     let shown = -1;
     w.onmessage = ({ data }) => {
-      if (data.progress !== undefined) { onProgress?.((0.9 * data.progress) / 100); return; }
-      if (asm.accept(data)) {
-        if (data.ents) w.postMessage({ ack: true }); // the worker posts the next batch now (one in flight: timers and frames run between batches)
-        const p = Math.floor(100 * asm.fraction); if (p !== shown) { shown = p; onProgress?.(0.9 + 0.1 * asm.fraction); }
-        return;
-      }
-      finish();
-      if (data.error) reject(Object.assign(new Error(data.error.message), data.error.code ? { code: data.error.code } : {}));
-      else resolve(asm.doc);
+      try {
+        if (data.progress !== undefined) { onProgress?.((0.9 * data.progress) / 100); return; }
+        if (asm.accept(data)) {
+          if (data.ents) w.postMessage({ ack: true }); // the worker posts the next batch now (one in flight: timers and frames run between batches)
+          const p = Math.floor(100 * asm.fraction); if (p !== shown) { shown = p; onProgress?.(0.9 + 0.1 * asm.fraction); }
+          return;
+        }
+        finish();
+        if (data.error) reject(Object.assign(new Error(data.error.message), data.error.code ? { code: data.error.code } : {}));
+        else resolve(asm.doc);
+      } catch (err) { finish(); reject(new Error(`The drawing could not be read: ${err?.message || err}`)); }
     };
     w.onerror = (e) => { finish(); reject(new Error(`The DXF reader stopped: ${e.message || 'worker error'}`)); };
     if (bytes.url) { w.postMessage({ url: bytes.url }); return; }

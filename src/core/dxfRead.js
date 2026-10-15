@@ -689,29 +689,19 @@ let clipObjs = new Map(); // DICTIONARY / SPATIAL_FILTER records by handle, for 
 let imageDefs = new Map(); // IMAGEDEF handle -> image definition (set per parse)
 // An object this program cannot read is kept when it carries its saved graphics (proxy graphics, 92 / 160 + 310: an
 // ACAD_PROXY_ENTITY or a custom object such as Civil 3D AECC_*), drawn read-only from them, or when it is a 3DSOLID /
-// BODY / REGION with its ACIS data (group 1) in the file (kept for saving, not drawn). Its tags after the common entity
-// part (from the first subclass marker on, plus the graphics) are written back as read; handle references in them are
-// written as null handles, as the objects they name are not kept. Otherwise undefined (counted as not displayed).
-const PROXY_COMMON = new Set([8, 6, 62, 420, 370, 48, 60, 67, 440]);
+// BODY / REGION with its ACIS data (group 1) in the file (a PROXY without parts: counted as read, not drawn). Neither is
+// written back (dxfWrite drops every PROXY) and its tags are not kept. Otherwise undefined (counted as not displayed).
 function proxyEntity(rec, o, doc) {
   const all = rec.tags();
   const bytes = proxyGraphicsBytes(all);
   const solid = rec.type === '3DSOLID' || rec.type === 'BODY' || rec.type === 'REGION';
   if (!bytes && !(solid && all.some(([c]) => c === 1))) return undefined;
-  const tags = [];
-  let phase = 0; // 0 before 100 AcDbEntity, 1 in the common part, 2 after it
-  for (const [c, v] of all) {
-    if (phase < 2 && c === 100) { phase = v.trim() === 'AcDbEntity' && phase === 0 ? 1 : 2; if (phase === 1) continue; }
-    if (phase === 0) continue;
-    if (phase === 1 && (PROXY_COMMON.has(c) || !(c === 92 || c === 160 || c === 310))) continue;
-    tags.push([c, (c >= 320 && c <= 369) || c === 1005 ? '0' : v]);
-  }
   let parts = [];
   if (bytes) {
     const ver = String(doc.header.version ?? '').trim();
     parts = parseProxyGraphics(bytes, { unicode: ver >= 'AC1021', version: ver, layers: [...doc.layers.keys()], linetypes: [...doc.linetypes.keys()], layer: o.layer, color: o.color, linetype: o.linetype });
   }
-  return { ...o, id: 0, type: 'PROXY', name: rec.type, parts, tags };
+  return { ...o, id: 0, type: 'PROXY', name: rec.type, parts };
 }
 
 function buildEntity(rec, doc, extra) {

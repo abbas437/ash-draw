@@ -475,11 +475,14 @@ export function* explodeSteps(e, doc) {
             continue;
           }
         }
-        const t = transformEntity(be, m);
-        delete t.attdef;
-        // BYBLOCK / layer "0" inheritance is resolved by the renderer through `parent`.
-        t.parent = e;
-        out.push(t);
+        // a PROXY cannot be transformed (it is read-only): its drawn parts are, so an exploded insert gives the parts
+        for (const src of be.type === 'PROXY' ? be.parts : [be]) {
+          const t = transformEntity(src, m);
+          delete t.attdef;
+          // BYBLOCK / layer "0" inheritance is resolved by the renderer through `parent`.
+          t.parent = e;
+          out.push(t);
+        }
         if ((out.length & 511) === 0) yield;
       }
     }
