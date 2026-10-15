@@ -30,7 +30,7 @@ import { TOOL_BUTTONS, buildToolPanel, iconButton, quickCommand, canvasDarkFrom,
 import { iconSvg } from './icons.js';
 import { initToolModes, TOOL_MODES, MODE_LABELS } from './tool-rail.js';
 import { initSidePanel, applySide, markHead, windowTitle, setSideMode, revealSection } from './side-panel.js';
-import { initSymbolsPanel } from './symbols-ui.js';
+import { initSymbolsPanel, SYMBOL_DOCKS, DOCK_LABELS } from './symbols-ui.js';
 import { symcountDialog } from './symcount-ui.js';
 import { layerStatesDialog } from './layerstates-ui.js';
 import { defaultLayout, cleanLayout, panelGroups, samePanel, quickRow, setQuickRow, compactKeys, foldMode, SEP } from './tool-layout.js';
@@ -42,6 +42,7 @@ import { qselectDialog, selectSimilarCommand, purgeDialog } from './selclean.js'
 import { draftingSettings, loadDraftingSettings } from './osnap-ui.js';
 import { loadGridSettings } from './grid-ui.js';
 import { initLayerCombo } from './layer-combo.js';
+import { initSymbolPalette } from './symbol-palette.js';
 import { el, message, modal, confirmDialog, textDialog, listDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
 import {
   OPEN_FILTERS, loadDrawing, conversionSummary, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, savePathIn, extOf, UNIT_NAMES,
@@ -235,7 +236,7 @@ class App {
       panel.scrollIntoView({ block: 'nearest' });
     };
     const regen = () => { this.vp.refreshStructure(); this.vp.invalidate(); toast('Regenerating model.', 1500); };
-    const symbols = () => { show('sym-grid')(); this.symbolsPanel.focus(); };
+    const symbols = () => { if (this.symbolsPanel.dock !== 'side') { this.symbolsPanel.show(); return; } show('sym-grid')(); this.symbolsPanel.focus(); };
     return { pr: show('props'), properties: show('props'), ch: show('props'), mo: show('props'), la: show('layers'), layer: show('layers'), symbols,
       re: regen, regen, regenall: regen, redraw: regen, r: regen };
   }
@@ -691,7 +692,8 @@ class App {
       ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Copy with Base Point', 'Ctrl+Shift+C', () => this.copySel(true)], ['Paste', 'Ctrl+V', () => this.paste()], ['Paste as Block', 'Ctrl+Shift+V', () => this.paste('block')], ['Paste to Original Coordinates', 'PASTEORIG', () => this.paste('orig')], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()], ['Quick Select…', 'QSELECT', () => qselectDialog(this)], ['Select Similar', 'SELECTSIMILAR', () => selectSimilarCommand(this)], ['Find and replace…', 'Ctrl+F', () => this.find.open()], '-', ['Preferences…', '', () => this.preferences()]]],
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-', ...viewMenuItems(this), '-',
         ['Command history', 'F2', () => this.toggleHistory(), () => this.histView.open],
-        ...[['Expanded', 'Ctrl+3'], ['Collapsed', ''], ['Hidden', '']].map(([m, key]) => [`Side panel: ${m}`, key, () => this.setSideMode(m.toLowerCase()), () => this.sideMode === m.toLowerCase()]), '-',
+        ...[['Expanded', 'Ctrl+3'], ['Collapsed', ''], ['Hidden', '']].map(([m, key]) => [`Side panel: ${m}`, key, () => this.setSideMode(m.toLowerCase()), () => this.sideMode === m.toLowerCase()]),
+        ...SYMBOL_DOCKS.map((d) => [`Symbols panel: ${DOCK_LABELS[d]}`, '', () => this.symbolsPanel.setDock(d), () => this.symbolsPanel.dock === d]), '-',
         ['Grid', 'F7', () => this.toggle('grid'), () => this.vp.settings.grid], ['Snap to grid', 'F9', () => this.toggle('gridSnap'), () => this.vp.settings.gridSnap], ['Show lineweights', '', () => this.toggle('lineweights')], ['Model space background: dark', '', () => this.toggle('dark'), () => this.vp.settings.dark], '-',
         ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark'],
         ...PLACEMENTS.map((p) => [`Tool panel: ${p[0].toUpperCase()}${p.slice(1)}`, '', () => this.setToolPlacement(p), () => this.toolPlacement === p]),
@@ -790,6 +792,7 @@ class App {
   buildQuickAccess() {
     document.getElementById('menubar').after(el('div', { id: 'qat', role: 'toolbar', 'aria-label': 'Quick Access' }));
     this.layerCombo = initLayerCombo(this);
+    this.symPalette = initSymbolPalette(this, api);
     this.renderQuickAccess();
   }
   renderQuickAccess() {
@@ -799,9 +802,10 @@ class App {
       const [key, id] = it, [label, alias] = quickCommand(id);
       return el('button', { class: `g-${key}`, 'data-cmd': id, title: toolTitle(label, alias), 'aria-label': label, onclick: () => (run[id] ? run[id]() : this.setTool(id)) }, iconSvg(id, 18));
     }));
-    // the layer combo sits right after the Layers button, or at the end of the row without one
+    // the layer combo sits right after the Layers button, or at the end of the row without one; "Symbols ▾" right after it
     const qat = document.getElementById('qat'), lb = qat.querySelector('button[data-cmd="layers"]');
     this.layerCombo.close(); if (lb) lb.after(this.layerCombo.el); else qat.append(this.layerCombo.el);
+    this.symPalette.close(); this.layerCombo.el.after(this.symPalette.el);
     document.getElementById('app').classList.toggle('no-qat', !this.toolLayout.quickRow);
   }
   /** a selector for the tool panel button or group header that has the focus (null elsewhere), to find its equivalent after a re-render */

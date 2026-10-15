@@ -402,6 +402,23 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 #layer-combo-list .lc-row button:hover { border-color:var(--line); }
 #layer-combo-list .lc-row .lc-name { cursor:pointer; padding-left:2px; }
 #layer-combo-list .lc-none { padding:4px; color:var(--dim); }
+/* "Symbols ▾" after the layer combo (symbol-palette.js); its palette is #sym-palette on <body> */
+#sym-combo { flex:none; display:flex; margin-left:4px; }
+#qat #sym-combo .sp-head { display:flex; align-items:center; gap:4px; height:22px; padding:0 6px; border:1px solid var(--line); background:var(--input); }
+#sym-combo .sp-arrow { color:var(--dim); }
+#sym-palette { position:fixed; z-index:50; width:340px; display:flex; flex-direction:column; gap:4px; background:var(--panel); border:1px solid var(--line); box-shadow:0 4px 14px rgba(0,0,0,.25); padding:4px; }
+#sym-palette[hidden], #sym-palette .sp-recent-box[hidden] { display:none; }
+#sym-palette .sp-bar { display:flex; gap:4px; }
+#sym-palette .sp-source { flex:0 1 40%; min-width:0; }
+#sym-palette .sp-search { flex:1; min-width:0; }
+#sym-palette .sp-label { font-size:11px; color:var(--dim); margin:0 2px 2px; }
+#sym-palette .sp-recent { display:flex; gap:2px; overflow:hidden; border-bottom:1px solid var(--line); padding-bottom:4px; }
+#sym-palette .sp-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(50px, 1fr)); gap:2px; overflow:auto; }
+#sym-palette .sym-cell { padding:2px 1px; }
+#sym-palette .sp-recent .sym-cell { flex:none; width:38px; }
+#sym-palette .sym-pic, #sym-palette .sym-thumb { width:36px; height:36px; }
+#sym-palette .sym-name { font-size:10px; }
+#sym-palette .sp-none, #sym-palette .sp-status { grid-column:1 / -1; padding:2px 4px; font-size:11px; color:var(--dim); }
 /* tool panel layouts (tool-rail.js): Compact rail, Floating, and the ⋯ layout menu */
 #tools .rail, #tools .float-head, #tools .rail-fly[hidden] { display:none; }
 #tools .tp-ctl { display:flex; align-items:center; justify-content:center; cursor:pointer; user-select:none; color:var(--text); background:var(--panel2); border:1px solid var(--line); border-radius:3px; }
@@ -446,3 +463,31 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 .tp-menu .tp-sep { height:1px; margin:4px 0; background:var(--line); }
 .tp-menu .tp-op { display:flex; align-items:center; gap:6px; padding:2px 8px 2px 6px; }
 .tp-menu .tp-op input { flex:1; min-width:70px; } .tp-menu .tp-op-val { min-width:3.2em; text-align:right; color:var(--dim); font-variant-numeric:tabular-nums; }
+/* Symbols panel in its own column beside the canvas (symbols-ui.js, setting 'symbols.dock' left / right): #sym-dock,
+   inner edge dragged by #sym-dock-grip ('symbols.dockWidth'), folded to a strip by #sym-dock-fold ('symbols.dockFolded') */
+#app { --symdock-w: var(--symdock-user, 280px); } #app.sym-dock-folded { --symdock-w:22px; }
+#sym-dock { grid-area:symdock; display:none; position:relative; flex-direction:column; min-width:0; min-height:0; overflow:hidden; background:var(--panel); }
+#app.sym-dock-left #sym-dock, #app.sym-dock-right #sym-dock { display:flex; }
+#app.sym-dock-left #main { grid-template-columns: var(--tools-w, 138px) var(--symdock-w) 1fr var(--side-w, 260px); grid-template-areas:"tools symdock docs side"; }
+#app.sym-dock-right #main { grid-template-columns: var(--tools-w, 138px) 1fr var(--symdock-w) var(--side-w, 260px); grid-template-areas:"tools docs symdock side"; }
+#app.tools-top.sym-dock-left #main { grid-template-columns: var(--symdock-w) 1fr var(--side-w, 260px); grid-template-areas:"tools tools side" "symdock docs side"; }
+#app.tools-top.sym-dock-right #main { grid-template-columns: 1fr var(--symdock-w) var(--side-w, 260px); grid-template-areas:"tools tools side" "docs symdock side"; }
+#app.sym-dock-left #sym-dock { border-right:1px solid var(--line); } #app.sym-dock-right #sym-dock { border-left:1px solid var(--line); }
+#sym-dock-fold { position:absolute; top:0; width:20px; height:26px; padding:0; border:none; border-radius:0; background:var(--panel); color:var(--dim); line-height:1; z-index:3; }
+#sym-dock-fold:hover { background:var(--hover); color:var(--text); }
+#app.sym-dock-left #sym-dock-fold { right:0; } #app.sym-dock-right #sym-dock-fold { left:0; }
+#sym-dock-grip { position:absolute; top:26px; bottom:0; width:5px; cursor:col-resize; z-index:2; } #sym-dock-grip:hover, #sym-dock-grip.drag { background:var(--accent); opacity:.5; }
+#app.sym-dock-left #sym-dock-grip { right:0; } #app.sym-dock-right #sym-dock-grip { left:0; }
+#sym-dock #sym-panel { flex:1; min-height:0; display:flex; flex-direction:column; border-bottom:none; }
+#app.sym-dock-left #sym-dock #sym-panel .phead { padding-right:20px; } #app.sym-dock-right #sym-dock #sym-panel .phead { padding-left:20px; }
+#sym-dock #sym-grid { flex:1; min-height:60px; max-height:none; }
+#sym-dock .phead { cursor:default; } #sym-dock .phead::before { display:none; }
+#app.sym-dock-folded #sym-dock #sym-panel, #app.sym-dock-folded #sym-dock-grip { display:none; }
+#app.sym-dock-folded #sym-dock-fold { width:100%; }
+#app.sym-dock-folded #sym-dock::after { content:'Symbols'; writing-mode:vertical-rl; margin:32px auto 0; color:var(--dim); font-size:12px; }
+#sym-dock-more { flex:none; padding:0 6px; }
+#sym-dock-menu button[aria-checked=true]::before { content:'\2713'; position:absolute; margin-left:-11px; }
+#sym-dock-menu button { position:relative; }
+/* tool panel on the right with the Symbols column docked left or right */
+#app.tools-right.sym-dock-left #main { grid-template-columns: var(--symdock-w) 1fr var(--tools-w, 138px) var(--side-w, 260px); grid-template-areas:"symdock docs tools side"; }
+#app.tools-right.sym-dock-right #main { grid-template-columns: 1fr var(--symdock-w) var(--tools-w, 138px) var(--side-w, 260px); grid-template-areas:"docs symdock tools side"; }
