@@ -3,6 +3,7 @@
 // Hidden tools keep their command line aliases and menu items: only the button goes.
 import { el, modal } from './ui.js';
 import { iconSvg } from './icons.js';
+import { renderMenu } from './menu-items.js';
 import { APP_COMMANDS, TOOL_BUTTONS, quickCommand } from './tool-panel.js';
 import {
   SEP, defaultLayout, groupLabel, canHide, isHidden, inQuick, setHidden, setGroupShown, moveItem, moveToGroup, moveGroup,
@@ -98,7 +99,7 @@ function onAway() { closeContext(); }
 function onDown(e) { if (ctx && !ctx.m.contains(e.target)) closeContext(); }
 function onKey(e) {
   if (!ctx) return;
-  const list = [...ctx.m.querySelectorAll('button:not(:disabled)')];
+  const list = [...ctx.m.querySelectorAll('button:not(:disabled)')].filter((b) => b.getClientRects().length);
   const k = list.indexOf(document.activeElement);
   if (e.key === 'Escape' || e.key === 'Tab') closeContext(true);
   else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') list[(k + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length]?.focus();
@@ -121,8 +122,8 @@ function removeAndFocus(app, btn, sel, attr, layout) {
 }
 
 function openContext(app, e) {
+  if (e.target.closest('input, select, textarea, #layer-combo-list, #sym-palette')) return; // fields keep their own menu
   const tool = e.target.closest('#tools button[data-tool]'), quick = e.target.closest('#qat button[data-cmd]'), head = e.target.closest('#tools [data-head]');
-  if (!tool && !quick && !head) return;
   e.preventDefault();
   if (e.type === 'keydown') e.stopImmediatePropagation(); // Shift+F10 is not also Polar (F10)
   closeContext();
@@ -136,8 +137,13 @@ function openContext(app, e) {
       : item('qadd', 'Add to Quick Access', () => app.setToolLayout(quickAdd(app.toolLayout, id))));
   }
   if (quick) items.push(item('qremove', 'Remove from Quick Access', () => removeAndFocus(app, quick, '#qat button[data-cmd]', 'data-cmd', quickRemove(app.toolLayout, quick.dataset.cmd))));
-  items.push(item('customize', 'Customize tools…', () => openCustomize(app)));
-  const m = el('div', { class: 'popmenu tcz-menu', role: 'menu', 'aria-label': tool ? nameOf(tool.dataset.tool) : quick ? 'Quick Access' : 'Tool panel' }, items);
+  // then View > Toolbars: the same items, by the menu bar's renderer
+  const tb = renderMenu(app.toolbarMenuItems(), { close: () => closeContext(true) });
+  tb.refresh();
+  for (const b of tb.nodes) if (b.tagName === 'BUTTON') b.tabIndex = -1;
+  if (items.length) items.push(el('hr'));
+  items.push(...tb.nodes);
+  const m = el('div', { class: 'popmenu tcz-menu tb-menu', role: 'menu', 'aria-label': tool ? nameOf(tool.dataset.tool) : quick ? 'Quick Access' : head ? 'Tool panel' : 'Toolbars' }, items);
   document.body.append(m);
   let x = e.clientX, y = e.clientY;
   if (!x && !y) { const r = e.target.getBoundingClientRect(); x = r.left + 10; y = r.bottom; } // keyboard (Shift+F10 / menu key)
@@ -153,7 +159,7 @@ function openContext(app, e) {
   m.querySelector('button:not(:disabled)')?.focus();
 }
 
-/** right-click on the tool panel and the Quick Access row */
+/** right-click on the tool panel (every layout) and the Quick Access row: a tool's own items, then View > Toolbars */
 export function initToolContextMenu(app) {
   document.addEventListener('contextmenu', (e) => { if (e.target.closest?.('#tools, #qat')) openContext(app, e); });
   // Shift+F10 / the menu key on a focused button (keydown, so the menu opens the same way everywhere; preventDefault stops the native event)

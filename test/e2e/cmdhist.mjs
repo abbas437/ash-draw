@@ -111,6 +111,7 @@ try {
     await typeCmd('xyz');
     assert.ok((await strip()).includes('Unknown command "xyz".'));
     await page.locator('#menubar .menu > button', { hasText: 'View' }).click();
+    await page.locator('#menubar .menu.open .sub > button', { hasText: 'Panels' }).hover();
     await page.locator('#menubar .drop button', { hasText: 'Command history' }).click();
     assert.equal(await page.locator('#cmdhist.open').count(), 1, 'menu opens it');
     await page.keyboard.press('Escape');

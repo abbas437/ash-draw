@@ -1494,7 +1494,7 @@ try {
   step = 'tool panel: icons, tooltips, labels off (icon-only, still works), group colours off, both themes legible';
   {
     await page.evaluate(() => window.app.newDrawing());
-    const menuItem = async (item) => { await page.locator('#menubar .menu > button', { hasText: 'View' }).click(); await page.locator('#menubar .drop button', { hasText: item }).click(); };
+    const menuItem = async (item) => { await page.locator('#menubar .menu > button', { hasText: 'View' }).click(); await page.locator('#menubar .menu.open .sub > button', { hasText: 'Toolbars' }).hover(); await page.locator('#menubar .drop button', { hasText: item }).click(); };
     const panel = () => page.evaluate(() => [...document.querySelectorAll('#tools button:not(.gmore)')].map((b) => ({
       svg: b.querySelectorAll('svg').length, fallback: !!b.querySelector('svg[data-fallback]'), label: b.querySelector('.lbl')?.getClientRects().length ?? 0, w: b.getBoundingClientRect().width, color: getComputedStyle(b.querySelector('svg') ?? b).color, tool: b.dataset.tool })));
     // icon contrast (WCAG 1.4.11, 3:1 for graphics) of every panel icon against its button
@@ -1556,7 +1556,7 @@ try {
 
   step = 'tool panel: a folded group stays hidden after a reload; Top places it as a band above the canvas, Left restores; Markup visible at 1366x768';
   {
-    const menuItem = async (item) => { await page.locator('#menubar .menu > button', { hasText: 'View' }).click(); await page.locator('#menubar .drop button', { hasText: item }).click(); };
+    const menuItem = async (item) => { await page.locator('#menubar .menu > button', { hasText: 'View' }).click(); await page.locator('#menubar .menu.open .sub > button', { hasText: 'Toolbars' }).hover(); await page.locator('#menubar .drop button', { hasText: item }).click(); };
     const rect = (sel) => page.evaluate((q) => { const r = document.querySelector(q).getBoundingClientRect(); return { x: r.left, y: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height }; }, sel);
     const bodyHidden = (key) => page.evaluate((k) => document.querySelector(`.gbody[data-body=${k}]`).hidden, key);
     await page.evaluate(() => window.api.settingsSet('tools.collapsed', []));

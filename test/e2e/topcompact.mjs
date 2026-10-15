@@ -36,7 +36,7 @@ try {
   const ready = () => page.waitForFunction(() => window.app && window.app.vp && window.app.doc && window.app.toolModes, null, { timeout: 10000 });
   await ready();
   const pickMode = async (m) => { await page.click('.tp-mode'); await page.click(`.tp-menu [data-mode=${m}]`); };
-  const viewItem = async (text) => { await page.locator('#menubar .menu > button', { hasText: 'View' }).click(); await page.locator('#menubar .drop button', { hasText: text }).click(); };
+  const viewItem = async (text) => { await page.locator('#menubar .menu > button', { hasText: 'View' }).click(); await page.locator('#menubar .menu.open .sub > button', { hasText: 'Toolbars' }).hover(); await page.locator('#menubar .drop button', { hasText: text }).click(); };
   const rect = (sel) => page.evaluate((s) => document.querySelector(s).getBoundingClientRect().toJSON(), sel);
   const cls = (c) => page.evaluate((k) => document.getElementById('app').classList.contains(k), c);
   const setting = (k) => page.evaluate((key) => window.api.settingsGet(key), k);

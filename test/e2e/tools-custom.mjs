@@ -33,7 +33,7 @@ try {
   await page.goto(`${base}/renderer/index.html`, { waitUntil: 'load' });
   const ready = () => page.waitForFunction(() => window.app && window.app.vp && window.app.doc, null, { timeout: 10000 });
   await ready();
-  const menuItem = async (item) => { await page.locator('#menubar .menu > button', { hasText: 'View' }).click(); await page.locator('#menubar .drop button', { hasText: item }).click(); };
+  const menuItem = async (item) => { await page.locator('#menubar .menu > button', { hasText: 'View' }).click(); await page.locator('#menubar .menu.open .sub > button', { hasText: 'Toolbars' }).hover(); await page.locator('#menubar .drop button', { hasText: item }).click(); };
   const typeCmd = async (text) => { await page.locator('#cmd').fill(text); await page.locator('#cmd').press('Enter'); };
   const panelIds = (g) => page.evaluate((k) => [...document.querySelectorAll(`#tools .gbody[data-body=${k}] button[data-tool]`)].map((b) => b.dataset.tool), g);
   const groupOrder = () => page.evaluate(() => [...document.querySelectorAll('#tools .tgroup[data-group]')].map((g) => g.dataset.group));
@@ -45,7 +45,9 @@ try {
   {
     await page.click('#tools button[data-tool=trim]', { button: 'right' });
     assert.equal(await page.locator('.tcz-menu').count(), 1, 'context menu open');
-    assert.deepEqual(await page.locator('.tcz-menu button').allTextContents(), ['Hide Trim', 'Remove from Quick Access', 'Customize tools…']);
+    const ctxItems = await page.locator('.tcz-menu button').allTextContents();
+    assert.deepEqual(ctxItems.slice(0, 2), ['Hide Trim', 'Remove from Quick Access'], 'the tool\'s own items first');
+    assert.ok(ctxItems.some((t) => t.includes('Tool panel: Left')) && ctxItems.at(-1).includes('Customize tools…'), `then View > Toolbars: ${ctxItems}`);
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('.tcz-menu').count(), 0, 'Escape closes it');
     await page.click('#tools button[data-tool=select]', { button: 'right' });
@@ -170,7 +172,7 @@ try {
     assert.equal(await page.evaluate(() => window.app.toolId), 'line', 'Enter on the focused button starts its tool (no repeat of the last command)');
     await page.evaluate(() => window.app.setTool('select'));
     await page.click('#tools button[data-tool=line]', { button: 'right' });
-    await page.locator('.tcz-menu [data-act=customize]').click();
+    await page.locator('.tcz-menu button', { hasText: 'Customize tools…' }).click();
     await page.waitForSelector('#dlg[open] .tcz');
     await page.locator('#dlg [data-key="show:extend"]').uncheck();
     await page.click('#dlg .dlg-btns button.primary');

@@ -148,6 +148,7 @@ try {
   step = 'View > Side panel: Hidden leaves no rail; LA still opens Layers over the canvas; Ctrl+3 expands';
   const w2 = await canvasW();
   await page.locator('#menubar .menu > button', { hasText: /^View$/ }).click();
+  await page.locator('#menubar .menu.open .sub > button', { hasText: 'Panels' }).hover();
   await page.locator('#menubar .menu.open .drop button', { hasText: /^.?Side panel: Hidden/ }).click();
   await page.waitForFunction((w) => document.getElementById('cv').getBoundingClientRect().width > w + 30, w2, { timeout: 5000 });
   assert.equal(await shown('#side-rail'), false);
