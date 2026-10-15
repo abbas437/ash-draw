@@ -70,14 +70,12 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 #tools button .lbl { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
 .ti { flex:none; display:block; }
 #tools .ti { color:var(--gc, currentColor); }
-#qat .g-file { --gc:#4b5b66; } [data-theme="dark"] #qat .g-file { --gc:#b4c0c7; }
-/* tool group colours (View > Tool group colours); the dark theme uses lighter tints of the same hues */
-#tools .g-select, #qat .g-select { --gc:#4b5b66; } #tools .g-draw, #qat .g-draw { --gc:#1f62c9; } #tools .g-modify, #qat .g-modify { --gc:#b65300; } #tools .g-block, #qat .g-block { --gc:#24773a; }
-#tools .g-annotate, #qat .g-annotate { --gc:#7a3fc4; } #tools .g-inquiry, #qat .g-inquiry { --gc:#0a7a81; } #tools .g-markup, #qat .g-markup { --gc:#c0262d; }
-[data-theme="dark"] #tools .g-select, #qat .g-select { --gc:#b4c0c7; } [data-theme="dark"] #tools .g-draw, #qat .g-draw { --gc:#7fb0ff; } [data-theme="dark"] #tools .g-modify, #qat .g-modify { --gc:#ffa45c; } [data-theme="dark"] #tools .g-block, #qat .g-block { --gc:#6fd18a; }
-[data-theme="dark"] #tools .g-annotate, #qat .g-annotate { --gc:#c09cff; } [data-theme="dark"] #tools .g-inquiry, #qat .g-inquiry { --gc:#4fd1d9; } [data-theme="dark"] #tools .g-markup, #qat .g-markup { --gc:#ff8a8f; }
+#qat .g-file { --gc:var(--grp-file); }
+/* tool group colours (View > Tool group colours): --grp-* (light and dark values) are set in the icon colour block at the end */
+#tools .g-select, #qat .g-select { --gc:var(--grp-select); } #tools .g-draw, #qat .g-draw { --gc:var(--grp-draw); } #tools .g-modify, #qat .g-modify { --gc:var(--grp-modify); } #tools .g-block, #qat .g-block { --gc:var(--grp-block); }
+#tools .g-annotate, #qat .g-annotate { --gc:var(--grp-annotate); } #tools .g-inquiry, #qat .g-inquiry { --gc:var(--grp-inquiry); } #tools .g-markup, #qat .g-markup { --gc:var(--grp-markup); }
 #app #tools.no-colours * { --gc:initial; }
-#tools button.active .ti { color:var(--on-accent); }
+#tools button.active .ti { color:var(--accent-ink); }
 /* View > Tool labels off: icon-only buttons, group names become separators (the name stays in the tooltip) */
 #app.no-tool-labels #tools button { justify-content:center; padding:1px 0; }
 #app.no-tool-labels #tools button .lbl { display:none; }
@@ -434,3 +432,22 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 #app.tools-float #tools { position:fixed; z-index:25; width:100px; max-height:75vh; padding-top:0; border:1px solid var(--line); border-radius:4px; box-shadow:0 6px 18px var(--shadow); }
 #app.tools-float:not(.no-tool-labels) #tools { width:150px; }
 #app.tools-float #tools .float-head { display:block; position:sticky; top:0; z-index:1; margin:0 -4px; padding:3px 6px; background:var(--panel); border-bottom:1px solid var(--line); color:var(--dim); font-size:11px; cursor:move; user-select:none; touch-action:none; }
+/* Icon colours and button states (ASH brand: gold accent on charcoal). Group hues are muted and keep >= 3:1 against --panel,
+   --panel2 and --hover in both themes; --accent marks what is on / current everywhere (active tool, pressed rail and toggle
+   buttons, status-bar toggles, the current tab). Icons draw in currentColor; an icon's .ac accent mark keeps the group hue. */
+:root {
+  --grp-select:#56646c; --grp-file:#56646c; --grp-draw:#2f63b0; --grp-modify:#a85a14; --grp-block:#2f7a46;
+  --grp-annotate:#7048b0; --grp-inquiry:#17777d; --grp-markup:#b23a3f;
+  --accent:#8a6a1c; --accent2:#f2e6c6; --on-accent:#3d2e08; --accent-ink:#7a5c12; --press:#d7dfe3; --current-bg:#f4ead0;
+}
+[data-theme="dark"] {
+  --grp-select:#aab6bd; --grp-file:#aab6bd; --grp-draw:#86aee8; --grp-modify:#e0a066; --grp-block:#82c79a;
+  --grp-annotate:#b9a0e6; --grp-inquiry:#6cc4c9; --grp-markup:#ec8c90;
+  --accent:#d4b062; --accent2:#4a3d1e; --on-accent:#fff3d6; --accent-ink:#e3c47c; --press:#3a454c; --current-bg:#3f3720;
+}
+.ti .ac { stroke:var(--gc, currentColor); }
+.ti .ac[fill="currentColor"] { fill:var(--gc, currentColor); }
+#tools button:active:not(:disabled), #qat button:active:not(:disabled), .rail-btn:active:not(:disabled) { background:var(--press); }
+#tools button:focus-visible, #qat button:focus-visible, .rail-btn:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+#tools button.active, #tools button.active:hover { background:var(--accent2); border-color:var(--accent); color:var(--on-accent); }
+.rail-btn[aria-pressed=true], #tools .rail-pin[aria-pressed="true"] { background:var(--accent2); border-color:var(--accent); color:var(--accent-ink); }
