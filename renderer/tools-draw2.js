@@ -28,6 +28,9 @@ export function createDraw2Tools(h, { Tool }) {
     }
     finish(vertices) { this.add(makePolyline(vertices, true, this.props())); this.reset(); }
     click(p) {
+      // a pick at a typed-input prompt takes its <default> (sides, Inscribed/Circumscribed) and carries on, so the mouse alone draws a polygon
+      if (this.step === 'sides') this.step = 'center';
+      else if (this.step === 'mode') this.step = 'radius';
       if (this.step === 'center') { this.c = p; this.vp.lastPoint = p; this.step = 'mode'; }
       else if (this.step === 'radius') { if (dist(this.c, p) > 1e-12) this.finish(polygonFromRadius(this.c, this.sides, this.inscribed, p)); }
       else if (this.step === 'edge1') { this.a = p; this.vp.lastPoint = p; this.step = 'edge2'; }

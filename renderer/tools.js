@@ -372,7 +372,7 @@ class ArcTool extends Tool {
   }
 }
 
-class EllipseTool extends Tool {
+export class EllipseTool extends Tool {
   activate() { super.activate(); this.pts = []; }
   get prompt() { return ['ELLIPSE  center', 'ELLIPSE  end of first axis', 'ELLIPSE  distance to the other axis'][this.pts.length]; }
   click(p) {
@@ -380,8 +380,11 @@ class EllipseTool extends Tool {
     if (this.pts.length < 3) { this.vp.lastPoint = p; return; }
     const [c, m, q] = this.pts;
     const major = { x: m.x - c.x, y: m.y - c.y }, L = Math.hypot(major.x, major.y);
+    if (L < 1e-12) { this.pts = [c]; this.h.toast?.('ELLIPSE: the end of the first axis must differ from the center.'); return; }
     const perp = Math.abs(((q.x - c.x) * -major.y + (q.y - c.y) * major.x) / L);
-    if (L > 1e-12 && perp > 1e-12) this.add(makeEllipse(c, major, Math.min(1, perp / L), 0, Math.PI * 2, this.props()));
+    // a point on the first axis gives no ellipse: keep asking for the other axis instead of dropping the command silently
+    if (perp <= L * 1e-6) { this.pts = [c, m]; this.h.toast?.('ELLIPSE: pick a point off the first axis (its distance from the axis is the other half-axis).'); return; }
+    this.add(makeEllipse(c, major, Math.min(1, perp / L), 0, Math.PI * 2, this.props()));
     this.pts = []; this.vp.lastPoint = null;
   }
   key(e) { if (e.key === 'Escape') { if (this.pts.length) { this.pts = []; this.vp.lastPoint = null; } else this.cancel(); return true; } return e.key === 'Enter'; }

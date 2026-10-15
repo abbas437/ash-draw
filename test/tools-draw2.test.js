@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { newDocument } from '../src/core/model.js';
 import { Session } from '../src/core/edit.js';
-import { Tool, TOOL_ALIASES } from '../renderer/tools.js';
+import { Tool, TOOL_ALIASES, EllipseTool } from '../renderer/tools.js';
 import { createDraw2Tools } from '../renderer/tools-draw2.js';
 
 function rig() {
@@ -54,6 +54,32 @@ test('POLYGON: sides, centre, I/C, typed or picked radius; defaults remembered; 
   assert.equal(ents().length, 3);
   type(t, '5'); type(t, '0,0'); t.key({ key: 'Escape' });
   assert.equal(h.tool, 'select', 'one Esc mid-polygon ends the command'); assert.equal(ents().length, 3);
+});
+
+test('POLYGON by mouse alone: a pick at the sides or I/C prompt takes the <default> and is used as the point', () => {
+  const { tools: { polygon: t }, ents } = rig();
+  t.activate();
+  assert.match(t.prompt, /number of sides <4>/);
+  t.click({ x: 0, y: 0 });                 // centre (4 sides taken)
+  assert.match(t.prompt, /Inscribed.*<I>/);
+  t.click({ x: 3, y: 0 });                 // radius point (Inscribed taken)
+  const e = ents().at(-1);
+  assert.equal(e?.type, 'LWPOLYLINE'); assert.equal(e.vertices.length, 4);
+  close(Math.hypot(e.vertices[0].x, e.vertices[0].y), 3); // inscribed: a vertex on the picked radius
+  assert.match(t.prompt, /number of sides <4>/, 'ready for the next polygon');
+});
+
+test('ELLIPSE: centre, axis end, other axis; a third point on the first axis keeps asking (nothing is dropped silently)', () => {
+  const toasts = [];
+  const h = { session: new Session(newDocument()), vp: { cursor: { x: 0, y: 0 }, lastPoint: null }, newProps: () => ({ layer: '0' }), toast: (m) => toasts.push(m), setTool: () => {} };
+  const t = new EllipseTool(h), ents = () => h.session.doc.entities;
+  t.activate();
+  t.click({ x: 0, y: 0 }); t.click({ x: 4, y: 0 }); t.click({ x: 7, y: 0 }); // on the axis line
+  assert.equal(ents().length, 0); assert.equal(toasts.length, 1);
+  assert.match(t.prompt, /other axis/, 'still waiting for the other axis');
+  t.click({ x: 1, y: 2 });
+  assert.equal(ents().length, 1); assert.equal(ents()[0].type, 'ELLIPSE'); close(ents()[0].ratio, 0.5);
+  assert.match(t.prompt, /center/);
 });
 
 test('SPLINE: fit points, U removes, Enter finishes, C closes, Esc cancels', () => {
