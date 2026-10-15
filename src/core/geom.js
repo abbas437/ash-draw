@@ -249,6 +249,7 @@ export function tessellate(e, doc = null, tol = 0) {
       }
       return out;
     }
+    case 'PROXY': return e.parts.flatMap((p) => tessellate(p, doc, tol));
     case 'OLE2FRAME': { const a = e.p1, b = e.p2; return [[{ x: a.x, y: a.y }, { x: b.x, y: a.y }, { x: b.x, y: b.y }, { x: a.x, y: b.y }, { x: a.x, y: a.y }]]; }
     case 'POINT': return [[{ ...e.p }]];
     case 'IMAGE': { const q = imageCorners(e); return [[...q.map((a) => ({ ...a })), { ...q[0] }]]; }
@@ -340,6 +341,11 @@ export function bboxOf(e, doc = null) {
     return b;
   }
   if (e.type === 'TEXT') return boxOfPoints(textCorners(textFrame(e, doc)));
+  if (e.type === 'PROXY') { // the union of its parts (text included)
+    let b = null;
+    for (const p of e.parts) { const q = bboxOf(p, doc); if (q) b = b ? { minx: Math.min(b.minx, q.minx), miny: Math.min(b.miny, q.miny), maxx: Math.max(b.maxx, q.maxx), maxy: Math.max(b.maxy, q.maxy) } : q; }
+    return b;
+  }
   if (e.type === 'MTEXT') {
     const { w, h } = textExtent(e);
     const r = (e.rot || 0) * DEG, c = Math.cos(r), s = Math.sin(r);
@@ -605,6 +611,7 @@ export function transformEntity(e, m) {
     case 'POINT': c.p = apply(m, e.p); break;
     case 'IMAGE': case 'WIPEOUT': return Object.assign(c, transformImage(e, m));
     case 'SOLID': case '3DFACE': c.pts = e.pts.map((p) => apply(m, p)); break;
+    case 'PROXY': throw Object.assign(new Error('This object is shown from its saved graphics and cannot be moved, copied, rotated or scaled.'), { code: 'SHEAR' });
     case 'OLE2FRAME': {
       // the frame stays an axis-aligned rectangle: only flips / 90-degree turns / scales keep it one
       const k = 1e-9 * Math.max(Math.abs(m[0]) + Math.abs(m[1]) + Math.abs(m[2]) + Math.abs(m[3]), 1);

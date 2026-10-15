@@ -440,6 +440,14 @@ export function* writeDxfSteps(doc, opts = {}) {
         for (const [c, v] of mlineTags(e, ms ? ms.h : hMlineStyle, ms ? ms.st.name : 'Standard')) if (c === 2) o.s(c, v); else o.p(c, v);
         return true;
       }
+      case 'PROXY': {
+        // an object kept from the file (dxfRead proxyEntity): its own tags as read, after a fresh common part.
+        // DWG output leaves them out (the converter cannot take them), as before they were kept.
+        if (asGeometry || !e.tags?.length) { report.skipped[e.name] = (report.skipped[e.name] ?? 0) + 1; return false; }
+        head(o, e, e.name, owner);
+        for (const [c, v] of e.tags) { if (c === 1001) xdApps.add(String(v).trim()); o.p(c, v); }
+        return true;
+      }
       case 'VIEWPORT': {
         head(o, e, 'VIEWPORT', owner);
         for (const [c, v] of viewportTags(e, (n) => layerH.get(n))) o.p(c, v);
