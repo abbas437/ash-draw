@@ -92,14 +92,14 @@ export const ICONS = {
   measure: p('M2.5 13.5l11-11 4 4-11 11z', 'M6 10l2 2M8.5 7.5l1.5 1.5M11 5l2 2'),
   area: p('M3 15l4-11 10 4-3 9z', 'M6 13l6-6M9 15l5-5'),
   // markups (dotted outline, like the markup the tool draws)
-  mkc: c(10, 10, 7, DOTTED) + p('M10 10h.01'),
-  mkr: `<path d="M3 4h14v12H3z"${DOTTED}/>` + p('M10 10h.01'),
-  mkt: p('M3 4h14v9H9l-4 3.5V13H3z', 'M6 7.5h8M6 10h5'),
+  mkc: a(cp(12, 12, 8), DOTTED),
+  mkr: a('M4.5 6.5h15v11h-15z', DOTTED),
+  mkt: p('M7.5 8.5h9M7.5 12h6') + a('M3.5 4.5h17V16H11l-4.5 4v-4h-3z'),
   // layouts, files
-  layout: p('M4 2h9l3 3v13H4z', 'M13 2v3h3', 'M7 9h6v5H7z'),
-  viewport: p('M2 4h16v12H2z', 'M5 7h6v6H5z'),
-  compare: p('M3 3h6v14H3z', 'M11 3h6v14h-6z', 'M5 7h2M13 9h2M5 11h2M13 13h2'),
-  xref: p('M13 6.5l-5.5 5.5a1.8 1.8 0 0 0 2.5 2.5l6-6a3.5 3.5 0 0 0-5-5l-6 6a5.2 5.2 0 0 0 7.4 7.4l5-5'),
+  layout: p('M3 5h18v14H3z') + a('M12 19v-4h9'),
+  viewport: p('M3 5h18v14H3z') + a('M6.5 8.5h11v7h-11z'),
+  compare: p('M8.5 7V3.5h11V17H16', 'M4.5 7H16v13.5H4.5z') + a('M10.25 10.5l3.25 6h-6.5z'),
+  xref: p('M4.5 3h8l4 4v4.5', 'M4.5 3v17.5h2', 'M12.5 3v4h4') + a('M13 20.5h-1a3 3 0 0 1 0-6h1M17 14.5h1a3 3 0 0 1 0 6h-1M12 17.5h6'),
   // view
   new: p('M6 3h8l4 4v14H6z', 'M14 3v4h4') + a('M12 10.5v7M8.5 14h7'),
   open: p('M3 19V5h6l2 2.5h8V11', 'M3 19l3.2-8H21.5l-3.2 8z'),
@@ -116,13 +116,6 @@ export const ICONS = {
 export const LEGACY_20 = new Set([
   // --- group A: draw, markup, layouts/files (one id per line; remove an id when its icon is redrawn on the 24 grid)
   // ---
-  'mkc',
-  'mkr',
-  'mkt',
-  'layout',
-  'viewport',
-  'compare',
-  'xref',
   // --- group B: modify (one id per line; remove an id when its icon is redrawn on the 24 grid)
   // ---
   'move',
