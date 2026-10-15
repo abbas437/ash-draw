@@ -38,3 +38,13 @@ test('tooltips name the command and its alias', () => {
   assert.equal(toolTitle('Line', 'L'), 'Line (L)');
   assert.equal(toolTitle('Select'), 'Select');
 });
+
+test('panel and toolbar icons exist and draw in currentColor (no colour of their own)', async () => {
+  const { QUICK_ACCESS } = await import('../renderer/tool-panel.js');
+  const ids = [...TOOL_BUTTONS.flatMap(([, , items]) => items.map(([id]) => id)), ...QUICK_ACCESS.flatMap(([, list]) => list), ...TOOLBAR_ICONS];
+  for (const id of new Set(ids)) {
+    assert.ok(Object.hasOwn(ICONS, id), `${id} has an icon`);
+    for (const [, attr, v] of ICONS[id].matchAll(/\b(fill|stroke|color|style)="([^"]*)"/g)) assert.match(v, /^(currentColor|none)$/, `${id}: ${attr}="${v}"`);
+    assert.doesNotMatch(ICONS[id], /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i, `${id} has a hard-coded colour`);
+  }
+});
