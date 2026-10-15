@@ -844,10 +844,10 @@ class App {
     if (save) api.settingsSet?.(`tools.${opt}`, !!on)?.catch?.(() => {});
   }
 
-  /** View > Tool panel: 'left' (column), 'top' (band above the canvas) or 'hidden'; a class on #app, saved as 'tools.placement' */
+  /** View > Tool panel: 'left' or 'right' (column beside the canvas), 'top' (band above the canvas) or 'hidden'; a class on #app, saved as 'tools.placement' */
   setToolPlacement(place, save = true) {
     this.toolPlacement = place = placementFrom(place);
-    if (save && place !== 'left' && this.toolModes && this.toolModes.mode !== 'full') this.toolModes.setMode('full'); // Top band / hidden: a Full panel
+    if (save && (place === 'top' || place === 'hidden') && this.toolModes && this.toolModes.mode !== 'full') this.toolModes.setMode('full'); // Top band / hidden: a Full panel
     const app = document.getElementById('app');
     for (const p of PLACEMENTS) app.classList.toggle(`tools-${p}`, p === place);
     this.fitBand();

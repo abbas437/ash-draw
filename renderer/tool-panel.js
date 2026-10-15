@@ -39,7 +39,7 @@ export function quickCommand(id) {
 /** saved settings -> layout. Never-set values take the beta.10 defaults: model space dark, tool labels off (compact panel). */
 export const canvasDarkFrom = (saved) => saved !== 'light';
 export const labelsFrom = (saved) => saved === true;
-export const PLACEMENTS = ['left', 'top', 'hidden'];
+export const PLACEMENTS = ['left', 'right', 'top', 'hidden'];
 export const placementFrom = (saved) => (PLACEMENTS.includes(saved) ? saved : 'left');
 export const collapsedFrom = (saved) => (Array.isArray(saved) ? saved.filter((k) => typeof k === 'string') : []);
 
