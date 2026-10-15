@@ -39,6 +39,7 @@ import { CommandHistory } from '../src/core/cmdhist.js';
 import { CmdHistView } from './cmdhist-view.js';
 import { qselectDialog, selectSimilarCommand, purgeDialog } from './selclean.js';
 import { draftingSettings, loadDraftingSettings } from './osnap-ui.js';
+import { initLayerCombo } from './layer-combo.js';
 import { el, message, modal, confirmDialog, textDialog, listDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
 import {
   OPEN_FILTERS, loadDrawing, conversionSummary, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, savePathIn, extOf, UNIT_NAMES,
@@ -165,6 +166,7 @@ class App {
   refreshPanels(selectionOnly = false) {
     if (!selectionOnly) renderLayers(this);
     renderProperties(this);
+    this.layerCombo?.refresh(); // the Quick Access layer combo shows the current layer or the selection's
     markHead(document.querySelector('#side .panel[data-sec="props"]')); // its header is rebuilt on each render
   }
   /** the side panel shown or collapsed to its strip (View > Side panel, Ctrl+3, the strip's button), saved as 'side.shown' */
@@ -783,6 +785,7 @@ class App {
   /** the Quick Access row under the menu bar: the chosen commands as icon buttons, coloured by group */
   buildQuickAccess() {
     document.getElementById('menubar').after(el('div', { id: 'qat', role: 'toolbar', 'aria-label': 'Quick Access' }));
+    this.layerCombo = initLayerCombo(this);
     this.renderQuickAccess();
   }
   renderQuickAccess() {
@@ -792,6 +795,9 @@ class App {
       const [key, id] = it, [label, alias] = quickCommand(id);
       return el('button', { class: `g-${key}`, 'data-cmd': id, title: toolTitle(label, alias), 'aria-label': label, onclick: () => (run[id] ? run[id]() : this.setTool(id)) }, iconSvg(id, 18));
     }));
+    // the layer combo sits right after the Layers button, or at the end of the row without one
+    const qat = document.getElementById('qat'), lb = qat.querySelector('button[data-cmd="layers"]');
+    this.layerCombo.close(); if (lb) lb.after(this.layerCombo.el); else qat.append(this.layerCombo.el);
     document.getElementById('app').classList.toggle('no-qat', !this.toolLayout.quickRow);
   }
   /** a selector for the tool panel button or group header that has the focus (null elsewhere), to find its equivalent after a re-render */
