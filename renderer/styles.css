@@ -232,7 +232,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 #sym-float .phead { cursor:move; } #sym-float .phead::before { display:none; }
 #sym-status { font-size:11px; color:var(--dim); }
 .lay-search input { flex:1; min-width:0; }
-.layer .lay-plot.off { opacity:.35; }
+.layer .lay-plot.off { opacity:.55; }
 .layer .lname-edit { flex:1 1 auto; min-width:160px; width:0; font:inherit; padding:0 2px; }
 .lay-none { color:var(--dim); padding:2px 0; font-style:italic; }
 .lay-prop { display:block; margin:6px 0; }
