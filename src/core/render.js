@@ -1454,6 +1454,7 @@ export function drawLayout(ctx, paperScene, view, layout, paperRectsOf, modelSce
   const r = (b) => [sx(b.minx), sy(b.maxy), (b.maxx - b.minx) * z, (b.maxy - b.miny) * z];
   ctx.fillStyle = 'rgba(0,0,0,0.35)'; const sr = r(sheet); ctx.fillRect(sr[0] + 4, sr[1] + 4, sr[2], sr[3]);
   ctx.fillStyle = PAPER_COLOUR; ctx.fillRect(...sr);
+  if (opts.paperGrid) { ctx.save(); ctx.beginPath(); ctx.rect(...sr); ctx.clip(); opts.paperGrid(ctx, view); ctx.restore(); } // display grid (viewport only)
   ctx.strokeStyle = '#888'; ctx.lineWidth = 1; ctx.setLineDash([4, 3]); ctx.strokeRect(...r(printable)); ctx.setLineDash([]);
   const vports = paperScene.doc.entities.filter((e) => e.type === 'VIEWPORT' && !isPaperViewport(e) && e.on !== false && e.width > 0 && e.height > 0);
   for (const v of vports) {

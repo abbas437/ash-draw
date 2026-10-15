@@ -39,6 +39,7 @@ import { CommandHistory } from '../src/core/cmdhist.js';
 import { CmdHistView } from './cmdhist-view.js';
 import { qselectDialog, selectSimilarCommand, purgeDialog } from './selclean.js';
 import { draftingSettings, loadDraftingSettings } from './osnap-ui.js';
+import { loadGridSettings } from './grid-ui.js';
 import { el, message, modal, confirmDialog, textDialog, listDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
 import {
   OPEN_FILTERS, loadDrawing, conversionSummary, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, savePathIn, extOf, UNIT_NAMES,
@@ -128,6 +129,7 @@ class App {
     api.settingsGet?.('theme').then((t) => { if (t === 'dark') this.setTheme('dark', false); }).catch(() => {});
     api.version?.().then((v) => { this.version = v; this.refreshWindowTitle(); }).catch(() => {});
     loadDraftingSettings(this).catch(() => {});
+    loadGridSettings(this).catch(() => {});
     api.settingsGet?.('measure.showLegs').then((v) => setShowLegs(v)).catch(() => {});
     loadSavedPatterns(this, api).catch(() => {});
     api.onOpenFile?.((f) => this.openFromFile(f));
@@ -689,7 +691,7 @@ class App {
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-', ...viewMenuItems(this), '-',
         ['Command history', 'F2', () => this.toggleHistory(), () => this.histView.open],
         ['Side panel', 'Ctrl+3', () => this.setSidePanel(!this.sideShown), () => this.sideShown], '-',
-        ['Show lineweights', 'F9', () => this.toggle('lineweights')], ['Model space background: dark', '', () => this.toggle('dark'), () => this.vp.settings.dark], '-',
+        ['Grid', 'F7', () => this.toggle('grid'), () => this.vp.settings.grid], ['Show lineweights', 'F9', () => this.toggle('lineweights')], ['Model space background: dark', '', () => this.toggle('dark'), () => this.vp.settings.dark], '-',
         ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark'],
         ...PLACEMENTS.map((p) => [`Tool panel: ${p[0].toUpperCase()}${p.slice(1)}`, '', () => this.setToolPlacement(p), () => this.toolPlacement === p]),
         ['Tool labels', '', () => this.setToolPanel('labels', !this.panelOpts.labels), () => this.panelOpts.labels],
@@ -850,7 +852,7 @@ class App {
       if (settings) b.addEventListener('contextmenu', (e) => { e.preventDefault(); draftingSettings(this); });
       return b;
     };
-    s.append(el('span', { class: 'coord', id: 'coord' }), tog('SNAP', 'snap', 'Object snap (F3); right-click: snap settings', true), tog('ORTHO', 'ortho', 'Ortho (F8)'), tog('POLAR', 'polar', 'Polar tracking (F10); right-click: settings', true), tog('OTRACK', 'otrack', 'Object snap tracking (F11)'), tog('LWT', 'lineweights', 'Show lineweights (F9)'), tog('TPY', 'transparency', 'Show transparency'),
+    s.append(el('span', { class: 'coord', id: 'coord' }), tog('SNAP', 'snap', 'Object snap (F3); right-click: snap settings', true), tog('ORTHO', 'ortho', 'Ortho (F8)'), tog('POLAR', 'polar', 'Polar tracking (F10); right-click: settings', true), tog('OTRACK', 'otrack', 'Object snap tracking (F11)'), tog('GRID', 'grid', 'Drawing grid (F7); settings: GRID command'), tog('LWT', 'lineweights', 'Show lineweights (F9)'), tog('TPY', 'transparency', 'Show transparency'),
       el('span', { class: 'spacer' }),
       el('span', { id: 'conv', hidden: true, role: 'button', tabindex: '0', style: 'margin-right:12px;cursor:pointer', onclick: () => this.converterLog(), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.converterLog(); } } }),
       el('span', { id: 'sel' }), el('span', { id: 'units', style: 'margin-left:12px', role: 'button', tabindex: '0', title: 'Drawing units (Format > Units…)', onclick: () => this.unitsDialog(), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.unitsDialog(); } } }),
@@ -864,6 +866,7 @@ class App {
     if (key === 'transparency') api.settingsSet?.('canvas.transparency', st[key])?.catch?.(() => {});
     if (key === 'snap') api.settingsSet?.('osnap.on', st.snap)?.catch?.(() => {});
     if (key === 'otrack') api.settingsSet?.('otrack.on', st.otrack)?.catch?.(() => {});
+    if (key === 'grid') api.settingsSet?.('grid.on', st.grid)?.catch?.(() => {});
     if (key === 'ortho' && st.ortho) st.polar = false;
     if (key === 'polar' && st.polar) st.ortho = false;
     this.refreshToggles(); this.vp.requestRender();
@@ -952,6 +955,7 @@ class App {
       if ((e.key === 'Enter' || e.key === ' ') && e.target.closest?.('#menubar')) return; // let a focused menu button / item activate by keyboard
       if (e.key === 'F2') { if (e.target.closest?.('#layers')) return; e.preventDefault(); this.toggleHistory(); return; }
       if (e.key === 'F3') { e.preventDefault(); this.toggle('snap'); return; }
+      if (e.key === 'F7') { e.preventDefault(); this.toggle('grid'); return; }
       if (e.key === 'F8') { e.preventDefault(); this.toggle('ortho'); return; }
       if (e.key === 'F9') { e.preventDefault(); this.toggle('lineweights'); return; }
       if (e.key === 'F10') { e.preventDefault(); this.toggle('polar'); return; }
