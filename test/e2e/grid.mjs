@@ -176,6 +176,28 @@ try {
   });
   await page.click('#spacebar button[data-space="Layout1"]');
   assert.equal(await page.evaluate(() => window.app.vp.layout?.name), 'Layout1');
+  // the crosshair over the white sheet is drawn dark, also with a dark model-space background (it vanished in beta.45)
+  await page.evaluate(() => { window.app.vp.settings.grid = false; window.app.setCanvasDark?.(true); window.app.vp.requestRender(); });
+  assert.equal(await page.evaluate(() => window.app.vp.settings.dark), true);
+  const armPixel = async (cx, cy) => {
+    await page.mouse.move(cx, cy); await page.mouse.move(cx + 1, cy); await page.waitForTimeout(150);
+    return page.evaluate(([x, y]) => { const vp = window.app.vp, r = vp.canvas.getBoundingClientRect(), d = vp.dpr;
+      const px = vp.ctx.getImageData(Math.round((x - r.left + 6) * d), Math.round((y - r.top) * d), 1, 1).data; // 6 px along the crosshair's arm
+      const under = vp.ctx.getImageData(Math.round((x - r.left + 6) * d), Math.round((y - r.top + 4) * d), 1, 1).data; // just off the arm
+      return { arm: [...px].slice(0, 3), under: [...under].slice(0, 3), cross: vp.crossColor, ink: vp.inkColor }; }, [cx, cy]);
+  };
+  const paperXY = await page.evaluate(async () => { // a sheet point in client px: 4 % in from the sheet's lower-left corner
+    const { paperRects } = await import('/src/core/layouts.js');
+    const vp = window.app.vp, v = vp.view, r = vp.canvas.getBoundingClientRect(), b = paperRects(vp.layout).sheet;
+    const wx = b.minx + (b.maxx - b.minx) * 0.04, wy = b.miny + (b.maxy - b.miny) * 0.04;
+    return { x: r.left + v.width / 2 + (wx - v.cx) * v.zoom, y: r.top + v.height / 2 - (wy - v.cy) * v.zoom };
+  });
+  const px = await armPixel(paperXY.x, paperXY.y);
+  const lum = (c) => (c[0] + c[1] + c[2]) / 3;
+  assert.ok(lum(px.under) > 150, `point is on the light sheet / surround: ${JSON.stringify(px)}`);
+  assert.ok(lum(px.arm) < lum(px.under) - 30, `crosshair visible on the sheet in dark mode: ${JSON.stringify(px)}`);
+  assert.equal(px.ink, '#b35c00', 'previews on the sheet use the light-background ink');
+  await page.evaluate(() => { window.app.vp.settings.grid = true; window.app.vp.requestRender(); });
   await cmd('GRID'); await cmd('5'); // paper spacing, mm
   const snapSp = () => page.evaluate(() => window.app.vp.gridSnapSpacing());
   const paperSp = await snapSp();

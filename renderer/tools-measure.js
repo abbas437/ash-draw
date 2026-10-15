@@ -57,7 +57,7 @@ function syncLegsBox() { const b = panel?.querySelector('.mp-legs input'); if (b
 function setMarks(vp, m) { marks = m; marksVp = vp; vp.requestRender(); }
 /** accent stroke over a wider contrasting outline, so it reads on the dark and the light model background */
 function strokeMark(c, vp, dash) {
-  c.setLineDash([]); c.lineWidth = 3.5; c.strokeStyle = vp.settings.dark ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)'; c.stroke();
+  c.setLineDash([]); c.lineWidth = 3.5; c.strokeStyle = (vp.overlayDark ?? vp.settings.dark) ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)'; c.stroke();
   c.setLineDash(dash); c.lineWidth = 1.5; c.strokeStyle = MARK; c.stroke(); c.setLineDash([]);
 }
 function drawMarks(c, vp) {
@@ -75,7 +75,7 @@ function drawMarks(c, vp) {
     cross(m.a); cross(m.b);
     if (m.label) { // the value beside the middle of the measured line
       const s = S({ x: (m.a.x + m.b.x) / 2, y: (m.a.y + m.b.y) / 2 });
-      c.font = '12px "Segoe UI", sans-serif'; c.lineWidth = 3; c.strokeStyle = vp.settings.dark ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)';
+      c.font = '12px "Segoe UI", sans-serif'; c.lineWidth = 3; c.strokeStyle = (vp.overlayDark ?? vp.settings.dark) ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)';
       c.strokeText(m.label, s.x + 8, s.y - 8); c.fillStyle = MARK; c.fillText(m.label, s.x + 8, s.y - 8);
     }
   }

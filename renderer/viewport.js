@@ -77,7 +77,11 @@ export class Viewport {
     this._bind();
   }
   /** colour for previews and snap markers: yellow on the dark canvas, dark amber on the light one */
-  get inkColor() { return this.settings.dark ? '#ffd400' : '#b35c00'; }
+  /** overlays (crosshair, previews, snap marks, tooltips) are drawn for what is under them: a layout is a white sheet
+   *  on a grey surround whatever the model-space background, so it takes the light-background colours */
+  get overlayDark() { return this.settings.dark && !this.layout; }
+  get inkColor() { return this.overlayDark ? '#ffd400' : '#b35c00'; }
+  get crossColor() { return this.overlayDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.6)'; }
 
   on(name, fn) { (this.listeners.get(name) ?? this.listeners.set(name, []).get(name)).push(fn); return () => this.off(name, fn); }
   off(name, fn) { const l = this.listeners.get(name); if (l) this.listeners.set(name, l.filter((f) => f !== fn)); }
@@ -394,9 +398,9 @@ export class Viewport {
     const label = m.kind === 'ext' || m.kind === 'track' || m.kind === 'trackint' ? trackLabel(m) : OSNAP_LABEL[m.kind] ?? m.kind;
     c.font = '11px "Segoe UI", sans-serif';
     const w = c.measureText(label).width, bx = s.x + r + 6, by = s.y + r + 4;
-    c.fillStyle = this.settings.dark ? 'rgba(40,44,52,0.92)' : 'rgba(255,255,225,0.95)'; c.fillRect(bx, by, w + 8, 16);
+    c.fillStyle = this.overlayDark ? 'rgba(40,44,52,0.92)' : 'rgba(255,255,225,0.95)'; c.fillRect(bx, by, w + 8, 16);
     c.lineWidth = 1; c.strokeRect(bx + 0.5, by + 0.5, w + 7, 15);
-    c.fillStyle = this.settings.dark ? '#e6e6e6' : '#222'; c.fillText(label, bx + 4, by + 12);
+    c.fillStyle = this.overlayDark ? '#e6e6e6' : '#222'; c.fillText(label, bx + 4, by + 12);
     c.restore();
   }
   /** the line whose direction the parallel snap uses: a small parallel glyph at the point it was acquired */
@@ -455,7 +459,7 @@ export class Viewport {
   _drawCrosshair() {
     if (!this.showCross || this.busy || this.panTool) return;
     const c = this.ctx, s = this.toScreen(this.cursor);
-    c.save(); c.strokeStyle = this.settings.dark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.55)'; c.lineWidth = 1;
+    c.save(); c.strokeStyle = this.crossColor; c.lineWidth = 1;
     c.beginPath(); c.moveTo(s.x - 10, s.y); c.lineTo(s.x + 10, s.y); c.moveTo(s.x, s.y - 10); c.lineTo(s.x, s.y + 10); c.stroke();
     c.restore();
   }
