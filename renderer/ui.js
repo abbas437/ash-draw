@@ -113,6 +113,8 @@ export function renderLayers(app) {
     // On/Off and Freeze/Thaw are independent flags (AutoCAD): toggling one never touches the other
     el('button', { class: 'icon lay-on', title: l.visible !== false ? 'Turn layer off' : 'Turn layer on', onclick: () => { setLayerProps(session, l.name, { visible: l.visible === false }); } }, l.visible !== false ? '◉' : '○'),
     el('button', { class: 'icon lay-frz', title: l.frozen ? 'Thaw layer' : 'Freeze layer', onclick: () => { setLayerProps(session, l.name, { frozen: !l.frozen }); } }, l.frozen ? '❄' : '☀'),
+    // VP freeze: frozen in the current layout viewport only (MSPACE, or one viewport selected); hidden elsewhere
+    ...[app.layerVpButton?.(l)].filter(Boolean),
     el('button', { class: 'icon', title: l.locked ? 'Unlock layer' : 'Lock layer', onclick: () => { setLayerProps(session, l.name, { locked: !l.locked }); } }, l.locked ? '🔒' : '🔓'),
     // Plot / No plot: a non-plotting layer is drawn on screen but left out of Print and Plot to PDF
     el('button', { class: `icon lay-plot${l.plot === false ? ' off' : ''}`, title: l.plot === false ? 'Not plotted (click to plot this layer)' : 'Plotted (click to stop plotting this layer)', onclick: () => { setLayerProps(session, l.name, { plot: l.plot === false }); } }, '🖶'),
