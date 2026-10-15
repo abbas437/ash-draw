@@ -28,7 +28,7 @@ import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
 import { loadDrawingXrefs, xrefPanel } from './xref-panel.js';
 import { TOOL_BUTTONS, buildToolPanel, iconButton, quickCommand, canvasDarkFrom, labelsFrom, placementFrom, PLACEMENTS, collapsedFrom, applyCollapsed, toolTitle, moreButton, fitToolBand, initToolBand } from './tool-panel.js';
 import { iconSvg } from './icons.js';
-import { initToolModes, TOOL_MODES, MODE_LABELS, modeAllows } from './tool-rail.js';
+import { initToolModes, LAYOUTS, LAYOUT_LABELS, modeAllows } from './tool-rail.js';
 import { initSidePanel, applySide, markHead, windowTitle, setSideMode, revealSection } from './side-panel.js';
 import { initSymbolsPanel, SYMBOL_DOCKS, DOCK_LABELS } from './symbols-ui.js';
 import { symcountDialog } from './symcount-ui.js';
@@ -699,7 +699,7 @@ class App {
         ['Grid', 'F7', () => this.toggle('grid'), () => this.vp.settings.grid], ['Snap to grid', 'F9', () => this.toggle('gridSnap'), () => this.vp.settings.gridSnap], ['Show lineweights', '', () => this.toggle('lineweights')], ['Model space background: dark', '', () => this.toggle('dark'), () => this.vp.settings.dark], '-',
         ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark'],
         ...PLACEMENTS.map((p) => [`Tool panel: ${p[0].toUpperCase()}${p.slice(1)}`, '', () => this.setToolPlacement(p), () => this.toolPlacement === p]),
-        ...TOOL_MODES.map((m) => [`Tool panel layout: ${MODE_LABELS[m]}`, '', () => this.toolModes.setMode(m), () => this.toolModes.mode === m]),
+        ...LAYOUTS.map((l) => [`Tool panel layout: ${LAYOUT_LABELS[l]}`, '', () => this.toolModes.setLayout(l), () => this.toolModes.layout === l]),
         ['Tool labels', '', () => this.setToolPanel('labels', !this.panelOpts.labels), () => this.panelOpts.labels],
         ['Tool group colours', '', () => this.setToolPanel('colours', !this.panelOpts.colours), () => this.panelOpts.colours],
         ['Tools: Compact', '', () => this.setFolded(compactKeys()), () => foldMode(this.collapsed) === 'compact'],
@@ -812,6 +812,7 @@ class App {
     this.symPalette.close(); this.layerCombo.el.after(this.symPalette.el);
     document.getElementById('app').classList.toggle('no-qat', !this.toolLayout.quickRow);
     this.markQuickAccess();
+    this.toolModes?.seat(); // Top + Compact rail: the group buttons and the ⋯ menu go back to the end of the rebuilt row
   }
   /** highlight the Quick Access button of the current tool */
   markQuickAccess() {
@@ -863,8 +864,13 @@ class App {
 
   /** View > Tool panel: 'left' or 'right' (column beside the canvas), 'top' (band above the canvas) or 'hidden'; a class on #app, saved as 'tools.placement' */
   setToolPlacement(place, save = true) {
-    this.toolPlacement = place = placementFrom(place);
-    if (save && this.toolModes && !modeAllows(this.toolModes.mode, place)) this.toolModes.setMode('full'); // hidden: a Full panel; Top: Full or Compact rail
+    place = placementFrom(place);
+    const modes = this.toolModes;
+    if (modes && !modeAllows(modes.mode, place)) { // hidden: a Full panel; Top: Full or Compact rail
+      if (!save && modes.mode === 'float' && place === 'top') place = 'left'; // a restored Floating keeps floating, docked on the left
+      else { this.toolPlacement = place; modes.setMode('full', save); }
+    }
+    this.toolPlacement = place;
     const app = document.getElementById('app');
     for (const p of PLACEMENTS) app.classList.toggle(`tools-${p}`, p === place);
     if (this.toolModes?.mode === 'rail') { this.toolModes.close(); this.toolModes.refresh(); } // the rail turns between a column and a row

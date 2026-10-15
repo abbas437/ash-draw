@@ -421,10 +421,10 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 #sym-palette .sp-none, #sym-palette .sp-status { grid-column:1 / -1; padding:2px 4px; font-size:11px; color:var(--dim); }
 /* tool panel layouts (tool-rail.js): Compact rail, Floating, and the ⋯ layout menu */
 #tools .rail, #tools .float-head, #tools .rail-fly[hidden] { display:none; }
-#tools .tp-ctl { display:flex; align-items:center; justify-content:center; cursor:pointer; user-select:none; color:var(--text); background:var(--panel2); border:1px solid var(--line); border-radius:3px; }
-#tools .tp-ctl:hover { background:var(--hover); }
-#tools .tp-ctl:focus-visible { outline:2px solid var(--accent); outline-offset:0; }
-#tools .tp-mode { align-self:flex-end; padding:1px 4px; color:var(--dim); }
+:is(#tools,#qat) .tp-ctl { display:flex; align-items:center; justify-content:center; cursor:pointer; user-select:none; color:var(--text); background:var(--panel2); border:1px solid var(--line); border-radius:3px; }
+:is(#tools,#qat) .tp-ctl:hover { background:var(--hover); }
+:is(#tools,#qat) .tp-ctl:focus-visible { outline:2px solid var(--accent); outline-offset:0; }
+:is(#tools,#qat) .tp-mode { align-self:flex-end; padding:1px 4px; color:var(--dim); }
 #app.tools-top #tools .tp-mode { order:2; align-self:flex-start; margin-left:4px; }
 .tp-menu { position:fixed; z-index:40; display:flex; flex-direction:column; min-width:150px; padding:4px 0; background:var(--panel2); border:1px solid var(--line); box-shadow:0 6px 18px var(--shadow); }
 .tp-menu button { border:none; border-radius:0; background:none; text-align:left; padding:4px 12px 4px 6px; }
@@ -434,10 +434,10 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 #app.tools-rail #tools > .tgroup, #app.tools-rail #tools > .lbl-toggle { display:none; }
 #app.tools-rail #tools .rail { display:flex; flex-direction:column; gap:3px; }
 #app.tools-rail #tools .tp-mode { align-self:center; margin-top:4px; }
-#tools .rail-item { display:flex; align-items:stretch; }
+:is(#tools,#qat) .rail-item { display:flex; align-items:stretch; }
 #tools .rail-btn { flex:1; height:30px; border-radius:3px 0 0 3px; }
-#tools .rail-more { width:9px; flex:none; border-left:none; border-radius:0 3px 3px 0; font-size:8px; color:var(--dim); }
-#tools .rail-more[aria-expanded="true"] { background:var(--accent2); }
+:is(#tools,#qat) .rail-more { width:9px; flex:none; border-left:none; border-radius:0 3px 3px 0; font-size:8px; color:var(--dim); }
+:is(#tools,#qat) .rail-more[aria-expanded="true"] { background:var(--accent2); }
 #tools .rail-fly { position:fixed; z-index:30; display:flex; flex-direction:column; gap:2px; width:100px; padding:4px; overflow-y:auto; background:var(--panel2); border:1px solid var(--line); border-radius:3px; box-shadow:0 6px 18px var(--shadow); }
 #app:not(.no-tool-labels) #tools .rail-fly { width:160px; }
 #tools .rail-head { display:flex; align-items:center; gap:4px; padding-left:5px; border-left:3px solid var(--gc, transparent); }
@@ -447,12 +447,20 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 #tools .rail-fly > .gbody[hidden] { display:flex; }
 #app.no-tool-labels #tools .rail-fly > .gbody { display:grid; grid-template-columns:repeat(3, 1fr); gap:1px; }
 #tools .rail-fly > .xbody { display:flex; flex-direction:column; gap:2px; margin-top:4px; padding-top:4px; border-top:1px solid var(--line); }
-/* Compact rail in the Top band: one row of the group buttons; each flyout opens under its button (tool-rail.js open) */
-#app.tools-top.tools-rail #tools { height:auto; align-items:center; padding:3px 4px; }
-#app.tools-top.tools-rail #tools .rail { flex-direction:row; }
-#app.tools-top.tools-rail #tools .rail-btn { width:32px; }
-#app.tools-top.tools-rail #tools .rail-more svg { transform:rotate(90deg); }
-#app.tools-top.tools-rail #tools .tp-mode { align-self:center; margin:0 0 0 auto; }
+/* Top + Compact rail: the group buttons sit in the Quick Access row after a separator (tool-rail.js seat); #tools takes no
+   height, only its flyout shows (position:fixed, so the 0-height #tools does not clip it); fitQat hides what the row has no room for */
+#app.tools-top.tools-rail #tools { height:0; padding:0; border:none; min-height:0; }
+#app.tools-top.tools-rail #tools > :not(.rail-fly) { display:none; }
+#qat .rail { display:flex; flex-direction:row; gap:2px; }
+#qat .rail-btn { flex:none; width:28px; height:24px; border-radius:3px 0 0 3px; }
+#qat .rail-more { height:24px; }
+#qat .rail-more svg { transform:rotate(90deg); }
+#qat .tp-mode { align-self:center; height:24px; margin-left:2px; }
+#app #qat .fit-out { display:none; }
+/* ... and with the Quick Access row off, the row still holds them (and only them) */
+#app.no-qat.tools-top.tools-rail { grid-template-rows: 30px auto 1fr 30px 24px; }
+#app.no-qat.tools-top.tools-rail #qat { display:flex; }
+#app.no-qat.tools-top.tools-rail #qat > :not(.rail, .tp-mode) { display:none; }
 #app.tools-float { --tools-w:0px; }
 #app.tools-float #tools { position:fixed; z-index:25; width:100px; max-height:75vh; padding-top:0; border:1px solid var(--line); border-radius:4px; box-shadow:0 6px 18px var(--shadow); }
 #app.tools-float:not(.no-tool-labels) #tools { width:150px; }
@@ -464,6 +472,13 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 #app.tools-ophover.tools-float #tools:hover, #app.tools-ophover.tools-rail #tools .rail-fly:hover { opacity:1; }
 #app.tools-float #tools .float-head { display:flex; align-items:center; justify-content:space-between; gap:4px; }
 #app.tools-float #tools .float-head .tp-mode { align-self:center; padding:0 3px; }
+/* Floating compact: the Compact rail's strip floats; its title strip is a dotted grip beside the ⋯ menu, flyouts open beside it */
+#app.tools-float.tools-float-rail #tools { width:48px; }
+#app.tools-float-rail #tools > .tgroup, #app.tools-float-rail #tools > .lbl-toggle { display:none; }
+#app.tools-float-rail #tools .rail { display:flex; flex-direction:column; gap:3px; }
+#app.tools-float.tools-float-rail #tools .float-head { padding:3px 3px 3px 4px; }
+#app.tools-float-rail #tools .float-head > span { flex:1; height:10px; font-size:0; background-image:radial-gradient(currentColor 1px, transparent 1.3px); background-size:4px 4px; background-position:center; }
+.dock-hint.narrow { width:44px; }
 .dock-hint { position:absolute; top:0; bottom:0; width:138px; z-index:24; pointer-events:none; background:var(--accent); opacity:.22; border:2px dashed var(--accent); box-sizing:border-box; }
 .dock-hint[hidden] { display:none; } .dock-hint[data-side=left] { left:0; } .dock-hint[data-side=right] { right:0; }
 .tp-menu .tp-sep { height:1px; margin:4px 0; background:var(--line); }
@@ -515,4 +530,4 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 #tools button:active:not(:disabled), #qat button:active:not(:disabled), .rail-btn:active:not(:disabled) { background:var(--press); }
 #tools button:focus-visible, #qat button:focus-visible, .rail-btn:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
 #tools button.active, #tools button.active:hover, #qat button.active, #qat button.active:hover { background:var(--accent2); border-color:var(--accent); color:var(--on-accent); }
-.rail-btn[aria-pressed=true], #tools .rail-btn[aria-pressed=true], #tools .rail-pin[aria-pressed="true"] { background:var(--accent2); border-color:var(--accent); color:var(--accent-ink); }
+.rail-btn[aria-pressed=true], :is(#tools,#qat) .rail-btn[aria-pressed=true], #tools .rail-pin[aria-pressed="true"] { background:var(--accent2); border-color:var(--accent); color:var(--accent-ink); }
