@@ -126,6 +126,7 @@ try {
   step = 'add a folder (browser folder picker): categories from subfolders, cleaned names, thumbnails';
   await page.locator('#sym-search').fill('');
   const chooser = page.waitForEvent('filechooser');
+  await page.locator('#sym-more').click(); // Add folder / Remove folder sit in the ⋯ menu
   await page.locator('#sym-add').click();
   await (await chooser).setFiles(lib);
   await page.waitForFunction(() => document.querySelectorAll('#sym-grid .sym-cell').length === 3, null, { timeout: 5000 });
@@ -157,6 +158,7 @@ try {
   assert.equal(ins[1].sx, 1, 'equipment-size file symbol: the drawing scale does not apply');
 
   step = 'Remove folder goes back to the built-in set';
+  await page.locator('#sym-more').click(); // Add folder / Remove folder sit in the ⋯ menu
   await page.locator('#sym-remove').click();
   await page.waitForFunction(() => document.getElementById('sym-source').value === 'builtin', null, { timeout: 5000 });
   assert.equal(await page.locator('#sym-source option').count(), 1);

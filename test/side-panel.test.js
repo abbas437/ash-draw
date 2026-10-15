@@ -20,3 +20,20 @@ test('window title carries the build version so two test builds can be told apar
   assert.equal(windowTitle('plan.dxf', true, '0.2.0'), '• plan.dxf — ASH Draw Studio 0.2.0');
   assert.equal(windowTitle('Drawing1.dxf', false, undefined), 'Drawing1.dxf — ASH Draw Studio'); // before api.version answers
 });
+
+test('side panel mode: saved side.mode wins; never set falls back to the older side.shown (false = the rail)', async () => {
+  const { sideModeFrom, SIDE_MODES } = await import('../renderer/side-panel.js');
+  assert.deepEqual(SIDE_MODES, ['expanded', 'collapsed', 'hidden']);
+  assert.equal(sideModeFrom('hidden', true), 'hidden');
+  assert.equal(sideModeFrom('collapsed', undefined), 'collapsed');
+  assert.equal(sideModeFrom(undefined, undefined), 'expanded');
+  assert.equal(sideModeFrom('bogus', false), 'collapsed');
+  assert.equal(sideModeFrom(null, true), 'expanded');
+});
+
+test('symbols layout: unknown view is grid; the floating window is sized then kept inside the app window', async () => {
+  const { symbolViewFrom, floatRectClamp } = await import('../renderer/symbols-ui.js');
+  assert.equal(symbolViewFrom('list'), 'list'); assert.equal(symbolViewFrom('bogus'), 'grid');
+  assert.deepEqual(floatRectClamp({ x: 1300, y: -20, w: 320, h: 460 }, 1000, 700), { x: 680, y: 0, w: 320, h: 460 });
+  assert.deepEqual(floatRectClamp({ x: 10, y: 10, w: 5000, h: 100 }, 1000, 700), { x: 0, y: 10, w: 1000, h: 160 });
+});

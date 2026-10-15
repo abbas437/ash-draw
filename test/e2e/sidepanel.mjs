@@ -67,13 +67,13 @@ try {
   await page.waitForFunction(() => /ASH Draw Studio web$/.test(document.title), null, { timeout: 5000 }); // shim.js answers api.version() with 'web'
   assert.match(await page.title(), /ASH Draw Studio/);
 
-  step = 'toggle: panel collapses to a strip, canvas takes the freed width and its buffer follows';
+  step = 'toggle: panel collapses to its icon rail, canvas takes the freed width and its buffer follows';
   const w0 = await canvasW(), b0 = await bufferW();
   await page.locator('#side-toggle').click();
   await page.waitForFunction((w) => document.getElementById('cv').getBoundingClientRect().width > w + 200, w0, { timeout: 5000 });
   assert.equal(await shown('#layers'), false, 'layer list hidden');
   assert.equal(await shown('#side-toggle'), true, 'strip button stays');
-  assert.ok((await page.locator('#side').boundingBox()).width <= 20, 'thin strip');
+  assert.ok((await page.locator('#side').boundingBox()).width <= 41, 'icon rail');
   await page.waitForFunction((b) => document.getElementById('cv').width > b, b0, { timeout: 5000 });
 
   step = 'toggle back restores the panel and the canvas width';
@@ -81,11 +81,11 @@ try {
   await page.waitForFunction((w) => Math.abs(document.getElementById('cv').getBoundingClientRect().width - w) < 1, w0, { timeout: 5000 });
   assert.equal(await shown('#layers'), true);
 
-  step = 'View > Side panel and Ctrl+3 toggle it too';
+  step = 'View > Side panel: Collapsed and Ctrl+3 toggle it too';
   await page.locator('#menubar .menu > button', { hasText: /^View$/ }).click();
-  const item = page.locator('#menubar .menu.open .drop button', { hasText: /^.?Side panel/ });
+  const item = page.locator('#menubar .menu.open .drop button', { hasText: /^.?Side panel: Expanded/ });
   assert.equal(await item.getAttribute('aria-checked'), 'true');
-  await item.click();
+  await page.locator('#menubar .menu.open .drop button', { hasText: /^.?Side panel: Collapsed/ }).click();
   assert.equal(await shown('#layers'), false);
   await page.locator('#cv').focus();
   await page.keyboard.press('Control+3');

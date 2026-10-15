@@ -163,6 +163,19 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 #side-grip { position:absolute; left:0; top:26px; bottom:0; width:5px; cursor:col-resize; z-index:2; } #side-grip:hover, #side-grip.drag { background:var(--accent); opacity:.5; }
 #side-toggle:hover { background:var(--hover); color:var(--text); }
 #app.no-side #side { padding-left:0; overflow:hidden; } #app.no-side #side-toggle { border-right:none; }
+/* side panel modes (setting 'side.mode'): collapsed = 40 px icon rail whose buttons open a section as a flyout over the
+   canvas (pin docks it back); hidden = no rail at all (View > Side panel, Ctrl+3); the flyout keeps the dragged width */
+#side-rail, #side-flybar { display:none; }
+#app.side-collapsed { --side-w:40px; } #app.side-hidden { --side-w:0px; }
+#app.side-collapsed #side, #app.side-hidden #side { overflow:visible; z-index:25; }
+#app.side-hidden #side { border-left:none; } #app.side-hidden #side-toggle { display:none; }
+#app.side-collapsed #side-toggle { width:100%; border-right:none; }
+#app.side-collapsed #side-rail { display:flex; flex-direction:column; align-items:center; gap:2px; padding-top:30px; }
+.rail-btn { width:32px; height:32px; padding:0; display:flex; align-items:center; justify-content:center; background:transparent; border:1px solid transparent; color:var(--text); }
+.rail-btn:hover { background:var(--hover); } .rail-btn[aria-pressed=true] { border-color:var(--accent); background:var(--hover); }
+#app.side-fly #side-flybar { display:flex; align-items:center; gap:4px; position:absolute; right:100%; top:0; height:26px; width:var(--side-user, 340px); box-sizing:border-box; padding:0 4px 0 8px; background:var(--panel2); border:1px solid var(--line); border-bottom:none; font-weight:600; }
+#side-pin { padding:0 4px; height:22px; display:flex; align-items:center; }
+#app.side-fly #side .panel.fly { display:block; position:absolute; right:100%; top:26px; bottom:0; width:var(--side-user, 340px); box-sizing:border-box; overflow:auto; background:var(--panel); border:1px solid var(--line); box-shadow:-4px 0 14px var(--shadow); }
 /* section headers fold their section (setting 'side.folded'); the header's own buttons keep their clicks */
 .panel[data-sec] .phead { cursor:pointer; user-select:none; }
 .panel[data-sec] .phead::before { content:'\25BE'; display:inline-block; width:1em; font-weight:400; color:var(--dim); }
@@ -204,6 +217,20 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 .sym-thumb { width:56px; height:56px; display:none; } .sym-cell.ready .sym-thumb { display:block; }
 [data-theme="dark"] .sym-thumb { filter:invert(1); } /* thumbnails are drawn black on transparent */
 .sym-name { font-size:11px; line-height:1.2; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* Symbols layouts (setting 'symbols.view'): list = one row per symbol; float = own window (#sym-float), dragged by
+   its title strip, resized at its corner, kept inside the app window; the ⋯ menu holds Add folder / Remove folder */
+.sym-views { display:flex; gap:1px; } .sym-views button, #sym-float-close { padding:0 3px; height:22px; display:flex; align-items:center; }
+.sym-views button[aria-pressed=true] { border-color:var(--accent); background:var(--hover); }
+.sym-src { flex-wrap:nowrap; } #sym-more { flex:none; padding:0 8px; }
+#sym-panel.view-list #sym-grid { grid-template-columns:1fr; gap:1px; }
+#sym-panel.view-list .sym-cell { flex-direction:row; justify-content:flex-start; gap:8px; padding:2px 4px; }
+#sym-panel.view-list .sym-pic, #sym-panel.view-list .sym-thumb { width:28px; height:28px; flex:none; }
+#sym-panel.view-list .sym-name { font-size:12px; }
+#sym-float { position:fixed; z-index:45; display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--line); border-radius:4px; box-shadow:0 6px 18px var(--shadow); resize:both; overflow:hidden; min-width:220px; min-height:160px; box-sizing:border-box; }
+#sym-float[hidden] { display:none; }
+#sym-float #sym-panel { flex:1; min-height:0; display:flex; flex-direction:column; border-bottom:none; }
+#sym-float #sym-grid { flex:1; min-height:60px; max-height:none; }
+#sym-float .phead { cursor:move; } #sym-float .phead::before { display:none; }
 #sym-status { font-size:11px; color:var(--dim); }
 .lay-search input { flex:1; min-width:0; }
 .layer .lay-plot.off { opacity:.35; text-decoration:line-through; }

@@ -1,12 +1,14 @@
 // ASH Draw Studio - the Symbols section of the side panel (source, category, search, lazy thumbnail grid, scales) and
 // SYMBOLINSERT: the chosen symbol follows the cursor, click to place, then the rotation (typed angle, second click,
 // Enter = 0); placement repeats until Esc / right-click. Each placement is one undo step (insertSymbol).
-// Settings: 'symbols.scale' (overall symbol scale) and 'symbols.drawingScale' (N of 1:N, paper-size symbols only).
+// Settings: 'symbols.scale' (overall symbol scale) and 'symbols.drawingScale' (N of 1:N, paper-size symbols only);
+// 'symbols.view' (grid / list / float) and 'symbols.float' ({x, y, w, h} of the floating window).
 import { createSymbolSource, BUILTIN_SOURCE } from './symbols-source.js';
 import { symbolScale, symbolPolylines, insertSymbol } from '../src/core/symbols-lib.js';
 import { attdefsOf, ATT_CONSTANT, ATT_PRESET } from '../src/core/blocks.js';
 import { attribValuesDialog } from './tools-blocks.js';
 import { el, modal } from './ui.js';
+import { applySide, closeSideFly } from './side-panel.js';
 
 /** cells drawn at most; the status line says when a filter would show more */
 export const SYMBOL_GRID_MAX = 500;
@@ -16,6 +18,21 @@ const posOr = (v, d) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v)
 export const filterSymbols = (items, category, query) => {
   const q = String(query ?? '').trim().toLowerCase();
   return items.filter((it) => (!category || it.category === category) && (!q || it.name.toLowerCase().includes(q)));
+};
+
+/** Symbols layouts: grid (docked), list (docked, one row per symbol), float (own window inside the app) */
+export const SYMBOL_VIEWS = ['grid', 'list', 'float'];
+export const symbolViewFrom = (v) => (SYMBOL_VIEWS.includes(v) ? v : 'grid');
+/** the floating window {x, y, w, h} kept inside a winW x winH window: size first (min 220 x 160), then position */
+export const floatRectClamp = (r, winW, winH) => {
+  const n = (v, d) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : d);
+  const w = Math.round(Math.min(Math.max(n(r?.w, 320), 220), winW)), h = Math.round(Math.min(Math.max(n(r?.h, 460), 160), winH));
+  return { x: Math.round(Math.min(Math.max(n(r?.x, winW - w - 60), 0), winW - w)), y: Math.round(Math.min(Math.max(n(r?.y, 90), 0), winH - h)), w, h };
+};
+const VIEW_ICONS = {
+  grid: '<path d="M3 3h6v6H3zM11 3h6v6h-6zM3 11h6v6H3zM11 11h6v6h-6z"/>',
+  list: '<path d="M3 4h3.5v3.5H3zM3 12.5h3.5V16H3zM9.5 5.7H17M9.5 14.2H17"/>',
+  float: '<path d="M2.5 7h11v9.5h-11z"/><path d="M6.5 7V3.5h11V13h-4"/>',
 };
 
 /** a library file with several symbols: pick one (null = cancelled) */
@@ -138,10 +155,77 @@ export function initSymbolsPanel(app, api) {
   bindScale(dscaleIn, 'symbols.drawingScale', 'drawingScale');
   refreshSources(BUILTIN_SOURCE.id);
 
+  // the ⋯ menu: Add folder… / Remove folder (keeps the source row on one line in a narrow panel)
+  const more = $('sym-more'), menu = $('sym-menu');
+  const showMenu = (on) => {
+    menu.hidden = !on; more.setAttribute('aria-expanded', String(on));
+    if (on) { const r = more.getBoundingClientRect(); menu.style.left = `${Math.max(0, r.right - 160)}px`; menu.style.top = `${r.bottom + 2}px`; menu.style.minWidth = '160px'; }
+  };
+  more.onclick = (e) => { e.stopPropagation(); showMenu(menu.hidden); };
+  menu.addEventListener('click', () => showMenu(false));
+  document.addEventListener('pointerdown', (e) => { if (!menu.hidden && !e.target.closest?.('#sym-menu, #sym-more')) showMenu(false); }, true);
+  menu.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); showMenu(false); more.focus(); } });
+
+  // layouts: grid / list docked in the side panel, or a floating window (drag its title strip, resize its corner)
+  const panel = $('sym-panel'), home = panel.parentElement, closeBtn = $('sym-float-close');
+  const box = el('div', { id: 'sym-float', role: 'dialog', 'aria-label': 'Symbols' });
+  box.hidden = true;
+  document.getElementById('app').append(box);
+  let view = 'grid', docked = 'grid', rect = null, saveT = 0;
+  const viewBtns = SYMBOL_VIEWS.map((v) => {
+    const b = $(`sym-view-${v}`);
+    b.innerHTML = `<svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">${VIEW_ICONS[v]}</svg>`;
+    b.onclick = () => setView(v);
+    return b;
+  });
+  const saveRect = () => { clearTimeout(saveT); saveT = setTimeout(() => api.settingsSet?.('symbols.float', rect)?.catch?.(() => {}), 300); };
+  const place = () => {
+    rect = floatRectClamp(rect, window.innerWidth, window.innerHeight);
+    Object.assign(box.style, { left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.w}px`, height: `${rect.h}px` });
+  };
+  function setView(v, save = true) {
+    view = symbolViewFrom(v);
+    if (view !== 'float') docked = view;
+    panel.classList.toggle('view-list', view === 'list');
+    viewBtns.forEach((b, i) => b.setAttribute('aria-pressed', String(SYMBOL_VIEWS[i] === view)));
+    closeBtn.hidden = view !== 'float';
+    if (view === 'float') {
+      if (app.sideFolded?.includes('symbols')) app.foldSideSection('symbols', false);
+      if (app.sideFly === 'symbols') closeSideFly(app);
+      panel.classList.remove('folded', 'fly');
+      box.append(panel); box.hidden = false; place();
+    } else if (panel.parentElement !== home) {
+      home.insertBefore(panel, home.querySelector('.panel[data-sec="props"]'));
+      box.hidden = true; applySide(app);
+    }
+    if (save) api.settingsSet?.('symbols.view', view)?.catch?.(() => {});
+  }
+  closeBtn.onclick = () => setView(docked);
+  panel.querySelector('.phead').addEventListener('pointerdown', (e) => {
+    if (view !== 'float' || e.button !== 0 || e.target.closest('button, select, input')) return;
+    e.preventDefault();
+    const head = e.currentTarget, dx = e.clientX - rect.x, dy = e.clientY - rect.y;
+    head.setPointerCapture(e.pointerId);
+    const move = (ev) => { rect = { ...rect, x: ev.clientX - dx, y: ev.clientY - dy }; place(); };
+    const up = () => { head.removeEventListener('pointermove', move); head.removeEventListener('pointerup', up); head.removeEventListener('pointercancel', up); saveRect(); };
+    head.addEventListener('pointermove', move); head.addEventListener('pointerup', up); head.addEventListener('pointercancel', up);
+  });
+  new ResizeObserver(() => {
+    if (view !== 'float' || box.hidden || !rect) return;
+    const w = box.offsetWidth, h = box.offsetHeight;
+    if (w !== rect.w || h !== rect.h) { rect = { ...rect, w, h }; saveRect(); }
+  }).observe(box);
+  window.addEventListener('resize', () => { if (view === 'float') { place(); saveRect(); } }); // snap back inside a smaller window
+  setView('grid', false);
+  Promise.all([api.settingsGet?.('symbols.float'), api.settingsGet?.('symbols.view')])
+    .then(([r, v]) => { if (r && typeof r === 'object') rect = r; setView(v, false); }).catch(() => {});
+
   return {
     /** the INSERT scale of `sym` in the current drawing */
     scaleOf: (sym) => symbolScale(sym, app.doc.units, { scale: st.scale, drawingScale: st.drawingScale }),
     focus() { search.focus(); },
+    /** the Symbols section is in its floating window (the rail and SYMBOLS focus it there) */
+    get floating() { return view === 'float'; },
     /** N of the drawing scale 1:N (setting 'symbols.drawingScale') */
     get drawingScale() { return st.drawingScale; },
   };
