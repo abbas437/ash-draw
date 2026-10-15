@@ -199,10 +199,11 @@ export class Viewport {
     }
     return { p, raw, marker, grid: grid && p.x === grid.x && p.y === grid.y ? grid : null };
   }
-  /** grid snap spacing in world units: the configured grid spacing (not the adaptive one); layouts use paper millimetres */
+  /** grid snap spacing in world units: the configured grid spacing (not the adaptive one); paper space on a layout uses paper
+   *  millimetres, model space through a layout viewport (mspace) the model spacing */
   gridSnapSpacing() {
     const st = this.settings;
-    return this.layout ? st.gridPaperSpacing / paperMmPerUnit(this.layout.plot) : st.gridSpacing;
+    return this.layout && !this.mspace ? st.gridPaperSpacing / paperMmPerUnit(this.layout.plot) : st.gridSpacing;
   }
 
   // ---- rendering -----------------------------------------------------------------------------

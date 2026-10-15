@@ -19,12 +19,12 @@ export async function loadGridSettings(app) {
   app.refreshToggles(); app.vp.requestRender();
 }
 
-/** change grid settings ({ on, spacing, major, style }; spacing applies to the space shown), save them and redraw */
-export function setGrid(app, { on, spacing, major, style, snap }) {
+/** change grid settings ({ on, spacing, major, style, snap }; spacing applies to the space shown, or to paper / model as `paper` says), save them and redraw */
+export function setGrid(app, { on, spacing, major, style, snap, paper = !!app.vp.layout }) {
   const st = app.vp.settings;
   if (on !== undefined) { st.grid = !!on; save('grid.on', st.grid); }
   if (spacing !== undefined) {
-    if (app.vp.layout) { st.gridPaperSpacing = spacing; save('grid.paperSpacing', spacing); } else { st.gridSpacing = spacing; save('grid.spacing', spacing); }
+    if (paper) { st.gridPaperSpacing = spacing; save('grid.paperSpacing', spacing); } else { st.gridSpacing = spacing; save('grid.spacing', spacing); }
   }
   if (snap !== undefined) { st.gridSnap = !!snap; save('grid.snap', st.gridSnap); }
   if (major !== undefined) { st.gridMajor = major; save('grid.major', major); }
@@ -36,22 +36,24 @@ export function setGrid(app, { on, spacing, major, style, snap }) {
 export function createGridTools(h, { Tool }) {
   class GridTool extends Tool {
     activate() { super.activate(); this.ask = null; }
-    get spacing() { const st = h.vp.settings; return h.vp.layout ? st.gridPaperSpacing : st.gridSpacing; }
+    /** the spacing edited is the paper one on a layout (the grid shown is the sheet's) */
+    get paper() { return !!h.vp.layout; }
+    get spacing() { const st = h.vp.settings; return this.paper ? st.gridPaperSpacing : st.gridSpacing; }
     get prompt() {
       const st = h.vp.settings;
-      if (this.ask === 'spacing') return `GRID  grid spacing${h.vp.layout ? ' on paper (mm)' : ''} <${this.spacing}>`;
+      if (this.ask === 'spacing') return `GRID  grid spacing${this.paper ? ' on paper (mm)' : ''} <${this.spacing}>`;
       if (this.ask === 'major') return `GRID  grid lines per major line, 1 to 100 <${st.gridMajor}>`;
       if (this.ask === 'style') return `GRID  grid style [Lines/Dots] <${st.gridStyle === 'dots' ? 'Dots' : 'Lines'}>`;
       return `GRID  specify grid spacing or [ON/OFF/Spacing/Major/Style] <${this.spacing}> (grid is ${st.grid ? 'on' : 'off'})`;
     }
-    finish(patch, msg) { this.cancel(); setGrid(h, patch); h.toast(msg, 2500); return true; }
+    finish(patch, msg) { this.cancel(); setGrid(h, { paper: this.paper, ...patch }); h.toast(msg, 2500); return true; }
     text(s) {
       const t = s.trim().toLowerCase();
       if (!t) return false;
       const num = /^[+]?\d*\.?\d+(e[-+]?\d+)?$/.test(t) ? Number(t) : NaN;
       if (this.ask === 'spacing') {
         if (!(num > 0) || !Number.isFinite(num)) { h.toast('GRID: the spacing must be a number greater than 0.'); return true; }
-        return this.finish({ spacing: num, on: true }, `Grid spacing = ${num}${h.vp.layout ? ' mm' : ''}`);
+        return this.finish({ spacing: num, on: true }, `Grid spacing = ${num}${this.paper ? ' mm' : ''}`);
       }
       if (this.ask === 'major') {
         if (cleanMajor(num) === null) { h.toast('GRID: requires a whole number from 1 to 100.'); return true; }
@@ -64,7 +66,7 @@ export function createGridTools(h, { Tool }) {
       }
       if (t === 'on') return this.finish({ on: true }, 'Grid on');
       if (t === 'off') return this.finish({ on: false }, 'Grid off');
-      if (num > 0 && Number.isFinite(num)) return this.finish({ spacing: num, on: true }, `Grid spacing = ${num}${h.vp.layout ? ' mm' : ''}`);
+      if (num > 0 && Number.isFinite(num)) return this.finish({ spacing: num, on: true }, `Grid spacing = ${num}${this.paper ? ' mm' : ''}`);
       // S = Spacing, St = Style, M = Major
       const opt = t === 's' ? 'spacing' : ['spacing', 'major', 'style'].find((o) => o.startsWith(t));
       if (opt) { this.ask = opt; return true; }
@@ -75,9 +77,11 @@ export function createGridTools(h, { Tool }) {
   }
   /** SNAP [ON/OFF/Spacing] <spacing>: grid snap (F9). The snap spacing is the grid spacing (shared, not a separate setting). */
   class SnapTool extends GridTool {
+    /** inside a layout viewport (MSPACE) points are model coordinates, so snapping uses the model spacing */
+    get paper() { return !!h.vp.layout && !h.vp.mspace; }
     get prompt() {
       const st = h.vp.settings;
-      if (this.ask === 'spacing') return `SNAP  snap spacing${h.vp.layout ? ' on paper (mm)' : ''} <${this.spacing}>`;
+      if (this.ask === 'spacing') return `SNAP  snap spacing${this.paper ? ' on paper (mm)' : ''} <${this.spacing}>`;
       return `SNAP  specify snap spacing or [ON/OFF/Spacing] <${this.spacing}> (grid snap is ${st.gridSnap ? 'on' : 'off'})`;
     }
     text(s) {
@@ -86,7 +90,7 @@ export function createGridTools(h, { Tool }) {
       const num = /^[+]?\d*\.?\d+(e[-+]?\d+)?$/.test(t) ? Number(t) : NaN;
       if (this.ask === 'spacing' || (num > 0 && Number.isFinite(num))) {
         if (!(num > 0) || !Number.isFinite(num)) { h.toast('SNAP: the spacing must be a number greater than 0.'); return true; }
-        return this.finish({ spacing: num, snap: true }, `Snap spacing = ${num}${h.vp.layout ? ' mm' : ''} (shared with the grid)`);
+        return this.finish({ spacing: num, snap: true }, `Snap spacing = ${num}${this.paper ? ' mm' : ''} (shared with the grid)`);
       }
       if (t === 'on') return this.finish({ snap: true }, 'Grid snap on');
       if (t === 'off') return this.finish({ snap: false }, 'Grid snap off');

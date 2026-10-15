@@ -168,6 +168,33 @@ try {
   await page.locator('#status button[data-key="lineweights"]').click();
   assert.equal(await on('lineweights'), false);
 
+  step = 'GSNAP on a layout: paper space snaps in paper mm, model space through a viewport (MSPACE) in the model spacing';
+  await page.evaluate(async () => {
+    const { readDxf } = await import('/src/core/dxfRead.js');
+    const bytes = new Uint8Array(await (await fetch('/test/fixtures/layouts_r2000.dxf')).arrayBuffer());
+    window.app.installDoc(readDxf(bytes), { path: null, name: 'layouts.dxf', format: 'dxf' });
+  });
+  await page.click('#spacebar button[data-space="Layout1"]');
+  assert.equal(await page.evaluate(() => window.app.vp.layout?.name), 'Layout1');
+  await cmd('GRID'); await cmd('5'); // paper spacing, mm
+  const snapSp = () => page.evaluate(() => window.app.vp.gridSnapSpacing());
+  const paperSp = await snapSp();
+  const sp = await page.evaluate(() => [window.app.vp.settings.gridSpacing, window.app.vp.settings.gridPaperSpacing]);
+  assert.deepEqual(sp, [10, 5], 'GRID on a layout sets the paper spacing, the model one is kept');
+  const paperClient = (x, y) => page.evaluate(([x, y]) => {
+    const vp = window.app.vp, v = vp.mspace ? { ...vp.mspace.paperView, width: vp.view.width, height: vp.view.height } : vp.view;
+    const r = vp.canvas.getBoundingClientRect();
+    return { x: r.left + v.width / 2 + (x - v.cx) * v.zoom, y: r.top + v.height / 2 - (y - v.cy) * v.zoom };
+  }, [x, y]);
+  const pIn = await paperClient(200, 150); await page.mouse.dblclick(pIn.x, pIn.y);
+  assert.ok(await page.evaluate(() => !!window.app.vp.mspace), 'entered the viewport');
+  assert.equal(await snapSp(), 10, 'MSPACE snaps in the model spacing');
+  assert.notEqual(paperSp, 10, 'paper space snapped in paper units');
+  await cmd('SNAP'); await cmd('2.5');
+  assert.deepEqual(await page.evaluate(() => [window.app.vp.settings.gridSpacing, window.app.vp.settings.gridPaperSpacing, window.app.vp.settings.gridSnap]), [2.5, 5, true], 'SNAP in MSPACE sets the model spacing');
+  const r = await page.evaluate(() => { const vp = window.app.vp, c = vp.toScreen({ x: 3.7, y: -1.1 }); return vp.resolve(c.x, c.y, { snap: false, from: null, gridSnap: true }).p; });
+  assert.ok(Math.abs(r.x - 2.5) < 1e-9 && Math.abs(r.y + 0) < 1e-9, `MSPACE point snapped to the 2.5 model grid: ${JSON.stringify(r)}`);
+
   assert.deepEqual(problems, []);
   console.log(`grid e2e: OK (dot counts while zooming out: ${counts.join(', ')})`);
 } catch (err) {
