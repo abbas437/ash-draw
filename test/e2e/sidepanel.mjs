@@ -83,6 +83,7 @@ try {
 
   step = 'View > Side panel: Collapsed and Ctrl+3 toggle it too';
   await page.locator('#menubar .menu > button', { hasText: /^View$/ }).click();
+  await page.locator('#menubar .menu.open .sub > button', { hasText: 'Panels' }).hover();
   const item = page.locator('#menubar .menu.open .drop button', { hasText: /^.?Side panel: Expanded/ });
   assert.equal(await item.getAttribute('aria-checked'), 'true');
   await page.locator('#menubar .menu.open .drop button', { hasText: /^.?Side panel: Collapsed/ }).click();

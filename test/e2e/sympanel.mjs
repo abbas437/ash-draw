@@ -86,6 +86,7 @@ try {
 
   step = 'View menu: Symbols panel: Dock left; search and place a symbol from the left dock';
   await page.locator('#menubar .menu > button', { hasText: /^View$/ }).click();
+  await page.locator('#menubar .menu.open .sub > button', { hasText: 'Panels' }).hover();
   await page.locator('#menubar .menu.open .drop button', { hasText: /Symbols panel: Dock left/ }).click();
   assert.equal(await cls('sym-dock-left'), true);
   assert.equal(await parentId(), 'sym-dock');
@@ -194,7 +195,7 @@ try {
   assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('sp-head')), true, 'focus back on the button');
 
   step = 'with the Symbols panel hidden: the palette still inserts (Enter on a cell)';
-  const viewDock = async (label) => { await page.locator('#menubar .menu > button', { hasText: /^View$/ }).click(); await page.locator('#menubar .menu.open .drop button', { hasText: `Symbols panel: ${label}` }).click(); };
+  const viewDock = async (label) => { await page.locator('#menubar .menu > button', { hasText: /^View$/ }).click(); await page.locator('#menubar .menu.open .sub > button', { hasText: 'Panels' }).hover(); await page.locator('#menubar .menu.open .drop button', { hasText: `Symbols panel: ${label}` }).click(); };
   await viewDock('Hide');
   assert.equal(await shown('#sym-panel'), false);
   await page.locator('#sym-combo .sp-head').click();

@@ -35,13 +35,26 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 #menubar .menu > button { background:none; border:none; padding:5px 10px; }
 #menubar .menu:hover > button, #menubar .menu.open > button { background:var(--panel2); }
 #menubar .drop { display:none; position:absolute; top:100%; left:0; min-width:230px; background:var(--panel2); border:1px solid var(--line); box-shadow:0 6px 18px var(--shadow); padding:4px 0; }
-#menubar .menu.open .drop { display:block; }
+#menubar .menu.open > .drop { display:block; }
 #menubar .drop button { display:flex; justify-content:space-between; gap:24px; width:100%; border:none; background:none; text-align:left; border-radius:0; padding:5px 14px; }
 #menubar .drop button:hover { background:var(--accent2); color:var(--on-accent); }
 #menubar .drop button[hidden] { display:none; }
 #menubar .drop .chk { display:inline-block; width:1.3em; font-weight:600; }
 #menubar .drop hr { border:none; border-top:1px solid var(--line); margin:4px 0; }
 #menubar .drop kbd { color:var(--dim); font:inherit; }
+/* submenus (menu-items.js): a nested .drop beside its item, to the left when the window has no room on the right */
+#menubar .sub, .popmenu .sub { position:relative; }
+#menubar .sub > .drop, .popmenu .sub > .drop { display:none; position:absolute; top:-5px; left:100%; z-index:1; min-width:230px; width:max-content; white-space:nowrap; background:var(--panel2); border:1px solid var(--line); box-shadow:0 6px 18px var(--shadow); padding:4px 0; }
+#menubar .sub.open > .drop, .popmenu .sub.open > .drop { display:block; }
+#menubar .sub.left > .drop, .popmenu .sub.left > .drop { left:auto; right:100%; }
+#menubar .sub.open > button { background:var(--accent2); color:var(--on-accent); }
+#menubar .drop button:focus-visible { background:var(--accent2); color:var(--on-accent); outline:none; }
+/* the toolbar right-click menu uses the menu bar's item layout: tick, label, shortcut */
+.popmenu.tb-menu { min-width:230px; }
+.popmenu.tb-menu > button { display:flex; justify-content:space-between; gap:24px; padding:4px 14px; }
+.popmenu.tb-menu .chk { display:inline-block; width:1.3em; font-weight:600; }
+.popmenu.tb-menu kbd { color:var(--dim); font:inherit; }
+.popmenu.tb-menu hr { border:none; border-top:1px solid var(--line); margin:4px 0; }
 #menubar .title { margin-left:auto; color:var(--dim); padding-right:8px; }
 #main { display:grid; grid-template-columns: var(--tools-w, 138px) 1fr var(--side-w, 260px); grid-template-areas:"tools docs side"; grid-template-rows:minmax(0,1fr); min-height:0; }
 #tools { grid-area:tools; } #docs { grid-area:docs; } #side { grid-area:side; }

@@ -39,7 +39,7 @@ try {
   const typeCmd = async (text) => { await page.locator('#cmd').fill(text); await page.locator('#cmd').press('Enter'); };
   const openMenu = () => page.click('#tools .tp-mode');
   const pickMode = async (m) => { await openMenu(); await page.click(`.tp-menu [data-mode=${m}]`); };
-  const viewItem = async (text) => { await page.locator('#menubar .menu > button', { hasText: 'View' }).click(); await page.locator('#menubar .drop button', { hasText: text }).click(); };
+  const viewItem = async (text) => { await page.locator('#menubar .menu > button', { hasText: 'View' }).click(); await page.locator('#menubar .menu.open .sub > button', { hasText: 'Toolbars' }).hover(); await page.locator('#menubar .drop button', { hasText: text }).click(); };
   const rect = (sel) => page.evaluate((s) => document.querySelector(s).getBoundingClientRect().toJSON(), sel);
   const cls = (c) => page.evaluate((k) => document.getElementById('app').classList.contains(k), c);
   const opacity = () => page.evaluate(() => Number(getComputedStyle(document.getElementById('tools')).opacity));

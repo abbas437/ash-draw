@@ -35,6 +35,7 @@ import { symcountDialog } from './symcount-ui.js';
 import { layerStatesDialog } from './layerstates-ui.js';
 import { defaultLayout, cleanLayout, panelGroups, samePanel, quickRow, setQuickRow, compactKeys, foldMode, SEP } from './tool-layout.js';
 import { openCustomize, initToolContextMenu } from './tool-custom.js';
+import { renderMenu, menuKey, closeSubmenus } from './menu-items.js';
 import { loadDrawingImages } from './images.js';
 import { CommandHistory } from '../src/core/cmdhist.js';
 import { CmdHistView } from './cmdhist-view.js';
@@ -686,6 +687,18 @@ class App {
   }
 
   // ---- menus --------------------------------------------------------------------------------------
+  /** View > Toolbars, also the right-click menu of the tool panel and the Quick Access row (tool-custom.js) */
+  toolbarMenuItems() {
+    return [
+      ...PLACEMENTS.map((p) => [`Tool panel: ${p[0].toUpperCase()}${p.slice(1)}`, '', () => this.setToolPlacement(p), () => this.toolPlacement === p]), '-',
+      ...LAYOUTS.map((l) => [`Tool panel layout: ${LAYOUT_LABELS[l]}`, '', () => this.toolModes.setLayout(l), () => this.toolModes.layout === l]), '-',
+      ['Tool labels', '', () => this.setToolPanel('labels', !this.panelOpts.labels), () => this.panelOpts.labels],
+      ['Tool group colours', '', () => this.setToolPanel('colours', !this.panelOpts.colours), () => this.panelOpts.colours],
+      ['Tools: Compact', '', () => this.setFolded(compactKeys()), () => foldMode(this.collapsed) === 'compact'],
+      ['Tools: Expanded', '', () => this.setFolded([]), () => foldMode(this.collapsed) === 'expanded'], '-',
+      ['Quick Access row', '', () => this.setToolLayout(setQuickRow(this.toolLayout, !this.toolLayout.quickRow)), () => this.toolLayout.quickRow],
+      ['Customize tools…', '', () => openCustomize(this)]];
+  }
   buildMenus() {
     const vp = this.vp;
     const M = [
@@ -693,19 +706,13 @@ class App {
         ['Print…', 'Ctrl+P', () => this.print()], ['Plot to PDF…', '', () => this.exportPdf()], ['Publish to PDF…', 'PUBLISH', () => this.publish()], ['Export SVG…', '', () => this.exportSvg()], ['Export PNG image…', '', () => this.exportPng()]]],
       ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Copy with Base Point', 'Ctrl+Shift+C', () => this.copySel(true)], ['Paste', 'Ctrl+V', () => this.paste()], ['Paste as Block', 'Ctrl+Shift+V', () => this.paste('block')], ['Paste to Original Coordinates', 'PASTEORIG', () => this.paste('orig')], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()], ['Quick Select…', 'QSELECT', () => qselectDialog(this)], ['Select Similar', 'SELECTSIMILAR', () => selectSimilarCommand(this)], ['Find and replace…', 'Ctrl+F', () => this.find.open()], '-', ['Preferences…', '', () => this.preferences()]]],
       ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-', ...viewMenuItems(this), '-',
-        ['Command history', 'F2', () => this.toggleHistory(), () => this.histView.open],
-        ...[['Expanded', 'Ctrl+3'], ['Collapsed', ''], ['Hidden', '']].map(([m, key]) => [`Side panel: ${m}`, key, () => this.setSideMode(m.toLowerCase()), () => this.sideMode === m.toLowerCase()]),
-        ...SYMBOL_DOCKS.map((d) => [`Symbols panel: ${DOCK_LABELS[d]}`, '', () => this.symbolsPanel.setDock(d), () => this.symbolsPanel.dock === d]), '-',
-        ['Grid', 'F7', () => this.toggle('grid'), () => this.vp.settings.grid], ['Snap to grid', 'F9', () => this.toggle('gridSnap'), () => this.vp.settings.gridSnap], ['Show lineweights', '', () => this.toggle('lineweights')], ['Model space background: dark', '', () => this.toggle('dark'), () => this.vp.settings.dark], '-',
-        ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark'],
-        ...PLACEMENTS.map((p) => [`Tool panel: ${p[0].toUpperCase()}${p.slice(1)}`, '', () => this.setToolPlacement(p), () => this.toolPlacement === p]),
-        ...LAYOUTS.map((l) => [`Tool panel layout: ${LAYOUT_LABELS[l]}`, '', () => this.toolModes.setLayout(l), () => this.toolModes.layout === l]),
-        ['Tool labels', '', () => this.setToolPanel('labels', !this.panelOpts.labels), () => this.panelOpts.labels],
-        ['Tool group colours', '', () => this.setToolPanel('colours', !this.panelOpts.colours), () => this.panelOpts.colours],
-        ['Tools: Compact', '', () => this.setFolded(compactKeys()), () => foldMode(this.collapsed) === 'compact'],
-        ['Tools: Expanded', '', () => this.setFolded([]), () => foldMode(this.collapsed) === 'expanded'],
-        ['Customize tools…', '', () => openCustomize(this)],
-        ['Quick Access row', '', () => this.setToolLayout(setQuickRow(this.toolLayout, !this.toolLayout.quickRow)), () => this.toolLayout.quickRow], '-',
+        { sub: 'Toolbars', items: this.toolbarMenuItems() },
+        { sub: 'Panels', items: [
+          ...[['Expanded', 'Ctrl+3'], ['Collapsed', ''], ['Hidden', '']].map(([m, key]) => [`Side panel: ${m}`, key, () => this.setSideMode(m.toLowerCase()), () => this.sideMode === m.toLowerCase()]), '-',
+          ...SYMBOL_DOCKS.map((d) => [`Symbols panel: ${DOCK_LABELS[d]}`, '', () => this.symbolsPanel.setDock(d), () => this.symbolsPanel.dock === d]), '-',
+          ['Command history', 'F2', () => this.toggleHistory(), () => this.histView.open]] }, '-',
+        ['Grid', 'F7', () => this.toggle('grid'), () => this.vp.settings.grid], ['Snap to grid', 'F9', () => this.toggle('gridSnap'), () => this.vp.settings.gridSnap], ['Show lineweights', '', () => this.toggle('lineweights')], ['Model space background: dark', '', () => this.toggle('dark'), () => this.vp.settings.dark],
+        ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark'], '-',
         ['Show markups', '', () => toggleMarkups(this), () => markupsShown(this.doc)], '-',
         ['External references…', 'XREF', () => xrefPanel(this)]]],
       ['Format', [['Units…', 'UNITS', () => this.unitsDialog()], ['Drafting settings…', 'DSETTINGS', () => draftingSettings(this)], ['Purge…', 'PURGE', () => blockedByEditor(this, 'purge') || purgeDialog(this)], '-',
@@ -715,26 +722,26 @@ class App {
     ];
     const bar = document.getElementById('menubar');
     for (const [label, items] of M) {
-      // an item's optional 4th element makes it a checkable item: () => checked; a label given as a function is read when the menu opens
-      const checks = [];
-      const item = (it) => {
-        const chk = it[3] ? el('span', { class: 'chk' }) : null;
-        const text = document.createTextNode(typeof it[0] === 'function' ? it[0]() : it[0]);
-        if (typeof it[0] === 'function') checks.push(() => { text.data = it[0](); });
-        const b = el('button', { role: it[3] ? 'menuitemcheckbox' : null, onclick: () => { closeMenus(); it[2](); } }, el('span', {}, chk, text), el('kbd', { text: it[1] }));
-        if (it[4]) checks.push(() => { b.hidden = !it[4](); });
-        if (chk) checks.push(() => { const on = !!it[3](); chk.textContent = on ? '\u2713' : ''; b.setAttribute('aria-checked', String(on)); });
-        return b;
-      };
+      // menu-items.js renders the items (labels and ticks are read when the menu opens; { sub } items are submenus)
+      const { nodes, refresh } = renderMenu(items, { close: () => closeMenus() });
       // opens on pointerdown, so the click that only re-focuses the window is not lost; click with detail 0 = keyboard (Enter / Space)
-      const toggle = () => { const open = menu.classList.contains('open'); closeMenus(); if (!open) { checks.forEach((f) => f()); menu.classList.add('open'); } };
-      const menu = el('div', { class: 'menu' }, el('button', { 'aria-haspopup': 'true', onpointerdown: (e) => { if (e.button === 0) { e.preventDefault(); toggle(); } }, onclick: (e) => { e.stopPropagation(); if (e.detail === 0) toggle(); } }, label),
-        el('div', { class: 'drop' }, items.map((it) => (it === '-' ? el('hr') : item(it)))));
+      const toggle = () => { const open = menu.classList.contains('open'); closeMenus(); if (!open) { refresh(); menu.classList.add('open'); top.setAttribute('aria-expanded', 'true'); } };
+      const top = el('button', { 'aria-haspopup': 'menu', 'aria-expanded': 'false', onpointerdown: (e) => { if (e.button === 0) { e.preventDefault(); toggle(); } }, onclick: (e) => { e.stopPropagation(); if (e.detail === 0) toggle(); } }, label);
+      const menu = el('div', { class: 'menu' }, top, el('div', { class: 'drop', role: 'menu', 'aria-label': label }, nodes));
       bar.append(menu);
     }
     bar.append(el('span', { class: 'title', id: 'title' }));
-    const closeMenus = () => document.querySelectorAll('#menubar .menu.open').forEach((m) => m.classList.remove('open'));
+    const closeMenus = () => document.querySelectorAll('#menubar .menu.open').forEach((m) => { closeSubmenus(m); m.classList.remove('open'); m.firstElementChild.setAttribute('aria-expanded', 'false'); });
     document.addEventListener('click', closeMenus);
+    // keyboard in an open menu (before bindKeys): ArrowDown from its menu-bar button (or from anywhere after a pointer opened it) to the first item
+    document.addEventListener('keydown', (e) => {
+      const open = bar.querySelector('.menu.open');
+      if (!open || menuKey(e, open, () => { closeMenus(); open.firstElementChild.focus(); })) return;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { const b = [...open.querySelectorAll(':scope > .drop > button, :scope > .drop > .sub > button')].filter((n) => n.getClientRects().length); (e.key === 'ArrowDown' ? b[0] : b.at(-1))?.focus(); }
+      else if (e.key === 'Escape') { closeMenus(); open.firstElementChild.focus(); }
+      else return;
+      e.preventDefault(); e.stopPropagation();
+    }, true);
     document.addEventListener('pointerdown', (e) => { if (!e.target.closest?.('#menubar .menu')) closeMenus(); });
   }
 

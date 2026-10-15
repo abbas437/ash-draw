@@ -119,6 +119,7 @@ try {
 
   step = 'Floating from the View menu: the canvas uses the full width; drag the title strip; the position persists';
   await page.locator('#menubar .menu > button', { hasText: 'View' }).click();
+  await page.locator('#menubar .menu.open .sub > button', { hasText: 'Toolbars' }).hover();
   await page.locator('#menubar .drop').getByRole('menuitemcheckbox', { name: 'Tool panel layout: Floating', exact: true }).click(); // not "Floating compact"
   await page.waitForFunction((w) => window.app.vp.view.width > w, railW, { timeout: 3000 });
   const head = await page.locator('#tools .float-head').boundingBox();
