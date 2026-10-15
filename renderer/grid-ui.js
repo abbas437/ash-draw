@@ -1,6 +1,6 @@
 // ASH Draw Studio - drawing grid settings: the GRID command (On/Off/Spacing/Major/Style, as in AutoCAD LT), F7 and the
 // GRID status bar button (app.js). Saved as settings 'grid.on', 'grid.spacing', 'grid.major', 'grid.style' and
-// 'grid.paperSpacing' (layouts, paper millimetres). The grid itself is drawn by viewport.js (src/core/grid.js).
+// 'grid.paperSpacing' (layouts, paper millimetres) and 'grid.snap' (GSNAP, F9; the SNAP command). The grid itself is drawn by viewport.js (src/core/grid.js).
 import { cleanSpacing, cleanMajor, cleanStyle } from '../src/core/grid.js';
 
 const api = () => globalThis.window?.api ?? {}; // read when used: this module is also loaded by node tests (via tools.js)
@@ -9,22 +9,24 @@ const save = (k, v) => api().settingsSet?.(k, v)?.catch?.(() => {});
 /** read the saved grid settings into vp.settings (start-up) */
 export async function loadGridSettings(app) {
   const st = app.vp.settings, get = (k) => api().settingsGet?.(k)?.catch?.(() => undefined);
-  const [on, spacing, major, style, paper] = await Promise.all(['grid.on', 'grid.spacing', 'grid.major', 'grid.style', 'grid.paperSpacing'].map(get));
+  const [on, spacing, major, style, paper, snap] = await Promise.all(['grid.on', 'grid.spacing', 'grid.major', 'grid.style', 'grid.paperSpacing', 'grid.snap'].map(get));
   if (typeof on === 'boolean') st.grid = on;
   st.gridSpacing = cleanSpacing(spacing) ?? st.gridSpacing;
   st.gridMajor = cleanMajor(major) ?? st.gridMajor;
   st.gridStyle = cleanStyle(style) ?? st.gridStyle;
   st.gridPaperSpacing = cleanSpacing(paper) ?? st.gridPaperSpacing;
+  if (typeof snap === 'boolean') st.gridSnap = snap;
   app.refreshToggles(); app.vp.requestRender();
 }
 
 /** change grid settings ({ on, spacing, major, style }; spacing applies to the space shown), save them and redraw */
-export function setGrid(app, { on, spacing, major, style }) {
+export function setGrid(app, { on, spacing, major, style, snap }) {
   const st = app.vp.settings;
   if (on !== undefined) { st.grid = !!on; save('grid.on', st.grid); }
   if (spacing !== undefined) {
     if (app.vp.layout) { st.gridPaperSpacing = spacing; save('grid.paperSpacing', spacing); } else { st.gridSpacing = spacing; save('grid.spacing', spacing); }
   }
+  if (snap !== undefined) { st.gridSnap = !!snap; save('grid.snap', st.gridSnap); }
   if (major !== undefined) { st.gridMajor = major; save('grid.major', major); }
   if (style !== undefined) { st.gridStyle = style; save('grid.style', style); }
   app.refreshToggles(); app.vp.requestRender();
@@ -71,5 +73,27 @@ export function createGridTools(h, { Tool }) {
     }
     key(e) { if (e.key === 'Enter') { this.cancel(); return true; } return super.key(e); } // Enter keeps <current>
   }
-  return { grid: new GridTool(h) };
+  /** SNAP [ON/OFF/Spacing] <spacing>: grid snap (F9). The snap spacing is the grid spacing (shared, not a separate setting). */
+  class SnapTool extends GridTool {
+    get prompt() {
+      const st = h.vp.settings;
+      if (this.ask === 'spacing') return `SNAP  snap spacing${h.vp.layout ? ' on paper (mm)' : ''} <${this.spacing}>`;
+      return `SNAP  specify snap spacing or [ON/OFF/Spacing] <${this.spacing}> (grid snap is ${st.gridSnap ? 'on' : 'off'})`;
+    }
+    text(s) {
+      const t = s.trim().toLowerCase();
+      if (!t) return false;
+      const num = /^[+]?\d*\.?\d+(e[-+]?\d+)?$/.test(t) ? Number(t) : NaN;
+      if (this.ask === 'spacing' || (num > 0 && Number.isFinite(num))) {
+        if (!(num > 0) || !Number.isFinite(num)) { h.toast('SNAP: the spacing must be a number greater than 0.'); return true; }
+        return this.finish({ spacing: num, snap: true }, `Snap spacing = ${num}${h.vp.layout ? ' mm' : ''} (shared with the grid)`);
+      }
+      if (t === 'on') return this.finish({ snap: true }, 'Grid snap on');
+      if (t === 'off') return this.finish({ snap: false }, 'Grid snap off');
+      if ('spacing'.startsWith(t)) { this.ask = 'spacing'; return true; }
+      h.toast('SNAP: type a spacing, ON, OFF or Spacing.');
+      return true;
+    }
+  }
+  return { grid: new GridTool(h), gsnap: new SnapTool(h) };
 }

@@ -18,7 +18,7 @@ import { setTextMeasure } from '../src/core/textMetrics.js';
 import { paperRects, paperMmPerUnit } from '../src/core/layouts.js';
 import { frameKey, framePlan, exposedStrips, sameKey } from '../src/core/frameCache.js';
 import { nextTask } from '../src/core/slice.js';
-import { drawGrid, GRID_DEFAULTS } from '../src/core/grid.js';
+import { drawGrid, snapToGrid, GRID_DEFAULTS } from '../src/core/grid.js';
 
 const DEFAULT_KINDS = new Set(['end', 'int', 'mid', 'cen', 'quad', 'node', 'ins', 'per']);
 const SNAP_PX = 12;
@@ -50,12 +50,12 @@ export class Viewport {
     this.tool = null;
     this.cursor = { x: 0, y: 0 };      // last resolved (snapped) world point
     this.rawCursor = { x: 0, y: 0 };
-    this.snapMarker = null;
+    this.snapMarker = null; this.gridMarker = null; // gridMarker: the grid point GSNAP snapped to, or null
     this.acquired = [];                // object snap tracking / extension points: [{at, path?}] (otrack.js)
     this._lastPoint = null;            // see the lastPoint accessor
     this.settings = { snap: true, ortho: false, polar: false, otrack: false, polarStep: 45, polarExtra: [], lineweights: false, transparency: true, dark: false, zoomFactor: ZOOMFACTOR_DEFAULT, kinds: new Set(DEFAULT_KINDS),
       // drawing grid (GRID / F7; renderer/grid-ui.js): model spacing in drawing units, layouts in paper millimetres
-      grid: GRID_DEFAULTS.on, gridSpacing: GRID_DEFAULTS.spacing, gridMajor: GRID_DEFAULTS.major, gridStyle: GRID_DEFAULTS.style, gridPaperSpacing: GRID_DEFAULTS.paperSpacing };
+      grid: GRID_DEFAULTS.on, gridSpacing: GRID_DEFAULTS.spacing, gridMajor: GRID_DEFAULTS.major, gridStyle: GRID_DEFAULTS.style, gridPaperSpacing: GRID_DEFAULTS.paperSpacing, gridSnap: GRID_DEFAULTS.snap };
     this.preview = null;               // (ctx, view, vp) => void drawn above the scene
     this.rubber = null;                // selection rectangle {a,b,crossing} in world coordinates
     this.layout = null;                // the layout shown (paper space; see layouts-ui.js), null = model space
@@ -181,7 +181,7 @@ export class Viewport {
   }
 
   // ---- point resolution (snap / ortho / polar) -------------------------------------------------
-  resolve(sx, sy, { from = this.lastPoint, snap = this.settings.snap, exclude } = {}) {
+  resolve(sx, sy, { from = this.lastPoint, snap = this.settings.snap, exclude, gridSnap = this.settings.gridSnap && this.tool?.tracks } = {}) {
     const raw = this.toWorld(sx, sy);
     this._checkParallel();
     let p = raw, marker = null;
@@ -191,11 +191,18 @@ export class Viewport {
       const s = resolveTracking(s0, this.acquired, raw, this.tolWorld, { otrack: st.otrack, ext: st.kinds.has('ext'), angles: trackAngles(st.polar, st.polarStep, st.polarExtra) });
       if (s) { p = { x: s.x, y: s.y }; marker = s; }
     }
+    let grid = null;
+    if (!marker && gridSnap) { grid = snapToGrid(raw, this.gridSnapSpacing()); p = grid; } // GSNAP (F9): only when no object snap / tracking point was found; ortho / polar then act on the grid point
     if (!marker && from) {
-      if (this.settings.ortho) p = orthoPoint(from, raw);
-      else if (this.settings.polar) { const r = polarPoint(from, raw, this.settings.polarStep, 5, this.settings.polarExtra); p = { x: r.x, y: r.y }; }
+      if (this.settings.ortho) p = orthoPoint(from, p);
+      else if (this.settings.polar) { const r = polarPoint(from, p, this.settings.polarStep, 5, this.settings.polarExtra); p = { x: r.x, y: r.y }; }
     }
-    return { p, raw, marker };
+    return { p, raw, marker, grid: grid && p.x === grid.x && p.y === grid.y ? grid : null };
+  }
+  /** grid snap spacing in world units: the configured grid spacing (not the adaptive one); layouts use paper millimetres */
+  gridSnapSpacing() {
+    const st = this.settings;
+    return this.layout ? st.gridPaperSpacing / paperMmPerUnit(this.layout.plot) : st.gridSpacing;
   }
 
   // ---- rendering -----------------------------------------------------------------------------
@@ -244,6 +251,7 @@ export class Viewport {
     if (this.parallel && this.lastPoint) this._drawParallelAcquired();
     if (this.acquired.length) this._drawAcquired();
     if (this.snapMarker) this._drawSnapMarker();
+    else if (this.gridMarker) this._drawGridMarker();
     this._drawCrosshair();
   }
 
@@ -363,6 +371,11 @@ export class Viewport {
     ctx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y); ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
     ctx.restore();
   }
+  /** GSNAP: a small square at the snapped grid point */
+  _drawGridMarker() {
+    const s = this.toScreen(this.gridMarker), c = this.ctx;
+    c.save(); c.strokeStyle = this.inkColor; c.lineWidth = 1; c.setLineDash([]); c.strokeRect(Math.round(s.x) - 2.5, Math.round(s.y) - 2.5, 5, 5); c.restore();
+  }
   _drawSnapMarker() {
     const m = this.snapMarker, s = this.toScreen(m), c = this.ctx;
     c.save(); c.strokeStyle = this.inkColor; c.lineWidth = 1.5;
@@ -475,7 +488,7 @@ export class Viewport {
         return;
       }
       const res = this.resolve(sx, sy);
-      this.cursor = res.p; this.snapMarker = res.marker;
+      this.cursor = res.p; this.snapMarker = res.marker; this.gridMarker = res.grid;
       if (e.button === 2) { this.tool?.rightClick?.(res.p, mk(e, res.raw, sx, sy)); this.requestRender(); return; }
       if (e.button !== 0) return;
       cv.setPointerCapture(e.pointerId);
@@ -504,7 +517,7 @@ export class Viewport {
       this._down = null;
       this.requestRender();
     });
-    cv.addEventListener('pointerleave', () => { this._dropMove(); this.showCross = false; this.snapMarker = null; this.requestRender(); this.emit('cursor', null); });
+    cv.addEventListener('pointerleave', () => { this._dropMove(); this.showCross = false; this.snapMarker = null; this.gridMarker = null; this.requestRender(); this.emit('cursor', null); });
     cv.addEventListener('pointerenter', () => { this.showCross = true; });
     window.addEventListener('keydown', () => this._flushMove(), true); // tools reading the cursor see the latest move
     window.addEventListener('keydown', (e) => { if (e.code === 'Space' && document.activeElement === cv) { this._spaceDown = true; this._syncCursor(); } });
@@ -519,7 +532,7 @@ export class Viewport {
   _moved(sx, sy, e, resolveOpts) {
     this.showCross = true;
     const res = this.resolve(sx, sy, resolveOpts);
-    this.cursor = res.p; this.rawCursor = res.raw; this.snapMarker = res.marker;
+    this.cursor = res.p; this.rawCursor = res.raw; this.snapMarker = res.marker; this.gridMarker = res.grid;
     this._trackHover(res.raw);
     if (resolveOpts?.snap !== false) this._acquireHover(res.raw, res.marker);
     if (this._down && Math.hypot(sx - this._down.sx, sy - this._down.sy) > 4) this._down.moved = true;

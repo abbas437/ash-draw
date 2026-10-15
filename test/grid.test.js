@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { gridStep, axisPositions, gridLayout, drawGrid, GRID_MAX, GRID_MIN_PX, cleanSpacing, cleanMajor, cleanStyle } from '../src/core/grid.js';
+import { gridStep, axisPositions, gridLayout, drawGrid, GRID_MAX, GRID_MIN_PX, cleanSpacing, cleanMajor, cleanStyle, snapToGrid } from '../src/core/grid.js';
 
 const view = (zoom, cx = 0, cy = 0, width = 1000, height = 600) => ({ cx, cy, zoom, width, height });
 
@@ -79,4 +79,16 @@ test('saved values are validated', () => {
   assert.equal(cleanSpacing(2.5), 2.5); assert.equal(cleanSpacing(0), null); assert.equal(cleanSpacing('10'), null); assert.equal(cleanSpacing(Infinity), null);
   assert.equal(cleanMajor(5), 5); assert.equal(cleanMajor(0), null); assert.equal(cleanMajor(2.5), null);
   assert.equal(cleanStyle('dots'), 'dots'); assert.equal(cleanStyle('cross'), null);
+});
+
+test('snapToGrid rounds to the nearest grid point, negatives included, with a paper-space spacing', () => {
+  assert.deepEqual(snapToGrid({ x: 13, y: 26 }, 10), { x: 10, y: 30 });
+  assert.deepEqual(snapToGrid({ x: -13, y: -26 }, 10), { x: -10, y: -30 });
+  assert.deepEqual(snapToGrid({ x: -4, y: 4 }, 10), { x: 0, y: 0 }); // no -0
+  assert.ok(Object.is(snapToGrid({ x: -4, y: -4 }, 10).x, 0));
+  const k = 10 / 25.4; // a 10 mm paper spacing expressed in the sheet's drawing units
+  const q = snapToGrid({ x: 1.07, y: -0.93 }, k);
+  assert.ok(Math.abs(q.x / k - Math.round(q.x / k)) < 1e-9 && Math.abs(q.y / k - Math.round(q.y / k)) < 1e-9);
+  assert.deepEqual(snapToGrid({ x: 1.3, y: 3.7 }, 2.5), { x: 2.5, y: 2.5 });
+  assert.deepEqual(snapToGrid({ x: 3.3, y: 4.4 }, 0), { x: 3.3, y: 4.4 }); // unusable spacing: unchanged
 });

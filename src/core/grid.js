@@ -2,7 +2,7 @@
 // area, and drawing them behind the scene (renderer/viewport.js). Display only: plots and exports never draw it.
 
 /** settings defaults: model space in drawing units, layouts in paper millimetres */
-export const GRID_DEFAULTS = { on: false, spacing: 10, major: 5, style: 'lines', paperSpacing: 10 };
+export const GRID_DEFAULTS = { on: false, spacing: 10, major: 5, style: 'lines', paperSpacing: 10, snap: false };
 export const GRID_STYLES = ['lines', 'dots'];
 /** below this on-screen spacing (CSS px) the grid coarsens */
 export const GRID_MIN_PX = 8;
@@ -40,6 +40,9 @@ export function axisPositions(lo, hi, step, major) {
   for (let i = i0; i <= i1; i++) out.push({ v: i * step, major: major > 1 && i % major === 0 });
   return out;
 }
+
+/** a point rounded to the nearest grid point of `spacing` (world units; the grid origin is 0,0) */
+export const snapToGrid = (p, spacing) => (spacing > 0 ? { x: Math.round(p.x / spacing) * spacing + 0, y: Math.round(p.y / spacing) * spacing + 0 } : { x: p.x, y: p.y });
 
 /** the visible grid of a view: { step, xs, ys } (world positions), or null; dots are every (x, y) pair */
 export function gridLayout(view, { spacing, major, style }, max = GRID_MAX) {
