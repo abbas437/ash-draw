@@ -434,3 +434,15 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 #app.tools-float #tools { position:fixed; z-index:25; width:100px; max-height:75vh; padding-top:0; border:1px solid var(--line); border-radius:4px; box-shadow:0 6px 18px var(--shadow); }
 #app.tools-float:not(.no-tool-labels) #tools { width:150px; }
 #app.tools-float #tools .float-head { display:block; position:sticky; top:0; z-index:1; margin:0 -4px; padding:3px 6px; background:var(--panel); border-bottom:1px solid var(--line); color:var(--dim); font-size:11px; cursor:move; user-select:none; touch-action:none; }
+/* Tool panel docked on the right of the canvas (View > Tool panel: Right); floating opacity and dock hint (tool-rail.js) */
+#app.tools-right #main { grid-template-columns: 1fr var(--tools-w, 138px) var(--side-w, 260px); grid-template-areas:"docs tools side"; }
+#app.tools-right:not(.tools-float) #tools { border-right:none; border-left:1px solid var(--line); }
+#app.tools-float #tools, #app.tools-rail #tools .rail-fly { opacity:var(--tools-op, 1); transition:opacity .12s ease-out; }
+#app.tools-ophover.tools-float #tools:hover, #app.tools-ophover.tools-rail #tools .rail-fly:hover { opacity:1; }
+#app.tools-float #tools .float-head { display:flex; align-items:center; justify-content:space-between; gap:4px; }
+#app.tools-float #tools .float-head .tp-mode { align-self:center; padding:0 3px; }
+.dock-hint { position:absolute; top:0; bottom:0; width:138px; z-index:24; pointer-events:none; background:var(--accent); opacity:.22; border:2px dashed var(--accent); box-sizing:border-box; }
+.dock-hint[hidden] { display:none; } .dock-hint[data-side=left] { left:0; } .dock-hint[data-side=right] { right:0; }
+.tp-menu .tp-sep { height:1px; margin:4px 0; background:var(--line); }
+.tp-menu .tp-op { display:flex; align-items:center; gap:6px; padding:2px 8px 2px 6px; }
+.tp-menu .tp-op input { flex:1; min-width:70px; } .tp-menu .tp-op-val { min-width:3.2em; text-align:right; color:var(--dim); font-variant-numeric:tabular-nums; }

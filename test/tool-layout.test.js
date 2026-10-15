@@ -31,12 +31,22 @@ test('every Quick Access command is in the panel definition (or is a named app c
   assert.equal(quickCommand('nope'), null);
 });
 
-test('tool panel placement: Left unless a saved placement is top or hidden', async () => {
+test('tool panel placement: Left unless a saved placement is right, top or hidden', async () => {
   const { placementFrom } = await import('../renderer/tool-panel.js');
   assert.equal(placementFrom(undefined), 'left');
   assert.equal(placementFrom('bogus'), 'left');
   assert.equal(placementFrom('top'), 'top');
+  assert.equal(placementFrom('right'), 'right');
   assert.equal(placementFrom('hidden'), 'hidden');
+});
+
+test('floating tool panel: opacity 30-100 %, docking at the canvas edges', async () => {
+  const { opacityFrom, dockSideAt, DOCK_SNAP } = await import('../renderer/tool-rail.js');
+  assert.equal(opacityFrom(undefined), 100); assert.equal(opacityFrom('40'), 100); assert.equal(opacityFrom(10), 30); assert.equal(opacityFrom(140), 100); assert.equal(opacityFrom(42.4), 42);
+  const stage = { left: 0, right: 1000 };
+  assert.equal(dockSideAt({ left: DOCK_SNAP, right: DOCK_SNAP + 150 }, stage), 'left');
+  assert.equal(dockSideAt({ left: 850 - DOCK_SNAP, right: 1000 - DOCK_SNAP }, stage), 'right');
+  assert.equal(dockSideAt({ left: DOCK_SNAP + 1, right: DOCK_SNAP + 151 }, stage), null);
 });
 
 test('Pan sits right next to Select in the side panel and in the Quick Access row', () => {
