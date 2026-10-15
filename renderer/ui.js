@@ -5,6 +5,7 @@ import { aciToRgb } from '../src/core/aci.js';
 import { transparencyText, parseTransparency, percentFromAlpha } from '../src/core/model.js';
 import { viewportFields } from './layouts-ui.js';
 import { editEntity, dimTextEdit } from './grips.js';
+import { iconSvg } from './icons.js';
 
 export function el(tag, attrs = {}, ...kids) {
   const n = document.createElement(tag);
@@ -123,13 +124,13 @@ export function renderLayers(app) {
     const row = el('div', { class: `layer${app.state.layer === l.name ? ' current' : ''}`, tabindex: '0', 'data-layer': l.name,
       onkeydown: (e) => { if (e.key === 'F2' && e.target === row) { e.preventDefault(); e.stopPropagation(); startRename(app, row, l); } },
       oncontextmenu: (e) => { e.preventDefault(); popMenu(e, [['Rename', () => startRename(app, row, l)], ['Make current', () => current(l.name)], ['Linetype / lineweight…', () => layerPropsDialog(app, l)]]); } },
-    el('button', { class: 'icon lay-on', title: l.visible !== false ? 'Turn layer off' : 'Turn layer on', onclick: () => layerOps.toggleOn(app, l) }, l.visible !== false ? '◉' : '○'),
-    el('button', { class: 'icon lay-frz', title: l.frozen ? 'Thaw layer' : 'Freeze layer', onclick: () => layerOps.toggleFreeze(app, l) }, l.frozen ? '❄' : '☀'),
+    el('button', { class: 'icon lay-on', title: l.visible !== false ? 'Turn layer off' : 'Turn layer on', 'data-state': l.visible !== false ? 'on' : 'off', onclick: () => layerOps.toggleOn(app, l) }, iconSvg(l.visible !== false ? 'layer-on' : 'layer-off', 14)),
+    el('button', { class: 'icon lay-frz', title: l.frozen ? 'Thaw layer' : 'Freeze layer', 'data-state': l.frozen ? 'frozen' : 'thawed', onclick: () => layerOps.toggleFreeze(app, l) }, iconSvg(l.frozen ? 'layer-freeze' : 'layer-thaw', 14)),
     // VP freeze: frozen in the current layout viewport only (MSPACE, or one viewport selected); hidden elsewhere
     ...[app.layerVpButton?.(l)].filter(Boolean),
-    el('button', { class: 'icon', title: l.locked ? 'Unlock layer' : 'Lock layer', onclick: () => layerOps.toggleLock(app, l) }, l.locked ? '🔒' : '🔓'),
+    el('button', { class: 'icon lay-lock', title: l.locked ? 'Unlock layer' : 'Lock layer', 'data-state': l.locked ? 'locked' : 'unlocked', onclick: () => layerOps.toggleLock(app, l) }, iconSvg(l.locked ? 'layer-lock' : 'layer-unlock', 14)),
     // Plot / No plot: a non-plotting layer is drawn on screen but left out of Print and Plot to PDF
-    el('button', { class: `icon lay-plot${l.plot === false ? ' off' : ''}`, title: l.plot === false ? 'Not plotted (click to plot this layer)' : 'Plotted (click to stop plotting this layer)', onclick: () => { setLayerProps(session, l.name, { plot: l.plot === false }); } }, '🖶'),
+    el('button', { class: `icon lay-plot${l.plot === false ? ' off' : ''}`, title: l.plot === false ? 'Not plotted (click to plot this layer)' : 'Plotted (click to stop plotting this layer)', 'data-state': l.plot === false ? 'noplot' : 'plot', onclick: () => { setLayerProps(session, l.name, { plot: l.plot === false }); } }, iconSvg(l.plot === false ? 'layer-noplot' : 'layer-plot', 14)),
     el('span', { class: 'swatch', style: `background:${cssOfAci(Math.abs(l.color))}`, title: 'Layer colour (click to change)', onclick: (e) => colorMenu(e, (c) => setLayerProps(session, l.name, { color: c })) }),
     el('span', { class: 'lname', title: `${l.name}\nLinetype ${l.linetype ?? 'CONTINUOUS'} · Lineweight ${lwText(l.lineweight)} · Transparency ${l.alpha >= 0 ? percentFromAlpha(l.alpha) : 0} % · ${used.get(l.name) ?? 0} object(s)\nDouble-click or F2 to rename; right-click for more`,
       ondblclick: () => startRename(app, row, l), text: l.name }),

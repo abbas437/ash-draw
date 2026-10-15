@@ -3,15 +3,16 @@
 // order, filter match and operations (ui.js layerOps), and picking a layer with objects selected moves them like
 // Properties > Layer (ui.js applyProps, one undo step). app.refreshPanels() refreshes it with the Layers panel.
 import { el, sortedLayers, layerMatches, layerCss, layerOps, applyProps } from './ui.js';
+import { iconSvg } from './icons.js';
 
 const ROW_H = 22; // px, fixed so only the rows in view are built (thousands of layers)
 const OVERSCAN = 6;
 
-/** the combo's state icons and toggles: [class, title when set, title when not, glyph set, glyph not, is set, operation] */
+/** the combo's state icons and toggles: [class, title when set, title when not, [icon id, data-state] set, [icon id, data-state] not, is set, operation] */
 const FLAGS = [
-  ['lc-on', 'Turn layer off', 'Turn layer on', '◉', '○', (l) => l.visible !== false, layerOps.toggleOn],
-  ['lc-frz', 'Thaw layer', 'Freeze layer', '❄', '☀', (l) => !!l.frozen, layerOps.toggleFreeze],
-  ['lc-lock', 'Unlock layer', 'Lock layer', '🔒', '🔓', (l) => !!l.locked, layerOps.toggleLock],
+  ['lc-on', 'Turn layer off', 'Turn layer on', ['layer-on', 'on'], ['layer-off', 'off'], (l) => l.visible !== false, layerOps.toggleOn],
+  ['lc-frz', 'Thaw layer', 'Freeze layer', ['layer-freeze', 'frozen'], ['layer-thaw', 'thawed'], (l) => !!l.frozen, layerOps.toggleFreeze],
+  ['lc-lock', 'Unlock layer', 'Lock layer', ['layer-lock', 'locked'], ['layer-unlock', 'unlocked'], (l) => !!l.locked, layerOps.toggleLock],
 ];
 
 /** build the combo; returns { el, refresh() }. app.renderQuickAccess() places el after the Layers button. */
@@ -31,9 +32,9 @@ export function initLayerCombo(app) {
     return ents.every((e) => e.layer === ents[0].layer) ? ents[0].layer : null;
   };
   const icons = (l, live) => FLAGS.map(([cls, tOn, tOff, gOn, gOff, isSet, op]) => {
-    const on = isSet(l), attrs = { class: `${cls}${on ? ' set' : ''}`, title: on ? tOn : tOff, text: on ? gOn : gOff };
-    if (!live) return el('span', { ...attrs, title: null, 'aria-hidden': 'true' });
-    return el('button', { ...attrs, type: 'button', tabindex: '-1', onclick: () => op(app, app.doc.layers.get(l.name) ?? l) });
+    const on = isSet(l), [icon, state] = on ? gOn : gOff, attrs = { class: `${cls}${on ? ' set' : ''}`, title: on ? tOn : tOff, 'data-state': state };
+    if (!live) return el('span', { ...attrs, title: null, 'aria-hidden': 'true' }, iconSvg(icon, 14));
+    return el('button', { ...attrs, type: 'button', tabindex: '-1', onclick: () => op(app, app.doc.layers.get(l.name) ?? l) }, iconSvg(icon, 14));
   });
 
   function renderHead() {

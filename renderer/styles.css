@@ -201,6 +201,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 .layer .cur { color:var(--accent); width:18px; text-align:center; }
 .layer button.icon, .layer .swatch { flex:none; }
 .layer button.icon { width:18px; padding:0; }
+.layer button.icon > svg { display:block; margin:auto; }
 .layer .swatch { margin:0 2px; }
 .lay-search { display:flex; align-items:center; gap:2px; margin-bottom:4px; }
 .sym-row { display:flex; flex-wrap:wrap; align-items:center; gap:4px; margin-bottom:4px; }
@@ -231,7 +232,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 #sym-float .phead { cursor:move; } #sym-float .phead::before { display:none; }
 #sym-status { font-size:11px; color:var(--dim); }
 .lay-search input { flex:1; min-width:0; }
-.layer .lay-plot.off { opacity:.35; text-decoration:line-through; }
+.layer .lay-plot.off { opacity:.35; }
 .layer .lname-edit { flex:1 1 auto; min-width:160px; width:0; font:inherit; padding:0 2px; }
 .lay-none { color:var(--dim); padding:2px 0; font-style:italic; }
 .lay-prop { display:block; margin:6px 0; }
@@ -398,6 +399,7 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 #layer-combo-list .lc-row:hover { background:var(--hover); }
 #layer-combo-list .lc-row button { flex:none; width:20px; height:18px; padding:0; border-color:transparent; background:none; font-size:11px; }
 #layer-combo-list .lc-row button:hover { border-color:var(--line); }
+#layer-combo .lc-head > span > svg, #layer-combo-list .lc-row button > svg { display:block; margin:auto; }
 #layer-combo-list .lc-row .lc-name { cursor:pointer; padding-left:2px; }
 #layer-combo-list .lc-none { padding:4px; color:var(--dim); }
 /* tool panel layouts (tool-rail.js): Compact rail, Floating, and the ⋯ layout menu */

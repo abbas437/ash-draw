@@ -87,13 +87,13 @@ try {
   await closed();
   assert.deepEqual(await lay('DOOR'), { frozen: false, color: 7 });
   assert.deepEqual(await lay('WALL'), { frozen: false, color: 7 });
-  assert.equal(await page.locator('#layers .layer[data-layer="DOOR"] .lay-frz').textContent(), '☀');
+  assert.equal(await page.locator('#layers .layer[data-layer="DOOR"] .lay-frz').getAttribute('data-state'), 'thawed');
 
   step = 'one undo takes the restore back';
   await typeCmd('u');
   assert.deepEqual(await lay('DOOR'), { frozen: true, color: 7 });
   assert.deepEqual(await lay('WALL'), { frozen: false, color: 1 });
-  assert.equal(await page.locator('#layers .layer[data-layer="DOOR"] .lay-frz').textContent(), '❄');
+  assert.equal(await page.locator('#layers .layer[data-layer="DOOR"] .lay-frz').getAttribute('data-state'), 'frozen');
 
   step = 'restore options: colour unchecked -> only the freeze comes back; the choice is saved as layerstates.restoreMask';
   await open('LMAN');
