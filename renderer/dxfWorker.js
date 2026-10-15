@@ -21,5 +21,5 @@ self.onmessage = async ({ data }) => {
     self.postMessage({ error: { message: String(err?.message ?? err), code: err?.code ?? null } });
     return;
   } finally { data = null; } // the DXF bytes are not kept while the document is posted
-  try { await postDocInBatches(doc, (m) => self.postMessage(m), { ready: credits.ready }); } catch (err) { self.postMessage({ error: { message: `The drawing could not be handed to the window (${err.message}).`, code: null } }); }
+  try { await postDocInBatches(doc, (m, transfer) => self.postMessage(m, transfer), { ready: credits.ready }); } catch (err) { self.postMessage({ error: { message: `The drawing could not be handed to the window (${err.message}).`, code: null } }); }
 };
