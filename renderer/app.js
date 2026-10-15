@@ -28,6 +28,7 @@ import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
 import { loadDrawingXrefs, xrefPanel } from './xref-panel.js';
 import { TOOL_BUTTONS, buildToolPanel, iconButton, quickCommand, canvasDarkFrom, labelsFrom, placementFrom, PLACEMENTS, collapsedFrom, applyCollapsed, toolTitle, moreButton, fitToolBand, initToolBand } from './tool-panel.js';
 import { iconSvg } from './icons.js';
+import { initToolModes, TOOL_MODES, MODE_LABELS } from './tool-rail.js';
 import { initSidePanel, applySide, markHead, windowTitle } from './side-panel.js';
 import { initSymbolsPanel } from './symbols-ui.js';
 import { symcountDialog } from './symcount-ui.js';
@@ -69,6 +70,7 @@ class App {
     this.autosave = initAutosave(this); // timed copies of unsaved drawings, recovered at the next start
     this.buildMenus();
     this.buildToolbar();
+    this.toolModes = initToolModes(this, api, el); // tool panel layout: Full / Compact rail / Floating (tool-rail.js)
     this.buildStatus();
     this.bindKeys();
     this.bindDrop();
@@ -692,6 +694,7 @@ class App {
         ['Show lineweights', 'F9', () => this.toggle('lineweights')], ['Model space background: dark', '', () => this.toggle('dark'), () => this.vp.settings.dark], '-',
         ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark'],
         ...PLACEMENTS.map((p) => [`Tool panel: ${p[0].toUpperCase()}${p.slice(1)}`, '', () => this.setToolPlacement(p), () => this.toolPlacement === p]),
+        ...TOOL_MODES.map((m) => [`Tool panel layout: ${MODE_LABELS[m]}`, '', () => this.toolModes.setMode(m), () => this.toolModes.mode === m]),
         ['Tool labels', '', () => this.setToolPanel('labels', !this.panelOpts.labels), () => this.panelOpts.labels],
         ['Tool group colours', '', () => this.setToolPanel('colours', !this.panelOpts.colours), () => this.panelOpts.colours],
         ['Tools: Compact', '', () => this.setFolded(compactKeys()), () => foldMode(this.collapsed) === 'compact'],
@@ -761,6 +764,7 @@ class App {
   /** (re)build the tool panel's groups from the customized layout (View > Customize tools…), before the Hatch group */
   renderToolPanel() {
     const box = document.getElementById('tools');
+    this.toolModes?.close(); // a Compact rail flyout gives its group's tools back first
     for (const g of box.querySelectorAll('.tgroup[data-group]')) g.remove();
     const frag = document.createDocumentFragment();
     buildToolPanel(frag, el, (id) => this.setTool(id), (group, body) => {
@@ -777,6 +781,7 @@ class App {
     for (const b of box.querySelectorAll('button[data-tool]')) b.classList.toggle('active', b.dataset.tool === this.toolId);
     this.refreshDimStyles();
     this.fitBand();
+    this.toolModes?.refresh();
   }
   /** Top band: push the groups that do not fit out to "Group ▾" buttons (tool-panel.js fitToolBand) */
   fitBand() { fitToolBand(document.getElementById('tools'), this.toolPlacement === 'top'); }
@@ -837,6 +842,7 @@ class App {
   /** View > Tool panel: 'left' (column), 'top' (band above the canvas) or 'hidden'; a class on #app, saved as 'tools.placement' */
   setToolPlacement(place, save = true) {
     this.toolPlacement = place = placementFrom(place);
+    if (save && place !== 'left' && this.toolModes && this.toolModes.mode !== 'full') this.toolModes.setMode('full'); // Top band / hidden: a Full panel
     const app = document.getElementById('app');
     for (const p of PLACEMENTS) app.classList.toggle(`tools-${p}`, p === place);
     this.fitBand();
