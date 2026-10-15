@@ -6,6 +6,7 @@ import { makeViewport, viewportScale, modelViewThrough, viewportFromModelView, v
 import { recordViewportView, viewportView } from '../src/core/edit.js';
 import { Tool, TOOL_ALIASES } from './tools.js';
 import { el, modal, message, toast } from './ui.js';
+import { initVpFreeze } from './vpfreeze-ui.js';
 import { addLayout, copyLayout, renameLayout, deleteLayout, moveLayout, setPageSetup, findLayout, layoutsOf, layoutNameError } from '../src/core/layoutmgmt.js';
 
 /** the drawing seen through one layout: entities are the layout's, everything else is the drawing's */
@@ -389,6 +390,7 @@ export function initLayouts(app) {
   app.spaceBar = el('div', { id: 'spacebar', role: 'tablist', 'aria-label': 'Model and layouts' });
   document.getElementById('docs').append(app.spaceBar);
   app.tools.mview = mviewTool(app);
+  initVpFreeze(app);
   TOOL_ALIASES.mv = TOOL_ALIASES.mview = 'mview';
   const vp = app.vp;
   const ms = () => {
