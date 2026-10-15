@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createOdaBridge, createDwgService, findOdaConverter, implausibleConversion, odaArgs, odaVersion, ODA_DWG_VERSIONS, ODA_HINT, ODA_TIMEOUT_MS } from './odaConverter.js';
+import { createOdaBridge, createDwgService, emptyReferencedBlocks, findOdaConverter, implausibleConversion, odaArgs, odaVersion, ODA_DWG_VERSIONS, ODA_HINT, ODA_TIMEOUT_MS } from './odaConverter.js';
 import { DWG_SAVE_VERSIONS } from '../src/core/dwgpref.js';
 
 const skip = process.platform === 'win32' ? 'the stub converter is a shebang script' : false;
@@ -233,4 +233,75 @@ test('ODA time limit grows with the drawing: 10 min floor, 15 s per MB, 1 h cap'
   assert.equal(odaTimeoutFor(1 * MiB), ODA_TIMEOUT_MS);
   assert.equal(odaTimeoutFor(115.4 * MiB), 116 * 15_000); // the reviewer's 115 MB drawing: 29 min
   assert.equal(odaTimeoutFor(1000 * MiB), 60 * 60_000);
+});
+
+// DXF text from [code, value] pairs, codes right-aligned to 3 like AutoCAD writes them
+const dxf = (pairs, eol = '\n') => pairs.map(([c, v]) => `${String(c).padStart(3)}${eol}${v}${eol}`).join('');
+const blk = (name, ...ents) => [[0, 'BLOCK'], [5, '1F'], [8, '0'], [2, name], [70, 0], [10, 0], [20, 0], [30, 0], [3, name], ...ents.flat(), [0, 'ENDBLK'], [8, '0']];
+const ins = (name) => [[0, 'INSERT'], [8, 'A-WALL'], [2, name], [10, 5], [20, 5]];
+const line = [[0, 'LINE'], [8, 'A-WALL'], [10, 0], [20, 0], [11, 1], [21, 1]];
+const blocksDxf = (eol) => dxf([
+  [0, 'SECTION'], [2, 'HEADER'], [9, '$ACADVER'], [1, 'AC1032'], [0, 'ENDSEC'],
+  [0, 'SECTION'], [2, 'BLOCKS'],
+  ...blk('*Model_Space'), ...blk('*Paper_Space'),
+  ...blk('room tag'), // referenced (as ROOM TAG) and empty
+  ...blk('door', line), // referenced, not empty
+  ...blk('unused'), // empty, never inserted
+  ...blk('BUILDING F -GF-ARC'), // empty, inserted only from inside another block
+  ...blk('level-floor', line, ins('BUILDING F -GF-ARC')),
+  [0, 'ENDSEC'],
+  [0, 'SECTION'], [2, 'ENTITIES'], ...ins('ROOM TAG'), ...ins('door'), ...ins('level-floor'), ...ins('*Paper_Space'), ...line, [0, 'ENDSEC'],
+  [0, 'EOF'],
+], eol);
+
+test('emptyReferencedBlocks: referenced blocks without entities, case-insensitive, nested INSERTs, CRLF; * blocks ignored', () => {
+  for (const eol of ['\n', '\r\n']) {
+    const bytes = new TextEncoder().encode(blocksDxf(eol));
+    assert.deepEqual(emptyReferencedBlocks(bytes), { count: 2, names: ['room tag', 'BUILDING F -GF-ARC'] }, JSON.stringify(eol));
+    assert.deepEqual(emptyReferencedBlocks(Buffer.from(bytes), 1), { count: 2, names: ['room tag'] }, 'Buffer input, name limit');
+  }
+  assert.deepEqual(emptyReferencedBlocks(new TextEncoder().encode(KNOWN_DXF)), { count: 0, names: [] });
+  assert.deepEqual(emptyReferencedBlocks(new Uint8Array(0)), { count: 0, names: [] });
+  // a view into a larger buffer is read from its own offset
+  const full = new TextEncoder().encode(`junk\n${blocksDxf('\n')}`);
+  assert.equal(emptyReferencedBlocks(full.subarray(5)).count, 2);
+});
+
+const libreDxf = (text) => ({ calls: 0, available: async () => ({ available: true, version: '0.13.3' }), async toDxf() { this.calls++; return { dxfBytes: new TextEncoder().encode(text), errorCount: 3, log: 'ERROR: a', converter: 'LibreDWG' }; } });
+test('empty referenced blocks from LibreDWG: ODA used when it works, else the LibreDWG drawing with a warning', async () => {
+  const text = blocksDxf('\n');
+  // ODA installed and working: its result is used
+  const ok = service(libreDxf(text), { mode: 'auto' }, '/x/ODAFileConverter.exe');
+  const r = await ok.svc.toDxf(dwg);
+  assert.deepEqual([r.engine, r.converter, r.warnings], ['oda', 'ODA', undefined]);
+  assert.deepEqual(ok.used, ['/x/ODAFileConverter.exe']);
+  // no ODA: the LibreDWG drawing, with a warning that suggests installing ODA
+  for (const mode of ['auto', 'libredwg']) {
+    const lib = libreDxf(text);
+    const n = await service(lib, { mode }, null).svc.toDxf(dwg);
+    assert.deepEqual([n.engine, n.converter, n.errorCount, n.log, lib.calls], ['libredwg', 'LibreDWG', 3, 'ERROR: a', 1], mode);
+    assert.equal(n.warnings.length, 1);
+    assert.match(n.warnings[0], /^2 blocks came through empty from the built-in converter \(e\.g\. room tag, BUILDING F -GF-ARC\) — walls, tags or symbols may be missing\. Install the free ODA File Converter/);
+    assert.equal(/Preferences/.test(n.warnings[0]), mode === 'libredwg', mode);
+  }
+  // ODA installed but failing: the LibreDWG drawing, the warning says ODA failed and does not suggest the install
+  const failing = service(libreDxf(text), { mode: 'auto' }, '/x/ODAFileConverter.exe', false);
+  const f = await failing.svc.toDxf(dwg);
+  assert.equal(f.engine, 'libredwg');
+  assert.match(f.warnings[0], /blocks came through empty[\s\S]*ODA File Converter was tried as well but could not convert this DWG \(ODA crashed\)/);
+  assert.doesNotMatch(f.warnings[0], /Install/);
+  assert.deepEqual(failing.used, ['/x/ODAFileConverter.exe']);
+  // earlier LibreDWG warnings are kept
+  const warned = { ...libreDxf(text), async toDxf() { return { dxfBytes: new TextEncoder().encode(text), warnings: ['Warning: x'] }; } };
+  assert.deepEqual((await service(warned, { mode: 'auto' }, null).svc.toDxf(dwg)).warnings.map((w) => w.slice(0, 9)), ['Warning: ', '2 blocks ']);
+});
+
+test('clean LibreDWG output: ODA is not run and no warning is added; ODA output is not scanned', async () => {
+  const clean = service(libreDxf(dxf([[0, 'SECTION'], [2, 'BLOCKS'], ...blk('door', line), [0, 'ENDSEC'], [0, 'SECTION'], [2, 'ENTITIES'], ...ins('door'), [0, 'ENDSEC'], [0, 'EOF']])), { mode: 'auto' }, '/x/ODAFileConverter.exe');
+  const r = await clean.svc.toDxf(dwg);
+  assert.deepEqual([r.engine, r.warnings, clean.used], ['libredwg', undefined, []]);
+  const text = blocksDxf('\n');
+  const odaOnly = createDwgService({ libre: libreDxf(text), getConfig: () => ({ mode: 'oda' }), detectOda: async () => '/x/ODAFileConverter.exe', makeOda: () => ({ toDxf: async () => ({ dxfBytes: new TextEncoder().encode(text) }) }) });
+  const o = await odaOnly.toDxf(dwg);
+  assert.deepEqual([o.engine, o.warnings], ['oda', undefined]);
 });
