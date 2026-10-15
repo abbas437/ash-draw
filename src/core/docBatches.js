@@ -2,10 +2,12 @@
 // that no single message takes the window long to deserialize: {head, total} (the doc with empty model-space and block
 // entity lists; total = the entities still to come), then {ents} / {block, ents} batches in order, then {done: true}.
 // Entities share no objects with each other or with the head (the parser builds each one fresh), so the pieces
-// reassemble into the same document a single structured clone would give.
+// reassemble into the same document a single structured clone would give. A batch's entities travel in the compact form
+// of entXfer.js (post(message, transfer): its numbers are transferred), and come out of accept as the same objects.
+import { encodeEnts, decodeEnts } from './entXfer.js';
 
-/** post(message) each piece of doc. A batch is grown or shrunk so that posting it (the structured serialize; reading
- *  it back costs about twice that on the receiving thread) takes about targetMs.
+/** post(message, transfer) each piece of doc. A batch is grown or shrunk so that encoding and posting it (the structured
+ *  serialize; reading and decoding it back costs about twice that on the receiving thread) takes about targetMs.
  *  ready: optional () => Promise awaited before each batch (then this returns a Promise): flow control, so that the
  *  receiver never has batches queued up - read back to back they hold its thread with no timer or frame in between. */
 export function postDocInBatches(doc, post, { targetMs = 12, first = 500, ready = null } = {}) {
@@ -25,7 +27,8 @@ function* batchSteps(doc, post, { targetMs, first }) {
     for (let i = 0; i < ents.length;) {
       yield;
       const part = ents.slice(i, i + size), t = performance.now();
-      post(block === null ? { ents: part } : { block, ents: part });
+      const { packet, transfer } = encodeEnts(part);
+      post(block === null ? { ents: packet } : { block, ents: packet }, transfer);
       const ms = performance.now() - t;
       i += part.length;
       if (part.length === size) size = Math.max(50, Math.min(50000, Math.round((size * targetMs) / Math.max(ms, 0.5))));
@@ -56,8 +59,9 @@ export function docAssembler() {
       if (m.head) { this.doc = m.head; total = m.total; return true; }
       if (!m.ents) return false;
       const into = m.block === undefined ? this.doc.entities : this.doc.blocks.get(m.block).entities;
-      for (const e of m.ents) into.push(e);
-      got += m.ents.length;
+      const ents = Array.isArray(m.ents) ? m.ents : decodeEnts(m.ents);
+      for (const e of ents) into.push(e);
+      got += ents.length;
       return true;
     },
   };
