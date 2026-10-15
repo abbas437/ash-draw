@@ -3,7 +3,8 @@
 // Enter = 0); placement repeats until Esc / right-click. Each placement is one undo step (insertSymbol).
 // Settings: 'symbols.scale' (overall symbol scale) and 'symbols.drawingScale' (N of 1:N, paper-size symbols only);
 // 'symbols.view' (grid / list / float) and 'symbols.float' ({x, y, w, h} of the floating window); 'symbols.dock' (side / left /
-// right / float / hidden), 'symbols.dockWidth' and 'symbols.dockFolded' (the column beside the canvas).
+// right / float / hidden), 'symbols.dockWidth' and 'symbols.dockFolded' (the column beside the canvas); 'symbols.recent'
+// (the last RECENT_MAX symbols inserted from the panel or the Quick Access palette, symbol-palette.js).
 import { createSymbolSource, BUILTIN_SOURCE } from './symbols-source.js';
 import { symbolScale, symbolPolylines, insertSymbol } from '../src/core/symbols-lib.js';
 import { attdefsOf, ATT_CONSTANT, ATT_PRESET } from '../src/core/blocks.js';
@@ -54,38 +55,78 @@ async function chooseSymbol(file, syms) {
   return r === 'ok' ? syms[Number(list.value)] ?? null : null;
 }
 
-export function initSymbolsPanel(app, api) {
-  const src = createSymbolSource(api);
-  const $ = (id) => document.getElementById(id);
-  const srcSel = $('sym-source'), catSel = $('sym-cat'), search = $('sym-search'), grid = $('sym-grid'), status = $('sym-status');
-  const scaleIn = $('sym-scale'), dscaleIn = $('sym-dscale'), addBtn = $('sym-add'), remBtn = $('sym-remove');
-  const st = { sources: [BUILTIN_SOURCE], source: BUILTIN_SOURCE, items: [], truncated: false, gen: 0, scale: 1, drawingScale: 1 };
+/** 'symbols.recent' holds at most this many {sourceId, file, name}, most recent first; file is the item's key (the file's
+ * path in its folder, or the built-in symbol's id) */
+export const RECENT_MAX = 8;
+/** `list` with `entry` moved (or added) to the front, at most RECENT_MAX */
+export const recentWith = (list, entry) => [entry, ...(Array.isArray(list) ? list : []).filter((r) => r && typeof r === 'object' && !(r.sourceId === entry.sourceId && r.file === entry.file))].slice(0, RECENT_MAX);
+let recentQ = Promise.resolve(); // one read-modify-write at a time
+const recordRecent = (api, source, item) => {
+  recentQ = recentQ.then(async () => {
+    const cur = await api.settingsGet?.('symbols.recent');
+    await api.settingsSet?.('symbols.recent', recentWith(cur, { sourceId: source.id, file: item.key, name: item.name }));
+  }).catch(() => {});
+  return recentQ;
+};
 
+/** insert the symbol of `item` (from `source`): SYMBOLINSERT with it, after a pick when the file holds several; adds it to
+ * 'symbols.recent'. The panel's cells and the Quick Access palette's go through here. */
+export async function pickSymbol(app, api, src, source, item) {
+  let syms;
+  try { syms = await src.loadSymbol(source, item); } catch (err) { app.toast(`Symbols: ${err.message}`); return; }
+  const sym = syms.length > 1 ? await chooseSymbol(item.file ?? item.name, syms) : syms[0];
+  if (!sym) { if (!syms.length) app.toast(`Symbols: ${item.name} has nothing to insert.`); return; }
+  recordRecent(api, source, item);
+  app.tools.symbolinsert.use(sym);
+  app.setTool('symbolinsert');
+}
+
+const blobToDataUrl = (blob) => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(r.result); r.onerror = () => reject(r.error);
+  r.readAsDataURL(blob);
+});
+/** lazy thumbnails for symbol cells (symbolCell): a cell's thumbnail loads when it comes within 120px of `root`'s view
+ * (null = the window). reset() before rebuilding the cells drops the loads still pending. */
+export function lazyThumbs(src, root) {
+  let gen = 0;
   const observer = new IntersectionObserver((entries) => {
-    for (const en of entries) if (en.isIntersecting) { observer.unobserve(en.target); loadThumb(en.target); }
-  }, { root: grid, rootMargin: '120px' });
-
-  const blobToDataUrl = (blob) => new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(r.result); r.onerror = () => reject(r.error);
-    r.readAsDataURL(blob);
-  });
-  function loadThumb(cell) {
-    const gen = st.gen, item = cell._item, source = st.source;
-    src.thumbnail(source, item).then((blob) => {
-      if (gen !== st.gen) return;
+    for (const en of entries) if (en.isIntersecting) { observer.unobserve(en.target); load(en.target); }
+  }, { root, rootMargin: '120px' });
+  function load(cell) {
+    const g = gen;
+    src.thumbnail(cell._source, cell._item).then((blob) => {
+      if (g !== gen) return;
       cell.classList.remove('loading');
       if (!blob) { cell.classList.add('nothumb'); return; }
       // a data: URL (not a blob: URL) so a thumbnail whose cell is replaced mid-load (grid rebuilt) leaves no
       // aborted request and nothing to revoke
       return blobToDataUrl(blob).then((url) => {
-        if (gen !== st.gen) return;
+        if (g !== gen) return;
         const img = cell.querySelector('img');
         img.onload = () => cell.classList.add('ready');
         img.src = url;
       });
-    }).catch(() => { if (gen === st.gen) { cell.classList.remove('loading'); cell.classList.add('nothumb'); } });
+    }).catch(() => { if (g === gen) { cell.classList.remove('loading'); cell.classList.add('nothumb'); } });
   }
+  return { reset() { gen++; observer.disconnect(); }, observe(cell) { observer.observe(cell); } };
+}
+/** a thumbnail cell (button) for `item` of `source`; lazyThumbs(...).observe(cell) loads its picture */
+export function symbolCell(source, item, onclick) {
+  const cell = el('button', { type: 'button', class: 'sym-cell loading', title: item.file ?? item.name, 'data-key': item.key },
+    el('span', { class: 'sym-pic' }, el('img', { class: 'sym-thumb', alt: '', draggable: 'false' })), el('span', { class: 'sym-name', text: item.name }));
+  cell._item = item; cell._source = source;
+  cell.onclick = onclick;
+  return cell;
+}
+
+export function initSymbolsPanel(app, api) {
+  const src = createSymbolSource(api);
+  const $ = (id) => document.getElementById(id);
+  const srcSel = $('sym-source'), catSel = $('sym-cat'), search = $('sym-search'), grid = $('sym-grid'), status = $('sym-status');
+  const scaleIn = $('sym-scale'), dscaleIn = $('sym-dscale'), addBtn = $('sym-add'), remBtn = $('sym-remove');
+  const st = { sources: [BUILTIN_SOURCE], source: BUILTIN_SOURCE, items: [], truncated: false, scale: 1, drawingScale: 1 };
+  const thumbs = lazyThumbs(src, grid);
 
   const catLabel = (c) => (c ? c.split('/').join(' › ') : '(top level)');
   function renderCats() {
@@ -95,18 +136,11 @@ export function initSymbolsPanel(app, api) {
     catSel.value = cats.includes(keep) ? keep : '';
   }
   function renderGrid() {
-    st.gen++;
-    observer.disconnect();
-    const shown = filterSymbols(st.items, catSel.value, search.value);
-    const cells = shown.slice(0, SYMBOL_GRID_MAX).map((item) => {
-      const cell = el('button', { type: 'button', class: 'sym-cell loading', title: item.file ?? item.name, 'data-key': item.key },
-        el('span', { class: 'sym-pic' }, el('img', { class: 'sym-thumb', alt: '', draggable: 'false' })), el('span', { class: 'sym-name', text: item.name }));
-      cell._item = item;
-      cell.onclick = () => pick(item);
-      return cell;
-    });
+    thumbs.reset();
+    const shown = filterSymbols(st.items, catSel.value, search.value), source = st.source;
+    const cells = shown.slice(0, SYMBOL_GRID_MAX).map((item) => symbolCell(source, item, () => pickSymbol(app, api, src, source, item)));
     grid.replaceChildren(...cells);
-    for (const c of cells) observer.observe(c);
+    for (const c of cells) thumbs.observe(c);
     const total = st.items.length;
     let s = shown.length === total ? `${total} symbol${total === 1 ? '' : 's'}` : `${shown.length} of ${total} symbols`;
     if (shown.length > SYMBOL_GRID_MAX) s += ` — first ${SYMBOL_GRID_MAX} shown, refine the search`;
@@ -128,16 +162,6 @@ export function initSymbolsPanel(app, api) {
     srcSel.replaceChildren(...st.sources.map((s) => el('option', { value: s.id, text: s.kind === 'builtin' ? s.name : `Folder: ${s.name}` })));
     await showSource(st.sources.find((s) => s.id === pickId) ?? st.sources[0]);
   }
-  async function pick(item) {
-    const source = st.source;
-    let syms;
-    try { syms = await src.loadSymbol(source, item); } catch (err) { app.toast(`Symbols: ${err.message}`); return; }
-    const sym = syms.length > 1 ? await chooseSymbol(item.file ?? item.name, syms) : syms[0];
-    if (!sym) { if (!syms.length) app.toast(`Symbols: ${item.name} has nothing to insert.`); return; }
-    app.tools.symbolinsert.use(sym);
-    app.setTool('symbolinsert');
-  }
-
   srcSel.onchange = () => showSource(st.sources.find((s) => s.id === srcSel.value) ?? BUILTIN_SOURCE);
   catSel.onchange = renderGrid;
   search.oninput = renderGrid;
@@ -299,6 +323,8 @@ export function initSymbolsPanel(app, api) {
     }).catch(() => {});
 
   return {
+    /** the symbol source (createSymbolSource) the panel lists from; the Quick Access palette shares it and its caches */
+    src,
     /** the INSERT scale of `sym` in the current drawing */
     scaleOf: (sym) => symbolScale(sym, app.doc.units, { scale: st.scale, drawingScale: st.drawingScale }),
     focus() { search.focus(); },

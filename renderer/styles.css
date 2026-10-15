@@ -402,6 +402,23 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 #layer-combo-list .lc-row button:hover { border-color:var(--line); }
 #layer-combo-list .lc-row .lc-name { cursor:pointer; padding-left:2px; }
 #layer-combo-list .lc-none { padding:4px; color:var(--dim); }
+/* "Symbols ▾" after the layer combo (symbol-palette.js); its palette is #sym-palette on <body> */
+#sym-combo { flex:none; display:flex; margin-left:4px; }
+#qat #sym-combo .sp-head { display:flex; align-items:center; gap:4px; height:22px; padding:0 6px; border:1px solid var(--line); background:var(--input); }
+#sym-combo .sp-arrow { color:var(--dim); }
+#sym-palette { position:fixed; z-index:50; width:340px; display:flex; flex-direction:column; gap:4px; background:var(--panel); border:1px solid var(--line); box-shadow:0 4px 14px rgba(0,0,0,.25); padding:4px; }
+#sym-palette[hidden], #sym-palette .sp-recent-box[hidden] { display:none; }
+#sym-palette .sp-bar { display:flex; gap:4px; }
+#sym-palette .sp-source { flex:0 1 40%; min-width:0; }
+#sym-palette .sp-search { flex:1; min-width:0; }
+#sym-palette .sp-label { font-size:11px; color:var(--dim); margin:0 2px 2px; }
+#sym-palette .sp-recent { display:flex; gap:2px; overflow:hidden; border-bottom:1px solid var(--line); padding-bottom:4px; }
+#sym-palette .sp-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(50px, 1fr)); gap:2px; overflow:auto; }
+#sym-palette .sym-cell { padding:2px 1px; }
+#sym-palette .sp-recent .sym-cell { flex:none; width:38px; }
+#sym-palette .sym-pic, #sym-palette .sym-thumb { width:36px; height:36px; }
+#sym-palette .sym-name { font-size:10px; }
+#sym-palette .sp-none, #sym-palette .sp-status { grid-column:1 / -1; padding:2px 4px; font-size:11px; color:var(--dim); }
 /* tool panel layouts (tool-rail.js): Compact rail, Floating, and the ⋯ layout menu */
 #tools .rail, #tools .float-head, #tools .rail-fly[hidden] { display:none; }
 #tools .tp-ctl { display:flex; align-items:center; justify-content:center; cursor:pointer; user-select:none; color:var(--text); background:var(--panel2); border:1px solid var(--line); border-radius:3px; }

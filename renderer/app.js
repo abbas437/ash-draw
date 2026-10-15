@@ -42,6 +42,7 @@ import { qselectDialog, selectSimilarCommand, purgeDialog } from './selclean.js'
 import { draftingSettings, loadDraftingSettings } from './osnap-ui.js';
 import { loadGridSettings } from './grid-ui.js';
 import { initLayerCombo } from './layer-combo.js';
+import { initSymbolPalette } from './symbol-palette.js';
 import { el, message, modal, confirmDialog, textDialog, listDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
 import {
   OPEN_FILTERS, loadDrawing, conversionSummary, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, savePathIn, extOf, UNIT_NAMES,
@@ -791,6 +792,7 @@ class App {
   buildQuickAccess() {
     document.getElementById('menubar').after(el('div', { id: 'qat', role: 'toolbar', 'aria-label': 'Quick Access' }));
     this.layerCombo = initLayerCombo(this);
+    this.symPalette = initSymbolPalette(this, api);
     this.renderQuickAccess();
   }
   renderQuickAccess() {
@@ -800,9 +802,10 @@ class App {
       const [key, id] = it, [label, alias] = quickCommand(id);
       return el('button', { class: `g-${key}`, 'data-cmd': id, title: toolTitle(label, alias), 'aria-label': label, onclick: () => (run[id] ? run[id]() : this.setTool(id)) }, iconSvg(id, 18));
     }));
-    // the layer combo sits right after the Layers button, or at the end of the row without one
+    // the layer combo sits right after the Layers button, or at the end of the row without one; "Symbols ▾" right after it
     const qat = document.getElementById('qat'), lb = qat.querySelector('button[data-cmd="layers"]');
     this.layerCombo.close(); if (lb) lb.after(this.layerCombo.el); else qat.append(this.layerCombo.el);
+    this.symPalette.close(); this.layerCombo.el.after(this.symPalette.el);
     document.getElementById('app').classList.toggle('no-qat', !this.toolLayout.quickRow);
   }
   /** a selector for the tool panel button or group header that has the focus (null elsewhere), to find its equivalent after a re-render */

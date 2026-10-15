@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Browser end-to-end test of the Symbols panel docks (setting 'symbols.dock'): in the side panel, its own column right or
 // left of the canvas (resize, fold to a strip), floating, hidden; search and place from the left dock; the dock kept across
-// a reload. Screenshots in .scratch/. Uses the browser fallback of window.api (shim.js).
+// a reload; the Quick Access "Symbols ▾" palette (search, insert, Recent row, keyboard, Esc, with the panel hidden).
+// Screenshots in .scratch/. Uses the browser fallback of window.api (shim.js).
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -142,6 +143,66 @@ try {
   assert.equal(await parentId(), 'sym-dock');
   await canvasNear(w0 - 340, 4);
   await dockTo('side');
+  assert.equal(await inSide(), true);
+
+  step = 'Quick Access "Symbols ▾" after the layer combo: palette, search focused, insert from it with two clicks';
+  const palOpen = () => page.evaluate(() => !document.getElementById('sym-palette').hidden);
+  assert.equal(await page.evaluate(() => document.getElementById('layer-combo').nextElementSibling?.id), 'sym-combo');
+  await page.locator('#sym-combo .sp-head').click();
+  assert.equal(await palOpen(), true);
+  assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('sp-search')), true, 'search focused');
+  await page.waitForFunction(() => document.querySelectorAll('#sym-palette .sp-grid .sym-cell').length > 3, null, { timeout: 5000 });
+  assert.equal(await page.locator('#sym-palette .sp-source option').first().textContent(), 'Built-in');
+  await page.locator('#sym-palette .sp-search').fill('exhaust gri');
+  await page.waitForFunction(() => document.querySelectorAll('#sym-palette .sp-grid .sym-cell').length === 1, null, { timeout: 5000 });
+  await page.waitForFunction(() => document.querySelector('#sym-palette .sp-grid .sym-cell.ready, #sym-palette .sp-grid .sym-cell.nothumb'), null, { timeout: 5000 });
+  const n1 = await inserts();
+  await page.locator('#sym-palette .sp-grid .sym-cell', { hasText: /^Exhaust Grille$/ }).click();
+  assert.equal(await palOpen(), false, 'closed on pick');
+  await page.waitForFunction(() => window.app.toolId === 'symbolinsert', null, { timeout: 5000 });
+  await clickAt(0.3, 0.3); await clickAt(0.5, 0.3);
+  await page.waitForFunction((n) => window.app.doc.entities.filter((e) => e.type === 'INSERT').length === n + 1, n1, { timeout: 5000 });
+  await page.keyboard.press('Escape');
+
+  step = 'reopen: Recent row, most recent first (palette pick, then the earlier panel pick); a stale entry is skipped';
+  await page.evaluate(() => window.api.settingsGet('symbols.recent').then((r) => window.api.settingsSet('symbols.recent', [...r, { sourceId: 'builtin', file: 'no-such-symbol', name: 'Gone' }])));
+  await page.locator('#sym-combo .sp-head').click();
+  await page.waitForFunction(() => document.querySelectorAll('#sym-palette .sp-recent .sym-cell').length > 0, null, { timeout: 5000 });
+  assert.deepEqual(await page.locator('#sym-palette .sp-recent .sym-name').allTextContents(), ['Exhaust Grille', 'Round Diffuser']);
+  await page.waitForFunction(() => document.querySelectorAll('#sym-palette .sp-grid .sym-cell').length > 3, null, { timeout: 5000 });
+  await page.screenshot({ path: path.join(SHOTS, 'sympalette.png') });
+
+  step = 'keyboard: ArrowDown from the search to the first cell, ArrowDown into the grid, ArrowRight; Esc closes';
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Exhaust Grille');
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('#sym-palette .sp-grid .sym-cell')), true, 'down to the grid');
+  await page.keyboard.press('ArrowRight');
+  assert.equal(await page.evaluate(() => document.activeElement === document.querySelectorAll('#sym-palette .sp-grid .sym-cell')[1]), true, 'right');
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await page.evaluate(() => !!document.activeElement?.closest('.sp-recent')), true, 'up to Recent');
+  await page.keyboard.press('Escape');
+  assert.equal(await palOpen(), false, 'Esc closes');
+  assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('sp-head')), true, 'focus back on the button');
+
+  step = 'with the Symbols panel hidden: the palette still inserts (Enter on a cell)';
+  const viewDock = async (label) => { await page.locator('#menubar .menu > button', { hasText: /^View$/ }).click(); await page.locator('#menubar .menu.open .drop button', { hasText: `Symbols panel: ${label}` }).click(); };
+  await viewDock('Hide');
+  assert.equal(await shown('#sym-panel'), false);
+  await page.locator('#sym-combo .sp-head').click();
+  await page.locator('#sym-palette .sp-search').fill('round diff');
+  await page.waitForFunction(() => document.querySelectorAll('#sym-palette .sp-grid .sym-cell').length === 1, null, { timeout: 5000 });
+  const n2 = await inserts();
+  await page.locator('#sym-palette .sp-grid .sym-cell').focus();
+  await page.keyboard.press('Enter');
+  assert.equal(await palOpen(), false);
+  await page.waitForFunction(() => window.app.toolId === 'symbolinsert', null, { timeout: 5000 });
+  await clickAt(0.3, 0.6); await clickAt(0.5, 0.6);
+  await page.waitForFunction((n) => window.app.doc.entities.filter((e) => e.type === 'INSERT').length === n + 1, n2, { timeout: 5000 });
+  await page.keyboard.press('Escape');
+  assert.equal(await shown('#sym-panel'), false, 'the panel stays hidden');
+  assert.equal(await page.evaluate(() => window.api.settingsGet('symbols.recent').then((r) => r[0].name)), 'Round Diffuser');
+  await viewDock('Dock in side panel');
   assert.equal(await inSide(), true);
 
   assert.deepEqual(problems, []);
