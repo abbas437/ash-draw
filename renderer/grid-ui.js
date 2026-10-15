@@ -3,12 +3,12 @@
 // 'grid.paperSpacing' (layouts, paper millimetres). The grid itself is drawn by viewport.js (src/core/grid.js).
 import { cleanSpacing, cleanMajor, cleanStyle } from '../src/core/grid.js';
 
-const api = window.api;
-const save = (k, v) => api.settingsSet?.(k, v)?.catch?.(() => {});
+const api = () => globalThis.window?.api ?? {}; // read when used: this module is also loaded by node tests (via tools.js)
+const save = (k, v) => api().settingsSet?.(k, v)?.catch?.(() => {});
 
 /** read the saved grid settings into vp.settings (start-up) */
 export async function loadGridSettings(app) {
-  const st = app.vp.settings, get = (k) => api.settingsGet?.(k)?.catch?.(() => undefined);
+  const st = app.vp.settings, get = (k) => api().settingsGet?.(k)?.catch?.(() => undefined);
   const [on, spacing, major, style, paper] = await Promise.all(['grid.on', 'grid.spacing', 'grid.major', 'grid.style', 'grid.paperSpacing'].map(get));
   if (typeof on === 'boolean') st.grid = on;
   st.gridSpacing = cleanSpacing(spacing) ?? st.gridSpacing;
