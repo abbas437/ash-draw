@@ -50,7 +50,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 #menubar .sub.open > button { background:var(--accent2); color:var(--on-accent); }
 #menubar .drop button:focus-visible { background:var(--accent2); color:var(--on-accent); outline:none; }
 /* the toolbar right-click menu uses the menu bar's item layout: tick, label, shortcut */
-.popmenu.tb-menu { min-width:230px; }
+.popmenu.tb-menu { min-width:230px; max-height:calc(100vh - 8px); overflow-y:auto; } /* flat items only: no submenu to clip */
 .popmenu.tb-menu > button { display:flex; justify-content:space-between; gap:24px; padding:4px 14px; }
 .popmenu.tb-menu .chk { display:inline-block; width:1.3em; font-weight:600; }
 .popmenu.tb-menu kbd { color:var(--dim); font:inherit; }

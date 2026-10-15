@@ -28,7 +28,7 @@ export function renderMenu(items, { close }) {
     const text = document.createTextNode(typeof it[0] === 'function' ? it[0]() : it[0]);
     if (typeof it[0] === 'function') checks.push(() => { text.data = it[0](); });
     const b = el('button', { type: 'button', role: it[3] ? 'menuitemcheckbox' : 'menuitem', onclick: (e) => { e.stopPropagation(); close(); it[2](); },
-      onpointerenter: () => later(() => siblingsClose(b)) }, el('span', {}, chk, text), el('kbd', { text: it[1] }));
+      onpointerenter: () => later(() => { if (b.getClientRects().length) siblingsClose(b); }) }, el('span', {}, chk, text), el('kbd', { text: it[1] }));
     if (it[4]) checks.push(() => { b.hidden = !it[4](); });
     if (chk) checks.push(() => { const on = !!it[3](); chk.textContent = on ? '✓' : ''; b.setAttribute('aria-checked', String(on)); });
     return b;
@@ -40,15 +40,18 @@ export function renderMenu(items, { close }) {
     const btn = el('button', { type: 'button', role: 'menuitem', 'aria-haspopup': 'menu', 'aria-expanded': 'false', class: 'sub-btn',
       onclick: (e) => { e.stopPropagation(); clearTimeout(timer); if (sub.classList.contains('open')) closeSub(sub); else { open(); if (e.detail === 0) levelButtons(drop)[0]?.focus(); } } },
     el('span', {}, el('span', { class: 'chk' }), it.sub), el('kbd', { text: '▸', 'aria-hidden': 'true' }));
-    const sub = el('div', { class: 'sub', onpointerenter: () => later(() => { siblingsClose(sub); open(); }) }, btn, drop);
+    // a hover timer still pending when its menu closed (Escape, a click elsewhere) does nothing: the menu has no boxes then
+    const sub = el('div', { class: 'sub', onpointerenter: () => later(() => { if (!sub.getClientRects().length) return; siblingsClose(sub); open(); }) }, btn, drop);
     const open = () => {
       if (sub.classList.contains('open')) return;
       siblingsClose(sub);
       inner.refresh();
       sub.classList.add('open'); btn.setAttribute('aria-expanded', 'true');
+      drop.style.top = ''; // measure from the stylesheet position, not the last open's shift
       const r = drop.getBoundingClientRect();
       if (r.right > innerWidth - 4) sub.classList.add('left'); // no room on the right: open to the left
-      if (r.bottom > innerHeight - 4) drop.style.top = `${Math.min(0, innerHeight - 4 - r.bottom)}px`; else drop.style.top = '';
+      const over = r.bottom - (innerHeight - 4);
+      if (over > 0) drop.style.top = `${parseFloat(getComputedStyle(drop).top) - Math.min(over, Math.max(0, r.top - 4))}px`; // up, but not above the window
     };
     sub.openSub = open;
     return sub;

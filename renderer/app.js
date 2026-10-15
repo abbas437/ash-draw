@@ -721,6 +721,7 @@ class App {
       ['Help', [['What this program can and cannot do', '', () => this.limitations()], ['Converter log…', '', () => this.converterLog()], ['About', '', () => this.about()]]],
     ];
     const bar = document.getElementById('menubar');
+    bar.setAttribute('role', 'menubar');
     for (const [label, items] of M) {
       // menu-items.js renders the items (labels and ticks are read when the menu opens; { sub } items are submenus)
       const { nodes, refresh } = renderMenu(items, { close: () => closeMenus() });
@@ -734,15 +735,20 @@ class App {
     const closeMenus = () => document.querySelectorAll('#menubar .menu.open').forEach((m) => { closeSubmenus(m); m.classList.remove('open'); m.firstElementChild.setAttribute('aria-expanded', 'false'); });
     document.addEventListener('click', closeMenus);
     // keyboard in an open menu (before bindKeys): ArrowDown from its menu-bar button (or from anywhere after a pointer opened it) to the first item
+    // Only while focus is in the menu bar: a menu opened with the pointer leaves focus where it was (the command line keeps its
+    // arrows, Enter and history); Escape there just closes the menu and the key goes on as usual.
     document.addEventListener('keydown', (e) => {
       const open = bar.querySelector('.menu.open');
-      if (!open || menuKey(e, open, () => { closeMenus(); open.firstElementChild.focus(); })) return;
+      if (!open) return;
+      if (!bar.contains(document.activeElement)) { if (e.key === 'Escape') closeMenus(); return; }
+      if (menuKey(e, open, () => { closeMenus(); open.firstElementChild.focus(); })) return;
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { const b = [...open.querySelectorAll(':scope > .drop > button, :scope > .drop > .sub > button')].filter((n) => n.getClientRects().length); (e.key === 'ArrowDown' ? b[0] : b.at(-1))?.focus(); }
       else if (e.key === 'Escape') { closeMenus(); open.firstElementChild.focus(); }
       else return;
       e.preventDefault(); e.stopPropagation();
     }, true);
     document.addEventListener('pointerdown', (e) => { if (!e.target.closest?.('#menubar .menu')) closeMenus(); });
+    bar.addEventListener('focusout', (e) => { if (e.relatedTarget && !bar.contains(e.relatedTarget)) closeMenus(); }); // Tab / a click into a field: a keyboard-opened menu closes
   }
 
   /** fill the toolbar's dimension-style list from the active drawing (only when it changed) */

@@ -151,6 +151,40 @@ try {
   assert.equal(await page.locator('.tcz-menu').count(), 0, 'no toolbar menu on SNAP');
   await page.keyboard.press('Escape');
 
+  step = 'a pointer-opened menu leaves the command line its keys (ArrowUp, Escape, Enter)';
+  await page.locator('#cmd').fill('LINE');
+  await page.locator('#cmd').focus();
+  await view().dispatchEvent('pointerdown', { button: 0 });
+  assert.equal(await page.locator('#menubar .menu.open').count(), 1, 'View opened by the pointer');
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await page.evaluate(() => document.activeElement?.id), 'cmd', 'focus stays in the command line');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#menubar .menu.open').count(), 0, 'Escape closes the menu');
+  // (Escape then goes on to the app as usual: it leaves the command line for the canvas)
+  await view().dispatchEvent('pointerdown', { button: 0 });
+  await page.locator('#cmd').fill('LINE'); await page.locator('#cmd').press('Enter');
+  assert.equal(await page.evaluate(() => window.app.toolId), 'line', 'Enter runs the command, not the menu');
+  await page.keyboard.press('Escape');
+
+  step = 'a hover timer pending when the menu closes does not reopen the submenu';
+  await view().click();
+  await subBtn('Toolbars').hover();
+  await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+  await page.mouse.move(700, 500);
+  await page.waitForTimeout(350);
+  assert.equal(await page.locator('.sub.open').count(), 0, 'no submenu left open');
+
+  step = 'a submenu that does not fit keeps inside the window on every open';
+  await page.setViewportSize({ width: 1000, height: 520 });
+  for (let k = 0; k < 3; k++) {
+    await view().click();
+    await subBtn('Toolbars').click();
+    const b = await page.evaluate(() => { const d = document.querySelector('#menubar .sub.open > .drop').getBoundingClientRect(); return { top: d.top, bottom: d.bottom }; });
+    assert.ok(b.bottom <= 520 - 3 && b.top >= 0, `open ${k + 1}: ${JSON.stringify(b)}`);
+    await page.mouse.click(700, 400); // close
+  }
+  await page.setViewportSize({ width: 1400, height: 850 });
+
   assert.deepEqual(problems, []);
   console.log('draw menus e2e: OK');
 } catch (err) {
