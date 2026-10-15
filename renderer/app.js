@@ -564,7 +564,7 @@ class App {
         }
         if (!this.allowDwgSave) { await this.modalWithOdaLink('Save as DWG is turned off', [el('p', { text: DWG_SAVE_DISABLED_TEXT }), el('p', { text: ODA_NEEDED_TEXT })], [{ label: 'OK', value: true, primary: true }]); return false; }
         const ok = await this.modalWithOdaLink('Save as DWG (experimental)', el('p', { text:
-          `DWG is written through the free LibreDWG converter. Layouts and viewports may appear empty when the file is opened in AutoCAD, and text rotation and some hatch details can be lost. The program re-reads the saved file and tells you if anything differs. DXF keeps everything this program supports. ${ODA_SAVE_HINT} Save as DWG anyway?` }),
+          `DWG is written through the free LibreDWG converter. AutoCAD and DWG TrueView may not open a DWG written this way (in a test, DWG TrueView 2026 stopped while loading one), layouts and viewports may appear empty, and text rotation and some hatch details can be lost. The program re-reads the saved file and tells you if anything differs. DXF keeps everything this program supports. ${ODA_SAVE_HINT} Save as DWG anyway?` }),
           [{ label: 'Save as DWG', value: 'yes', primary: true }, { label: 'Cancel', value: 'no' }]);
         if (ok !== 'yes') return false;
         const r = await saveDwg(api, tab.doc, {
