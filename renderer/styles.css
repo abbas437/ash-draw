@@ -1,22 +1,22 @@
 /* Light is the default theme; [data-theme="dark"] on <html> switches to the dark palette (View > Dark theme). */
 :root {
   color-scheme: light;
-  --bg:#e9edef; --panel:#f6f8f9; --panel2:#ffffff; --line:#c3ccd1; --text:#1c2427; --dim:#4f5c63;
+  --bg:#E4DED2; --panel:#F1ECE2; --panel2:#FBF8F2; --line:#C2B9A7; --text:#15241F; --dim:#55615b;
   --accent:#2a7353; --accent2:#cfe7db; --on-accent:#123828; --warn:#8a5300;
-  --hover:#e3e9ec; --input:#ffffff; --canvas:#ffffff; --current-bg:#dcefe5;
+  --hover:#E9E3D7; --input:#FFFDF8; --canvas:#ffffff; --current-bg:#dcefe5;
   --shadow:rgba(20,32,40,.18); --shadow-lg:rgba(20,32,40,.28); --backdrop:rgba(20,32,40,.35);
-  --drop-bg:rgba(226,242,234,.88); --swatch-border:rgba(0,0,0,.45);
-  --toast-bg:#fff6d6; --toast-text:#5a3c00; --selection:#b9dccb; --scroll-thumb:#b3bec4;
+  --drop-bg:rgba(241,236,226,.9); --swatch-border:rgba(0,0,0,.45);
+  --toast-bg:#fff6d6; --toast-text:#5a3c00; --selection:#ddd0ad; --scroll-thumb:#b9ae99;
   --danger:#b3261e;
 }
 [data-theme="dark"] {
   color-scheme: dark;
-  --bg:#14181b; --panel:#1e2428; --panel2:#262d32; --line:#36414a; --text:#e6e9ea; --dim:#9aa6ad;
+  --bg:#101d18; --panel:#1A2D26; --panel2:#213830; --line:#335046; --text:#ECE6DA; --dim:#A9B3A9;
   --accent:#3f9a73; --accent2:#2f7a5a; --on-accent:#ffffff; --warn:#ffd400;
-  --hover:#2f383e; --input:#0f1316; --canvas:#1b1f23; --current-bg:#2c4a3d;
+  --hover:#28433a; --input:#0e1a16; --canvas:#1b1f23; --current-bg:#2c4a3d;
   --shadow:rgba(0,0,0,.53); --shadow-lg:rgba(0,0,0,.67); --backdrop:rgba(0,0,0,.53);
   --drop-bg:rgba(10,26,20,.8); --swatch-border:rgba(255,255,255,.4);
-  --toast-bg:rgba(0,0,0,.8); --toast-text:#ffd400; --selection:#2f7a5a; --scroll-thumb:#4a565e;
+  --toast-bg:rgba(0,0,0,.8); --toast-text:#ffd400; --selection:#335346; --scroll-thumb:#3C4B45;
   --danger:#ff6b61;
 }
 ::selection { background:var(--selection); color:var(--text); }
@@ -30,11 +30,11 @@ button.primary { background:var(--accent2); border-color:var(--accent); color:va
 button:disabled { opacity:.4; cursor:default; }
 input, select, textarea { font:inherit; color:var(--text); background:var(--input); border:1px solid var(--line); border-radius:3px; padding:3px 5px; }
 input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px solid var(--accent); outline-offset:0; }
-#menubar { display:flex; align-items:center; background:var(--panel); border-bottom:1px solid var(--line); padding:0 6px; gap:2px; position:relative; z-index:20; }
+#menubar { display:flex; align-items:center; background:var(--frame-bg); color:var(--frame-text); border-bottom:1px solid var(--frame-line); padding:0 6px; gap:2px; position:relative; z-index:20; }
 #menubar .menu { position:relative; }
-#menubar .menu > button { background:none; border:none; padding:5px 10px; }
-#menubar .menu:hover > button, #menubar .menu.open > button { background:var(--panel2); }
-#menubar .drop { display:none; position:absolute; top:100%; left:0; min-width:230px; background:var(--panel2); border:1px solid var(--line); box-shadow:0 6px 18px var(--shadow); padding:4px 0; }
+#menubar .menu > button { background:none; border:none; padding:5px 10px; color:var(--frame-text); }
+#menubar .menu:hover > button, #menubar .menu.open > button { background:var(--frame-hover); }
+#menubar .drop { display:none; position:absolute; top:100%; left:0; min-width:230px; color:var(--text); background:var(--panel2); border:1px solid var(--line); box-shadow:0 6px 18px var(--shadow); padding:4px 0; }
 #menubar .menu.open > .drop { display:block; }
 #menubar .drop button { display:flex; justify-content:space-between; gap:24px; width:100%; border:none; background:none; text-align:left; border-radius:0; padding:5px 14px; }
 #menubar .drop button:hover { background:var(--accent2); color:var(--on-accent); }
@@ -55,7 +55,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 .popmenu.tb-menu .chk { display:inline-block; width:1.3em; font-weight:600; }
 .popmenu.tb-menu kbd { color:var(--dim); font:inherit; }
 .popmenu.tb-menu hr { border:none; border-top:1px solid var(--line); margin:4px 0; }
-#menubar .title { margin-left:auto; color:var(--dim); padding-right:8px; }
+#menubar .title { margin-left:auto; color:var(--frame-dim); padding-right:8px; }
 #main { display:grid; grid-template-columns: var(--tools-w, 138px) 1fr var(--side-w, 260px); grid-template-areas:"tools docs side"; grid-template-rows:minmax(0,1fr); min-height:0; }
 #tools { grid-area:tools; } #docs { grid-area:docs; } #side { grid-area:side; }
 #tools .tgroup { display:contents; }
@@ -277,10 +277,11 @@ button.icon { border:none; background:none; padding:0 3px; width:22px; }
 #cmdbar { display:flex; align-items:center; gap:8px; background:var(--panel); border-top:1px solid var(--line); padding:0 8px; }
 #prompt { color:var(--warn); white-space:nowrap; max-width:55%; overflow:hidden; text-overflow:ellipsis; }
 #cmd { flex:1; min-width:120px; background:var(--input); }
-#status { display:flex; align-items:center; gap:4px; background:var(--panel); border-top:1px solid var(--line); padding:0 8px; color:var(--dim); }
+#status { display:flex; align-items:center; gap:4px; background:var(--frame-bg); border-top:1px solid var(--frame-line); padding:0 8px; color:var(--frame-dim); }
 #status .coord { min-width:210px; font-variant-numeric: tabular-nums; }
-#status button { padding:0 8px; border-radius:2px; }
-#status button.on { background:var(--accent2); color:var(--on-accent); border-color:var(--accent); }
+#status button { padding:0 8px; border-radius:2px; background:var(--frame-btn); color:var(--frame-text); border-color:var(--frame-line); }
+#status button:hover { background:var(--frame-hover); }
+#status button.on { background:var(--frame-on-bg); color:var(--frame-on-text); border-color:var(--frame-on-line); }
 #status #theme-btn { margin-left:12px; }
 dialog { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:16px 20px; max-width:560px; width:90%; box-shadow:0 12px 40px var(--shadow-lg); }
 dialog::backdrop { background:var(--backdrop); }
@@ -525,18 +526,21 @@ dialog label.tcz-check, .tcz-check { display:flex; align-items:center; gap:6px; 
 /* tool panel on the right with the Symbols column docked left or right */
 #app.tools-right.sym-dock-left #main { grid-template-columns: var(--symdock-w) 1fr var(--tools-w, 138px) var(--side-w, 260px); grid-template-areas:"symdock docs tools side"; }
 #app.tools-right.sym-dock-right #main { grid-template-columns: 1fr var(--symdock-w) var(--tools-w, 138px) var(--side-w, 260px); grid-template-areas:"docs symdock tools side"; }
-/* Icon colours and button states (ASH brand: gold accent on charcoal). Group hues are muted and keep >= 3:1 against --panel,
+/* Icon colours and button states (ASH brand: brass accent on ink green / stone). Group hues are muted and keep >= 3:1 against --panel,
    --panel2 and --hover in both themes; --accent marks what is on / current everywhere (active tool, pressed rail and toggle
    buttons, status-bar toggles, the current tab). Icons draw in currentColor; an icon's .ac accent mark keeps the group hue. */
 :root {
-  --grp-select:#56646c; --grp-file:#56646c; --grp-draw:#2f63b0; --grp-modify:#a85a14; --grp-block:#2f7a46;
-  --grp-annotate:#7048b0; --grp-inquiry:#17777d; --grp-markup:#b23a3f;
-  --accent:#8a6a1c; --accent2:#f2e6c6; --on-accent:#3d2e08; --accent-ink:#7a5c12; --press:#d7dfe3; --current-bg:#f4ead0;
+  --grp-select:#4f5b55; --grp-file:#4f5b55; --grp-draw:#2c5ea6; --grp-modify:#9a5410; --grp-block:#2d6f43;
+  --grp-annotate:#6a45a6; --grp-inquiry:#146d70; --grp-markup:#a8353a;
+  --accent:#9A7A2C; --accent2:#efe2bf; --on-accent:#3d2e08; --accent-ink:#7a5c12; --press:#DDD5C5; --current-bg:#f0e5c8;
+  /* the app frame (menu bar, status bar) is the brand's ink green in both themes */
+  --frame-bg:#15241F; --frame-text:#ECE6DA; --frame-dim:#A9B3A9; --frame-hover:#24392f; --frame-btn:#1c2f28; --frame-line:#2e463d;
+  --frame-on-bg:#3b3219; --frame-on-line:#C9A55A; --frame-on-text:#fff3d6;
 }
 [data-theme="dark"] {
-  --grp-select:#aab6bd; --grp-file:#aab6bd; --grp-draw:#86aee8; --grp-modify:#e0a066; --grp-block:#82c79a;
-  --grp-annotate:#b9a0e6; --grp-inquiry:#6cc4c9; --grp-markup:#ec8c90;
-  --accent:#d4b062; --accent2:#4a3d1e; --on-accent:#fff3d6; --accent-ink:#e3c47c; --press:#3a454c; --current-bg:#3f3720;
+  --grp-select:#c3c9c0; --grp-file:#c3c9c0; --grp-draw:#8fb8e8; --grp-modify:#e3a76a; --grp-block:#9fd4a8;
+  --grp-annotate:#c2a8ec; --grp-inquiry:#7fd0cc; --grp-markup:#f09a90;
+  --accent:#C9A55A; --accent2:#3b3219; --on-accent:#fff3d6; --accent-ink:#d9bb73; --press:#2e4a40; --current-bg:#33301c;
 }
 .ti .ac { stroke:var(--gc, currentColor); }
 .ti .ac[fill="currentColor"] { fill:var(--gc, currentColor); }
