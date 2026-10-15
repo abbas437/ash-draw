@@ -281,14 +281,14 @@ test('empty referenced blocks from LibreDWG: ODA used when it works, else the Li
     const n = await service(lib, { mode }, null).svc.toDxf(dwg);
     assert.deepEqual([n.engine, n.converter, n.errorCount, n.log, lib.calls], ['libredwg', 'LibreDWG', 3, 'ERROR: a', 1], mode);
     assert.equal(n.warnings.length, 1);
-    assert.match(n.warnings[0], /^2 blocks came through empty from the built-in converter \(e\.g\. room tag, BUILDING F -GF-ARC\) — walls, tags or symbols may be missing\. Install the free ODA File Converter/);
+    assert.match(n.warnings[0], /^2 blocks came through empty or missing from the built-in converter \(e\.g\. room tag, BUILDING F -GF-ARC\) — walls, tags or symbols may be missing\. Install the free ODA File Converter/);
     assert.equal(/Preferences/.test(n.warnings[0]), mode === 'libredwg', mode);
   }
   // ODA installed but failing: the LibreDWG drawing, the warning says ODA failed and does not suggest the install
   const failing = service(libreDxf(text), { mode: 'auto' }, '/x/ODAFileConverter.exe', false);
   const f = await failing.svc.toDxf(dwg);
   assert.equal(f.engine, 'libredwg');
-  assert.match(f.warnings[0], /blocks came through empty[\s\S]*ODA File Converter was tried as well but could not convert this DWG \(ODA crashed\)/);
+  assert.match(f.warnings[0], /blocks came through empty or missing[\s\S]*ODA File Converter was tried as well but could not convert this DWG \(ODA crashed\)/);
   assert.doesNotMatch(f.warnings[0], /Install/);
   assert.deepEqual(failing.used, ['/x/ODAFileConverter.exe']);
   // earlier LibreDWG warnings are kept
@@ -304,4 +304,15 @@ test('clean LibreDWG output: ODA is not run and no warning is added; ODA output 
   const odaOnly = createDwgService({ libre: libreDxf(text), getConfig: () => ({ mode: 'oda' }), detectOda: async () => '/x/ODAFileConverter.exe', makeOda: () => ({ toDxf: async () => ({ dxfBytes: new TextEncoder().encode(text) }) }) });
   const o = await odaOnly.toDxf(dwg);
   assert.deepEqual([o.engine, o.warnings], ['oda', undefined]);
+});
+
+test('emptyReferencedBlocks: INSERTs of blocks with no definition at all count (LibreDWG leaves some out of BLOCKS)', () => {
+  const dxf = ['0', 'SECTION', '2', 'BLOCKS',
+    '0', 'BLOCK', '2', '*Model_Space', '0', 'ENDBLK',
+    '0', 'BLOCK', '2', 'door', '0', 'LINE', '0', 'ENDBLK',
+    '0', 'BLOCK', '2', '*U4', '0', 'INSERT', '2', 'room tag', '0', 'ENDBLK',
+    '0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES',
+    '0', 'INSERT', '2', 'door', '0', 'INSERT', '2', 'Room Tag', '0', 'INSERT', '2', 'BUILDING F -GF-ARC', '0', 'INSERT', '2', '*U13', '0', 'INSERT', '2', '*U4',
+    '0', 'ENDSEC', '0', 'EOF', ''].join('\n');
+  assert.deepEqual(emptyReferencedBlocks(new TextEncoder().encode(dxf)), { count: 3, names: ['room tag', 'BUILDING F -GF-ARC', '*U13'] });
 });

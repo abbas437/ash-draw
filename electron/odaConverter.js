@@ -42,7 +42,7 @@ export function implausibleConversion({ dwgBytes, dxfBytes, errorCount = 0 }) {
   return null;
 }
 /**
- * Blocks that INSERTs reference but that came out of a DWG -> DXF conversion with no entities (LibreDWG drops the
+ * Blocks that INSERTs reference but that came out of a DWG -> DXF conversion with no entities or with no definition at all (LibreDWG drops the
  * contents of some blocks, e.g. bound xrefs and room tags, so walls and tags vanish without an error).
  * Walks an ASCII DXF (Uint8Array/Buffer) line by line without decoding the whole buffer: in BLOCKS, the entities of
  * each BLOCK..ENDBLK are counted; INSERT names (group 2) are collected in BLOCKS and ENTITIES. Names starting with
@@ -53,7 +53,8 @@ export function emptyReferencedBlocks(dxfBytes, limit = 20) {
   const buf = Buffer.isBuffer(dxfBytes) ? dxfBytes : Buffer.from(dxfBytes.buffer, dxfBytes.byteOffset, dxfBytes.byteLength);
   const n = buf.length;
   const blocks = new Map(); // lower-case name -> {name, count}
-  const inserted = new Set(); // lower-case names of inserted blocks
+  const inserted = new Map(); // lower-case name of an inserted block -> its name as first seen
+  const defined = new Set(); // lower-case names of every BLOCK definition, '*' blocks included
   let pos = 0;
   let code = null; // group code of the value line that comes next; null: the next line is a group code line
   let section = '';
@@ -87,6 +88,7 @@ export function emptyReferencedBlocks(dxfBytes, limit = 20) {
       else if (t === 'ENDSEC') { section = ''; block = null; }
       else if (section === 'BLOCKS' && t === 'BLOCK') { block = { name: null, count: 0 }; want = 1; }
       else if (section === 'BLOCKS' && t === 'ENDBLK') {
+        if (block?.name) defined.add(block.name.toLowerCase());
         if (block?.name && !block.name.startsWith('*')) {
           const key = block.name.toLowerCase();
           const seen = blocks.get(key);
@@ -100,7 +102,7 @@ export function emptyReferencedBlocks(dxfBytes, limit = 20) {
     } else if (g === 2) {
       if (wantSection) { section = buf.toString('latin1', s, e); wantSection = false; }
       else if (want === 1) { block.name = buf.toString('utf8', s, e); want = 0; }
-      else if (want === 2) { inserted.add(buf.toString('utf8', s, e).toLowerCase()); want = 0; }
+      else if (want === 2) { const nm = buf.toString('utf8', s, e); const k = nm.toLowerCase(); if (!inserted.has(k)) inserted.set(k, nm); want = 0; }
     }
   }
   const names = [];
@@ -110,13 +112,21 @@ export function emptyReferencedBlocks(dxfBytes, limit = 20) {
     count++;
     if (names.length < limit) names.push(b.name);
   }
+  // LibreDWG also leaves some blocks out of BLOCKS altogether (seen on a bound drawing: 'room tag', bound xrefs,
+  // anonymous *U blocks) while their INSERTs remain: those count as well
+  for (const [key, nm] of inserted) {
+    if (defined.has(key) || key === '*model_space' || key === '*paper_space') continue;
+    count++;
+    if (names.length < limit) names.push(nm);
+  }
   return { count, names };
 }
 /** the plain-words warning for LibreDWG output with empty referenced blocks; `odaError` when ODA was tried and failed */
 function emptyBlocksWarning({ count, names }, odaError, prefs) {
-  const shown = names.slice(0, 5).map((nm) => (nm.length > 40 ? `${nm.slice(0, 39)}…` : nm));
+  // named blocks first: anonymous ones (*U13) mean nothing to the user
+  const shown = [...names.filter((nm) => !nm.startsWith('*')), ...names.filter((nm) => nm.startsWith('*'))].slice(0, 5).map((nm) => (nm.length > 40 ? `${nm.slice(0, 39)}…` : nm));
   const eg = shown.length ? ` (e.g. ${shown.join(', ')}${count > shown.length ? ', …' : ''})` : '';
-  const what = `${count.toLocaleString('en-US')} ${count === 1 ? 'block' : 'blocks'} came through empty from the built-in converter${eg} — walls, tags or symbols may be missing.`;
+  const what = `${count.toLocaleString('en-US')} ${count === 1 ? 'block' : 'blocks'} came through empty or missing from the built-in converter${eg} — walls, tags or symbols may be missing.`;
   return odaError ? `${what} The ODA File Converter was tried as well but could not convert this DWG (${odaError}).` : `${what} ${ODA_INSTALL}${prefs}`;
 }
 /** the first lines of a converter log, made safe for the " [detail]" tail of an error message */
