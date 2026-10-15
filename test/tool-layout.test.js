@@ -220,3 +220,10 @@ test('customize: less common tools start hidden; a stored layout that already sh
   assert.ok(!shown.hidden.includes('donut'));
   assert.ok(shown.hidden.includes('xline'));
 });
+
+test('tool panel layouts: Compact rail may sit in the Top band; Floating only docks left or right; a hidden panel is Full', async () => {
+  const { modeAllows } = await import('../renderer/tool-rail.js');
+  for (const p of ['left', 'right', 'top', 'hidden']) assert.equal(modeAllows('full', p), true, `full ${p}`);
+  assert.deepEqual(['left', 'right', 'top', 'hidden'].map((p) => modeAllows('rail', p)), [true, true, true, false]);
+  assert.deepEqual(['left', 'right', 'top', 'hidden'].map((p) => modeAllows('float', p)), [true, true, false, false]);
+});

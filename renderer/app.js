@@ -28,7 +28,7 @@ import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
 import { loadDrawingXrefs, xrefPanel } from './xref-panel.js';
 import { TOOL_BUTTONS, buildToolPanel, iconButton, quickCommand, canvasDarkFrom, labelsFrom, placementFrom, PLACEMENTS, collapsedFrom, applyCollapsed, toolTitle, moreButton, fitToolBand, initToolBand } from './tool-panel.js';
 import { iconSvg } from './icons.js';
-import { initToolModes, TOOL_MODES, MODE_LABELS } from './tool-rail.js';
+import { initToolModes, TOOL_MODES, MODE_LABELS, modeAllows } from './tool-rail.js';
 import { initSidePanel, applySide, markHead, windowTitle, setSideMode, revealSection } from './side-panel.js';
 import { initSymbolsPanel, SYMBOL_DOCKS, DOCK_LABELS } from './symbols-ui.js';
 import { symcountDialog } from './symcount-ui.js';
@@ -197,6 +197,8 @@ class App {
     this.tool.activate();
     if (kept) { const own = this.vp.preview; this.vp.preview = (c, v, vp) => { kept(c, v, vp); own?.(c, v, vp); }; }
     for (const b of document.querySelectorAll('#tools button')) b.classList.toggle('active', b.dataset.tool === id);
+    this.markQuickAccess();
+    this.toolModes?.mark(); // the Compact rail button of the tool's group
     this.refreshPrompt();
     this.vp.requestRender();
     this.vp.canvas.focus();
@@ -761,7 +763,7 @@ class App {
     refreshPatternSelect(this);
     const sc = el('input', { type: 'number', step: 'any', min: '0', value: '1', title: 'Hatch scale', style: 'width:100%', onchange: (e) => { const v = Number(e.target.value); if (v > 0) this.defaults.hatchScale = v; } });
     box.append(el('div', { class: 'tgroup', 'data-extra': 'hatch' }, el('div', { class: 'group g-draw', text: 'Hatch' }), el('div', { class: 'xbody' }, pat, sc), moreButton(el, 'Hatch', 'draw')));
-    initToolBand(box, () => this.toolPlacement === 'top');
+    initToolBand(box, () => this.topBand());
     for (const [id, icon] of [['z-in', 'zoomin'], ['z-out', 'zoomout'], ['z-fit', 'zoomfit']]) { const b = document.getElementById(id); b.setAttribute('aria-label', b.title); b.replaceChildren(iconSvg(icon, 18)); }
   }
   /** (re)build the tool panel's groups from the customized layout (View > Customize tools…), before the Hatch group */
@@ -787,7 +789,9 @@ class App {
     this.toolModes?.refresh();
   }
   /** Top band: push the groups that do not fit out to "Group ▾" buttons (tool-panel.js fitToolBand) */
-  fitBand() { fitToolBand(document.getElementById('tools'), this.toolPlacement === 'top'); }
+  fitBand() { fitToolBand(document.getElementById('tools'), this.topBand()); }
+  /** the Full panel as a Top band (a Compact rail at the top is one row of group buttons: nothing to push out) */
+  topBand() { return this.toolPlacement === 'top' && this.toolModes?.mode !== 'rail'; }
   /** the Quick Access row under the menu bar: the chosen commands as icon buttons, coloured by group */
   buildQuickAccess() {
     document.getElementById('menubar').after(el('div', { id: 'qat', role: 'toolbar', 'aria-label': 'Quick Access' }));
@@ -807,6 +811,15 @@ class App {
     this.layerCombo.close(); if (lb) lb.after(this.layerCombo.el); else qat.append(this.layerCombo.el);
     this.symPalette.close(); this.layerCombo.el.after(this.symPalette.el);
     document.getElementById('app').classList.toggle('no-qat', !this.toolLayout.quickRow);
+    this.markQuickAccess();
+  }
+  /** highlight the Quick Access button of the current tool */
+  markQuickAccess() {
+    for (const b of document.querySelectorAll('#qat button[data-cmd]')) {
+      const on = b.dataset.cmd === this.toolId;
+      b.classList.toggle('active', on);
+      if (on) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+    }
   }
   /** a selector for the tool panel button or group header that has the focus (null elsewhere), to find its equivalent after a re-render */
   focusToken() {
@@ -851,9 +864,10 @@ class App {
   /** View > Tool panel: 'left' or 'right' (column beside the canvas), 'top' (band above the canvas) or 'hidden'; a class on #app, saved as 'tools.placement' */
   setToolPlacement(place, save = true) {
     this.toolPlacement = place = placementFrom(place);
-    if (save && (place === 'top' || place === 'hidden') && this.toolModes && this.toolModes.mode !== 'full') this.toolModes.setMode('full'); // Top band / hidden: a Full panel
+    if (save && this.toolModes && !modeAllows(this.toolModes.mode, place)) this.toolModes.setMode('full'); // hidden: a Full panel; Top: Full or Compact rail
     const app = document.getElementById('app');
     for (const p of PLACEMENTS) app.classList.toggle(`tools-${p}`, p === place);
+    if (this.toolModes?.mode === 'rail') { this.toolModes.close(); this.toolModes.refresh(); } // the rail turns between a column and a row
     this.fitBand();
     if (save) api.settingsSet?.('tools.placement', place)?.catch?.(() => {});
   }
