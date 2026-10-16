@@ -86,19 +86,22 @@ export function emptyReferencedBlocks(dxfBytes, limit = 20) {
       const t = e - s <= 32 ? buf.toString('latin1', s, e) : '';
       if (t === 'SECTION') { wantSection = true; section = ''; block = null; }
       else if (t === 'ENDSEC') { section = ''; block = null; }
-      else if (section === 'BLOCKS' && t === 'BLOCK') { block = { name: null, count: 0 }; want = 1; }
+      else if (section === 'BLOCKS' && t === 'BLOCK') { block = { name: null, count: 0, flags: 0, head: true }; want = 1; }
       else if (section === 'BLOCKS' && t === 'ENDBLK') {
         if (block?.name) defined.add(block.name.toLowerCase());
-        if (block?.name && !block.name.startsWith('*')) {
+        // an attached (unbound) xref (flag 4) or an xref-dependent block (16) is empty in the DWG itself: not a loss
+        if (block?.name && !block.name.startsWith('*') && !(block.flags & 20)) {
           const key = block.name.toLowerCase();
           const seen = blocks.get(key);
           if (seen) seen.count += block.count; else blocks.set(key, block);
         }
         block = null;
       } else {
-        if (block) block.count++;
+        if (block) { block.head = false; block.count++; }
         if (t === 'INSERT' && (section === 'BLOCKS' || section === 'ENTITIES')) want = 2;
       }
+    } else if (g === 70 && block?.head) {
+      block.flags = Number.parseInt(buf.toString('latin1', s, e), 10) || 0;
     } else if (g === 2) {
       if (wantSection) { section = buf.toString('latin1', s, e); wantSection = false; }
       else if (want === 1) { block.name = buf.toString('utf8', s, e); want = 0; }

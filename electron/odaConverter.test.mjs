@@ -316,3 +316,15 @@ test('emptyReferencedBlocks: INSERTs of blocks with no definition at all count (
     '0', 'ENDSEC', '0', 'EOF', ''].join('\n');
   assert.deepEqual(emptyReferencedBlocks(new TextEncoder().encode(dxf)), { count: 3, names: ['room tag', 'BUILDING F -GF-ARC', '*U13'] });
 });
+
+test('emptyReferencedBlocks: attached xrefs (flag 4, overlay 12) and xref-dependent blocks (16) are empty by nature, not lost', () => {
+  const dxf = ['0', 'SECTION', '2', 'BLOCKS',
+    '0', 'BLOCK', '2', 'SITE-PLAN', '70', '4', '1', '..\\x\\site.dwg', '0', 'ENDBLK',
+    '0', 'BLOCK', '2', 'GRID', '70', '44', '1', 'grid.dwg', '0', 'ENDBLK',
+    '0', 'BLOCK', '2', 'SITE-PLAN|DOOR', '70', '48', '0', 'ENDBLK',
+    '0', 'BLOCK', '2', 'tag', '70', '0', '0', 'ENDBLK',
+    '0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES',
+    '0', 'INSERT', '2', 'SITE-PLAN', '0', 'INSERT', '2', 'GRID', '0', 'INSERT', '2', 'SITE-PLAN|DOOR', '0', 'INSERT', '2', 'tag',
+    '0', 'ENDSEC', '0', 'EOF', ''].join('\n');
+  assert.deepEqual(emptyReferencedBlocks(new TextEncoder().encode(dxf)), { count: 1, names: ['tag'] });
+});
