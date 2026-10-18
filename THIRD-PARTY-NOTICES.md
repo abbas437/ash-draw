@@ -211,7 +211,8 @@ The Windows build ships LibreDWG 0.14.8597 executables
 (LGPL-2.1-or-later, an unmodified separate DLL from the upstream archive, used only by libredwg), in
 `resources/libredwg/`. Release builds ship LibreDWG converters built from the upstream 0.14.8597 source
 with one patch (`tools/libredwg-win/libredwg-llp64-bitpos.patch`, fixing false "buffer underflow" errors
-past 256 MiB on 64-bit Windows); `resources/libredwg/README-SOURCE.txt` next to the converters states which
+past 256 MiB on 64-bit Windows, and DXF output that left out block definitions after a block holding a
+POLYLINE or an attributed INSERT); `resources/libredwg/README-SOURCE.txt` next to the converters states which
 build a given copy contains. ASH Draw Studio does not link to or load LibreDWG; it runs
 these programs as separate child processes (`execFile`, no shell) to convert DWG
 files to and from DXF through temporary files. LibreDWG is licensed under the GNU

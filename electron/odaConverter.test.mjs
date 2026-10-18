@@ -244,21 +244,22 @@ const blocksDxf = (eol) => dxf([
   [0, 'SECTION'], [2, 'HEADER'], [9, '$ACADVER'], [1, 'AC1032'], [0, 'ENDSEC'],
   [0, 'SECTION'], [2, 'BLOCKS'],
   ...blk('*Model_Space'), ...blk('*Paper_Space'),
-  ...blk('room tag'), // referenced (as ROOM TAG) and empty
+  // 'room tag' (inserted as ROOM TAG) and 'BUILDING F -GF-ARC' (inserted only from inside another block) have
+  // no definition: lost by the converter
   ...blk('door', line), // referenced, not empty
   ...blk('unused'), // empty, never inserted
-  ...blk('BUILDING F -GF-ARC'), // empty, inserted only from inside another block
+  ...blk('placeholder'), // empty but DEFINED and inserted: a genuinely empty block, not a loss
   ...blk('level-floor', line, ins('BUILDING F -GF-ARC')),
   [0, 'ENDSEC'],
-  [0, 'SECTION'], [2, 'ENTITIES'], ...ins('ROOM TAG'), ...ins('door'), ...ins('level-floor'), ...ins('*Paper_Space'), ...line, [0, 'ENDSEC'],
+  [0, 'SECTION'], [2, 'ENTITIES'], ...ins('ROOM TAG'), ...ins('placeholder'), ...ins('door'), ...ins('level-floor'), ...ins('*Paper_Space'), ...line, [0, 'ENDSEC'],
   [0, 'EOF'],
 ], eol);
 
-test('emptyReferencedBlocks: referenced blocks without entities, case-insensitive, nested INSERTs, CRLF; * blocks ignored', () => {
+test('emptyReferencedBlocks: inserted blocks with no definition, case-insensitive, nested INSERTs, CRLF; defined empty and * blocks ignored', () => {
   for (const eol of ['\n', '\r\n']) {
     const bytes = new TextEncoder().encode(blocksDxf(eol));
-    assert.deepEqual(emptyReferencedBlocks(bytes), { count: 2, names: ['room tag', 'BUILDING F -GF-ARC'] }, JSON.stringify(eol));
-    assert.deepEqual(emptyReferencedBlocks(Buffer.from(bytes), 1), { count: 2, names: ['room tag'] }, 'Buffer input, name limit');
+    assert.deepEqual(emptyReferencedBlocks(bytes), { count: 2, names: ['BUILDING F -GF-ARC', 'ROOM TAG'] }, JSON.stringify(eol));
+    assert.deepEqual(emptyReferencedBlocks(Buffer.from(bytes), 1), { count: 2, names: ['BUILDING F -GF-ARC'] }, 'Buffer input, name limit');
   }
   assert.deepEqual(emptyReferencedBlocks(new TextEncoder().encode(KNOWN_DXF)), { count: 0, names: [] });
   assert.deepEqual(emptyReferencedBlocks(new Uint8Array(0)), { count: 0, names: [] });
@@ -281,14 +282,14 @@ test('empty referenced blocks from LibreDWG: ODA used when it works, else the Li
     const n = await service(lib, { mode }, null).svc.toDxf(dwg);
     assert.deepEqual([n.engine, n.converter, n.errorCount, n.log, lib.calls], ['libredwg', 'LibreDWG', 3, 'ERROR: a', 1], mode);
     assert.equal(n.warnings.length, 1);
-    assert.match(n.warnings[0], /^2 blocks came through empty or missing from the built-in converter \(e\.g\. room tag, BUILDING F -GF-ARC\) — walls, tags or symbols may be missing\. Install the free ODA File Converter/);
+    assert.match(n.warnings[0], /^2 blocks are missing from the built-in converter's output \(e\.g\. BUILDING F -GF-ARC, ROOM TAG\) — walls, tags or symbols may be missing\. Install the free ODA File Converter/);
     assert.equal(/Preferences/.test(n.warnings[0]), mode === 'libredwg', mode);
   }
   // ODA installed but failing: the LibreDWG drawing, the warning says ODA failed and does not suggest the install
   const failing = service(libreDxf(text), { mode: 'auto' }, '/x/ODAFileConverter.exe', false);
   const f = await failing.svc.toDxf(dwg);
   assert.equal(f.engine, 'libredwg');
-  assert.match(f.warnings[0], /blocks came through empty or missing[\s\S]*ODA File Converter was tried as well but could not convert this DWG \(ODA crashed\)/);
+  assert.match(f.warnings[0], /blocks are missing from the built-in converter's output[\s\S]*ODA File Converter was tried as well but could not convert this DWG \(ODA crashed\)/);
   assert.doesNotMatch(f.warnings[0], /Install/);
   assert.deepEqual(failing.used, ['/x/ODAFileConverter.exe']);
   // earlier LibreDWG warnings are kept
@@ -317,12 +318,11 @@ test('emptyReferencedBlocks: INSERTs of blocks with no definition at all count (
   assert.deepEqual(emptyReferencedBlocks(new TextEncoder().encode(dxf)), { count: 3, names: ['room tag', 'BUILDING F -GF-ARC', '*U13'] });
 });
 
-test('emptyReferencedBlocks: attached xrefs (flag 4, overlay 12) and xref-dependent blocks (16) are empty by nature, not lost', () => {
+test('emptyReferencedBlocks: attached xrefs (flag 4, overlay 12) and xref-dependent blocks (16) are empty by nature, not lost; a missing definition still counts', () => {
   const dxf = ['0', 'SECTION', '2', 'BLOCKS',
     '0', 'BLOCK', '2', 'SITE-PLAN', '70', '4', '1', '..\\x\\site.dwg', '0', 'ENDBLK',
     '0', 'BLOCK', '2', 'GRID', '70', '44', '1', 'grid.dwg', '0', 'ENDBLK',
     '0', 'BLOCK', '2', 'SITE-PLAN|DOOR', '70', '48', '0', 'ENDBLK',
-    '0', 'BLOCK', '2', 'tag', '70', '0', '0', 'ENDBLK',
     '0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES',
     '0', 'INSERT', '2', 'SITE-PLAN', '0', 'INSERT', '2', 'GRID', '0', 'INSERT', '2', 'SITE-PLAN|DOOR', '0', 'INSERT', '2', 'tag',
     '0', 'ENDSEC', '0', 'EOF', ''].join('\n');
