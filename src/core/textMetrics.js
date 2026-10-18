@@ -41,7 +41,7 @@ export function textFrame(e, doc = null) {
   const st = doc?.textStyles?.get(String(e.style || 'STANDARD').toUpperCase());
   const lines = (isGdtFont(st?.fontFile || st?.font) ? gdtText(mtextPlain(e.text)) : mtextPlain(e.text)).split('\n');
   const sl = !e.ui && lines.length === 1 && shxSubstitute(st?.fontFile || st?.font) ? strokeLayout(lines[0], 1) : null;
-  const w1 = sl ? sl.width : Math.max(0, ...lines.map((l) => textAdvance(l, st?.font || 'Arial')));
+  const w1 = sl ? sl.width : Math.max(0, ...lines.map((l) => textAdvance(l, st?.family || st?.font || 'Arial', !!st?.bold, !!st?.italic)));
   const m = sl ? SHX_M : CANVAS_M;
   const t = Math.tan((e.oblique || 0) * Math.PI / 180);
   let h = e.height || 1, wf = e.widthFactor || 1, rot = (e.rot || 0) * Math.PI / 180;

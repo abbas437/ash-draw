@@ -683,6 +683,28 @@ function readXData(rec) {
 }
 
 // ---------------------------------------------------------------------------------------------
+/** A TrueType STYLE's face for display: XDATA ACAD 1000 family name and 1071 flags (0x2000000 bold, 0x1000000 italic),
+ *  as AutoCAD writes them. The Swiss / Dutch fonts AutoCAD installs are not on a plain Windows PC: drawn as Arial,
+ *  Arial Narrow and Times New Roman, the way their metrics are closest. -> { family?, bold?, italic? } */
+export function ttfFace(tags, fontFile = '') {
+  let app = null, fam = null, flags = null;
+  for (const [c, v] of tags) {
+    if (c === 1001) app = v;
+    else if (app === 'ACAD' && c === 1000 && fam == null) fam = String(v).trim();
+    else if (app === 'ACAD' && c === 1071 && flags == null) flags = parseInt(v, 10) >>> 0;
+  }
+  const file = String(fontFile).toLowerCase().replace(/\.ttf$/, '');
+  if (!fam && /^swiss/.test(file)) fam = /^swissc/.test(file) ? 'Swis721 Cn BT' : 'Swis721 BT';
+  const out = {};
+  if (fam && flags != null) out.acadFace = { family: fam, flags }; // written back as read
+  if (fam) {
+    out.family = /^swis721 (cn|cond|blkcn)/i.test(fam) ? 'Arial Narrow' : /^swis721/i.test(fam) ? 'Arial' : /^dutch801/i.test(fam) ? 'Times New Roman' : fam;
+  }
+  if (flags != null) { if (flags & 0x2000000) out.bold = true; if (flags & 0x1000000) out.italic = true; }
+  else if (/^swiss/.test(file) && /b/.test(file.slice(5))) out.bold = true; // swissb, swisscb, swissbo ...
+  return out;
+}
+
 let mlStyles = new Map(); // MLEADERSTYLE handle -> defaults (set per parse)
 let styleNames = new Map(); // STYLE handle -> name (set per parse): an MLEADER's text style
 let dimHandleName = () => undefined; // (DIMVAR, handle) -> block / text style name, for DSTYLE overrides (set per parse)
@@ -963,6 +985,7 @@ function parseTokensInto(tk, onProgress) {
         const font = rec.str(3).replace(/\.(ttf|shx|otf)$/i, '') || 'Arial';
         const st = addTextStyle(doc, { name, font, height: rec.num(40), widthFactor: rec.num(41, 1) || 1, oblique: rec.num(50) });
         st.fontFile = rec.str(3);
+        Object.assign(st, ttfFace(rec.tags(), st.fontFile));
       }
     }
     dimHandleName = (k, h) => (k === 'DIMTXSTY' ? styleH.get(h) : blockRecH.get(normHandle(h)));

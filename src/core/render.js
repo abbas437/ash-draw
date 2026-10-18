@@ -50,6 +50,11 @@ function linetypeOf(e, layer, inherit) {
   return lt;
 }
 
+/** the family a text style is drawn in (a TrueType style's display family, else its font name) */
+const faceOf = (ts) => ts?.family || ts?.font || 'Arial';
+/** { bold, italic } of a TrueType style, only the ones set (scene items without them are unchanged) */
+const faceFlags = (ts) => ({ ...(ts?.bold ? { bold: true } : {}), ...(ts?.italic ? { italic: true } : {}) });
+
 /** opacity 0..1 from the entity's alpha (ByLayer: the layer's - for layer-0 content of a block, the INSERT's layer -
  *  ByBlock: the enclosing INSERT's). An INSERT's own transparency does not fade content that has its own (checked
  *  against DWG TrueView: axis bubbles on an opaque layer inside a block on a 75 % layer are drawn solid). */
@@ -116,7 +121,7 @@ class Builder {
   /** MLEADER text frame (Frame text on): a closed polyline round the laid-out text, the landing gap clear of it on
    *  every side, as AutoCAD draws it; BYBLOCK so it takes the MLEADER's own properties */
   mleaderFrame(e) {
-    const ts = this.doc.textStyles.get(String(e.textStyle || 'STANDARD').toUpperCase()), styleFont = ts?.fontFile || ts?.font, ttFont = ts?.font || 'Arial';
+    const ts = this.doc.textStyles.get(String(e.textStyle || 'STANDARD').toUpperCase()), styleFont = ts?.fontFile || ts?.font, ttFont = ts?.family || ts?.font || 'Arial';
     const shx = !!shxSubstitute(styleFont);
     const measure = (t, pr) => (shx && !pr.font ? strokeLayout(t, pr.h).width : textAdvance(t, pr.font || ttFont, pr.bold, pr.italic) * pr.h);
     const lay = layoutMText(parseMText(e.text, { height: e.textHeight || 1 }), { width: e.textWidth || 0, attach: e.textAttach || 1, lineSpacing: 1, measure });
@@ -449,6 +454,9 @@ class Builder {
         // conservative bbox around the (rotated) text block
         let box = null;
         const mt = e.type === 'MTEXT' ? gdtModel(parseMText(e.text, { height: h }), gdt) : null;
+        if (mt && (tst?.bold || tst?.italic)) { // a bold / italic TrueType style: runs in the style's font take its face
+          for (const para of mt.paras) for (const r of para.runs) if (r.props && !r.props.font) r.props = { ...r.props, bold: r.props.bold || !!tst.bold, italic: r.props.italic || !!tst.italic };
+        }
         const lay = mt && layoutMText(mt, { width: (e.width || 0) * s, attach: e.attach || 1, lineSpacing: e.lineSpacing || 1 });
         const corners = lay ? [[lay.x0, -lay.y0], [lay.x0 + lay.width, -lay.y0], [lay.x0 + lay.width, -lay.y0 - lay.height], [lay.x0, -lay.y0 - lay.height]]
           : [[0, -h * lines.length * 1.4], [w, -h * lines.length * 1.4], [w, h], [0, h]];
@@ -462,7 +470,7 @@ class Builder {
           if (f.stroke) { this.pushStrokeText(strokeLayout(raw, f.h), f, style, box, rootId); return; }
           if (e.hAlign === 3 || e.hAlign === 5) {
             this.push({ kind: 'text', p: f.o, h: f.h, rot: f.rot, lines, wf: f.wf, style, bbox: box, mtext: false, attach: 1, boxW: 0, hAlign: 0, vAlign: 0,
-              font: this.doc.textStyles.get(String(e.style || 'STANDARD').toUpperCase())?.font || 'Arial', mt: null, lineSpacing: 1 }, rootId);
+              font: faceOf(tst), ...faceFlags(tst), mt: null, lineSpacing: 1 }, rootId);
             return;
           }
         }
@@ -470,7 +478,7 @@ class Builder {
         this.push({
           kind: 'text', p, h, rot, lines, wf: e.widthFactor || 1, style, bbox: box, mtext: e.type === 'MTEXT', attach: e.attach || 1,
           boxW: e.type === 'MTEXT' ? (e.width || 0) * s : 0, hAlign: e.hAlign || 0, vAlign: e.vAlign || 0,
-          font: this.doc.textStyles.get(String(e.style || 'STANDARD').toUpperCase())?.font || 'Arial',
+          font: faceOf(tst), ...faceFlags(tst),
           // MTEXT: the parsed run model (heights in drawing units of this item)
           mt, lineSpacing: e.lineSpacing || 1,
         }, rootId);
@@ -508,7 +516,7 @@ class Builder {
    */
   pushStrokeMText(e, mt, p, rot, s, style, lines, rootId) {
     const ts = this.doc.textStyles.get(String(e.style || 'STANDARD').toUpperCase());
-    const styleFont = ts?.fontFile || ts?.font, ttFont = ts?.font || 'Arial';
+    const styleFont = ts?.fontFile || ts?.font, ttFont = faceOf(ts);
     let any = false;
     for (const para of mt.paras) {
       for (const r of para.runs) {
@@ -1273,7 +1281,7 @@ function drawText(ctx, it, x, y, z, color) {
   ctx.translate(x, y);
   ctx.rotate(-it.rot);
   ctx.scale(it.wf, 1);
-  ctx.font = `${px}px "${it.font}", Arial, "Segoe UI", sans-serif`;
+  ctx.font = `${it.italic ? 'italic ' : ''}${it.bold ? 'bold ' : ''}${px}px "${it.font}", Arial, "Segoe UI", sans-serif`;
   ctx.fillStyle = color;
   ctx.direction = 'ltr'; // paragraph direction of a TEXT line is the same as the PDF's, whatever the page's dir
   let lines = it.lines;

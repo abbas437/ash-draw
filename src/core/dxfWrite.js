@@ -619,6 +619,7 @@ export function* writeDxfSteps(doc, opts = {}) {
     out.p(70, 0); out.p(40, st.height || 0); out.p(41, st.widthFactor || 1); out.p(50, st.oblique || 0); out.p(71, 0); out.p(42, 2.5);
     const file = st.fontFile || `${st.font || 'Arial'}.ttf`; // an SHX file name is kept (drawn with the stroke substitute)
     out.s(3, file); out.p(4, '');
+    if (st.acadFace) { out.s(1001, 'ACAD'); out.s(1000, st.acadFace.family); out.p(1071, st.acadFace.flags); } // TrueType family / bold / italic
   }
   out.p(0, 'ENDTAB');
 
