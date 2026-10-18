@@ -50,12 +50,17 @@ function linetypeOf(e, layer, inherit) {
   return lt;
 }
 
-/** opacity 0..1 from the entity's alpha (ByLayer: the layer's, ByBlock: the enclosing INSERT's) */
+/** opacity 0..1 from the entity's alpha (ByLayer: the layer's, ByBlock: the enclosing INSERT's). Inside an INSERT
+ *  the block reference's own transparency applies to the whole block, as AutoCAD / TrueView show it (a background
+ *  plan inserted on a 75 % transparent layer is faded, whatever the layers of its contents): the content's own
+ *  opacity times the INSERT's. A ByBlock entity, or a ByLayer one on layer 0 (which takes the INSERT's layer), has
+ *  no transparency of its own - only the INSERT's. */
 function opacityOf(e, layer, inherit) {
-  const a = e.alpha;
-  if (a === -2) return inherit ? inherit.alpha ?? 1 : 1;
-  if (a >= 0) return a / 255;
-  return layer && layer.alpha >= 0 ? layer.alpha / 255 : 1;
+  const outer = inherit ? inherit.alpha ?? 1 : 1, a = e.alpha;
+  if (a === -2) return outer;
+  if (a >= 0) return (a / 255) * outer;
+  if (inherit && (e.layer === '0' || e.layer === undefined)) return outer;
+  return (layer && layer.alpha >= 0 ? layer.alpha / 255 : 1) * outer;
 }
 
 class Builder {
@@ -1481,10 +1486,17 @@ export function drawLayout(ctx, paperScene, view, layout, paperRectsOf, modelSce
   }
   drawScene(ctx, paperScene, view, { ...opts, background: PAPER_COLOUR, noClear: true });
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
+  ctx.lineWidth = 1;
+  const layers = paperScene.doc?.layers;
   for (const v of vports) {
-    const sel = opts.highlight instanceof Set && opts.highlight.has(v.id);
-    ctx.strokeStyle = sel ? (opts.highlightColor ?? '#0a6fd1') : '#333'; ctx.lineWidth = v === opts.activeVp ? 3 : sel ? 2 : 1; ctx.strokeRect(sx(v.c.x - v.width / 2), sy(v.c.y + v.height / 2), v.width * z, v.height * z);
+    const sel = opts.highlight instanceof Set && opts.highlight.has(v.id), act = v === opts.activeVp;
+    // the frame in its own colour (ByLayer: the viewport's layer), hidden with its layer as in AutoCAD - unless it is
+    // the active (MSPACE) or a selected viewport, whose frame is the cue
+    const layer = layers?.get(v.layer ?? '0') ?? null;
+    if (!act && !sel && layer && (layer.visible === false || layer.frozen)) continue;
+    const c = resolveColor(v, layer);
+    ctx.strokeStyle = sel ? (opts.highlightColor ?? '#0a6fd1') : c.auto ? '#000000' : rgbCss(c.rgb);
+    ctx.lineWidth = act ? 3 : sel ? 2 : 1; ctx.strokeRect(sx(v.c.x - v.width / 2), sy(v.c.y + v.height / 2), v.width * z, v.height * z);
   }
 }
 

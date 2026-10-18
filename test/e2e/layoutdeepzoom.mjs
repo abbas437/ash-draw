@@ -4,6 +4,7 @@
 // whole model view was drawn - and stroked at huge coordinates - at the zoomed size.)
 //  1. Deep in a plain and in a twisted viewport, a render draws a handful of paths, not the whole model.
 //  2. What is drawn is still right: the model line under the canvas centre is drawn there, in both viewports.
+//  3. A viewport frame is drawn in its layer's colour (red here, as AutoCAD shows it) and hidden with that layer.
 // Prints "layoutdeepzoom e2e: OK".
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
@@ -40,7 +41,7 @@ try {
     const { addLayout, layoutsOf } = await import('/src/core/layoutmgmt.js');
     const doc = newDocument(), s = new Session(doc);
     s.transact('setup', (tx) => {
-      tx.layer('A', { color: 1 });
+      tx.layer('A', { color: 1 }); tx.layer('VP', { color: 1 });
       for (let i = 0; i < 20000; i++) {
         const x = (i * 37) % 1000, y = (i * 53) % 1000;
         tx.add({ type: 'LINE', id: 0, layer: 'A', color: 256, linetype: 'BYLAYER', lineweight: -1, ltscale: 1, p1: { x, y }, p2: { x: x + 3, y: y + 5 } });
@@ -50,9 +51,10 @@ try {
     addLayout(s, 'Layout1');
     const fit = { minx: 0, miny: 0, maxx: 1000, maxy: 1000 };
     const tw = { ...makeViewport({ x: 220, y: 50 }, { x: 400, y: 230 }, fit, 3), id: doc.nextId++ }; tw.twist = 0.4;
+    const plain = { ...makeViewport({ x: 20, y: 50 }, { x: 200, y: 230 }, fit, 2), id: doc.nextId++, layer: 'VP' };
     s.transact('paper', (tx) => tx.set(layoutsOf(doc)[0], 'entities', [
       { ...makeViewport({ x: 0, y: 0 }, { x: 420, y: 297 }, null, 1), paper: true, id: doc.nextId++ },
-      { ...makeViewport({ x: 20, y: 50 }, { x: 200, y: 230 }, fit, 2), id: doc.nextId++ }, tw]));
+      plain, tw]));
     window.app.installDoc(doc, { path: null, name: 'deepzoom.dxf', format: 'dxf' });
     window.__paths = 0;
     for (const m of ['lineTo', 'moveTo']) { const f = CanvasRenderingContext2D.prototype[m]; CanvasRenderingContext2D.prototype[m] = function (...a) { window.__paths++; return f.apply(this, a); }; }
@@ -80,6 +82,19 @@ try {
     assert.ok(r.paths < 2000, `${label}: a deep render drew ${r.paths} paths (the whole model is ~80000)`);
     assert.ok(r.blue, `${label}: the model line under the canvas centre is not drawn there`);
   }
+
+  step = 'the plain viewport\'s frame is red (its layer VP); hidden when VP is off';
+  const frame = () => page.evaluate(() => {
+    const vp = window.app.vp; vp.view = { ...vp.view, cx: 210, cy: 148, zoom: 2 }; vp.invalidate(); vp.render();
+    const v = vp.doc.entities.find((e) => e.type === 'VIEWPORT' && e.vpId === 2), p = vp.toScreen({ x: v.c.x - v.width / 2, y: v.c.y });
+    const d = vp.canvas.getContext('2d').getImageData(Math.round(p.x) - 2, Math.round(p.y), 5, 1).data;
+    let red = false, black = false;
+    for (let i = 0; i < d.length; i += 4) { if (d[i] > 180 && d[i + 1] < 90 && d[i + 2] < 90) red = true; if (d[i] < 90 && d[i + 1] < 90 && d[i + 2] < 90) black = true; }
+    return { red, black };
+  });
+  assert.deepEqual(await frame(), { red: true, black: false }, 'frame in the layer colour');
+  await page.evaluate(() => { window.app.doc.layers.get('VP').visible = false; window.app.vp.refreshStructure(); });
+  assert.deepEqual(await frame(), { red: false, black: false }, 'frame hidden with its layer');
 
   assert.deepEqual(problems, []);
   console.log('layoutdeepzoom e2e: OK');
