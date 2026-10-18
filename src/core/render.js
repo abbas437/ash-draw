@@ -27,7 +27,7 @@ import { drain } from './slice.js';
 import { strokeLayout, shxSubstitute } from './shx.js';
 import { isGdtFont, gdtText, gdtModel } from './gdt.js';
 import { textFrame, textCorners, textAdvance } from './textMetrics.js';
-import { isPaperViewport } from './layouts.js';
+import { isPaperViewport, paperToModel } from './layouts.js';
 import { worldClip, clipItem, clipOn } from './xclip.js';
 
 const TAU = Math.PI * 2;
@@ -1462,15 +1462,21 @@ export function drawLayout(ctx, paperScene, view, layout, paperRectsOf, modelSce
   const vports = layoutViewports(paperScene);
   for (const v of vports) {
     const k = (v.height / (v.viewHeight || 1)) * z, cx = sx(v.c.x), cy = sy(v.c.y), w = v.width * z, h = v.height * z;
-    const D = Math.hypot(w, h) + 2;
+    // only the part of the viewport on the canvas is drawn: zoomed far into a sheet the viewport is far larger than the
+    // screen, and a model view the size of the whole viewport would draw (and stroke at huge coordinates) all of it
+    const x0 = Math.max(cx - w / 2, 0), x1 = Math.min(cx + w / 2, W), y0 = Math.max(cy - h / 2, 0), y1 = Math.min(cy + h / 2, H);
+    if (x1 <= x0 || y1 <= y0) continue;
+    const vx = (x0 + x1) / 2, vy = (y0 + y1) / 2, D = Math.hypot(x1 - x0, y1 - y0) + 2;
+    const mc = paperToModel(v, { x: view.cx + (vx - W / 2) / z, y: view.cy - (vy - H / 2) / z }); // model point at the visible part's centre
     ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.beginPath(); ctx.rect(cx - w / 2, cy - h / 2, w, h); ctx.clip();
-    // model view centred on the viewport, D x D pixels so culling covers the rotated window
-    ctx.translate(cx, cy); ctx.rotate(-(v.twist || 0)); ctx.translate(-D / 2, -D / 2);
-    drawScene(ctx, modelScene(v.frozen ?? []), { cx: v.viewCenter.x, cy: v.viewCenter.y, zoom: k, width: D, height: D },
+    ctx.beginPath(); ctx.rect(x0, y0, x1 - x0, y1 - y0); ctx.clip();
+    // model view centred on the visible part, D x D pixels so culling covers the rotated window
+    ctx.translate(vx, vy); ctx.rotate(-(v.twist || 0)); ctx.translate(-D / 2, -D / 2);
+    const mv = { cx: mc.x, cy: mc.y, zoom: k, width: D, height: D };
+    drawScene(ctx, modelScene(v.frozen ?? []), mv,
       { ...opts, background: PAPER_COLOUR, noClear: true, baseTransform: ctx.getTransform(), highlight: v === opts.activeVp ? opts.modelHighlight : null });
-    if (opts.modelGrid && v === opts.activeVp) opts.modelGrid(ctx, { cx: v.viewCenter.x, cy: v.viewCenter.y, zoom: k, width: D, height: D }); // MSPACE: the model grid in the active viewport
+    if (opts.modelGrid && v === opts.activeVp) opts.modelGrid(ctx, mv); // MSPACE: the model grid in the active viewport
     ctx.restore();
   }
   drawScene(ctx, paperScene, view, { ...opts, background: PAPER_COLOUR, noClear: true });
