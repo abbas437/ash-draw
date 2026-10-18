@@ -21,7 +21,7 @@ import { AUTOSAVE_CHOICES, shouldDiscardAutosave } from '../src/core/autosave.js
 import { FindPanel } from './find.js';
 import { plotDialog, publishDialog } from './plot.js';
 import { initBlockEditor, blockedByEditor, settleBlockEdit, blockEditPending } from './bedit-ui.js';
-import { initLayouts, restoreSpace, renderSpaceBar, layoutDoubleClick, exitMspace, renderVpScale, commitViewportView } from './layouts-ui.js';
+import { initLayouts, restoreSpace, openSavedSpace, noteSavedSpace, renderSpaceBar, layoutDoubleClick, exitMspace, renderVpScale, commitViewportView } from './layouts-ui.js';
 import { ComparePanel, runCompare, compareUses } from './compare.js';
 import { viewCommands, viewMenuItems } from './views-ui.js';
 import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
@@ -394,6 +394,7 @@ class App {
       const pp = progressToast('Preparing drawing…', () => ac.abort());
       const prepared = await prepareView(doc, { signal: ac.signal, onProgress: (x) => pp.set(x) });
       this.installDoc(doc, { path: f.path ?? null, name: f.name, format }, { replaceBlank: true, prepared, firstView: true });
+      openSavedSpace(this); // saved on a layout ($TILEMODE 0): open on that layout tab, as AutoCAD does
       this.active.conversion = conversion ?? null; // the status-bar conversion item and Help > Converter log
       this.refreshStatus();
       toast(`${f.name}: ${doc.entities.length.toLocaleString()} objects`, 2500);
@@ -466,6 +467,7 @@ class App {
     if (!tab) return false;
     if (tab.saving) { toast('Still saving…', 2000); return false; }
     commitViewportView(this); // a viewport view changed in MSPACE becomes its undo step before the save point
+    noteSavedSpace(tab); // the file opens in the space shown now (Model or this layout)
     tab.saving = { step: tab.session.undoStack.at(-1)?.id ?? 0 }; // the save point: edits made while saving stay unsaved
     try { return await fn(tab); } finally { tab.saving = null; }
   }

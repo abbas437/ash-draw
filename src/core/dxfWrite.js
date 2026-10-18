@@ -478,14 +478,17 @@ export function* writeDxfSteps(doc, opts = {}) {
     if (writeEntity(entOut, e, hModelRec)) report.entities++;
     if ((++n & 1023) === 0) yield;
   }
-  // paper space: the first layout is the active one (*Paper_Space, entities in ENTITIES), the others own *Paper_SpaceN
-  // blocks. Model viewports go last in each list.
+  // paper space: the active layout (doc.header.activeLayout, else the first) is *Paper_Space with its entities in
+  // ENTITIES, the others own *Paper_Space0..n blocks; the tab order (71) stays the list order. Model viewports go last in each list.
   // The overall (paper) viewport goes first: AutoCAD takes the first viewport of a layout as its paper view.
   const paperOrder = (list) => [...list.filter((e) => e.type === 'VIEWPORT' && e.paper), ...list.filter((e) => e.type !== 'VIEWPORT'),
     ...list.filter((e) => e.type === 'VIEWPORT' && !e.paper)];
-  const paperLayouts = (doc.layouts?.length ? doc.layouts : [{ name: 'Layout1', tab: 1, entities: [], plot: null }]).map((lo, i) => ({
-    lo, name: i === 0 ? '*Paper_Space' : `*Paper_Space${i - 1}`, rec: i === 0 ? hPaperRec : H(), layoutH: i === 0 ? hPaperLayout : H(),
-  }));
+  const los = doc.layouts?.length ? doc.layouts : [{ name: 'Layout1', tab: 1, entities: [], plot: null }];
+  const want = String(doc.header.activeLayout ?? '').toUpperCase();
+  const act = Math.max(0, want ? los.findIndex((lo) => String(lo.name).toUpperCase() === want) : 0);
+  let blkN = 0;
+  const paperLayouts = los.map((lo, i) => (i === act ? { lo, name: '*Paper_Space', rec: hPaperRec, layoutH: hPaperLayout }
+    : { lo, name: `*Paper_Space${blkN++}`, rec: H(), layoutH: H() }));
   paperMode = true;
   for (const pl of paperLayouts) {
     const ents = paperOrder(pl.lo.entities ?? []);
@@ -516,6 +519,7 @@ export function* writeDxfSteps(doc, opts = {}) {
   out.p(9, '$EXTMIN'); if (ext) out.pt(10, ext.minx, ext.miny, 0); else out.pt(10, 1e20, 1e20, 1e20);
   out.p(9, '$EXTMAX'); if (ext) out.pt(10, ext.maxx, ext.maxy, 0); else out.pt(10, -1e20, -1e20, -1e20);
   out.p(9, '$LTSCALE'); out.p(40, doc.header.ltscale || 1);
+  out.p(9, '$TILEMODE'); out.p(70, doc.header.tilemode === 0 ? 0 : 1); // 0: open on the active layout (*Paper_Space)
   // $XCLIPFRAME is read (doc.header.xclipframe) but not written: its group code differs between DXF versions
   out.p(9, '$TEXTSTYLE'); out.p(7, 'Standard');
   out.p(9, '$CLAYER'); out.p(8, '0');
@@ -653,7 +657,7 @@ export function* writeDxfSteps(doc, opts = {}) {
   table('BLOCK_RECORD', 1 + paperLayouts.length + blockNames.length);
   out.p(0, 'BLOCK_RECORD'); out.p(5, hModelRec); out.p(330, tbl.BLOCK_RECORD); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, 'AcDbBlockTableRecord'); out.p(2, '*Model_Space'); out.p(340, hModelLayout);
   out.p(0, 'BLOCK_RECORD'); out.p(5, hPaperRec); out.p(330, tbl.BLOCK_RECORD); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, 'AcDbBlockTableRecord'); out.p(2, '*Paper_Space'); out.p(340, hPaperLayout);
-  for (const pl of paperLayouts.slice(1)) { out.p(0, 'BLOCK_RECORD'); out.p(5, pl.rec); out.p(330, tbl.BLOCK_RECORD); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, 'AcDbBlockTableRecord'); out.s(2, pl.name); out.p(340, pl.layoutH); }
+  for (const pl of paperLayouts.filter((x) => x.rec !== hPaperRec)) { out.p(0, 'BLOCK_RECORD'); out.p(5, pl.rec); out.p(330, tbl.BLOCK_RECORD); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, 'AcDbBlockTableRecord'); out.s(2, pl.name); out.p(340, pl.layoutH); }
   for (const n of blockNames) { out.p(0, 'BLOCK_RECORD'); out.p(5, blockRec.get(n)); out.p(330, tbl.BLOCK_RECORD); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, 'AcDbBlockTableRecord'); out.s(2, n); }
   out.p(0, 'ENDTAB');
   out.p(0, 'ENDSEC');

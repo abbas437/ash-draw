@@ -903,6 +903,7 @@ function parseTokensInto(tk, onProgress) {
       else if (name === '$DWGCODEPAGE') doc.header.codepage = val(j);
       else if (name === '$DIMSTYLE') doc.header.currentDimStyle = val(j);
       else if (name === '$LTSCALE') doc.header.ltscale = parseFloat(val(j)) || 1;
+      else if (name === '$TILEMODE') { const v = parseInt(val(j), 10); if (v === 0 || v === 1) doc.header.tilemode = v; } // 0: a layout was current when saved
       else if (name === '$XCLIPFRAME') { const v = parseInt(val(j), 10); if (v >= 0 && v <= 2) doc.header.xclipframe = v; }
       else if (name === '$INSBASE' && first === 10) { const b = { x: parseFloat(val(j)), y: parseFloat(val(j + 1)) }; if (Number.isFinite(b.x) && Number.isFinite(b.y) && (b.x || b.y)) doc.header.insbase = b; }
       else if (name === '$EXTMIN' && first === 10) doc.header.extmin = { x: parseFloat(val(j)), y: parseFloat(val(j + 1)) };
@@ -1056,6 +1057,8 @@ function parseTokensInto(tk, onProgress) {
   layouts.sort((a, b) => a.tab - b.tab);
   for (const lo of layouts) markPaperViewport(lo.entities);
   doc.layouts = layouts;
+  const active = layouts.find((lo) => /^\*paper_space$/i.test(lo.block)); // the layout current when saved ($TILEMODE 0 shows it)
+  if (active) doc.header.activeLayout = active.name;
   for (const t of viewRecs) { const v = viewFromDxf(t, layouts); if (v) (doc.views ??= new Map()).set(viewKey(v.name), v); }
   // draw order: each table's owner is the block record of a space or block definition
   for (const t of sortents) {

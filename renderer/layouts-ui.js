@@ -39,6 +39,20 @@ export function setSpace(app, name) {
   app.refreshPanels(); app.refreshStatus(); renderSpaceBar(app);
 }
 
+/** a drawing just opened from a file: show the layout it was saved on ($TILEMODE 0), as a click on its tab would */
+export function openSavedSpace(app) {
+  const tab = app.active, h = tab?.doc.header;
+  if (h?.tilemode === 0 && h.activeLayout && layoutOf(tab, h.activeLayout)) setSpace(app, h.activeLayout);
+}
+
+/** before a save: the space the tab shows is the one the file opens in ($TILEMODE; a shown layout is the active one) */
+export function noteSavedSpace(tab) {
+  if (!tab.spaces) return; // never shown: keeps what it was read with
+  const h = tab.doc.header, cur = tab.spaces.cur;
+  h.tilemode = cur === 'Model' ? 1 : 0;
+  if (cur !== 'Model') h.activeLayout = cur;
+}
+
 /** called by App.switchTo before the tab's session is shown */
 export function restoreSpace(app, tab) { app.vp.layout = layoutOf(tab, spaces(tab).cur); }
 
