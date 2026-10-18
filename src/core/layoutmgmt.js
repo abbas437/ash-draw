@@ -67,6 +67,8 @@ export function renameLayout(s, from, to) {
   s.transact(`Rename layout ${old}`, (tx) => {
     tx.props(lo, { name: n });
     for (const [k, v] of [...views]) if (v.space === old) tx.set(views, k, { ...v, space: n }, false);
+    // the layout the file opens on ($TILEMODE 0, *Paper_Space) follows its rename
+    if (root.header?.activeLayout?.toUpperCase() === old.toUpperCase()) tx.props(root.header, { activeLayout: n });
   });
   return lo;
 }

@@ -66,13 +66,16 @@ test('LAYOUT Copy deep-copies paper entities and viewports with new ids, after t
 
 test('LAYOUT Rename renames the layout and moves its named views; one undo step', () => {
   const s = drawing(), steps = s.undoStack.length;
+  (s.doc.header ??= {}).activeLayout = 'Layout1';
   renameLayout(s, 'layout1', 'Sheet 1');
   assert.equal(names(s), '1:Sheet 1');
+  assert.equal(s.doc.header.activeLayout, 'Sheet 1', 'the layout the file opens on follows the rename');
   assert.equal(findView(s.doc, 'Detail').space, 'Sheet 1');
   assert.equal(findView(s.doc, 'Plan').space, 'model');
   assert.equal(s.undoStack.length, steps + 1);
   s.undo();
   assert.equal(names(s), '1:Layout1');
+  assert.equal(s.doc.header.activeLayout, 'Layout1');
   assert.equal(findView(s.doc, 'Detail').space, 'Layout1');
   addLayout(s, 'Other');
   assert.throws(() => renameLayout(s, 'Other', 'LAYOUT1'), /already exists/);
