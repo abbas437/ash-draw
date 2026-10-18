@@ -35,6 +35,7 @@ import { symcountDialog } from './symcount-ui.js';
 import { layerStatesDialog } from './layerstates-ui.js';
 import { defaultLayout, cleanLayout, panelGroups, samePanel, quickRow, setQuickRow, compactKeys, foldMode, SEP } from './tool-layout.js';
 import { openCustomize, initToolContextMenu } from './tool-custom.js';
+import { openTabMenu } from './tab-menu.js';
 import { renderMenu, menuKey, closeSubmenus } from './menu-items.js';
 import { loadDrawingImages } from './images.js';
 import { CommandHistory } from '../src/core/cmdhist.js';
@@ -972,7 +973,7 @@ class App {
   }
   /** window title with the build version (api.version: 0.2.0-beta.N in test builds), so side-by-side builds can be told apart */
   refreshWindowTitle() { if (this.active) api.setTitle?.(windowTitle(this.file.name, this.session?.dirty, this.version)); }
-  /** the file tab strip above the drawing area: name, unsaved-changes dot, close button; middle-click closes */
+  /** the file tab strip above the drawing area: name, unsaved-changes dot, close button; middle-click closes, right-click opens the close menu */
   renderTabs() {
     const bar = document.getElementById('tabbar');
     bar.replaceChildren(...this.tabs.map((t) => el('div', {
@@ -980,6 +981,9 @@ class App {
       onclick: () => { if (this.active !== t) this.switchTo(t); },
       onauxclick: (e) => { if (e.button === 1) { e.preventDefault(); this.closeTab(t); } },
       onmousedown: (e) => { if (e.button === 1) e.preventDefault(); }, // no auto-scroll
+      tabindex: t === this.active ? '0' : '-1',
+      oncontextmenu: (e) => openTabMenu(this, t, e),
+      onkeydown: (e) => { if ((e.key === 'F10' && e.shiftKey) || e.key === 'ContextMenu') openTabMenu(this, t, e); },
     }, el('span', { class: 'dot', text: t.session.dirty ? '\u25CF' : '', title: t.session.dirty ? 'Unsaved changes' : '' }), el('span', { class: 'name', text: t.file.name }),
     el('button', { class: 'x', title: 'Close (Ctrl+W)', 'aria-label': `Close ${t.file.name}`, onclick: (e) => { e.stopPropagation(); this.closeTab(t); } }, '\u00D7'))));
   }
