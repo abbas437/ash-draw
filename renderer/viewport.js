@@ -1,6 +1,6 @@
 // ASH Draw Studio - canvas viewport: view state, pan/zoom, snapping, selection, overlays.
 // The active tool receives world-space events through vp.tool (see tools.js).
-import { buildScene, updateScene, drawScene, drawSceneSteps, drawLayout, fitView, screenToWorld, worldToScreen, zoomAt, zoomLimits } from '../src/core/render.js';
+import { buildScene, updateScene, drawScene, drawSceneSteps, drawLayout, layoutViewports, fitView, screenToWorld, worldToScreen, zoomAt, zoomLimits } from '../src/core/render.js';
 import { wheelScale, ZOOMFACTOR_DEFAULT } from '../src/core/cmdline.js';
 import { SpatialIndex, findSnap, orthoPoint, polarPoint, pickEntity, selectInBox } from '../src/core/pick.js';
 import { bboxOf, growBox } from '../src/core/geom.js';
@@ -241,11 +241,7 @@ export class Viewport {
     const opts = this.sceneOpts();
     const ms = this.mspace;
     this.gridDrawn = 0;               // dots or lines of grid in this frame (tests)
-    if (this.layout) {
-      this._frame = null; this._stopProgressive();
-      drawLayout(ctx, ms ? ms.paperScene : this.scene, ms ? { ...ms.paperView, width: view.width, height: view.height } : view, this.layout, paperRects, this.modelScene,
-        { ...opts, highlightColor: '#0a6fd1', ...(ms && { highlight: null, modelHighlight: this.selection, activeVp: ms.vp }), ...(this.settings.grid && (ms ? { modelGrid: (c, v) => this._grid(c, v, false, true) } : { paperGrid: (c, v) => this._grid(c, v, true) })) });
-    }
+    if (this.layout) this._layoutFrame(opts);
     else this._sceneFrame(opts);
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     if (this.overlay) { ctx.save(); this.overlay(ctx, view, this); ctx.restore(); } // block editor base point
@@ -337,6 +333,45 @@ export class Viewport {
       const d = this.dpr;
       ctx.drawImage(buf, plan.ox * d, plan.oy * d, buf.width * plan.s, buf.height * plan.s);
     } else ctx.drawImage(buf, 0, 0);
+  }
+
+  /** layout (paper space, or MSPACE through a viewport): the sheet with its viewports is drawn into the cached bitmap
+   *  only when what it shows changed (see layoutKey); a cursor or overlay change blits that bitmap */
+  _layoutFrame(opts) {
+    this._stopProgressive();
+    const { ctx, canvas } = this, ms = this.mspace;
+    const view = ms ? { ...ms.paperView, width: this.view.width, height: this.view.height } : this.view;
+    const paperScene = ms ? ms.paperScene : this.scene;
+    const key = this.layoutKey(paperScene);
+    if (framePlan(this._frame, key, view, null).mode !== 'blit') {
+      const buf = this._buf;
+      if (buf.width !== canvas.width || buf.height !== canvas.height) { buf.width = canvas.width; buf.height = canvas.height; }
+      const bc = buf.getContext('2d');
+      bc.setTransform(1, 0, 0, 1, 0, 0); bc.clearRect(0, 0, buf.width, buf.height);
+      drawLayout(bc, paperScene, view, this.layout, paperRects, this.modelScene,
+        { ...opts, highlightColor: '#0a6fd1', ...(ms && { highlight: null, modelHighlight: this.selection, activeVp: ms.vp }), ...(this.settings.grid && (ms ? { modelGrid: (c, v) => this._grid(c, v, false, true) } : { paperGrid: (c, v) => this._grid(c, v, true) })) });
+      this.sheetDraws = (this.sheetDraws ?? 0) + 1; // full sheet renders (tests)
+      this._frame = { key, view, exact: true, gridDrawn: this.gridDrawn };
+    } else this.gridDrawn = this._frame.gridDrawn;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(this._buf, 0, 0);
+  }
+  /** what the layout picture depends on besides the paper view: the frameKey fields, the layout's sheet, MSPACE state,
+   *  grid settings, and per shown viewport its placement, model view and frozen layers with the model scene drawn
+   *  through it (modelScene hands out a new scene after a model edit, undo or layer change) */
+  layoutKey(paperScene) {
+    const st = this.settings, ms = this.mspace, { sheet, printable } = paperRects(this.layout);
+    const key = frameKey({ scene: paperScene, dark: st.dark, lineweights: st.lineweights, transparency: st.transparency, selection: this.selection, dpr: this.dpr, pxWidth: this.canvas.width, pxHeight: this.canvas.height });
+    key.layout = this.layout;
+    key.sheet = [sheet.minx, sheet.miny, sheet.maxx, sheet.maxy, printable.minx, printable.miny, printable.maxx, printable.maxy].join();
+    key.activeVp = ms?.vp ?? null;
+    key.grid = st.grid ? `${ms ? st.gridSpacing : st.gridPaperSpacing},${st.gridMajor},${st.gridStyle}` : '';
+    layoutViewports(paperScene).forEach((v, i) => {
+      const s = this.modelScene(v.frozen ?? []);
+      key[`m${i}`] = s; key[`mv${i}`] = s.version;
+      key[`v${i}`] = `${v.c.x},${v.c.y},${v.width},${v.height},${v.viewCenter.x},${v.viewCenter.y},${v.viewHeight},${v.twist || 0},${(v.frozen ?? []).join('\u0001')}`;
+    });
+    return key;
   }
 
   /** model space: the background and the grid for the current view, under the (transparent) scene bitmap; drawn every

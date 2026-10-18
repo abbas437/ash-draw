@@ -1443,6 +1443,9 @@ export function docWithFrozen(doc, frozen) {
 export const PAPER_COLOUR = '#ffffff';
 export const PAPER_SURROUND = '#8a8f96';
 
+/** the viewports a layout shows model space through (on, not the paper-space one, with a size), in drawing order */
+export const layoutViewports = (paperScene) => paperScene.doc.entities.filter((e) => e.type === 'VIEWPORT' && !isPaperViewport(e) && e.on !== false && e.width > 0 && e.height > 0);
+
 /** Draw a layout: grey surround, white sheet with shadow, dashed printable area, viewports showing model space
  *  (scene per frozen-layer set from `modelScene(frozen)`), then the paper-space scene and its highlight. */
 export function drawLayout(ctx, paperScene, view, layout, paperRectsOf, modelScene, opts = {}) {
@@ -1456,7 +1459,7 @@ export function drawLayout(ctx, paperScene, view, layout, paperRectsOf, modelSce
   ctx.fillStyle = PAPER_COLOUR; ctx.fillRect(...sr);
   if (opts.paperGrid) { ctx.save(); ctx.beginPath(); ctx.rect(...sr); ctx.clip(); opts.paperGrid(ctx, view); ctx.restore(); } // display grid (viewport only)
   ctx.strokeStyle = '#888'; ctx.lineWidth = 1; ctx.setLineDash([4, 3]); ctx.strokeRect(...r(printable)); ctx.setLineDash([]);
-  const vports = paperScene.doc.entities.filter((e) => e.type === 'VIEWPORT' && !isPaperViewport(e) && e.on !== false && e.width > 0 && e.height > 0);
+  const vports = layoutViewports(paperScene);
   for (const v of vports) {
     const k = (v.height / (v.viewHeight || 1)) * z, cx = sx(v.c.x), cy = sy(v.c.y), w = v.width * z, h = v.height * z;
     const D = Math.hypot(w, h) + 2;
