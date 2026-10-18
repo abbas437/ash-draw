@@ -47,3 +47,15 @@ export const cycleIndex = (count, active, step) => (count ? (((active + step) % 
 
 /** an unchanged, never-saved empty drawing: opening a file replaces it instead of adding a tab */
 export const isBlankTab = (t) => !!t && !t.file.path && !t.session.dirty && t.doc.entities.length === 0;
+
+/** ids a tab's context menu closes, in strip order: which = 'this' | 'others' | 'left' | 'right' | 'all' */
+export function tabsToClose(ids, id, which) {
+  const i = ids.indexOf(id);
+  if (which === 'all') return [...ids];
+  if (i < 0) return [];
+  if (which === 'this') return [id];
+  if (which === 'others') return ids.filter((x) => x !== id);
+  if (which === 'left') return ids.slice(0, i);
+  if (which === 'right') return ids.slice(i + 1);
+  return [];
+}

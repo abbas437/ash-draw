@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { newDocument, addEntity } from '../src/core/model.js';
-import { createDocState, findTabByPath, indexAfterClose, cycleIndex, isBlankTab } from '../renderer/tabs.js';
+import { createDocState, findTabByPath, indexAfterClose, cycleIndex, isBlankTab, tabsToClose } from '../renderer/tabs.js';
 
 test('each drawing state has its own document, session and undo stacks', () => {
   const a = createDocState(newDocument(), { path: null, name: 'A.dxf', format: 'dxf' });
@@ -44,4 +44,18 @@ test('isBlankTab: only an unchanged, unsaved, empty drawing', () => {
   addEntity(t.doc, { type: 'POINT', p: { x: 0, y: 0 }, layer: '0' });
   assert.equal(isBlankTab(t), false);
   assert.equal(isBlankTab(createDocState(newDocument(), { path: '/x.dxf', name: 'x.dxf' })), false);
+});
+
+test('tabsToClose: which tabs the tab context menu closes, in strip order', () => {
+  const ids = [1, 2, 3, 4];
+  assert.deepEqual(tabsToClose(ids, 2, 'this'), [2]);
+  assert.deepEqual(tabsToClose(ids, 2, 'others'), [1, 3, 4]);
+  assert.deepEqual(tabsToClose(ids, 2, 'left'), [1]);
+  assert.deepEqual(tabsToClose(ids, 2, 'right'), [3, 4]);
+  assert.deepEqual(tabsToClose(ids, 2, 'all'), [1, 2, 3, 4]);
+  assert.deepEqual(tabsToClose(ids, 1, 'left'), []);
+  assert.deepEqual(tabsToClose(ids, 4, 'right'), []);
+  assert.deepEqual(tabsToClose([7], 7, 'others'), []);
+  assert.deepEqual(tabsToClose(ids, 9, 'others'), []);
+  assert.deepEqual(tabsToClose(ids, 2, 'bogus'), []);
 });
