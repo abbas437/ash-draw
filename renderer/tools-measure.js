@@ -2,6 +2,7 @@
 // (points or object, with Add / Subtract running totals). Results go to a docked panel that stays until closed.
 import { entityMeasure, loopMeasure, AreaTotal, angleAt, unitLabel, formatLength, showLegsFrom } from '../src/core/measure.js';
 import { tessellate, ccwSweep, dist, DEG } from '../src/core/geom.js';
+import { viewportAt, viewportScale, paperToModel, viewportPrintScale } from '../src/core/layouts.js';
 import { findHatchBoundary } from './tools.js';
 import { el, toast } from './ui.js';
 
@@ -152,7 +153,23 @@ export class MeasureGeomTool {
   rightClick() { this.key({ key: 'Enter' }); }
   up(p, ev) { if (!ev.dragged) this.click(p, ev); }
   setMode(m) { if (marks) setMarks(this.vp, null); this.mode = m; this.total = null; this.sub = m === 'area' ? 'points' : 'pick'; this.reset(); this.shape = null; }
-  reset() { this.pts = []; this.picked = null; this.vp.lastPoint = null; }
+  reset() { this.pts = []; this.picked = null; this.vp.lastPoint = null; this.vports = null; }
+
+  /** on a layout in paper space: the model viewport (not the overall paper one) that every one of the paper points
+   *  `pts` lies in, so a measurement through it reports the model value; null in Model and in MSPACE (the points are
+   *  model coordinates there), and when the points are outside any viewport or in different ones */
+  throughViewport(pts) {
+    const vp = this.vp;
+    if (!vp.layout || vp.mspace || !pts.length) return null;
+    const vports = (this.vports ??= vp.doc.entities.filter((e) => e.type === 'VIEWPORT')); // kept for the rubber band
+    const v = viewportAt(vports, pts[0]);
+    return v && pts.every((q) => viewportAt(vports, q) === v) ? v : null;
+  }
+  /** the model value through viewport v first, the sheet value second: '810.31 mm  (sheet 16.21 mm, viewport 1:50)' */
+  dual(model, sheet, v, fmt) {
+    const n = +viewportPrintScale(v, this.vp.layout.plot, this.file.units).toPrecision(6);
+    return `${fmt(model)}  (sheet ${fmt(sheet)}, viewport 1:${n})`;
+  }
 
   /** units and precision belong to the whole drawing (UNITS), also while a layout is shown */
   get file() { return this.h.fileDoc ?? this.vp.doc; }
@@ -206,15 +223,20 @@ export class MeasureGeomTool {
     const raw = ev?.raw ?? p;
     if (this.mode === 'distance') {
       if (!this.pts.length) { setMarks(this.vp, null); this.pts = [p]; this.vp.lastPoint = p; return; }
-      const a = this.pts[0], ang = ((Math.atan2(p.y - a.y, p.x - a.x) / DEG) + 360) % 360;
-      const label = () => this.len(dist(a, p));
+      // through a layout viewport the result is the model distance (scale and twist), the sheet distance second
+      const a = this.pts[0], v = this.throughViewport([a, p]);
+      const A = v ? paperToModel(v, a) : a, B = v ? paperToModel(v, p) : p, ang = ((Math.atan2(B.y - A.y, B.x - A.x) / DEG) + 360) % 360;
+      const label = () => this.len(dist(A, B));
+      const d = () => (v ? this.dual(dist(A, B), dist(a, p), v, (x) => this.len(x)) : this.len(dist(a, p)));
       this.reset(); setMarks(this.vp, { a, b: p, label: label() });
-      this.result('Distance', () => [`Distance = ${this.len(dist(a, p))}`, `Delta X = ${this.len(p.x - a.x)}, Delta Y = ${this.len(p.y - a.y)}`, `Angle in XY plane = ${f4(ang)}°`], label);
+      this.result('Distance', () => [`Distance = ${d()}`, `Delta X = ${this.len(B.x - A.x)}, Delta Y = ${this.len(B.y - A.y)}`, `Angle in XY plane = ${f4(ang)}°`], label);
     } else if (this.mode === 'radius') {
       const e = this.vp.pick(raw);
       if (!e || !['CIRCLE', 'ARC'].includes(e.type)) { toast('Select an arc or a circle.'); return; }
       setMarks(this.vp, { arc: { c: e.c, r: e.r, a0: e.type === 'ARC' ? e.a0 : null, a1: e.a1 } });
-      this.result('Radius', () => [`Radius = ${this.len(e.r)}`, `Diameter = ${this.len(2 * e.r)}`]);
+      const v = this.throughViewport([e.c, raw]), s = v ? viewportScale(v) : 1, r = e.r;
+      const L = (x) => (v ? this.dual(x * s, x, v, (y) => this.len(y)) : this.len(x));
+      this.result('Radius', () => [`Radius = ${L(r)}`, `Diameter = ${L(2 * r)}`]);
     } else if (this.mode === 'angle') this.clickAngle(p, raw);
     else if (this.sub === 'object') this.pickArea(raw);
     else { if (!this.pts.length) setMarks(this.vp, null); this.pts.push(p); this.vp.lastPoint = p; }
@@ -268,9 +290,20 @@ export class MeasureGeomTool {
 
   addArea(m, shape) {
     this.shape = shape; setMarks(this.vp, { shape });
-    const total = this.total ? this.total.push(m.area) : null;
-    this.result(this.total ? `Area (${this.total.mode})` : 'Area', () => [`Area = ${this.area(m.area)}, Perimeter = ${this.len(m.perimeter)}`,
-      ...(total === null ? [] : [`Total area = ${this.area(total)}`])]);
+    // through a layout viewport: model area (scale²) and perimeter (scale) first, the sheet values second
+    const v = this.throughViewport(shape.flat()), s = v ? viewportScale(v) : 1;
+    const t = this.total, total = t ? t.push(m.area) : null;
+    let tv = null, tm = 0;
+    if (t) { // a model total while every area in it came through the same viewport, else the sheet total only
+      t.vp = t.vp === undefined || t.vp === v ? v : null;
+      t.model = (t.model ?? 0) + (t.mode === 'subtract' ? -1 : 1) * m.area * s * s;
+      tv = t.vp; tm = t.model;
+    }
+    const A = (x) => this.area(x), P = (x) => this.len(x);
+    this.result(t ? `Area (${t.mode})` : 'Area', () => [
+      ...(v ? [`Area = ${this.dual(m.area * s * s, m.area, v, A)}`, `Perimeter = ${this.dual(m.perimeter * s, m.perimeter, v, P)}`]
+        : [`Area = ${A(m.area)}, Perimeter = ${P(m.perimeter)}`]),
+      ...(total === null ? [] : [`Total area = ${tv ? this.dual(tm, total, tv, A) : A(total)}`])]);
   }
 
   key(e) {
@@ -300,7 +333,8 @@ export class MeasureGeomTool {
     if (this.mode === 'distance' && this.pts.length) {
       c.beginPath(); path([this.pts[0], cur]); c.stroke();
       const s = S(cur); c.fillStyle = vp.inkColor; c.font = '12px "Segoe UI", sans-serif';
-      c.fillText(this.len(dist(this.pts[0], cur)), s.x + 14, s.y + 18);
+      const a = this.pts[0], v = this.throughViewport([a, cur]); // the model distance through a layout viewport
+      c.fillText(this.len(v ? dist(paperToModel(v, a), paperToModel(v, cur)) : dist(a, cur)), s.x + 14, s.y + 18);
     }
     if (this.mode === 'angle' && this.sub === 'vertex' && this.pts.length) { c.beginPath(); path([...this.pts.slice(1, 2), this.pts[0], cur]); c.stroke(); }
   }
