@@ -172,3 +172,40 @@ test('DWG through ODA: multileaders go out as geometry (ODA drops MULTILEADER fr
   assert.ok(back.entities.some((e) => e.type === 'MTEXT' && /SUPPLY AIR/.test(e.text)));
   assert.equal(compareDocuments(doc, back).ok, true);
 });
+
+test('Frame text (entity 292 = 1, not the context 292): a box round the text with the landing gap clear; round trip', async () => {
+  const { mleaderFromTags } = await import('../src/core/mleader.js');
+  const tags = (frame) => [[300, 'CONTEXT_DATA{'], [40, '1'], [10, '0'], [20, '0'], [41, '125'], [140, '250'], [145, '75'], [290, '1'],
+    [304, 'ACOUSTIC LINING'], [12, '1000'], [22, '500'], [171, '1'], [292, '0'],
+    [302, 'LEADER{'], [10, '900'], [20, '440'], [304, 'LEADER_LINE{'], [10, '0'], [20, '0'], [305, '}'], [303, '}'], [301, '}'],
+    [90, '0'], [291, '1'], [292, frame]];
+  assert.equal(mleaderFromTags(tags('1')).textFrame, true);
+  assert.equal(mleaderFromTags(tags('0')).textFrame, false);
+  const doc = newDocument();
+  addEntity(doc, { ...mleaderFromTags(tags('1')), type: 'MLEADER', id: 0, layer: '0', color: 256, linetype: 'BYLAYER', lineweight: -1, ltscale: 1 });
+  const sc = buildScene(doc);
+  const text = sc.items.find((it) => it.kind === 'text');
+  const frame = sc.items.filter((it) => it.kind !== 'text').map((it) => it.bbox).find((b) => b && b.maxx > 1500);
+  assert.ok(text && frame, 'text and a frame drawn');
+  // the frame clears the text by the landing gap (75) at the left and top; it extends right of the text start
+  assert.ok(Math.abs(frame.minx - (1000 - 75)) < 1e-6, `frame left ${frame.minx}`);
+  assert.ok(Math.abs(frame.maxy - (500 + 75)) < 1e-6, `frame top ${frame.maxy}`);
+  assert.ok(frame.miny < 500 - 125, 'frame below the text line');
+  const again = parseDxf(writeDxf(doc)).entities[0];
+  assert.equal(again.textFrame, true);
+  const plain = newDocument();
+  addEntity(plain, { ...mleaderFromTags(tags('0')), type: 'MLEADER', id: 0, layer: '0', color: 256, linetype: 'BYLAYER', lineweight: -1, ltscale: 1 });
+  assert.ok(!buildScene(plain).items.some((it) => it.bbox && it.bbox.maxx > 1500 && it.kind !== 'text'), 'no frame without Frame text');
+});
+
+test('an MLEADER keeps its text style (entity 343) for its text, and writes it back', () => {
+  const doc = newDocument();
+  doc.textStyles.set('NARROW', { name: 'Narrow', font: 'Arial Narrow', fontFile: 'arialn.ttf', height: 0, widthFactor: 1, oblique: 0 });
+  const ml = makeMLeader({ x: 0, y: 0 }, { x: 10, y: 10 }, 'LABEL', { textHeight: 2.5 });
+  addEntity(doc, { ...ml, textStyle: 'Narrow', textFrame: true });
+  const again = parseDxf(writeDxf(doc)).entities[0];
+  assert.equal(again.textStyle, 'Narrow');
+  assert.equal(again.textFrame, true);
+  const txt = buildScene(doc).items.find((it) => it.kind === 'text');
+  assert.equal(txt.font, 'Arial Narrow');
+});

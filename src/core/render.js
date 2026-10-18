@@ -50,17 +50,14 @@ function linetypeOf(e, layer, inherit) {
   return lt;
 }
 
-/** opacity 0..1 from the entity's alpha (ByLayer: the layer's, ByBlock: the enclosing INSERT's). Inside an INSERT
- *  the block reference's own transparency applies to the whole block, as AutoCAD / TrueView show it (a background
- *  plan inserted on a 75 % transparent layer is faded, whatever the layers of its contents): the content's own
- *  opacity times the INSERT's. A ByBlock entity, or a ByLayer one on layer 0 (which takes the INSERT's layer), has
- *  no transparency of its own - only the INSERT's. */
+/** opacity 0..1 from the entity's alpha (ByLayer: the layer's - for layer-0 content of a block, the INSERT's layer -
+ *  ByBlock: the enclosing INSERT's). An INSERT's own transparency does not fade content that has its own (checked
+ *  against DWG TrueView: axis bubbles on an opaque layer inside a block on a 75 % layer are drawn solid). */
 function opacityOf(e, layer, inherit) {
-  const outer = inherit ? inherit.alpha ?? 1 : 1, a = e.alpha;
-  if (a === -2) return outer;
-  if (a >= 0) return (a / 255) * outer;
-  if (inherit && (e.layer === '0' || e.layer === undefined)) return outer;
-  return (layer && layer.alpha >= 0 ? layer.alpha / 255 : 1) * outer;
+  const a = e.alpha;
+  if (a === -2) return inherit ? inherit.alpha ?? 1 : 1;
+  if (a >= 0) return a / 255;
+  return layer && layer.alpha >= 0 ? layer.alpha / 255 : 1;
 }
 
 class Builder {
@@ -102,6 +99,8 @@ class Builder {
     if (e.type === 'MLEADER') {
       const st = this.styleFor(e, layer, inherit, name);
       for (const sub of mleaderParts(e)) this.emit(sub, m, st, rootId, depth + 1);
+      const fr = e.textFrame && e.text ? this.mleaderFrame(e) : null; // "Frame text": a box round the text, landing gap clear
+      if (fr) this.emit(fr, m, st, rootId, depth + 1);
       return;
     }
     const style = this.styleFor(e, layer, inherit, name);
@@ -112,6 +111,21 @@ class Builder {
       try { ent = transformEntity(e, m); mm = null; } catch { return; }
     }
     this.build(ent, mm, style, rootId);
+  }
+
+  /** MLEADER text frame (Frame text on): a closed polyline round the laid-out text, the landing gap clear of it on
+   *  every side, as AutoCAD draws it; BYBLOCK so it takes the MLEADER's own properties */
+  mleaderFrame(e) {
+    const ts = this.doc.textStyles.get(String(e.textStyle || 'STANDARD').toUpperCase()), styleFont = ts?.fontFile || ts?.font, ttFont = ts?.font || 'Arial';
+    const shx = !!shxSubstitute(styleFont);
+    const measure = (t, pr) => (shx && !pr.font ? strokeLayout(t, pr.h).width : textAdvance(t, pr.font || ttFont, pr.bold, pr.italic) * pr.h);
+    const lay = layoutMText(parseMText(e.text, { height: e.textHeight || 1 }), { width: e.textWidth || 0, attach: e.textAttach || 1, lineSpacing: 1, measure });
+    if (!(lay.width > 0) || !(lay.height > 0)) return null;
+    const g = e.landingGap || 0, r = (e.textRot || 0) * DEG, c = Math.cos(r), sn = Math.sin(r), p = e.textP;
+    const W = (x, y) => ({ x: p.x + x * c + y * sn, y: p.y + x * sn - y * c, bulge: 0 }); // x along the text, y down
+    const x0 = lay.x0 - g, x1 = lay.x0 + lay.width + g, y0 = lay.y0 - g, y1 = lay.y0 + lay.height + g;
+    return { id: 0, type: 'LWPOLYLINE', layer: '0', color: 0, linetype: 'BYBLOCK', lineweight: -2, ltscale: 1, closed: true,
+      vertices: [W(x0, y0), W(x1, y0), W(x1, y1), W(x0, y1)] };
   }
 
   styleFor(e, layer, inherit, layerName) {

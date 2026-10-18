@@ -1,7 +1,7 @@
 // ASH Draw Studio - MLEADER (multileader) entity: DXF read/write and display parts.
 // Pure ES module. Model:
 //   { type:'MLEADER', text, textP:{x,y}, textHeight, textAttach, textRot (deg), textWidth, arrowSize, landingGap,
-//     scale, base:{x,y}, style:'Standard', arrow, dogleg,
+//     scale, base:{x,y}, style:'Standard', arrow, dogleg, textFrame (Frame text, 292), textStyle (STYLE name),
 //     leaders:[{ last:{x,y}, dir:{x,y}, doglegLen, lines:[ [{x,y} arrow tip first, ...] ] }] }
 // Display (render/extents) goes through mleaderParts(): leader polylines, SOLID arrowheads, MTEXT content.
 // textHeight / arrowSize / landingGap are final drawing units: the CONTEXT_DATA values (41 / 140 / 145) already hold
@@ -26,7 +26,7 @@ export function mleaderFromTags(tags, style = null) {
   };
   let ctx = false, leader = null, line = null, cur = null, hasText = false;
   const own = new Set(); // context values present (already scaled)
-  let overrides = null;
+  let overrides = null, ctxStyleH = null;
   for (const [c, v] of tags) {
     if (c === 300 && v.startsWith('CONTEXT_DATA')) { ctx = true; continue; }
     if (c === 301) { ctx = false; continue; }
@@ -54,6 +54,7 @@ export function mleaderFromTags(tags, style = null) {
         case 12: e.textP = P(f, 0); break; case 22: if (e.textP) e.textP.y = f; break;
         case 13: e.textDir = P(f, 0); break; case 23: if (e.textDir) e.textDir.y = f; break;
         case 43: e.textWidth = f; break;
+        case 340: ctxStyleH = v; break; // the text's style
         case 171: e.textAttach = f || 1; break;
         default: break;
       }
@@ -62,6 +63,8 @@ export function mleaderFromTags(tags, style = null) {
     if (c === 90) overrides = parseInt(v, 10) >>> 0; // property override flags: which entity values replace the style's
     else if (c === 290) e.landing = f !== 0;
     else if (c === 291) e.dogleg = f !== 0;
+    else if (c === 343) e.textStyleH = v; // text style
+    else if (c === 292) e.textFrame = f !== 0; // Frame text (entity value; the style's default is in MLEADERSTYLE 292)
     else if (c === 42) { if (!e.arrowSize) e.arrowSize = f; }
   }
   // arrowhead size not overridden (flag bit 9): AutoCAD draws the style's size, whatever the context holds (a client
@@ -76,6 +79,7 @@ export function mleaderFromTags(tags, style = null) {
   e.leaders = e.leaders.filter((l) => l.lines.some((ln) => ln.length));
   if (!e.leaders.length && !e.text) return null;
   if (!e.textP) e.textP = { ...e.base };
+  if (!e.textStyleH && ctxStyleH) e.textStyleH = ctxStyleH;
   return e;
 }
 
@@ -102,7 +106,7 @@ export function mleaderParts(e) {
   }
   if (e.text) {
     out.push({ id: 0, type: 'MTEXT', ...o, p: { ...e.textP }, height: e.textHeight, text: e.text,
-      width: e.textWidth || 0, rot: e.textRot || 0, attach: e.textAttach || 1, style: 'STANDARD' });
+      width: e.textWidth || 0, rot: e.textRot || 0, attach: e.textAttach || 1, style: e.textStyle || 'STANDARD' });
   }
   return out;
 }
@@ -155,7 +159,7 @@ export function mleaderTags(e, h, encode) {
   p(301, '}');
   p(340, h.style); p(90, 0x200); // arrowhead size overridden: the entity's own size (42) is the one drawn p(170, 1); p(91, BYBLOCK); p(171, -2); p(290, 1); p(291, e.dogleg === false ? 0 : 1);
   p(41, e.leaders[0]?.doglegLen ?? 8); p(42, e.arrowSize); p(172, e.text ? 2 : 0); p(343, h.textStyle);
-  p(173, 1); p(95, 1); p(174, 1); p(175, 0); p(92, BYBLOCK); p(292, 0); p(93, BYBLOCK); p(10, 1); p(20, 1); p(30, 1); p(43, 0); p(176, 0);
+  p(173, 1); p(95, 1); p(174, 1); p(175, 0); p(92, BYBLOCK); p(292, e.textFrame ? 1 : 0); p(93, BYBLOCK); p(10, 1); p(20, 1); p(30, 1); p(43, 0); p(176, 0);
   p(293, 0); p(294, 0); p(178, 0); p(179, 1); p(45, 1); p(271, 0); p(272, 9); p(273, 9);
   return t;
 }

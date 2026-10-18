@@ -684,6 +684,7 @@ function readXData(rec) {
 
 // ---------------------------------------------------------------------------------------------
 let mlStyles = new Map(); // MLEADERSTYLE handle -> defaults (set per parse)
+let styleNames = new Map(); // STYLE handle -> name (set per parse): an MLEADER's text style
 let dimHandleName = () => undefined; // (DIMVAR, handle) -> block / text style name, for DSTYLE overrides (set per parse)
 let clipObjs = new Map(); // DICTIONARY / SPATIAL_FILTER records by handle, for XCLIP'd inserts (set per parse)
 let imageDefs = new Map(); // IMAGEDEF handle -> image definition (set per parse)
@@ -749,6 +750,7 @@ function buildEntity(rec, doc, extra) {
       const tags = rec.tags();
       const ml = mleaderFromTags(tags, tags.map(([c, v]) => c === 340 && mlStyles.get(v)).find(Boolean) ?? mlStyles.get('*'));
       e = ml && { ...ml, ...o, type: 'MLEADER' };
+      if (e) { const sn = e.textStyleH && styleNames.get(normHandle(e.textStyleH)); delete e.textStyleH; if (sn && sn.toUpperCase() !== 'STANDARD') e.textStyle = sn; }
       break;
     }
     case 'IMAGE': {
@@ -873,7 +875,7 @@ export function parseDxf(text) {
 // ends (returned or thrown), so the reader does not keep a big drawing's bytes alive until the next parse.
 function parseTokens(tk, onProgress = null) {
   try { return parseTokensInto(tk, onProgress); } finally {
-    mlStyles = new Map(); dimHandleName = () => undefined; clipObjs = new Map(); imageDefs = new Map();
+    mlStyles = new Map(); styleNames = new Map(); dimHandleName = () => undefined; clipObjs = new Map(); imageDefs = new Map();
   }
 }
 function parseTokensInto(tk, onProgress) {
@@ -918,6 +920,7 @@ function parseTokensInto(tk, onProgress) {
   const viewRecs = []; // VIEW table records, read once the layouts are known (a paper-space view belongs to one)
   if (secs.TABLES) {
     const dimRecs = [], styleH = new Map();
+    styleNames = new Map();
     let vportSeen = false;
     for (const rec of records(tk, secs.TABLES.from, secs.TABLES.to)) {
       if (rec.type === 'BLOCK_RECORD') {
@@ -925,7 +928,7 @@ function parseTokensInto(tk, onProgress) {
         const h = blockRepTag(rec.tags());
         if (h && rec.str(2).startsWith('*')) dynRefs.push([rec.str(2), h]);
       }
-      if (rec.type === 'STYLE') styleH.set(rec.str(5), rec.str(2));
+      if (rec.type === 'STYLE') { styleH.set(rec.str(5), rec.str(2)); styleNames.set(normHandle(rec.str(5)), rec.str(2)); }
       if (rec.type === 'TABLE' && rec.str(2) === 'LAYER') lsXdict = rec.get(360); // layer states live in its extension dictionary
       if (rec.type === 'VIEW') viewRecs.push(rec.tags().map(([c, v]) => [c, isStringCode(c) ? decodeU(v) : v])); // name, ASHDRAW layout XDATA
       if (rec.type === 'VPORT' && !vportSeen && rec.str(2).toLowerCase() === '*active') { vportSeen = true; const av = readActiveView(rec); if (av) doc.activeView = av; }

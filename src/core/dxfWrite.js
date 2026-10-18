@@ -385,7 +385,7 @@ export function* writeDxfSteps(doc, opts = {}) {
           return true;
         }
         head(o, e, 'MULTILEADER', owner);
-        for (const [c, v] of mleaderTags(e, { style: hMleaderStyle, textStyle: '__STDSTYLE__' }, encode)) o.p(c, v);
+        for (const [c, v] of mleaderTags(e, { style: hMleaderStyle, textStyle: e.textStyle ? `__STYLE__${String(e.textStyle).toUpperCase()}__` : '__STDSTYLE__' }, encode)) o.p(c, v);
         return true;
       }
       case 'LEADER': {
@@ -768,6 +768,7 @@ export function* writeDxfSteps(doc, opts = {}) {
   text = text.replace('__HANDSEED__', seed.toString(16).toUpperCase());
   yield;
   text = text.replaceAll('\r\n__STDSTYLE__\r\n', `\r\n${styleHandle.get('STANDARD')}\r\n`);
+  text = text.replace(/\r\n__STYLE__(.*?)__\r\n/g, (_, n) => `\r\n${styleHandle.get(n) ?? styleHandle.get('STANDARD')}\r\n`); // MLEADER text styles
   if (text.includes('__DIMTXSTY:')) text = text.replace(/__DIMTXSTY:(.*?)__/g, (_, u) => styleHandle.get(u) ?? styleHandle.get('STANDARD'));
 
   for (const [t, n] of Object.entries(doc.skipped)) report.skipped[`${t} (not read)`] = n;
