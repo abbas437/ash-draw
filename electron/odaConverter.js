@@ -42,12 +42,12 @@ export function implausibleConversion({ dwgBytes, dxfBytes, errorCount = 0 }) {
   return null;
 }
 /**
- * Blocks that INSERTs reference but that came out of a DWG -> DXF conversion with no entities or with no definition at all (LibreDWG drops the
+ * Blocks that INSERTs reference but that came out of a DWG -> DXF conversion with no definition at all (LibreDWG drops the
  * contents of some blocks, e.g. bound xrefs and room tags, so walls and tags vanish without an error).
  * Walks an ASCII DXF (Uint8Array/Buffer) line by line without decoding the whole buffer: in BLOCKS, the entities of
  * each BLOCK..ENDBLK are counted; INSERT names (group 2) are collected in BLOCKS and ENTITIES. Names starting with
  * '*' (model/paper space, anonymous dimension/hatch blocks) are ignored; names compare case-insensitively.
- * Returns {count, names}: how many referenced blocks are empty and up to `limit` of their names, in file order.
+ * Returns {count, names}: how many inserted blocks have no definition and up to `limit` of their names, in file order.
  */
 export function emptyReferencedBlocks(dxfBytes, limit = 20) {
   const buf = Buffer.isBuffer(dxfBytes) ? dxfBytes : Buffer.from(dxfBytes.buffer, dxfBytes.byteOffset, dxfBytes.byteLength);
@@ -110,11 +110,9 @@ export function emptyReferencedBlocks(dxfBytes, limit = 20) {
   }
   const names = [];
   let count = 0;
-  for (const [key, b] of blocks) {
-    if (b.count > 0 || !inserted.has(key)) continue;
-    count++;
-    if (names.length < limit) names.push(b.name);
-  }
+  // A block DEFINED with no entities is not counted: such blocks are common in real drawings (bound title-block
+  // placeholders, Revit / AEC exports) and LibreDWG writes them faithfully. What LibreDWG loses are whole
+  // definitions (dxf_block_write advanced the BLOCK_HEADER loop index; fixed in our build on 2026-10-18).
   // LibreDWG also leaves some blocks out of BLOCKS altogether (seen on a bound drawing: 'room tag', bound xrefs,
   // anonymous *U blocks) while their INSERTs remain: those count as well
   for (const [key, nm] of inserted) {
@@ -129,7 +127,7 @@ function emptyBlocksWarning({ count, names }, odaError, prefs) {
   // named blocks first: anonymous ones (*U13) mean nothing to the user
   const shown = [...names.filter((nm) => !nm.startsWith('*')), ...names.filter((nm) => nm.startsWith('*'))].slice(0, 5).map((nm) => (nm.length > 40 ? `${nm.slice(0, 39)}…` : nm));
   const eg = shown.length ? ` (e.g. ${shown.join(', ')}${count > shown.length ? ', …' : ''})` : '';
-  const what = `${count.toLocaleString('en-US')} ${count === 1 ? 'block' : 'blocks'} came through empty or missing from the built-in converter${eg} — walls, tags or symbols may be missing.`;
+  const what = `${count.toLocaleString('en-US')} ${count === 1 ? 'block' : 'blocks'} ${count === 1 ? 'is' : 'are'} missing from the built-in converter's output${eg} — walls, tags or symbols may be missing.`;
   return odaError ? `${what} The ODA File Converter was tried as well but could not convert this DWG (${odaError}).` : `${what} ${ODA_INSTALL}${prefs}`;
 }
 /** the first lines of a converter log, made safe for the " [detail]" tail of an error message */

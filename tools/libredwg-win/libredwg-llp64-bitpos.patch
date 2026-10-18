@@ -28,3 +28,45 @@ positions, so Linux/macOS behaviour is unchanged.
      {
        loglevel = dat->opts & DWG_OPTS_LOGLEVEL;
        LOG_ERROR ("buffer underflow at pos %" PRIuSIZE ".%u, size %" PRIuSIZE
+
+LibreDWG 0.14.8597: dwg2dxf skips blocks after a block holding a POLYLINE or an INSERT with attributes
+(added 2026-10-18)
+
+dxf_block_write() (src/out_dxf.c) passes the caller's loop index `i` - the BLOCK_HEADER index of
+dxf_blocks_write() - to dwg_dxf_object() for the BLOCK record and every owned entity. For a POLYLINE
+(and an INSERT with ATTRIBs) dwg_dxf_object() advances that index past the object's VERTEX/SEQEND
+(ATTRIB/SEQEND) objects, which is right for the object-array walk of the ENTITIES section but here
+moves the BLOCK_HEADER loop forward, so the next BLOCK_HEADERs are never written: their INSERTs then
+reference blocks that have no definition in the DXF, silently (no ERROR). Seen on real AutoCAD 2007-2018
+drawings (bound xrefs, room tags, equipment blocks, _ArchTick): 62 blocks over 11 drawings, 0 with
+this fix. The fix gives dwg_dxf_object() a local index inside dxf_block_write().
+
+--- a/src/out_dxf.c
++++ b/src/out_dxf.c
+@@ -3894,7 +3894,8 @@
+ 
+   if (obj && obj->fixedtype == DWG_TYPE_BLOCK)
+     {
+-      error |= dwg_dxf_object (dat, obj, i);
++      int j = (int)obj->index; // see below: never the caller's loop index
++      error |= dwg_dxf_object (dat, obj, &j);
+     }
+   else
+     {
+@@ -3987,7 +3988,15 @@
+                              != mspace_ref
+                       && obj->tio.entity->ownerhandle->absolute_ref
+                              != pspace_ref)))
+-            error |= dwg_dxf_object (dat, obj, i);
++            {
++              // A local index: dwg_dxf_object advances it past the VERTEX/SEQEND
++              // or ATTRIB/SEQEND objects of a POLYLINE or INSERT, which is right
++              // for the object-array walk in dxf_entities_write but here would
++              // move the caller's BLOCK_HEADER loop index (dxf_blocks_write) and
++              // skip the following blocks without any error.
++              int j = (int)obj->index;
++              error |= dwg_dxf_object (dat, obj, &j);
++            }
+           obj = get_next_owned_block_entity (hdr, obj); // until last_entity
+         }
+     }

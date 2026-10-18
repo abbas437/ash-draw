@@ -49,11 +49,13 @@ export const LIBREDWG = Object.freeze({
   files: ['dwg2dxf.exe', 'dxf2dwg.exe', 'libredwg-0.dll', 'libiconv-2.dll'],
   // libiconv-2.dll from the upstream zip; the patched build reuses it byte-for-byte.
   libiconvSha256: 'ff31fa811f9c07cc7fdaa68c9e8bca3a7b4fdf6e0a079a58175ea58ba139c7ae',
-  // Patched build (tools/libredwg-win/build-patched.sh): upstream source + one patch for the
-  // LLP64 "buffer underflow past 256 MiB" bug in src/bits.c bit_advance_position().
+  // Patched build (tools/libredwg-win/build-patched.sh): upstream source + one patch file with two fixes:
+  // the LLP64 "buffer underflow past 256 MiB" bug in src/bits.c bit_advance_position() (2026-10-14), and
+  // dwg2dxf skipping BLOCK definitions after a block with a POLYLINE / attributed INSERT in
+  // src/out_dxf.c dxf_block_write() (2026-10-18).
   toolsDir: 'tools/libredwg-win',
   patchName: 'libredwg-llp64-bitpos.patch',
-  patchDate: '2026-10-14',
+  patchDate: '2026-10-18',
   patchedZipName: 'libredwg-0.14.8597-llp64-win64.zip',
   buildScripts: ['build-patched.sh', 'build-win64.sh', 'package-win64.sh', 'deps/libiconv-2/'],
   // Release assets published next to sourceName (.github/workflows/build.yml).
@@ -163,9 +165,12 @@ export function readmeSource(fileHashes, { patched = false, zipSha256 = LIBREDWG
 ${L.version}. ASH Technical & Project Management Services (ASH PMCS) modified
 them on ${L.patchDate}; they are built from the unmodified upstream source
 release with one patch applied, ${L.patchName} (a copy is in this
-folder). The patch fixes a 64-bit Windows bug in src/bits.c: once a drawing's
-decompressed data passed 256 MiB, reads were reported as "buffer underflow" and
-restarted from byte 0, so large drawings converted to nearly empty files.
+folder). The patch fixes two bugs. In src/bits.c (64-bit Windows): once a
+drawing's decompressed data passed 256 MiB, reads were reported as "buffer
+underflow" and restarted from byte 0, so large drawings converted to nearly
+empty files. In src/out_dxf.c: writing a block that holds a POLYLINE or an
+attributed INSERT advanced the loop over block headers, so the blocks after it
+were left out of the DXF (walls, tags and symbols missing).
 
 Archive: ${L.patchedZipName}
   SHA-256 of that archive: ${zipSha256}

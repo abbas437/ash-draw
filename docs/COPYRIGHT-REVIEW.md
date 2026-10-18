@@ -33,7 +33,7 @@ DWG conversion uses GNU LibreDWG 0.14.8597 (libredwg), licensed GPL-3.0-or-later
 - **Modified, one patch**: release builds ship `dwg2dxf.exe`, `dxf2dwg.exe` and `libredwg-0.dll`
   cross-built by CI (`tools/libredwg-win/build-patched.sh`, mingw-w64) from the SHA-256-pinned upstream
   source tarball plus `tools/libredwg-win/libredwg-llp64-bitpos.patch`, which fixes false "buffer
-  underflow" errors past 256 MiB on 64-bit Windows. `libiconv-2.dll` (GNU libiconv, LGPL-2.1-or-later,
+  underflow" errors past 256 MiB on 64-bit Windows and block definitions left out of the DXF (2026-10-18). `libiconv-2.dll` (GNU libiconv, LGPL-2.1-or-later,
   a separate DLL used only by libredwg) is taken unmodified from the official upstream Windows x64
   archive. `scripts/fetch-libredwg.mjs` accepts either the pinned upstream archive or a patched build
   whose patch is byte-identical to the repository's, and `README-SOURCE.txt` states which one shipped
