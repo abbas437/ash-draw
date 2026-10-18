@@ -119,8 +119,15 @@ try {
   await page.evaluate(() => window.app.vp.zoomBy(1.5));
   const pz = await picture();
   assert.notEqual(pz, pm, 'viewport zoom shown');
+  step = 'a model edit made in MSPACE shows through the viewport; its undo from paper space too';
+  await page.evaluate(() => window.app.vp.session.transact('model line', (tx) => tx.add({ type: 'LINE', id: 0, layer: 'A', color: 3, linetype: 'BYLAYER', lineweight: -1, ltscale: 1, p1: { x: 0, y: 0 }, p2: { x: 100, y: 100 } })));
+  const pe = await picture();
+  assert.notEqual(pe, pz, 'model edit in MSPACE shown');
   await page.evaluate(() => window.app.layoutCommands.ps()); await frames();
-  assert.notEqual(await picture(), pz, 'back in paper space');
+  const pps = await picture();
+  assert.notEqual(pps, pz, 'back in paper space');
+  await page.evaluate(() => window.app.undo()); await frames();
+  assert.notEqual(await picture(), pps, 'undo of the model edit from paper space shown');
 
   assert.deepEqual(problems, []);
   console.log(`layoutcursor e2e: OK (path calls per move: idle ${idle.toFixed(1)}, rubber band ${rubber.toFixed(1)})`);
