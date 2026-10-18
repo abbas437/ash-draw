@@ -6,9 +6,10 @@ export function frameKey({ scene, dark, lineweights, transparency, selection, dp
   return { scene, version: scene?.version, dark: !!dark, lineweights: !!lineweights, transparency: transparency !== false, selection, selSize: selection?.size ?? 0, dpr, pxWidth, pxHeight };
 }
 
-export function sameKey(a, b) {
+/** @param {string} [skip] a field left out of the comparison */
+export function sameKey(a, b, skip) {
   if (!a || !b) return false;
-  for (const k in a) if (a[k] !== b[k]) return false;
+  for (const k in a) if (k !== skip && a[k] !== b[k]) return false;
   for (const k in b) if (!(k in a)) return false;
   return true;
 }
@@ -36,8 +37,13 @@ export function framePlan(frame, key, view, gesture) {
     if (!dx && !dy) return { mode: 'blit' };
     return { mode: 'shift', dx, dy, view: { ...f, cx: f.cx - dx / dpr / z, cy: f.cy + dy / dpr / z } };
   }
-  const s = z / f.zoom, W = view.width, H = view.height;
-  return { mode: 'scale', s, ox: W / 2 - (W / 2) * s + (f.cx - view.cx) * z, oy: H / 2 - (H / 2) * s - (f.cy - view.cy) * z };
+  return { mode: 'scale', ...placeFrame(f, view) };
+}
+
+/** where a bitmap drawn for view `f` goes in `view` (same width and height): scaled by s, top-left at (ox, oy) CSS pixels */
+export function placeFrame(f, view) {
+  const z = view.zoom, s = z / f.zoom, W = view.width, H = view.height;
+  return { s, ox: W / 2 - (W / 2) * s + (f.cx - view.cx) * z, oy: H / 2 - (H / 2) * s - (f.cy - view.cy) * z };
 }
 
 /** device-pixel rectangles [x, y, w, h] left uncovered after shifting a pxWidth x pxHeight bitmap by (dx, dy); disjoint */

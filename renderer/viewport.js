@@ -1,6 +1,6 @@
 // ASH Draw Studio - canvas viewport: view state, pan/zoom, snapping, selection, overlays.
 // The active tool receives world-space events through vp.tool (see tools.js).
-import { buildScene, updateScene, drawScene, drawSceneSteps, drawLayout, layoutViewports, fitView, screenToWorld, worldToScreen, zoomAt, zoomLimits } from '../src/core/render.js';
+import { buildScene, updateScene, drawScene, drawSceneSteps, drawLayout, layoutViewports, fitView, screenToWorld, worldToScreen, zoomAt, zoomLimits, PAPER_COLOUR, PAPER_SURROUND } from '../src/core/render.js';
 import { wheelScale, ZOOMFACTOR_DEFAULT } from '../src/core/cmdline.js';
 import { SpatialIndex, findSnap, orthoPoint, polarPoint, pickEntity, selectInBox } from '../src/core/pick.js';
 import { bboxOf, growBox } from '../src/core/geom.js';
@@ -16,7 +16,7 @@ import { setTextMeasure } from '../src/core/textMetrics.js';
   setTextMeasure((t, font, b, i) => { mctx.font = `${i ? 'italic ' : ''}${b ? 'bold ' : ''}100px "${font}", Arial, "Segoe UI", sans-serif`; return mctx.measureText(t).width / 100; });
 }
 import { paperRects, paperMmPerUnit } from '../src/core/layouts.js';
-import { frameKey, framePlan, exposedStrips, sameKey } from '../src/core/frameCache.js';
+import { frameKey, framePlan, placeFrame, exposedStrips, sameKey } from '../src/core/frameCache.js';
 import { nextTask } from '../src/core/slice.js';
 import { drawGrid, snapToGrid, GRID_DEFAULTS } from '../src/core/grid.js';
 
@@ -343,6 +343,7 @@ export class Viewport {
     const view = ms ? { ...ms.paperView, width: this.view.width, height: this.view.height } : this.view;
     const paperScene = ms ? ms.paperScene : this.scene;
     const key = this.layoutKey(paperScene);
+    if (this._gesture && this._layoutGestureFrame(key, view)) return;
     if (framePlan(this._frame, key, view, null).mode !== 'blit') {
       const buf = this._buf;
       if (buf.width !== canvas.width || buf.height !== canvas.height) { buf.width = canvas.width; buf.height = canvas.height; }
@@ -351,10 +352,42 @@ export class Viewport {
       drawLayout(bc, paperScene, view, this.layout, paperRects, this.modelScene,
         { ...opts, highlightColor: '#0a6fd1', ...(ms && { highlight: null, modelHighlight: this.selection, activeVp: ms.vp }), ...(this.settings.grid && (ms ? { modelGrid: (c, v) => this._grid(c, v, false, true) } : { paperGrid: (c, v) => this._grid(c, v, true) })) });
       this.sheetDraws = (this.sheetDraws ?? 0) + 1; // full sheet renders (tests)
-      this._frame = { key, view, exact: true, gridDrawn: this.gridDrawn };
+      this._frame = { key, view, exact: true, gridDrawn: this.gridDrawn, modelView: ms ? { ...this.view } : null };
     } else this.gridDrawn = this._frame.gridDrawn;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawImage(this._buf, 0, 0);
+  }
+  /** a pan / wheel-zoom frame on a layout from the cached sheet bitmap (the full sheet follows when the gesture settles):
+   *  the paper view moved (paper space, or a locked viewport in MSPACE) - the whole bitmap shifted / scaled on the
+   *  surround; the active viewport's model view moved (MSPACE) - the sheet as drawn with the viewport's inside shifted /
+   *  scaled within it. Returns false where the bitmap cannot stand in (no sheet frame, other content, a new size). */
+  _layoutGestureFrame(key, view) {
+    const f = this._frame, { ctx, canvas } = this, d = this.dpr;
+    if (!f?.exact || !sameKey(f.key, key, 'msView') || view.width !== f.view.width || view.height !== f.view.height) return false;
+    const paperMoved = view.cx !== f.view.cx || view.cy !== f.view.cy || view.zoom !== f.view.zoom;
+    const modelMoved = f.key.msView !== key.msView;
+    if (paperMoved === modelMoved) return false; // unchanged: blit as usual; both moved: no stand-in
+    this.gridDrawn = f.gridDrawn;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (paperMoved) {
+      const p = placeFrame(f.view, view);
+      ctx.fillStyle = PAPER_SURROUND; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(this._buf, p.ox * d, p.oy * d, this._buf.width * p.s, this._buf.height * p.s);
+      return true;
+    }
+    // the active viewport's inside, less the inner half of its 3 px border, from the sheet frame moved by the model view change
+    const v = this.mspace.vp, z = view.zoom, m = 1.5;
+    const x0 = (v.c.x - v.width / 2 - view.cx) * z + view.width / 2 + m, y0 = view.height / 2 - (v.c.y + v.height / 2 - view.cy) * z + m;
+    const w = v.width * z - 2 * m, h = v.height * z - 2 * m;
+    ctx.drawImage(this._buf, 0, 0);
+    if (!(w > 0 && h > 0)) return true;
+    const p = placeFrame(f.modelView, this.view);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x0 * d, y0 * d, w * d, h * d); ctx.clip();
+    ctx.fillStyle = PAPER_COLOUR; ctx.fillRect(x0 * d, y0 * d, w * d, h * d);
+    ctx.drawImage(this._buf, x0 * d, y0 * d, w * d, h * d, (x0 * p.s + p.ox) * d, (y0 * p.s + p.oy) * d, w * p.s * d, h * p.s * d);
+    ctx.restore();
+    return true;
   }
   /** what the layout picture depends on besides the paper view: the frameKey fields, the layout's sheet, MSPACE state,
    *  grid settings, and per shown viewport its placement, model view and frozen layers with the model scene drawn
@@ -366,10 +399,12 @@ export class Viewport {
     key.sheet = [sheet.minx, sheet.miny, sheet.maxx, sheet.maxy, printable.minx, printable.miny, printable.maxx, printable.maxy].join();
     key.activeVp = ms?.vp ?? null;
     key.grid = st.grid ? `${ms ? st.gridSpacing : st.gridPaperSpacing},${st.gridMajor},${st.gridStyle}` : '';
+    key.msView = ''; // MSPACE: the active viewport's model view, apart so a gesture frame can tell it from other changes
     layoutViewports(paperScene).forEach((v, i) => {
-      const s = this.modelScene(v.frozen ?? []);
+      const s = this.modelScene(v.frozen ?? []), mview = `${v.viewCenter.x},${v.viewCenter.y},${v.viewHeight}`;
+      if (v === ms?.vp) key.msView = mview;
       key[`m${i}`] = s; key[`mv${i}`] = s.version;
-      key[`v${i}`] = `${v.c.x},${v.c.y},${v.width},${v.height},${v.viewCenter.x},${v.viewCenter.y},${v.viewHeight},${v.twist || 0},${(v.frozen ?? []).join('\u0001')}`;
+      key[`v${i}`] = `${v.c.x},${v.c.y},${v.width},${v.height},${v === ms?.vp ? '' : mview},${v.twist || 0},${(v.frozen ?? []).join('\u0001')}`;
     });
     return key;
   }

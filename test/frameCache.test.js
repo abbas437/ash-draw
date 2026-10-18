@@ -1,7 +1,7 @@
 // Reuse rule for the viewport's cached scene bitmap (src/core/frameCache.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { frameKey, framePlan, exposedStrips } from '../src/core/frameCache.js';
+import { frameKey, framePlan, placeFrame, sameKey, exposedStrips } from '../src/core/frameCache.js';
 
 const scene = { version: 3 }, selection = new Set();
 const key = (o = {}) => frameKey({ scene, dark: false, lineweights: false, selection, dpr: 1, pxWidth: 800, pxHeight: 600, ...o });
@@ -38,6 +38,18 @@ test('view changes: full render without a gesture, shift while panning, scale wh
   // a gesture approximation is redrawn once the gesture is over, an exact frame is not
   assert.equal(framePlan(frame({ exact: false }), key(), view, 'pan').mode, 'blit');
   assert.equal(framePlan(frame({ exact: false }), key(), view, null).mode, 'full');
+});
+
+test('placeFrame maps a point of the old view to where the new view shows it; sameKey can leave one field out', () => {
+  const to = { ...view, cx: 130, cy: 20, zoom: 5 }, p = { x: 117, y: 61 };
+  const scr = (v) => ({ x: (p.x - v.cx) * v.zoom + v.width / 2, y: v.height / 2 - (p.y - v.cy) * v.zoom });
+  const { s, ox, oy } = placeFrame(view, to), a = scr(view), b = scr(to);
+  assert.equal(s, 2.5);
+  assert.ok(Math.abs(a.x * s + ox - b.x) < 1e-9 && Math.abs(a.y * s + oy - b.y) < 1e-9);
+  const k1 = { ...key(), msView: 'a' }, k2 = { ...key(), msView: 'b' };
+  assert.equal(sameKey(k1, k2), false);
+  assert.equal(sameKey(k1, k2, 'msView'), true);
+  assert.equal(sameKey({ ...k1, dpr: 2 }, k2, 'msView'), false);
 });
 
 test('exposed strips cover exactly the uncovered area', () => {
