@@ -99,6 +99,8 @@ export function* writeDxfSteps(doc, opts = {}) {
   const hMleaderDict = H(), hMleaderStyle = H();
   const hModelRec = '17', hPaperRec = '1B', hModelLayout = '1A', hPaperLayout = '1E';
   const tbl = { LAYER: '1', LTYPE: '2', APPID: '3', DIMSTYLE: '4', STYLE: '5', UCS: '6', VIEW: '7', VPORT: '8', BLOCK_RECORD: '9' };
+  // the space the file opens in: opts.space ({tilemode, activeLayout}, an autosave copy of the shown space) else the header's
+  const space = (opts && opts.space) || doc.header;
   const asGeometry = !!(opts && opts.dimensionsAsGeometry);
   // ODA File Converter drops MULTILEADER entities from an R2000 DXF (the class is newer), so DWG writing through ODA
   // asks for multileaders as geometry while keeping real dimensions
@@ -478,13 +480,13 @@ export function* writeDxfSteps(doc, opts = {}) {
     if (writeEntity(entOut, e, hModelRec)) report.entities++;
     if ((++n & 1023) === 0) yield;
   }
-  // paper space: the active layout (doc.header.activeLayout, else the first) is *Paper_Space with its entities in
+  // paper space: the active layout (space.activeLayout, else the first) is *Paper_Space with its entities in
   // ENTITIES, the others own *Paper_Space0..n blocks; the tab order (71) stays the list order. Model viewports go last in each list.
   // The overall (paper) viewport goes first: AutoCAD takes the first viewport of a layout as its paper view.
   const paperOrder = (list) => [...list.filter((e) => e.type === 'VIEWPORT' && e.paper), ...list.filter((e) => e.type !== 'VIEWPORT'),
     ...list.filter((e) => e.type === 'VIEWPORT' && !e.paper)];
   const los = doc.layouts?.length ? doc.layouts : [{ name: 'Layout1', tab: 1, entities: [], plot: null }];
-  const want = String(doc.header.activeLayout ?? '').toUpperCase();
+  const want = String(space.activeLayout ?? '').toUpperCase();
   const act = Math.max(0, want ? los.findIndex((lo) => String(lo.name).toUpperCase() === want) : 0);
   let blkN = 0;
   const paperLayouts = los.map((lo, i) => (i === act ? { lo, name: '*Paper_Space', rec: hPaperRec, layoutH: hPaperLayout }
@@ -519,7 +521,7 @@ export function* writeDxfSteps(doc, opts = {}) {
   out.p(9, '$EXTMIN'); if (ext) out.pt(10, ext.minx, ext.miny, 0); else out.pt(10, 1e20, 1e20, 1e20);
   out.p(9, '$EXTMAX'); if (ext) out.pt(10, ext.maxx, ext.maxy, 0); else out.pt(10, -1e20, -1e20, -1e20);
   out.p(9, '$LTSCALE'); out.p(40, doc.header.ltscale || 1);
-  out.p(9, '$TILEMODE'); out.p(70, doc.header.tilemode === 0 ? 0 : 1); // 0: open on the active layout (*Paper_Space)
+  out.p(9, '$TILEMODE'); out.p(70, space.tilemode === 0 ? 0 : 1); // 0: open on the active layout (*Paper_Space)
   // $XCLIPFRAME is read (doc.header.xclipframe) but not written: its group code differs between DXF versions
   out.p(9, '$TEXTSTYLE'); out.p(7, 'Standard');
   out.p(9, '$CLAYER'); out.p(8, '0');

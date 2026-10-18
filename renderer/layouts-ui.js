@@ -32,10 +32,18 @@ export function setSpace(app, name) {
   sp.views[sp.cur] = { cx: vp.view.cx, cy: vp.view.cy, zoom: vp.view.zoom };
   if (app.toolId) app.setTool(app.toolId === 'select' ? 'select' : app.toolId); // drop a half-done command
   if (layout && sp.docs[name]?.layout !== layout) sp.docs[name] = spaceDoc(tab.doc, layout); // a name can move to another layout (rename, delete)
+  // leaving Model: keep its scene and index for the way back, and let the layout's viewports draw through that same
+  // scene (no layers frozen per viewport), so a big drawing is not rebuilt in one blocking pass (dropped on any change)
+  if (sp.cur === 'Model' && vp.doc === tab.doc && vp.scene) {
+    sp.model = { scene: vp.scene, index: vp.index };
+    if (!sp.scenes.has('')) sp.scenes.set('', vp.scene);
+  }
+  const back = !layout && sp.model ? sp.model : null;
+  sp.model = layout ? sp.model : null;
   tab.session.doc = layout ? sp.docs[name] : tab.doc;
   sp.cur = name;
   vp.layout = layout;
-  vp.setSession(tab.session, { fit: !sp.views[name], view: sp.views[name] ?? null });
+  vp.setSession(tab.session, { fit: !sp.views[name], view: sp.views[name] ?? null, scene: back?.scene ?? null, index: back?.index ?? null });
   app.refreshPanels(); app.refreshStatus(); renderSpaceBar(app);
 }
 
@@ -45,12 +53,18 @@ export function openSavedSpace(app) {
   if (h?.tilemode === 0 && h.activeLayout && layoutOf(tab, h.activeLayout)) setSpace(app, h.activeLayout);
 }
 
-/** before a save: the space the tab shows is the one the file opens in ($TILEMODE; a shown layout is the active one) */
+/** the space the tab shows, as the file should record it ($TILEMODE; a shown layout is the active one); null when the
+ *  tab was never shown (it keeps what it was read with). In the block editor: the space it returns to. */
+export function shownSpace(tab) {
+  if (!tab.spaces) return null;
+  const h = tab.doc.header, cur = tab.bedit?.prevSpace ?? tab.spaces.cur;
+  return cur === 'Model' ? { tilemode: 1, activeLayout: h.activeLayout } : { tilemode: 0, activeLayout: cur };
+}
+
+/** before a save: the file opens in the space shown now (Model or this layout) */
 export function noteSavedSpace(tab) {
-  if (!tab.spaces) return; // never shown: keeps what it was read with
-  const h = tab.doc.header, cur = tab.spaces.cur;
-  h.tilemode = cur === 'Model' ? 1 : 0;
-  if (cur !== 'Model') h.activeLayout = cur;
+  const sp = shownSpace(tab);
+  if (sp) Object.assign(tab.doc.header, sp);
 }
 
 /** called by App.switchTo before the tab's session is shown */
@@ -440,7 +454,7 @@ export function initLayouts(app) {
     if (!s) sp.scenes.set(key, (s = buildScene(docWithFrozen(app.active.doc, frozen))));
     return s;
   };
-  const drop = () => { if (app.active) spaces(app.active).scenes.clear(); };
+  const drop = () => { if (app.active) { const sp = spaces(app.active); sp.scenes.clear(); sp.model = null; } };
   vp.on('change', (info) => { if (!info.doc || info.doc === app.active?.doc || info.structure) drop(); });
   vp.on('structure', drop);
   vp.on('change', (info) => { if (info.kind !== 'do') syncSpace(app); }); // undo / redo of a layout action

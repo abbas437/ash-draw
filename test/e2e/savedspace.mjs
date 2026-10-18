@@ -67,8 +67,11 @@ try {
   const opened = await shown();
   assert.equal(opened.tab, 'Layout2'); assert.equal(opened.layout, 'Layout2');
   assert.deepEqual(opened.view, clicked.view, 'same fit as clicking the tab');
+  // the model scene prepared while opening is the one the viewports draw through and the one Model shows again (no rebuild)
+  assert.ok(await page.evaluate(() => !!(window.__ms = window.app.active.spaces.scenes.get(''))), 'viewports draw through the prepared model scene');
   await page.click('#spacebar button[data-space="Model"]');
   assert.equal((await shown()).layout, null, 'the Model tab stays available');
+  assert.ok(await page.evaluate(() => window.app.vp.scene === window.__ms), 'back on Model: the same scene, not rebuilt');
 
   step = 'only on open: switching between open drawings keeps the space each shows';
   await page.evaluate(() => window.app.activateIndex(window.app.tabs.findIndex((t) => t.file.name === 'tm1.dxf')));

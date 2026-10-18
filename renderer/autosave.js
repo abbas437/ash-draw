@@ -2,7 +2,7 @@
 // Main keeps the copies in <userData>/autosave (electron/autosave.js); this module names them by id only. Desktop only.
 import { el, modal, toast } from './ui.js';
 import { dxfBytesAsync } from './files.js';
-import { noteSavedSpace } from './layouts-ui.js';
+import { shownSpace } from './layouts-ui.js';
 import { AUTOSAVE_DEFAULT, AUTOSAVE_KEY, autosaveMinutesFrom, dueTabs, newAutosaveId, recoveryFile, sessionSignature } from '../src/core/autosave.js';
 
 export function initAutosave(app) {
@@ -34,8 +34,8 @@ export function initAutosave(app) {
     const ac = new AbortController();
     const done = (async () => {
       const sig = sessionSignature(tab.session);
-      noteSavedSpace(tab); // a recovered copy opens in the space shown now, as a saved file would
-      const bytes = await dxfBytesAsync(tab.doc, undefined, { signal: ac.signal });
+      // a recovered copy opens in the space shown now, as a saved file would (the drawing's own record is left alone)
+      const bytes = await dxfBytesAsync(tab.doc, { space: shownSpace(tab) }, { signal: ac.signal });
       // the writer read the live document between slices: an edit, undo or redo meanwhile makes this copy inconsistent
       if (ac.signal.aborted || !app.tabs.includes(tab) || tab.saving || sessionSignature(tab.session) !== sig || !tab.session.dirty) return false;
       const from = tab.recoveredFrom ?? tab.file;

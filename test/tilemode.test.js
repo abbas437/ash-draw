@@ -73,3 +73,12 @@ print(json.dumps({'tilemode': d.header.get('$TILEMODE'), 'active': d.layouts.act
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(JSON.parse(r.stdout), { tilemode: 0, active: 'Layout2', names: ['Model', 'Layout1', 'Layout2'], errors: 0, texts: { Layout1: ['TITLE Layout1'], Layout2: ['TITLE Layout2'] } });
 });
+
+test('write: opts.space (an autosave copy of the shown space) overrides the header without changing it', () => {
+  const doc = parseDxf(withTilemode(1));
+  const back = parseDxf(writeDxf(doc, { space: { tilemode: 0, activeLayout: 'Layout2' } }));
+  assert.equal(back.header.tilemode, 0);
+  assert.equal(back.header.activeLayout, 'Layout2');
+  assert.equal(doc.header.tilemode, 1, 'the drawing keeps its own record');
+  assert.equal(doc.header.activeLayout, 'Layout1');
+});
