@@ -10,7 +10,7 @@ import { newDocument } from '../src/core/model.js';
 import { Session } from '../src/core/edit.js';
 import {
   addMarkup, listMarkups, setMarkupStatus, deleteMarkup, markupData, markupsCsv, setMarkupsVisible, MARKUP_LAYER,
-  setMarkupCode, renumberMarkups, markupsCrsSheet, markupXData,
+  setMarkupCode, renumberMarkups, markupsCrsSheet, markupXData, MARKUP_STATUSES,
 } from '../src/core/markup.js';
 import { xlsxBytes } from '../src/core/xlsx.js';
 import { ezdxfAvailable, validateWithEzdxf } from './helpers.js';
@@ -49,6 +49,31 @@ test('ASH_MARKUP XDATA round-trips through writeDxf/parseDxf incl. status, autho
   assert.equal(got[1].comment, long);
   assert.equal(back.layers.get(MARKUP_LAYER).linetype, 'DASHED');
   assert.deepEqual(back.linetypes.get('DASHED').pattern, [0.5, -0.25]);
+});
+
+test('status In progress round-trips (XDATA, DXF, CSV); closing with no code sets code A in one undo step, a chosen code stays', () => {
+  const s = new Session(newDocument());
+  addMarkup(s, 'circle', { c: { x: 0, y: 0 }, r: 2 }, { ...meta, comment: 'one' });
+  addMarkup(s, 'rect', { p1: { x: 5, y: 5 }, p2: { x: 8, y: 9 } }, { ...meta, comment: 'two' });
+  addMarkup(s, 'text', { p: { x: 30, y: 0 } }, { ...meta, comment: 'three' });
+  const [a, b, c] = listMarkups(s.doc);
+  assert.deepEqual(MARKUP_STATUSES, ['Open', 'In progress', 'Closed']);
+  setMarkupStatus(s, a.uid, 'In progress');
+  assert.deepEqual([listMarkups(s.doc)[0].status, listMarkups(s.doc)[0].code], ['In progress', ''], 'In progress does not set a code');
+  const back = listMarkups(parseDxf(writeDxf(s.doc)));
+  assert.equal(back[0].status, 'In progress');
+  assert.match(markupsCsv(listMarkups(s.doc)), /,In progress\r\n/);
+  // closing with an empty code -> A, one undo step covering every part
+  const before = s.undoStack?.length;
+  setMarkupStatus(s, b.uid, 'Closed');
+  assert.deepEqual([listMarkups(s.doc)[1].status, listMarkups(s.doc)[1].code], ['Closed', 'A']);
+  if (before !== undefined) assert.equal(s.undoStack.length, before + 1);
+  s.undo();
+  assert.deepEqual([listMarkups(s.doc)[1].status, listMarkups(s.doc)[1].code], ['Open', ''], 'one undo reverts status and code together');
+  // an explicit code is never overwritten
+  setMarkupCode(s, c.uid, 'B'); setMarkupStatus(s, c.uid, 'Closed');
+  assert.deepEqual([listMarkups(s.doc)[2].status, listMarkups(s.doc)[2].code], ['Closed', 'B']);
+  assert.equal(setMarkupStatus(s, c.uid, 'Bogus'), 0);
 });
 
 test('delete, status, hide and CSV', () => {
@@ -163,5 +188,5 @@ test('Export to CRS: 7 columns, header block, Calibri 11, wrapped comments, Stat
   assert.deepEqual(got.fills, ['FF00B050', 'FFFFC000', null], 'Status fill: A green, B orange, none');
   assert.deepEqual(got.fonts, [['Calibri', 11]]);
   assert.deepEqual(got.wrap, [true, true, true]);
-  assert.deepEqual(got.dv, [['F6:F8', '"Open,Closed"'], ['G6:G8', '"A,B,C"']]);
+  assert.deepEqual(got.dv, [['F6:F8', '"Open,In progress,Closed"'], ['G6:G8', '"A,B,C"']]);
 });

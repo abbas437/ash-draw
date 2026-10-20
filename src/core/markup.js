@@ -2,7 +2,7 @@
 // Every part is an ordinary DXF entity on layer ASH-MARKUP, so markups plot, print and open in AutoCAD. The review
 // metadata (number, author, date, status, comment) is XDATA of application ASH_MARKUP on each part, so it round-trips:
 //   1000 "key=value" strings; keys: uid, no, role (shape | leader | text), kind (circle | rect | text), author, date,
-//   status (Open | Closed), code (review code A | B | C; absent = none), comment (repeated in 200-character pieces when long).
+//   status (Open | In progress | Closed), code (review code A | B | C; absent = none), comment (repeated in 200-character pieces when long).
 // Pure ES module (no DOM).
 import { makeCircle, makeRect, makeLine, makeMText, addLinetype } from './model.js';
 import { bboxOf, unionBox } from './geom.js';
@@ -12,7 +12,7 @@ import { colName } from './xlsx.js';
 export const MARKUP_LAYER = 'ASH-MARKUP';
 export const MARKUP_APP = 'ASH_MARKUP';
 export const MARKUP_LINETYPE = 'DASHED';
-export const MARKUP_STATUSES = ['Open', 'Closed'];
+export const MARKUP_STATUSES = ['Open', 'In progress', 'Closed'];
 export const MARKUP_CODES = ['A', 'B', 'C'];
 const RED = 1;
 const PIECE = 200;
@@ -125,8 +125,25 @@ function setMarkupField(s, uid, key, value, label) {
   });
 }
 
-/** change the status (Open / Closed) of markup `uid`: one undo step */
-export const setMarkupStatus = (s, uid, status) => setMarkupField(s, uid, 'status', status, 'Markup status');
+/**
+ * change the status (Open / In progress / Closed) of markup `uid`: one undo step. Closing a markup that has no review code
+ * gives it code A (addressed = Code A); a code already chosen is never changed.
+ */
+export function setMarkupStatus(s, uid, status) {
+  if (!MARKUP_STATUSES.includes(status)) return 0;
+  return s.transact('Markup status', (tx) => {
+    let n = 0;
+    for (const e of s.doc.entities) {
+      const d = markupData(e);
+      if (d?.uid !== uid) continue;
+      const code = status === 'Closed' && !d.code ? 'A' : (d.code ?? '');
+      if ((d.status ?? '') === status && (d.code ?? '') === code) continue;
+      tx.replace({ ...structuredClone(e), xdata: markupXData({ ...d, status, code }) });
+      n++;
+    }
+    return n;
+  });
+}
 
 /** change the review code (A / B / C, '' = none) of markup `uid`: one undo step */
 export const setMarkupCode = (s, uid, code) => setMarkupField(s, uid, 'code', MARKUP_CODES.includes(code) ? code : '', 'Markup code');
