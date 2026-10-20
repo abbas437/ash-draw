@@ -17,7 +17,8 @@ export function sameKey(a, b, skip) {
 /**
  * How to produce the frame for `view` from the cached `frame` ({ key, view, exact }).
  *   full  - render the scene (no frame, content changed, no gesture and the view moved, or the cache is a gesture
- *           approximation and the gesture is over)
+ *           approximation and the gesture is over). `under`: when the cached frame shows the same content at the same
+ *           canvas size, its placement in `view` (placeFrame) - the stand-in shown while a slow full frame is drawn
  *   blit  - the cached bitmap is the frame (same view)
  *   shift - same zoom during a gesture: move the bitmap by (dx, dy) device pixels and render the exposed strips;
  *           `view` is the frame's view moved by exactly that (within half a device pixel of the requested view)
@@ -28,8 +29,8 @@ export function framePlan(frame, key, view, gesture) {
   if (!frame || !sameKey(frame.key, key)) return { mode: 'full' };
   const f = frame.view;
   if (view.width !== f.width || view.height !== f.height) return { mode: 'full' };
-  if (view.zoom === f.zoom && view.cx === f.cx && view.cy === f.cy) return frame.exact || gesture ? { mode: 'blit' } : { mode: 'full' };
-  if (!gesture) return { mode: 'full' };
+  if (view.zoom === f.zoom && view.cx === f.cx && view.cy === f.cy) return frame.exact || gesture ? { mode: 'blit' } : { mode: 'full', under: placeFrame(f, view) };
+  if (!gesture) return { mode: 'full', under: placeFrame(f, view) };
   const z = view.zoom, dpr = key.dpr || 1;
   if (z === f.zoom) {
     const dx = Math.round((f.cx - view.cx) * z * dpr), dy = Math.round((view.cy - f.cy) * z * dpr);

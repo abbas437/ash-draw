@@ -294,6 +294,7 @@ export class Viewport {
     const { ctx, view, canvas } = this;
     const key = frameKey({ scene: this.scene, dark: this.settings.dark, lineweights: this.settings.lineweights, transparency: this.settings.transparency, selection: this.selection, dpr: this.dpr, pxWidth: canvas.width, pxHeight: canvas.height });
     // grid on: the bitmap is transparent and _underlay draws the background and grid under it; off: opaque as before
+    // (a progressive frame is always transparent: see below)
     key.grid = !!this.settings.grid;
     if (key.grid) opts = { ...opts, noClear: true };
     const plan = framePlan(this._frame, key, view, this._gesture);
@@ -301,9 +302,13 @@ export class Viewport {
     const p = this._prog;
     if (p && !(plan.mode === 'full' && sameKey(p.key, key) && p.view.cx === view.cx && p.view.cy === view.cy && p.view.zoom === view.zoom && p.view.width === view.width && p.view.height === view.height)) this._stopProgressive();
     if (plan.mode === 'full' && (this._prog || this.scene.items.length >= PROGRESSIVE_ITEMS)) {
-      if (!this._prog) this._startProgressive(key, view, opts);
-      // in the making: show what is drawn so far; finished at once: the cached frame
+      // drawn transparent, so the stand-in below shows through until the frame is finished
+      if (!this._prog) this._startProgressive(key, view, { ...opts, noClear: true });
+      // in the making: what is drawn so far over the last frame placed for this view (scaled about the zoom centre,
+      // moved by a pan), so a zoom never shows a blank canvas; finished at once: the cached frame
       this._underlay(opts.background);
+      const u = this._prog && plan.under, d = this.dpr;
+      if (u) ctx.drawImage(buf, u.ox * d, u.oy * d, buf.width * u.s, buf.height * u.s);
       ctx.drawImage(this._prog ? this._prog.buf : this._buf, 0, 0);
       return;
     }
