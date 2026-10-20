@@ -6,6 +6,7 @@ import { INSUNITS, unitLabel, lengthPrecision, looksLikeMapMetres } from '../src
 import { setShowLegs, refreshMeasureResults, clearMeasureResults } from './tools-measure.js';
 import { parseCoordinate } from '../src/core/coords.js';
 import { PATTERN_NAMES } from '../src/core/patterns.js';
+import { unkeptObjects } from '../src/core/dxfWrite.js';
 import { loadPatFile, patternsDialog, loadSavedPatterns, refreshPatternSelect } from './patterns-ui.js';
 import { layIsolate, layUnisolate, layFreeze, layOn, layThaw } from '../src/core/layers.js';
 import { Viewport, CANVAS_BG } from './viewport.js';
@@ -447,10 +448,10 @@ class App {
     document.getElementById('stage').append(box);
     return true;
   }
-  /** objects that were read but cannot be written back (they would vanish from an overwritten file) */
+  /** objects a save leaves out (they would vanish from an overwritten file): those not read, and those read but not
+   *  written (dxfWrite unkeptObjects, the writer's own rule) */
   droppedContent() {
-    const sk = Object.entries(this.doc.skipped || {}).map(([k, v]) => `${v} ${k}`);
-    return sk;
+    return Object.entries(unkeptObjects(this.doc)).map(([k, v]) => `${v} ${k}`);
   }
   /** whether DWG can be written by the ODA File Converter now (installed, and the converter preference allows it); cached in this.odaWrite for the File menu */
   async refreshDwgWrite() {

@@ -4,7 +4,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseProxyGraphics, proxyGraphicsBytes } from '../src/core/proxygfx.js';
 import { parseDxf } from '../src/core/dxfRead.js';
-import { writeDxf } from '../src/core/dxfWrite.js';
+import { writeDxf, unkeptObjects } from '../src/core/dxfWrite.js';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { ezdxfAvailable } from './helpers.js';
 import { tessellate, bboxOf, transformEntity } from '../src/core/geom.js';
 
 /** records [type, bytes] -> stream (RL total, RL count, then RL size, RL type, data padded to 4 bytes) */
@@ -96,10 +101,84 @@ test('kept objects: drawn read-only from their graphics; the solid is kept but n
   assert.deepEqual(doc.skipped, {});
 });
 
-test('objects shown from their graphics are left out when saving, and the save report counts them', () => {
+test('an ACAD_PROXY_ENTITY is saved back as read; the other kinds are left out, and the save report counts them', () => {
   const doc = parseDxf(drawing());
   const again = kept(parseDxf(writeDxf(doc)));
-  assert.deepEqual(again, []);
-  assert.equal(doc.lastWriteReport.skipped.ACAD_PROXY_ENTITY, 1);
+  assert.deepEqual(again.map((e) => e.name), ['ACAD_PROXY_ENTITY']);
+  assert.equal(doc.lastWriteReport.skipped.ACAD_PROXY_ENTITY, undefined);
   assert.equal(doc.lastWriteReport.skipped.AECC_THING, 1);
+  assert.equal(doc.lastWriteReport.skipped['3DSOLID'], 1);
+  // DWG through LibreDWG (dimensions as geometry) cannot take it: left out and counted
+  writeDxf(doc, { dimensionsAsGeometry: true });
+  assert.equal(doc.lastWriteReport.skipped.ACAD_PROXY_ENTITY, 1);
+});
+
+// ACAD_PROXY_ENTITY with graphics, entity data, object ids and XDATA, in model space and in a block definition
+function proxyRec(h, owner, layer, g, extra = []) {
+  return ['0', 'ACAD_PROXY_ENTITY', '5', h, '330', owner, '100', 'AcDbEntity', '8', layer,
+    '100', 'AcDbProxyEntity', '90', '498', '91', '500', '92', String(g.length / 2), '310', g,
+    '93', '64', '310', '0102030405060708', '330', '1F', '340', '2B', '350', '0', '360', '2D', '94', '0', '95', String((4 << 16) | 31), '70', '0',
+    ...extra];
+}
+function proxyDrawing() {
+  const g = hex(sample());
+  return ['0', 'SECTION', '2', 'HEADER', '9', '$ACADVER', '1', 'AC1027', '0', 'ENDSEC',
+    '0', 'SECTION', '2', 'BLOCKS',
+    '0', 'BLOCK', '5', '40', '330', '41', '100', 'AcDbEntity', '8', '0', '100', 'AcDbBlockBegin', '2', 'CIVIL', '70', '0', '10', '0', '20', '0', '30', '0', '3', 'CIVIL', '1', '',
+    ...proxyRec('42', '41', 'B', g),
+    '0', 'ENDBLK', '5', '43', '330', '41', '100', 'AcDbEntity', '8', '0', '100', 'AcDbBlockEnd',
+    '0', 'ENDSEC',
+    '0', 'SECTION', '2', 'ENTITIES',
+    ...proxyRec('2A', '1F', 'P', g, ['1001', 'CIVIL_APP', '1000', 'alignment', '1005', '2B']),
+    '0', 'INSERT', '5', '44', '330', '1F', '100', 'AcDbEntity', '8', '0', '100', 'AcDbBlockReference', '2', 'CIVIL', '10', '0', '20', '0', '30', '0',
+    '0', 'ENDSEC', '0', 'EOF', ''].join('\n');
+}
+const isPtr = (c) => (c >= 320 && c <= 369) || c === 1005;
+
+test('ACAD_PROXY_ENTITY round trip: model and block, same graphics and entity data, null object ids, valid handles', (t) => {
+  const doc = parseDxf(proxyDrawing());
+  const before = [...kept(doc), ...kept({ entities: doc.blocks.get('CIVIL').entities })];
+  assert.equal(before.length, 2);
+  const text = writeDxf(doc);
+  const doc2 = parseDxf(text);
+  const after = [...kept(doc2), ...kept({ entities: doc2.blocks.get('CIVIL').entities })];
+  assert.deepEqual(after.map((e) => e.name), ['ACAD_PROXY_ENTITY', 'ACAD_PROXY_ENTITY']);
+  assert.deepEqual(after.map((e) => e.layer), ['P', 'B']);
+  for (let i = 0; i < 2; i++) {
+    assert.deepEqual(after[i].raw.filter(([c]) => c === 310), before[i].raw.filter(([c]) => c === 310), 'graphics and entity data as read');
+    assert.deepEqual(after[i].raw, before[i].raw.map(([c, v]) => [c, isPtr(c) ? '0' : v]), 'object ids kept in place as null handles');
+    assert.equal(after[i].parts.length, before[i].parts.length, 'still drawn from its graphics');
+  }
+  assert.deepEqual(doc.lastWriteReport.skipped, {});
+  assert.ok(text.includes('\r\nAPPID\r\n5\r\n'), 'APPID table');
+  assert.ok(/\r\n2\r\nCIVIL_APP\r\n/.test(text), 'the XDATA application is registered');
+  const py = ezdxfAvailable();
+  if (!py) { t.skip('ezdxf not installed'); return; }
+  const dir = mkdtempSync(path.join(tmpdir(), 'ash-proxy-'));
+  try {
+    const f = path.join(dir, 'proxy.dxf');
+    writeFileSync(f, text);
+    const r = spawnSync(py, ['-c', `import ezdxf,sys
+d=ezdxf.readfile(sys.argv[1]); a=d.audit()
+ps=[e for e in d.entitydb.values() if e.dxftype()=='ACAD_PROXY_ENTITY']
+owners=[d.entitydb[e.dxf.owner].dxftype() for e in ps]
+print(len(a.errors), len(ps), len(set(e.dxf.handle for e in ps)), ','.join(owners), ','.join(sorted(d.entitydb[e.dxf.owner].dxf.name for e in ps)))`, f], { encoding: 'utf8' });
+    assert.equal(r.stdout.trim(), '0 2 2 BLOCK_RECORD,BLOCK_RECORD *Model_Space,CIVIL', r.stderr);
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('the Save guard counts exactly what the writer leaves out (unkeptObjects = lastWriteReport.skipped)', () => {
+  const doc = parseDxf(drawing());
+  doc.skipped.HELIX = 2;
+  doc.entities.push({ id: 0, type: 'LWPOLYLINE', layer: '0', vertices: [{ x: 0, y: 0 }] },
+    { id: 0, type: 'SPLINE', layer: '0', ctrl: [{ x: 0, y: 0 }], fit: [] },
+    { id: 0, type: 'INSERT', layer: '0', block: 'NOPE', p: { x: 0, y: 0 }, sx: 1, sy: 1 },
+    { id: 0, type: 'FOO', layer: '0' });
+  for (const opts of [{}, { dimensionsAsGeometry: true }, { mleadersAsGeometry: true }]) {
+    const guard = unkeptObjects(doc, opts);
+    writeDxf(doc, opts);
+    assert.deepEqual(guard, doc.lastWriteReport.skipped, JSON.stringify(opts));
+  }
+  assert.deepEqual(unkeptObjects(doc), { AECC_THING: 1, '3DSOLID': 1, 'LWPOLYLINE (fewer than 2 vertices)': 1, 'SPLINE (unusable)': 1,
+    'INSERT (block missing)': 1, FOO: 1, 'HELIX (not read)': 2 });
 });

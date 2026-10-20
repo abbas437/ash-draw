@@ -712,19 +712,34 @@ let clipObjs = new Map(); // DICTIONARY / SPATIAL_FILTER records by handle, for 
 let imageDefs = new Map(); // IMAGEDEF handle -> image definition (set per parse)
 // An object this program cannot read is kept when it carries its saved graphics (proxy graphics, 92 / 160 + 310: an
 // ACAD_PROXY_ENTITY or a custom object such as Civil 3D AECC_*), drawn read-only from them, or when it is a 3DSOLID /
-// BODY / REGION with its ACIS data (group 1) in the file (a PROXY without parts: counted as read, not drawn). Neither is
-// written back (dxfWrite drops every PROXY) and its tags are not kept. Otherwise undefined (counted as not displayed).
+// BODY / REGION with its ACIS data (group 1) in the file (a PROXY without parts: counted as read, not drawn).
+// An ACAD_PROXY_ENTITY keeps its own tags (e.raw: from its first subclass marker after AcDbEntity on, XDATA included)
+// and is written back from them (dxfWrite); the other kinds are not written (dxfWrite unwritable). Otherwise undefined
+// (counted as not displayed).
+// Group 95 (object drawing format: low word the DWG version of the data) decides how its graphics are read, so the
+// text in them reads the same from the R2000 file this program writes as from the newer file it came from.
+const DWG_VER = { 23: 'AC1015', 25: 'AC1018', 27: 'AC1021', 29: 'AC1024', 31: 'AC1027', 33: 'AC1032' };
 function proxyEntity(rec, o, doc) {
   const all = rec.tags();
   const bytes = proxyGraphicsBytes(all);
   const solid = rec.type === '3DSOLID' || rec.type === 'BODY' || rec.type === 'REGION';
   if (!bytes && !(solid && all.some(([c]) => c === 1))) return undefined;
+  const isProxy = rec.type === 'ACAD_PROXY_ENTITY';
   let parts = [];
   if (bytes) {
-    const ver = String(doc.header.version ?? '').trim();
+    const fmt = isProxy && rec.has(95) ? DWG_VER[rec.int(95) & 0xffff] : undefined;
+    const ver = fmt ?? String(doc.header.version ?? '').trim();
     parts = parseProxyGraphics(bytes, { unicode: ver >= 'AC1021', version: ver, layers: [...doc.layers.keys()], linetypes: [...doc.linetypes.keys()], layer: o.layer, color: o.color, linetype: o.linetype });
   }
-  return { ...o, id: 0, type: 'PROXY', name: rec.type, parts };
+  const e = { ...o, id: 0, type: 'PROXY', name: rec.type, parts };
+  if (isProxy) {
+    const ent = all.findIndex(([c, v]) => c === 100 && v.trim() === 'AcDbEntity');
+    const at = all.findIndex(([c], i) => c === 100 && i > ent);
+    // graphics saved in the common part (92 / 160 + 310) stay there: written right after the writer's common groups
+    const common = all.slice(ent + 1, at < 0 ? all.length : at).filter(([c]) => c === 92 || c === 160 || c === 310);
+    if (ent >= 0 && at > 0) e.raw = [...common, ...all.slice(at)];
+  }
+  return e;
 }
 
 function buildEntity(rec, doc, extra) {

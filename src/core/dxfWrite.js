@@ -64,6 +64,42 @@ class Out {
   }
 }
 
+const WRITTEN = new Set(['LINE', 'XLINE', 'RAY', 'CIRCLE', 'ARC', 'ELLIPSE', 'LWPOLYLINE', 'SPLINE', 'TEXT', 'MTEXT', '3DFACE',
+  'OLE2FRAME', 'POINT', 'SOLID', 'INSERT', 'DIMENSION', 'MLEADER', 'LEADER', 'HATCH', 'IMAGE', 'WIPEOUT', 'MLINE', 'PROXY', 'VIEWPORT']);
+/** why `e` cannot be written (the lastWriteReport.skipped key), or null when it is written. The one rule for both the
+ *  writer and unkeptObjects (the Save guard), so the guard counts exactly what a save leaves out. opts as writeDxf. */
+export function unwritable(e, doc, opts = {}) {
+  if (!WRITTEN.has(e.type)) return e.type;
+  switch (e.type) {
+    case 'LWPOLYLINE': return !e.vertices || e.vertices.length < 2 ? 'LWPOLYLINE (fewer than 2 vertices)' : null;
+    case 'SPLINE': return (e.ctrl?.length ?? 0) < 2 && (!e.fit || e.fit.length < 2) ? 'SPLINE (unusable)' : null;
+    case 'INSERT': return doc.blocks.has(e.block) ? null : 'INSERT (block missing)';
+    case 'DIMENSION': return doc.blocks.has(e.block) ? null : 'DIMENSION (block missing)';
+    case 'MLEADER': return !e.leaders?.length && !e.text ? 'MLEADER (unusable)' : null;
+    case 'LEADER': return !e.pts || e.pts.length < 2 ? 'LEADER (unusable)' : null;
+    case 'HATCH': return !e.loops?.length ? 'HATCH (unusable)' : null;
+    case 'MLINE': return !e.verts?.length ? 'MLINE (unusable)' : null;
+    // an ACAD_PROXY_ENTITY is written back from its own tags (DXF only: LibreDWG's dxf2dwg cannot take it). Other
+    // objects shown from their saved graphics (custom objects such as AECC_*, 3DSOLID / BODY / REGION) are not: their
+    // tags belong to a newer file version and an object class this R2000 file cannot declare.
+    case 'PROXY': return e.name === 'ACAD_PROXY_ENTITY' && e.raw?.length && !opts.dimensionsAsGeometry ? null : e.name;
+    default: return null;
+  }
+}
+
+/** the objects of `doc` a save with `opts` leaves out: { key: count } (the keys of lastWriteReport.skipped), the
+ *  objects not read from the file included ("TYPE (not read)") */
+export function unkeptObjects(doc, opts = {}) {
+  const out = {};
+  const add = (k, n = 1) => { out[k] = (out[k] ?? 0) + n; };
+  const walk = (list) => { for (const e of list ?? []) { const k = unwritable(e, doc, opts); if (k) add(k); else if (e.type === 'INSERT') walk(e.attribs); } };
+  walk(doc.entities);
+  for (const b of doc.blocks.values()) if (!b.xrefDep && !b.xref) walk(b.entities);
+  for (const lo of doc.layouts ?? []) walk(lo.entities);
+  for (const [t, n] of Object.entries(doc.skipped ?? {})) add(`${t} (not read)`, n);
+  return out;
+}
+
 /** opts.mleadersAsGeometry: MLEADERs as their lines, arrows and text only (DWG through ODA).
  *  opts.dimensionsAsGeometry: write DIMENSION entities as plain INSERTs of their blocks (used for DWG, where the
  *  converter cannot handle every dimension type), and MLEADERs as their lines, arrows and text (R2000 has no
@@ -214,6 +250,8 @@ export function* writeDxfSteps(doc, opts = {}) {
   const hImageDict = H(), hWipeoutVars = H();
   let hasWipeouts = false, hasArcDims = false, hasJoggedDims = false;
   function writeEntity(o, e, owner) {
+    const why = unwritable(e, doc, opts);
+    if (why) { report.skipped[why] = (report.skipped[why] ?? 0) + 1; return false; }
     const ok = writeEntityBody(o, e, owner);
     if (ok && e.xdata && XD_TYPES.has(e.type)) {
       for (const [app, tags] of Object.entries(e.xdata)) {
@@ -251,7 +289,6 @@ export function* writeDxfSteps(doc, opts = {}) {
         o.p(41, full ? 0 : e.a0 ?? 0); o.p(42, full ? TAU : e.a1 ?? TAU); return true;
       }
       case 'LWPOLYLINE': {
-        if (!e.vertices || e.vertices.length < 2) { report.skipped['LWPOLYLINE (fewer than 2 vertices)'] = (report.skipped['LWPOLYLINE (fewer than 2 vertices)'] ?? 0) + 1; return false; }
         head(o, e, 'LWPOLYLINE', owner); o.p(100, 'AcDbPolyline'); o.p(90, e.vertices.length); o.p(70, e.closed ? 1 : 0);
         if (e.width > 0) o.p(43, e.width);
         for (const v of e.vertices) { o.p(10, v.x); o.p(20, v.y); if (v.bulge && Math.abs(v.bulge) > 1e-12) o.p(42, v.bulge); }
@@ -259,7 +296,6 @@ export function* writeDxfSteps(doc, opts = {}) {
       }
       case 'SPLINE': {
         const deg = e.degree || 3, n = e.ctrl.length;
-        if (n < 2 && (!e.fit || e.fit.length < 2)) return false;
         head(o, e, 'SPLINE', owner); o.p(100, 'AcDbSpline'); o.p(210, 0); o.p(220, 0); o.p(230, 1);
         const rational = e.weights && e.weights.length === n;
         o.p(70, (e.closed ? 1 : 0) | (rational ? 4 : 0) | 8);
@@ -341,7 +377,6 @@ export function* writeDxfSteps(doc, opts = {}) {
         o.pt(10, p[0].x, p[0].y); o.pt(11, p[1].x, p[1].y); o.pt(12, p[2].x, p[2].y); o.pt(13, p4.x, p4.y); return true;
       }
       case 'INSERT': {
-        if (!doc.blocks.has(e.block)) { report.skipped['INSERT (block missing)'] = (report.skipped['INSERT (block missing)'] ?? 0) + 1; return false; }
         const atts = e.attribs?.length ? e.attribs : null;
         // XCLIP: extension dictionary -> ACAD_FILTER -> SPATIAL -> SPATIAL_FILTER, written with the OBJECTS
         const hX = e.clip?.pts?.length >= 2 ? H() : null;
@@ -357,7 +392,6 @@ export function* writeDxfSteps(doc, opts = {}) {
         return true;
       }
       case 'DIMENSION': {
-        if (!doc.blocks.has(e.block)) { report.skipped['DIMENSION (block missing)'] = (report.skipped['DIMENSION (block missing)'] ?? 0) + 1; return false; }
         const dimName = e.def?.kind === 'arc' ? 'ARC_DIMENSION' : e.def?.kind === 'jogged' ? 'LARGE_RADIAL_DIMENSION' : 'DIMENSION';
         if (dimName === 'ARC_DIMENSION' && !asGeometry) hasArcDims = true;
         if (dimName === 'LARGE_RADIAL_DIMENSION' && !asGeometry) hasJoggedDims = true;
@@ -376,7 +410,6 @@ export function* writeDxfSteps(doc, opts = {}) {
         return true;
       }
       case 'MLEADER': {
-        if (!e.leaders?.length && !e.text) return false;
         if (mleaderGeometry) {
           // R2000 DWG has no multileaders: LibreDWG drops every entity of a DXF that holds MLEADERSTYLE / MULTILEADER objects
           const own = { layer: e.layer, color: e.color, linetype: e.linetype, lineweight: e.lineweight };
@@ -389,7 +422,6 @@ export function* writeDxfSteps(doc, opts = {}) {
         return true;
       }
       case 'LEADER': {
-        if (!e.pts || e.pts.length < 2) return false;
         head(o, e, 'LEADER', owner); o.p(100, 'AcDbLeader'); o.s(3, 'Standard'); o.p(71, e.arrow === false ? 0 : 1); o.p(72, 0); o.p(73, 3);
         o.p(74, 1); o.p(75, 0); o.p(40, 0); o.p(41, 0); o.p(76, e.pts.length);
         e.pts.forEach((c) => o.pt(10, c.x, c.y));
@@ -397,7 +429,6 @@ export function* writeDxfSteps(doc, opts = {}) {
         return true;
       }
       case 'HATCH': {
-        if (!e.loops || !e.loops.length) return false;
         let solid = e.solid !== false && (e.pattern === 'SOLID' || e.solid);
         let lines = null;
         if (!solid) {
@@ -435,7 +466,6 @@ export function* writeDxfSteps(doc, opts = {}) {
         return true;
       }
       case 'MLINE': {
-        if (!e.verts?.length) return false;
         head(o, e, 'MLINE', owner);
         const ms = mlStyleOut.get(String(e.styleH ?? '').toUpperCase());
         if (ms && !ms.h) ms.h = H();
@@ -443,19 +473,26 @@ export function* writeDxfSteps(doc, opts = {}) {
         return true;
       }
       case 'PROXY': {
-        // an object shown from its saved graphics (dxfRead proxyEntity) is not written: its own tags come from a newer
-        // file version with handle references that cannot be kept, which AutoCAD may refuse in this R2000 file. Saving
-        // leaves it out and the save report says so, as before it was shown.
-        report.skipped[e.name] = (report.skipped[e.name] ?? 0) + 1; return false;
+        // an ACAD_PROXY_ENTITY (only those pass unwritable) from its own tags as read (dxfRead proxyEntity e.raw), after
+        // a fresh common part (handle, owner, layer ...). Its graphics (92 / 310), entity data (93 / 310) and XDATA are
+        // kept as read. Every handle reference in them (320..369: the object ids the entity data counts by position;
+        // 1005) is written as a null handle: none of the objects they name is written with its handle, and nulling keeps
+        // the id list's length and order (dropping one would shift the ids the entity data refers to).
+        head(o, e, 'ACAD_PROXY_ENTITY', owner);
+        for (const [c, v] of e.raw) {
+          if (c === 1001) xdApps.add(String(v).trim());
+          if ((c >= 320 && c <= 369) || c === 1005) o.p(c, '0');
+          else if ((c >= 1 && c <= 9) || (c >= 300 && c <= 309) || (c >= 1000 && c <= 1009)) o.s(c, v);
+          else o.p(c, v);
+        }
+        return true;
       }
       case 'VIEWPORT': {
         head(o, e, 'VIEWPORT', owner);
         for (const [c, v] of viewportTags(e, (n) => layerH.get(n))) o.p(c, v);
         return true;
       }
-      default:
-        report.skipped[e.type] = (report.skipped[e.type] ?? 0) + 1;
-        return false;
+      default: return false; // unreachable: unwritable() names every other type
     }
   }
 
