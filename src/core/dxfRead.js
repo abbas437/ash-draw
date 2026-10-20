@@ -487,9 +487,16 @@ function textGenFlags(rec) {
   return 0;
 }
 
-function buildMText(rec, o) {
-  const chunks = rec.all(3);
-  const text = chunks.join('') + rec.str(1);
+function buildMText(rec0, o) {
+  // AcDbMText ends at "101 Embedded Object" (R2018 column data repeats 10 / 11 / 40 / 41 / 44 ... there)
+  let end = rec0.a + 1;
+  while (end < rec0.b && rec0.tk.codes[end] !== 101) end++;
+  const rec = new Rec(rec0.tk, rec0.a, end);
+  // the 3 chunks and 1 are joined before \U+ is decoded: a chunk may end inside a \U+XXXX code
+  const { codes, val } = rec.tk;
+  let raw = '', last = '';
+  for (let i = rec.a + 1; i < rec.b; i++) if (codes[i] === 3) raw += val(i); else if (codes[i] === 1 && !last) last = val(i);
+  const text = decodeU(raw + last);
   // insertion point and direction (11) are WCS; rotation 50 (no 11) is in the OCS
   const ocs = ocsMatrix(rec, 0);
   const a = rec.num(50) * DEG;
