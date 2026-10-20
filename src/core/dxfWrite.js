@@ -44,6 +44,7 @@ let nonBmpWritten = 0;
 const encode = (s) => String(s ?? '').replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7e]/gu, (c) => {
   const code = c.codePointAt(0);
   if (code > 0xffff) { nonBmpWritten++; return '?'; }
+  if (code === 9) return '\t'; // a tab (MTEXT tab stops) is kept: dwg2dxf and ezdxf write it as is, dxf2dwg reads it back
   return code < 32 ? ' ' : `\\U+${code.toString(16).toUpperCase().padStart(4, '0')}`;
 });
 function chunkEncoded(s, max = 240) {
