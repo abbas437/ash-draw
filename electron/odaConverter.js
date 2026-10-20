@@ -4,13 +4,14 @@
 // Command line, as used by FreeCAD (src/Mod/Draft/importDWG.py: [oda, indir, outdir, "ACAD2000", "DXF", "0", "1", basename])
 // and documented by ezdxf (addons/odafc):
 //   ODAFileConverter.exe "<input folder>" "<output folder>" <output version> <output type DXF|DWG|DXB> <recurse 0|1> <audit 0|1> ["<input filter>"]
-// It runs via execFile (no shell, windowsHide) with a fixed argument array; only fixed names reach argv.
+// It runs via spawn (no shell, windowsHide; electron/converterProcs.js) with a fixed argument array; only fixed names reach argv.
 //
 // No Electron imports here, so this module can be unit-tested in plain Node with a stub converter script.
-import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { cancelledError, converterProcs, runConverter } from './converterProcs.js';
+import { stderrCollector, STDERR_READ } from './dwgBridge.js';
 
 export const ODA_TIMEOUT_MS = 10 * 60_000;
 /** time allowed for one ODA run: at least ODA_TIMEOUT_MS, else 15 s per MB of input (ODA with audit took ~4.5 min for
@@ -181,70 +182,71 @@ export async function findOdaConverter(roots) {
 /** Version string from the install folder name ("ODAFileConverter 25.12.0" -> "25.12.0"), or "unknown". */
 export const odaVersion = (exe) => versionOf(path.basename(path.dirname(exe))).join('.') || 'unknown';
 
-function run(file, args, opts) {
-  return new Promise((resolve, reject) => {
-    execFile(file, args, opts, (err, stdout, stderr) => (err ? reject(Object.assign(err, { stdout, stderr })) : resolve({ stdout, stderr })));
-  });
-}
-
 /**
  * @param {string} exe  ODAFileConverter executable
- * @param {{tmpRoot?: string, timeoutMs?: number, maxBytes?: number, version?: string}} [opts]
+ * @param {{tmpRoot?: string, timeoutMs?: number, maxBytes?: number, version?: string, registry?: object}} [opts]  registry: converterProcs
  */
 export function createOdaBridge(exe, opts = {}) {
   const tmpRoot = opts.tmpRoot ?? os.tmpdir();
   const maxBytes = opts.maxBytes ?? ODA_MAX_BYTES;
-  /** run the converter on one input file in a private temp folder and return the single output file's bytes */
-  async function convert(bytes, inKind, inName, outType, version) {
+  const registry = opts.registry ?? converterProcs;
+  /** run the converter on one input file in a private temp folder; -> {bytes, log}: the single output file's bytes and
+   *  the converter's console output (first STDERR_READ bytes) followed by any .err file it wrote */
+  async function convert(bytes, inKind, inName, outType, version, signal = null) {
     const input = Buffer.from(bytes.buffer ?? bytes, bytes.byteOffset ?? 0, bytes.byteLength);
     if (input.length === 0) throw new RangeError(`${inKind} data is empty`);
     if (input.length > maxBytes) throw new RangeError(`${inKind} data is ${input.length} bytes; the limit is ${maxBytes} bytes`);
     const tmp = await fs.mkdtemp(path.join(tmpRoot, 'ash-oda-'));
+    registry.addDir(tmp);
     try {
       const inDir = path.join(tmp, 'in'), outDir = path.join(tmp, 'out');
       await fs.mkdir(inDir); await fs.mkdir(outDir);
       await fs.writeFile(path.join(inDir, inName), input);
       const args = odaArgs(inDir, outDir, outType, version);
       const timeoutMs = opts.timeoutMs ?? odaTimeoutFor(input.length);
-      try {
-        await run(exe, args, { cwd: tmp, timeout: timeoutMs, windowsHide: true, shell: false, maxBuffer: 10 * 1024 * 1024, encoding: 'utf8' });
-      } catch (err) {
+      const col = stderrCollector(STDERR_READ);
+      const r = await runConverter(exe, args, { cwd: tmp, timeout: timeoutMs, signal, registry, stdout: true, onOutput: (c) => col.push(c) });
+      if (r.cancelled) throw cancelledError();
+      if (r.error || r.timedOut || r.stuck || r.code !== 0 || r.signal) {
+        const secs = Math.round(timeoutMs / 1000);
         let why;
-        if (err.code === 'ENOENT') why = 'executable not found';
-        else if (err.killed && err.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') why = `timed out after ${Math.round(timeoutMs / 1000)} s`;
-        else if (typeof err.code === 'number') why = `exit code ${err.code}`;
-        else why = err.signal ? `terminated by ${err.signal}` : err.message;
+        if (r.error?.code === 'ENOENT') why = 'executable not found';
+        else if (r.stuck) why = `timed out after ${secs} s and did not stop when it was ended`;
+        else if (r.timedOut) why = `timed out after ${secs} s`;
+        else if (typeof r.code === 'number') why = `exit code ${r.code}`;
+        else why = r.signal ? `terminated by ${r.signal}` : r.error.message;
         throw new Error(`ODA File Converter failed (${why})`);
       }
       const names = await fs.readdir(outDir);
       const ext = `.${outType.toLowerCase()}`;
       const outName = names.find((n) => n.toLowerCase().endsWith(ext));
-      if (!outName) {
-        const errFile = names.find((n) => /\.err$/i.test(n));
-        const detail = errFile ? (await fs.readFile(path.join(outDir, errFile), 'utf8')).trim().slice(0, 4096) : '';
-        throw new Error(`ODA File Converter produced no ${outType}${detail ? `: ${detail}` : ''}`);
-      }
+      const errFile = names.find((n) => /\.err$/i.test(n));
+      const detail = errFile ? (await fs.readFile(path.join(outDir, errFile), 'utf8')).trim().slice(0, 4096) : '';
+      if (!outName) throw new Error(`ODA File Converter produced no ${outType}${detail ? `: ${detail}` : ''}`);
       const st = await fs.stat(path.join(outDir, outName));
       if (st.size === 0) throw new Error('ODA File Converter produced an empty file');
       if (st.size > maxBytes) throw new RangeError(`ODA File Converter output exceeds ${maxBytes} bytes`);
-      return new Uint8Array(await fs.readFile(path.join(outDir, outName)));
+      const log = [col.finish().log.trim(), detail].filter(Boolean).join('\n');
+      return { bytes: new Uint8Array(await fs.readFile(path.join(outDir, outName))), log };
     } finally {
       // a converter still releasing its files (Windows) may need a retry; a leftover temp folder must not hide the real error
       await fs.rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
+      registry.removeDir(tmp);
     }
   }
   return {
     exe,
     version: opts.version ?? odaVersion(exe),
-    /** DWG bytes -> {dxfBytes} (ASCII DXF, ACAD2018, audit on); the temp folder is always removed. */
-    async toDxf(dwgBytes) {
-      const out = await convert(dwgBytes, 'DWG', IN_NAME, 'DXF');
-      return { dxfBytes: out, errorCount: 0, log: '', converter: 'ODA' };
+    /** DWG bytes -> {dxfBytes, log} (ASCII DXF, ACAD2018, audit on; log: the converter's messages); the temp folder is
+     *  always removed; an aborted `signal` kills the converter (Error code 'CANCELLED'). */
+    async toDxf(dwgBytes, { signal = null } = {}) {
+      const { bytes, log } = await convert(dwgBytes, 'DWG', IN_NAME, 'DXF', undefined, signal);
+      return { dxfBytes: bytes, errorCount: 0, log, converter: 'ODA' };
     },
     /** DXF bytes -> {dwgBytes} in the given ODA_DWG_VERSIONS version ('acad2018', ...); the temp folder is always removed. */
     async fromDxf(dxfBytes, version) {
       odaArgs('', '', 'DWG', version); // unknown versions fail before anything is written
-      return { dwgBytes: await convert(dxfBytes, 'DXF', IN_DXF_NAME, 'DWG', version) };
+      return { dwgBytes: (await convert(dxfBytes, 'DXF', IN_DXF_NAME, 'DWG', version)).bytes };
     },
   };
 }
@@ -295,8 +297,9 @@ export function createDwgService({ libre, getConfig, detectOda, makeOda }) {
     /** DWG bytes -> {dxfBytes, warnings?, engine, converter: 'ODA'|'LibreDWG', errorCount, log}; errors carry `odaHint`
      *  when installing ODA would help. An implausible output (implausibleConversion) counts as a failed engine.
      *  LibreDWG output with empty referenced blocks (emptyReferencedBlocks) is a soft problem: ODA is tried when
-     *  installed, else (or when ODA fails) the LibreDWG result is returned with a warning. */
-    async toDxf(dwgBytes) {
+     *  installed, else (or when ODA fails) the LibreDWG result is returned with a warning.
+     *  An aborted `signal` kills the running converter and rejects with code 'CANCELLED' (no further engine is tried). */
+    async toDxf(dwgBytes, { signal = null } = {}) {
       const { mode, order } = await engines();
       const errors = [];
       const odaTried = order.some((e) => e.name === 'oda');
@@ -306,7 +309,10 @@ export function createDwgService({ libre, getConfig, detectOda, makeOda }) {
       for (const e of order) {
         const label = e.name === 'oda' ? 'ODA File Converter' : 'LibreDWG';
         let r;
-        try { r = await e.bridge.toDxf(dwgBytes); } catch (err) { errors.push(`${label}: ${String(err.message || err).split('\n')[0]}`); continue; }
+        if (signal?.aborted) throw cancelledError();
+        try { r = await e.bridge.toDxf(dwgBytes, { signal }); } catch (err) {
+          if (err.code === 'CANCELLED' || signal?.aborted) throw cancelledError();
+          errors.push(`${label}: ${String(err.message || err).split('\n')[0]}`); continue; }
         const res = { ...r, engine: e.name, converter: e.name === 'oda' ? 'ODA' : 'LibreDWG', errorCount: r.errorCount ?? 0, log: r.log ?? '' };
         const reason = implausibleConversion({ dwgBytes: dwgBytes.byteLength, dxfBytes: res.dxfBytes.byteLength, errorCount: res.errorCount });
         if (!reason) {

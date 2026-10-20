@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { atomicWrite, saveDrawingFile } from './backup.js';
 import { createAutosaveStore } from './autosave.js';
+import { converterProcs, sweepConverterTemp } from './converterProcs.js';
 import { converterPath, createDwgBridge, DWG_OUT_VERSIONS } from './dwgBridge.js';
 import { cacheLimitBytes, createDwgCache, openCached } from './dwgCache.js';
 import { createHandoffStore } from './handoff.js';
@@ -49,6 +50,7 @@ if (!app.requestSingleInstanceLock(lockData({ exe: process.execPath, version: ap
 const libredwgDir = process.env.ASH_LIBREDWG_DIR
   || (app.isPackaged ? path.join(process.resourcesPath, 'libredwg') : path.join(APP_ROOT, 'build', 'libredwg'));
 let dwg = null; // created after ready (temp path needs app)
+const dwgJobs = new Map(); // dwg:open job id -> AbortController of its conversion
 
 /** @type {BrowserWindow|null} */
 let win = null;
@@ -165,6 +167,9 @@ function saveSession() {
   writeJsonSync('session.json', { version: 1, ...s });
 }
 app.on('will-quit', saveSession);
+// A conversion still running at quit: kill the converters (with ODA's own processes) and remove their temp folders, which
+// can hold a DWG and a 500 MB DXF. Not on before-quit: closing the window may still be cancelled at the unsaved-changes prompt.
+app.on('will-quit', () => converterProcs.killAll());
 // Reopens the previous session: existing files are granted again and returned; deleted or moved ones in `missing`.
 async function restoreSession() {
   sessionOffer = null;
@@ -433,7 +438,15 @@ function registerIpc() {
   // as a one-time URL (handOff) that the window's reader worker fetches.
   // A DWG opened from a path goes through the converted-drawing cache (electron/dwgCache.js): an unchanged file is
   // not converted again.
-  handle('dwg:open', async (src) => {
+  // `job` (optional, from the window): dwg:cancel(job) kills that open's conversion (the progress toast's Cancel)
+  handle('dwg:open', async (src, job) => {
+    const ac = new AbortController();
+    const id = typeof job === 'string' && job.length <= 64 ? job : null;
+    if (id) dwgJobs.set(id, ac);
+    try { return await openDwg(src, ac.signal); } finally { if (id && dwgJobs.get(id) === ac) dwgJobs.delete(id); }
+  });
+  handle('dwg:cancel', (job) => { if (typeof job === 'string') dwgJobs.get(job)?.abort(); });
+  async function openDwg(src, signal) {
     if (typeof src === 'string') {
       const p = grantedPath(src);
       settings ??= await loadJson('settings.json');
@@ -441,14 +454,14 @@ function registerIpc() {
       const binStat = async (f) => { try { const st = await fs.stat(f); return [st.size, st.mtimeMs]; } catch { return null; } }; // the binary itself, not only its reported version
       const converter = JSON.stringify([av.mode, av.libredwg?.version ?? null, await binStat(converterPath(libredwgDir, process.platform, 'dwg2dxf')),
         av.oda?.available ? (av.oda.path ?? null) : null, av.oda?.version ?? null, av.oda?.available && av.oda.path ? await binStat(av.oda.path) : null]);
-      const { dxfBytes, warnings, engine, converter: conv, errorCount, log, dwgSize, header, cached } = await openCached(dwgCache, p, { converter, read: readGranted, convert: (b) => dwg.toDxf(b) });
+      const { dxfBytes, warnings, engine, converter: conv, errorCount, log, dwgSize, header, cached } = await openCached(dwgCache, p, { converter, read: readGranted, convert: (b) => dwg.toDxf(b, { signal }) });
       return { url: handOff(dxfBytes), size: dxfBytes.byteLength, dwgSize, header, warnings, engine, converter: conv, errorCount, log, cached };
     }
     const bytes = asBytes(src, 'DWG data');
-    const { dxfBytes, warnings, engine, converter, errorCount, log } = await dwg.toDxf(bytes);
+    const { dxfBytes, warnings, engine, converter, errorCount, log } = await dwg.toDxf(bytes, { signal });
     const header = Buffer.from(bytes.subarray(0, 6)).toString('latin1'); // "AC1032": the DWG version, kept for Save in the same version
     return { url: handOff(dxfBytes), size: dxfBytes.byteLength, dwgSize: bytes.byteLength, header, warnings, engine, converter, errorCount, log };
-  });
+  }
   handle('dwg:cacheInfo', async () => {
     settings ??= await loadJson('settings.json');
     return { ...(await dwgCache.info()), limitBytes: cacheLimitBytes(settings['dwg.cacheMaxMB']) };
@@ -471,6 +484,7 @@ app.whenReady().then(async () => {
   session.defaultSession.setPermissionCheckHandler(() => false);
   protocol.handle(SCHEME, serveAppFile);
   const tmpRoot = app.getPath('temp');
+  sweepConverterTemp(tmpRoot).catch(() => {}); // folders a killed conversion left behind (older than 2 hours)
   const programFiles = [...new Set([process.env.ProgramW6432, process.env.ProgramFiles, 'C:\\Program Files'].filter(Boolean))];
   dwg = createDwgService({
     libre: createDwgBridge(libredwgDir, process.platform, { tmpRoot }),

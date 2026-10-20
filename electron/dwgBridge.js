@@ -6,10 +6,11 @@
 // files in a private temporary directory.
 //
 // No Electron imports here, so this module can be unit-tested in plain Node.
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promises as fs, constants as fsc } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { cancelledError, converterProcs, runConverter } from './converterProcs.js';
 
 export const MAX_BYTES = 1536 * 1024 * 1024; // input/output size cap (a 120 MB DWG can expand to 500+ MB of DXF)
 export const TIMEOUT_MS = 10 * 60_000; // a 120 MB AutoCAD 2018 DWG converts to a 500+ MB DXF
@@ -109,25 +110,19 @@ export function stderrCollector(limit = STDERR_READ) {
 // Runs a converter with its stderr streamed through stderrCollector, so any amount of console output can
 // neither fail the run nor be held in memory: ERROR lines are counted over the whole stream, only the
 // first STDERR_READ bytes are kept. Rejects with the same error shape as execFile (numeric `code`, `killed`,
-// `signal`, `stderr`) plus `errorCount`.
-async function runLogged(file, args, { cwd, timeout }) {
+// `signal`, `stderr`) plus `errorCount`, `timedOut` and `stuck` (see runConverter); a cancel rejects with code 'CANCELLED'.
+async function runLogged(file, args, { cwd, timeout, signal, registry, graceMs, closeWaitMs }) {
   const col = stderrCollector(STDERR_READ);
-  const result = await new Promise((resolve) => {
-    let killed = false;
-    let settled = false;
-    const done = (v) => { if (!settled) { settled = true; clearTimeout(timer); resolve(v); } };
-    const child = spawn(file, args, { cwd, windowsHide: true, shell: false, stdio: ['ignore', 'ignore', 'pipe'] });
-    const timer = setTimeout(() => { killed = true; child.kill('SIGTERM'); }, timeout);
-    child.stderr?.on('data', (c) => col.push(c));
-    child.on('error', (error) => done({ error }));
-    child.on('close', (code, signal) => done({ code, signal, killed }));
-  });
+  const result = await runConverter(file, args, { cwd, timeout, signal, registry, graceMs, closeWaitMs, onOutput: (c) => col.push(c) });
   const { errorCount, log: stderr } = col.finish();
+  if (result.cancelled) throw cancelledError();
   if (result.error) { Object.assign(result.error, { stderr, errorCount }); throw result.error; }
-  if (result.code === 0 && !result.signal) return { stderr, errorCount };
+  if (result.code === 0 && !result.signal && !result.timedOut && !result.stuck) return { stderr, errorCount };
   const err = new Error(`Command failed: ${path.basename(file)}`);
   err.code = result.code ?? undefined; // null (killed by signal) must not look like an exit code
-  err.killed = result.killed;
+  err.killed = result.timedOut;
+  err.timedOut = result.timedOut;
+  err.stuck = result.stuck;
   err.signal = result.signal;
   err.stderr = stderr;
   err.errorCount = errorCount;
@@ -138,6 +133,8 @@ function describeFailure(name, err, timeoutMs) {
   const stderr = trimStderr(err.stderr);
   let why;
   if (err.code === 'ENOENT') why = 'executable not found';
+  else if (err.stuck) why = `timed out after ${Math.round(timeoutMs / 1000)} s and did not stop when it was ended`;
+  else if (err.timedOut) why = `timed out after ${Math.round(timeoutMs / 1000)} s`;
   else if (err.killed && (err.signal === 'SIGTERM' || err.signal === 'SIGKILL') && err.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
     why = `timed out after ${Math.round(timeoutMs / 1000)} s`;
   } else if (err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') why = 'produced too much console output';
@@ -151,13 +148,15 @@ function describeFailure(name, err, timeoutMs) {
 /**
  * @param {string} dir       folder holding dwg2dxf[.exe] / dxf2dwg[.exe]
  * @param {string} platform  process.platform value deciding the executable suffix
- * @param {{tmpRoot?: string, timeoutMs?: number, maxBytes?: number}} [opts]
+ * @param {{tmpRoot?: string, timeoutMs?: number, maxBytes?: number, registry?: object, graceMs?: number, closeWaitMs?: number}} [opts]
+ *        registry: converterProcs; graceMs / closeWaitMs: runConverter's kill escalation
  */
 export function createDwgBridge(dir, platform = process.platform, opts = {}) {
   if (typeof dir !== 'string' || !dir) throw new TypeError('dir must be a non-empty string');
   const tmpRoot = opts.tmpRoot ?? os.tmpdir();
   const timeoutMs = opts.timeoutMs ?? TIMEOUT_MS;
   const maxBytes = opts.maxBytes ?? MAX_BYTES;
+  const registry = opts.registry ?? converterProcs;
   const dwg2dxf = converterPath(dir, platform, 'dwg2dxf');
   const dxf2dwg = converterPath(dir, platform, 'dxf2dwg');
   const execOpts = (cwd, timeout) => ({
@@ -186,8 +185,9 @@ export function createDwgBridge(dir, platform = process.platform, opts = {}) {
 
   // LibreDWG's dwg2dxf exits non-zero on recoverable problems (CRC mismatch, unknown objects) yet usually
   // still writes a usable DXF. `recover` (DWG->DXF only) accepts such an output; it returns {bytes, warnings}.
-  async function convert(name, exe, input, inExt, outExt, extraArgs, recover = null) {
+  async function convert(name, exe, input, inExt, outExt, extraArgs, recover = null, signal = null) {
     const tmp = await fs.mkdtemp(path.join(tmpRoot, 'ash-dwg-'));
+    registry.addDir(tmp);
     try {
       const inPath = path.join(tmp, `input.${inExt}`);
       const outPath = path.join(tmp, `output.${outExt}`);
@@ -196,8 +196,9 @@ export function createDwgBridge(dir, platform = process.platform, opts = {}) {
       let errorCount = 0;
       let failed = null;
       try {
-        ({ stderr, errorCount } = await runLogged(exe, [...extraArgs, '-y', '-o', outPath, inPath], { cwd: tmp, timeout: timeoutMs }));
+        ({ stderr, errorCount } = await runLogged(exe, [...extraArgs, '-y', '-o', outPath, inPath], { cwd: tmp, timeout: timeoutMs, signal, registry, graceMs: opts.graceMs, closeWaitMs: opts.closeWaitMs }));
       } catch (err) {
+        if (err.code === 'CANCELLED') throw err;
         // only a plain non-zero exit is recoverable: never timeout / ENOENT / signal
         if (!recover || typeof err.code !== 'number' || err.killed || err.signal) throw describeFailure(name, err, timeoutMs);
         failed = err;
@@ -220,6 +221,7 @@ export function createDwgBridge(dir, platform = process.platform, opts = {}) {
       return recover ? { bytes, warnings: [], errorCount, log: stderr } : bytes;
     } finally {
       await fs.rm(tmp, { recursive: true, force: true });
+      registry.removeDir(tmp);
     }
   }
 
@@ -231,10 +233,10 @@ export function createDwgBridge(dir, platform = process.platform, opts = {}) {
       return availability;
     },
     /** DWG bytes -> {dxfBytes, warnings?, errorCount, log, converter}: errorCount = ERROR lines over the whole
-     *  converter output, log = its first STDERR_READ bytes */
-    async toDxf(dwgBytes) {
+     *  converter output, log = its first STDERR_READ bytes; an aborted `signal` kills the converter (Error code 'CANCELLED') */
+    async toDxf(dwgBytes, { signal = null } = {}) {
       const input = toBuffer(dwgBytes, 'DWG data', maxBytes);
-      const { bytes, warnings, errorCount, log } = await convert('dwg2dxf', dwg2dxf, input, 'dwg', 'dxf', [], warningLines);
+      const { bytes, warnings, errorCount, log } = await convert('dwg2dxf', dwg2dxf, input, 'dwg', 'dxf', [], warningLines, signal);
       return { dxfBytes: bytes, ...(warnings.length ? { warnings } : {}), errorCount, log, converter: 'LibreDWG' };
     },
     /** DXF bytes -> {dwgBytes}; version one of DWG_OUT_VERSIONS (default r2000) */
