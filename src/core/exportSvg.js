@@ -20,9 +20,11 @@ const MAX_HATCH_LINES = 4000;
  * Walk scene path ops, calling sink.moveTo(x,y), sink.lineTo(x,y), sink.close(),
  * sink.arc(cx,cy,rx,ry,rot,t0,sweep) (elliptical arc by parameter, world coords, Y up).
  * Like Canvas2D, an arc whose start is away from the current point is joined to it with a line.
+ * An op with a non-finite number is skipped (the path goes on from the next good point with a move); returns how many.
  */
 export function walkOps(ops, sink) {
-  let cur = null, start = null;
+  let cur = null, start = null, bad = 0;
+  const ok = (i, n) => { for (let j = i + 1; j <= i + n; j++) if (!Number.isFinite(ops[j])) { bad++; cur = null; return false; } return true; };
   const join = (x, y) => {
     if (!cur) { sink.moveTo(x, y); start = { x, y }; } else if (Math.hypot(x - cur.x, y - cur.y) > 1e-9 * (1 + Math.abs(x) + Math.abs(y))) sink.lineTo(x, y);
   };
@@ -37,16 +39,30 @@ export function walkOps(ops, sink) {
   };
   for (let i = 0; i < ops.length;) {
     switch (ops[i]) {
-      case OP_M: cur = start = { x: ops[i + 1], y: ops[i + 2] }; sink.moveTo(cur.x, cur.y); i += 3; break;
+      case OP_M: if (ok(i, 2)) { cur = start = { x: ops[i + 1], y: ops[i + 2] }; sink.moveTo(cur.x, cur.y); } i += 3; break;
       case OP_L:
+        if (!ok(i, 2)) { i += 3; break; }
         if (!cur) { start = { x: ops[i + 1], y: ops[i + 2] }; sink.moveTo(start.x, start.y); } else sink.lineTo(ops[i + 1], ops[i + 2]);
         cur = { x: ops[i + 1], y: ops[i + 2] }; i += 3; break;
-      case OP_A: arc(ops[i + 1], ops[i + 2], ops[i + 3], ops[i + 3], 0, ops[i + 4], ops[i + 5]); i += 6; break;
-      case OP_E: arc(ops[i + 1], ops[i + 2], ops[i + 3], ops[i + 4], ops[i + 5], ops[i + 6], ops[i + 7]); i += 8; break;
-      case OP_Z: sink.close(); cur = start; i += 1; break;
+      case OP_A: if (ok(i, 5)) arc(ops[i + 1], ops[i + 2], ops[i + 3], ops[i + 3], 0, ops[i + 4], ops[i + 5]); i += 6; break;
+      case OP_E: if (ok(i, 7)) arc(ops[i + 1], ops[i + 2], ops[i + 3], ops[i + 4], ops[i + 5], ops[i + 6], ops[i + 7]); i += 8; break;
+      case OP_Z: if (cur) { sink.close(); cur = start; } i += 1; break;
       default: throw new Error(`bad path op ${ops[i]}`);
     }
   }
+  return bad;
+}
+
+const finitePt = (p) => !!p && Number.isFinite(p.x) && Number.isFinite(p.y);
+export const finiteSeg = (s) => Number.isFinite(s[0]) && Number.isFinite(s[1]) && Number.isFinite(s[2]) && Number.isFinite(s[3]);
+/** true when the item's anchor point(s) are finite (points, text, arrows, pictures); paths are checked by walkOps */
+export const finiteAnchor = (it) => (it.p ? finitePt(it.p) : true) && (it.arrow ? it.arrow.every(finitePt) : true) && (it.image ? finitePt(it.image.p) : true);
+/** the export warnings for `bad` objects not drawn (non-finite coordinates) and `tints` hatches too dense to draw */
+export function exportNotes(bad, tints) {
+  const out = [];
+  if (bad) out.push(bad === 1 ? '1 object could not be drawn (invalid coordinates)' : `${bad} objects could not be drawn (invalid coordinates)`);
+  if (tints) out.push(tints === 1 ? '1 dense hatch was printed as a tint' : `${tints} dense hatches were printed as a tint`);
+  return out;
 }
 
 const ACI_GREYS = [8, 9, 250, 251, 252, 253, 254].map((i) => aciToRgb(i).join(','));
@@ -202,11 +218,11 @@ const BAD_XML = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\u
 export const xmlEscape = (s) => String(s).replace(BAD_XML, '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
   .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 
-/** SVG path data with the Y flip folded into the numbers (svg y = -world y) */
-export function svgPathData(ops) {
+/** SVG path data with the Y flip folded into the numbers (svg y = -world y); stat.bad counts skipped non-finite ops */
+export function svgPathData(ops, stat = null) {
   const d = [];
   const P = (x, y) => `${num(x)} ${num(-y)}`;
-  walkOps(ops, {
+  const bad = walkOps(ops, {
     moveTo: (x, y) => d.push(`M${P(x, y)}`),
     lineTo: (x, y) => d.push(`L${P(x, y)}`),
     close: () => d.push('Z'),
@@ -225,6 +241,7 @@ export function svgPathData(ops) {
       }
     },
   });
+  if (stat) stat.bad += bad;
   return d.join('');
 }
 
@@ -244,7 +261,8 @@ const fontFamily = (font) => {
  * exportSvg(doc, opts) -> standalone SVG 1.1 document string.
  * opts: scene (prebuilt), background ('#ffffff' default | null = transparent), monochrome (false),
  * lineweights (true), unitsPerMm (drawing units per plotted millimetre; when given, width/height are in mm),
- * margin (fraction of the larger drawing dimension, 0.02).
+ * margin (fraction of the larger drawing dimension, 0.02), warnings (an array the export warnings are pushed to: objects
+ * with non-finite coordinates are left out, dense hatches drawn as a tint; exportNotes).
  * Stroke width in SVG user units (= drawing units): max(lineweightMm, 0.18) * (unitsPerMm ?? 1);
  * default lineweight (-3) and lineweights:false use 0.25 mm.
  */
@@ -281,12 +299,16 @@ export function exportSvg(doc, opts = {}) {
   // transparency: the item's opacity on its own element (a group for clipped hatches and text runs)
   const op = (st) => { const a = opts.transparency === false ? 1 : st.alpha ?? 1; return a < 1 ? ` opacity="${num(a)}"` : ''; };
   const plotBox = { minx: vx, miny: -(vy + vh), maxx: vx + vw, maxy: -vy }; // XLINE / RAY: their part inside the sheet
+  let bad = 0, tints = 0;
+  const stat = { bad: 0 };
   for (let it of scene.items) {
+    if (stat.bad) { bad++; stat.bad = 0; }
     if (it.inf && !(it = infiniteItem(it, plotBox))) continue;
+    if (!finiteAnchor(it)) { bad++; continue; }
     const col = rgb(it.style), oa = op(it.style);
     if (it.kind === 'path') {
       const sw = strokeW(it.style);
-      out.push(`<path d="${svgPathData(it.ops)}" stroke="${col}" stroke-width="${sw}"${dashAttr(dashUnits(doc, it.style))}${oa}/>`);
+      out.push(`<path d="${svgPathData(it.ops, stat)}" stroke="${col}" stroke-width="${sw}"${dashAttr(dashUnits(doc, it.style))}${oa}/>`);
       if (it.arrow) {
         const t = arrowTriangle(it.arrow, msize);
         out.push(`<path d="M${t.map((p) => `${num(p.x)} ${num(-p.y)}`).join('L')}Z" fill="${col}" stroke="none"${oa}/>`);
@@ -294,11 +316,12 @@ export function exportSvg(doc, opts = {}) {
     } else if (it.kind === 'fill' || (it.kind === 'hatch' && it.solid)) {
       // a wide polyline band thinner than the minimum plotted line weight is outlined at that weight, so it still prints
       const thin = it.wide && !(it.w >= MIN_LW_MM * upm);
-      out.push(`<path d="${svgPathData(it.ops)}" fill="${col}" fill-rule="evenodd" stroke="${thin ? col : 'none'}"${thin ? ` stroke-width="${num(MIN_LW_MM * upm)}"` : ''}${oa}/>`);
+      out.push(`<path d="${svgPathData(it.ops, stat)}" fill="${col}" fill-rule="evenodd" stroke="${thin ? col : 'none'}"${thin ? ` stroke-width="${num(MIN_LW_MM * upm)}"` : ''}${oa}/>`);
     } else if (it.kind === 'hatch') {
       const fams = hatchFamilies(it);
-      const d = svgPathData(it.ops);
+      const d = svgPathData(it.ops, stat);
       if (fams === null) {
+        tints++;
         out.push(`<path d="${d}" fill="${col}" fill-opacity="0.3" fill-rule="evenodd" stroke="none"${oa}/>`);
         continue;
       }
@@ -306,7 +329,9 @@ export function exportSvg(doc, opts = {}) {
       const sw = strokeW(it.style);
       out.push(`<clipPath id="${id}"><path d="${d}" clip-rule="evenodd"/></clipPath><g clip-path="url(#${id})" stroke="${col}" stroke-width="${sw}"${oa}>`);
       for (const f of fams) {
-        const pd = f.segs.map((s) => `M${num(s[0])} ${num(-s[1])}L${num(s[2])} ${num(-s[3])}`).join('');
+        const segs = f.segs.filter(finiteSeg);
+        if (segs.length < f.segs.length) stat.bad++;
+        const pd = segs.map((s) => `M${num(s[0])} ${num(-s[1])}L${num(s[2])} ${num(-s[3])}`).join('');
         if (pd) out.push(`<path d="${pd}"${dashAttr(f.dashes)}/>`);
       }
       out.push('</g>');
@@ -334,6 +359,8 @@ export function exportSvg(doc, opts = {}) {
       out.push(`<path d="M${num(x - s)} ${num(y)}L${num(x + s)} ${num(y)}M${num(x)} ${num(y - s)}L${num(x)} ${num(y + s)}" stroke="${col}" stroke-width="${strokeW(it.style)}"${oa}/>`);
     }
   }
+  if (stat.bad) bad++;
+  if (opts.warnings) opts.warnings.push(...exportNotes(bad, tints));
   out.push('</g>', '</svg>', '');
   return out.join('\n');
 }

@@ -114,7 +114,7 @@ function clampedKnots(n, degree) {
 }
 function splinePoints(e, tol) {
   let ctrl = e.ctrl, knots = e.knots, weights = e.weights, degree = e.degree || 3;
-  if ((!ctrl || ctrl.length < 2) && e.fit && e.fit.length >= 2) return catmullRom(e.fit, e.closed);
+  if ((!ctrl || ctrl.length < 2) && e.fit && e.fit.length >= 2) return fitSplinePoints(e, tol);
   if (!ctrl || ctrl.length < 2) return [];
   if (ctrl.length <= degree) degree = ctrl.length - 1;
   if (!knots || knots.length !== ctrl.length + degree + 1) knots = clampedKnots(ctrl.length, degree);
@@ -155,29 +155,20 @@ function deBoor(ctrl, knots, weights, p, t, st = { k: p, t: -Infinity, x: new Fl
   const w = dw[p] || 1;
   return { x: dx[p] / w, y: dy[p] / w };
 }
-// Fit-point splines are approximated by a centripetal Catmull-Rom curve through the fit points
-// (DXF stores tangents/knots for an exact fit; this approximation is visually close for display).
-function catmullRom(pts, closed) {
-  const P = closed ? [pts[pts.length - 1], ...pts, pts[0], pts[1]] : [pts[0], ...pts, pts[pts.length - 1]];
-  const out = [];
-  const segs = closed ? pts.length : pts.length - 1;
-  for (let i = 0; i < segs; i++) {
-    const p0 = P[i], p1 = P[i + 1], p2 = P[i + 2], p3 = P[i + 3];
-    const t0 = 0;
-    const t1 = t0 + Math.pow(dist(p0, p1), 0.5) || 1e-6;
-    const t2 = t1 + Math.pow(dist(p1, p2), 0.5) || 1e-6;
-    const t3 = t2 + Math.pow(dist(p2, p3), 0.5) || 1e-6;
-    const N = 12;
-    for (let j = 0; j < N; j++) {
-      const t = t1 + ((t2 - t1) * j) / N;
-      const L = (a, b, ta, tb) => ({ x: ((tb - t) * a.x + (t - ta) * b.x) / (tb - ta), y: ((tb - t) * a.y + (t - ta) * b.y) / (tb - ta) });
-      const A1 = L(p0, p1, t0, t1), A2 = L(p1, p2, t1, t2), A3 = L(p2, p3, t2, t3);
-      const B1 = L(A1, A2, t0, t2), B2 = L(A2, A3, t1, t3);
-      out.push(L(B1, B2, t1, t2));
-    }
+// Fit-point-only splines: the cubic interpolating every fit point (nurbs.js fitNurbs, as AutoCAD computes the control
+// points), sampled span by span so each fit point (a knot) is a vertex of the polyline.
+function fitSplinePoints(e, tol) {
+  const nu = nurbsOf(e);
+  if (!nu) return [];
+  const ctrl = nu.P.map((q) => ({ x: q.x, y: q.y })), U = nu.U, n = ctrl.length;
+  const per = Math.min(64, Math.max(8, Math.round(16 / Math.max(tol ? tol / 0.01 : 1, 0.25))));
+  const st = { k: 3, t: -Infinity, x: new Float64Array(4), y: new Float64Array(4), w: new Float64Array(4) };
+  const out = [deBoor(ctrl, U, null, 3, U[3], st)];
+  for (let k = 3; k < n; k++) {
+    const a = U[k], b = U[k + 1];
+    if (!(b > a)) continue;
+    for (let j = 1; j <= per; j++) out.push(deBoor(ctrl, U, null, 3, j === per ? b : a + ((b - a) * j) / per, st));
   }
-  out.push({ x: P[closed ? pts.length + 1 : pts.length].x, y: P[closed ? pts.length + 1 : pts.length].y });
-  if (closed) out[out.length - 1] = { ...out[0] };
   return out;
 }
 
@@ -628,7 +619,9 @@ export function transformEntity(e, m) {
     case 'MLEADER': return transformMLeader(e, (p) => apply(m, p));
     case 'MLINE': return transformMline(e, (p) => apply(m, p));
     case 'SPLINE':
-      c.ctrl = e.ctrl.map((p) => apply(m, p)); c.fit = (e.fit || []).map((p) => apply(m, p)); break;
+      c.ctrl = e.ctrl.map((p) => apply(m, p)); c.fit = (e.fit || []).map((p) => apply(m, p));
+      for (const k of ['startTan', 'endTan']) if (e[k]) { const d = applyVec(m, e[k]), l = Math.hypot(d.x, d.y); c[k] = l > 0 ? { x: d.x / l, y: d.y / l } : d; }
+      break;
     case 'CIRCLE':
       if (sim) { c.c = apply(m, e.c); c.r = e.r * s; } else return circleToEllipseTransformed(e, m);
       break;

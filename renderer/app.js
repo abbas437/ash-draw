@@ -602,7 +602,11 @@ class App {
   /** File > Compare… (COMPARE): differences between two drawings, shown in a new tab */
   compare() { return runCompare(this).catch((err) => message('Compare failed', err.message || String(err))); }
   async exportSvg() {
-    try { await this.saveBytes(await exportSvgBytes(this.fileDoc, this.scene(), {}), 'svg', 'SVG image'); } catch (err) { await message('Export failed', err.message || String(err)); }
+    try {
+      const warnings = [];
+      await this.saveBytes(await exportSvgBytes(this.fileDoc, this.scene(), { warnings }), 'svg', 'SVG image');
+      if (warnings.length) await message('SVG exported with warnings', warnings.join('\n'));
+    } catch (err) { await message('Export failed', err.message || String(err)); }
   }
   async exportPng() {
     try { await this.saveBytes(await exportPngBytes(this.fileDoc, this.scene(), { dark: this.vp.settings.dark, lineweights: this.vp.settings.lineweights }), 'png', 'PNG image'); } catch (err) { await message('Export failed', err.message || String(err)); }

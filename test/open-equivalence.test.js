@@ -94,7 +94,7 @@ const EXPECTED = {
   "r12_ac1009.dxf": {scene: 'b8d6329feb876f3b', boxes: '1b42026e324a1c08', queries: 'cecc924767d86eea', explode: '4f53cda18c2baa0c', tess: '2e0a5a9eb0d56fb0'},
   "r2007_ac1021.dxf": {scene: '0de087a3e860fc75', boxes: 'e5f7021d37159444', queries: 'cffe0260a583d92a', explode: '4f53cda18c2baa0c', tess: '2e0a5a9eb0d56fb0'},
   "r2018_ac1032.dxf": {scene: '0de087a3e860fc75', boxes: 'e5f7021d37159444', queries: 'cffe0260a583d92a', explode: '4f53cda18c2baa0c', tess: '2e0a5a9eb0d56fb0'},
-  "splines_r2000.dxf": {scene: '457ae11f612cdc03', boxes: '779a0246e2436828', queries: 'd599a6ec88706309', explode: '4f53cda18c2baa0c', tess: 'a195641f62a640e2'},
+  "splines_r2000.dxf": {scene: '66b9372594625ef9', boxes: '2fd5b93814e8084a', queries: '585d4bc7c8097b8a', explode: '4f53cda18c2baa0c', tess: 'ba4182f64fb9d210'},
   "text_r2000.dxf": {scene: 'ad178817833612b2', boxes: 'e09a81f6974e129f', queries: '95c15edabdb3a0cd', explode: '4f53cda18c2baa0c', tess: '210e130878aabaf4'},
   "unsupported_r2000.dxf": {scene: 'd946cd7fe14278e0', boxes: 'bb922b3e6f428178', queries: 'cc22b62f686fa87a', explode: '4f53cda18c2baa0c', tess: '040eb132e611a816'},
   "utm_metres_insunits_mm.dxf": {scene: '0d2caec27fc07cfa', boxes: '24b8d43cc59cdc92', queries: 'e6fdbd1fc61f953f', explode: '4f53cda18c2baa0c', tess: '3a5b20e15621b7de'},

@@ -462,7 +462,9 @@ function buildSpline(rec, o) {
     else if (c === 21 && ff) ff.y = num(i);
   }
   const flags = rec.int(70);
-  return makeSpline({ ...o, degree: rec.int(71, 3), ctrl, knots, weights: weights.length === ctrl.length && weights.length ? weights : null, fit, closed: (flags & 1) === 1 });
+  // fit-point end tangents (12 / 13): kept for the interpolation and written back
+  const tan = (c) => (rec.has(c) ? pt(rec, c) : null);
+  return makeSpline({ ...o, degree: rec.int(71, 3), ctrl, knots, weights: weights.length === ctrl.length && weights.length ? weights : null, fit, closed: (flags & 1) === 1, startTan: tan(12), endTan: tan(13) });
 }
 
 function buildText(rec, o) {

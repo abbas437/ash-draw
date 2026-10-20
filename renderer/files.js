@@ -247,7 +247,7 @@ export function verificationMessage(v, { oda = false } = {}) {
 }
 
 export async function exportSvgBytes(doc, scene, opts = {}) {
-  return enc.encode(exportSvg(doc, { scene, unitsPerMm: unitsPerMm(doc), monochrome: !!opts.monochrome, background: opts.background ?? '#ffffff' }));
+  return enc.encode(exportSvg(doc, { scene, unitsPerMm: unitsPerMm(doc), monochrome: !!opts.monochrome, background: opts.background ?? '#ffffff', warnings: opts.warnings }));
 }
 /** the bundled Unicode PDF fonts (Noto Sans, Noto Sans Arabic, Noto Sans Math subset; OFL-1.1), fetched once on first use */
 const UNICODE_FONTS = ['NotoSans-Regular.ttf', 'NotoSansArabic-Regular.ttf', 'NotoSansMath-Regular.ttf'];

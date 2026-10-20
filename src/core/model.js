@@ -154,6 +154,7 @@ export const makeMText = (p, height, text, o = {}) => ({
 export const makeSpline = (o = {}) => ({
   ...base('SPLINE', o), degree: o.degree ?? 3, ctrl: (o.ctrl ?? []).map(pt), knots: o.knots ?? [],
   weights: o.weights ?? null, fit: (o.fit ?? []).map(pt), closed: !!o.closed,
+  ...(o.startTan ? { startTan: pt(o.startTan) } : {}), ...(o.endTan ? { endTan: pt(o.endTan) } : {}),
 });
 export const makeSolid = (pts, o = {}) => ({ ...base('SOLID', o), pts: pts.map(pt) });
 export const makeInsert = (block, p, o = {}) => ({
