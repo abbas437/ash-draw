@@ -193,6 +193,9 @@ try {
   assert.equal(await win.locator('#dlg h2').innerText(), 'Print');
   await win.locator('#dlg select[name=pageSize]').selectOption('A4');
   await win.locator('#dlg button.primary').click();
+  // a 1 : N plot of this unitless drawing first asks what a unit is (#11)
+  await win.waitForFunction(() => document.querySelector('#dlg[open] h2')?.textContent === 'Drawing units' || !document.querySelector('#dlg[open]'), null, { timeout: 10000 });
+  if (await win.locator('#dlg[open] h2', { hasText: 'Drawing units' }).count()) await win.locator('#dlg button', { hasText: 'Millimetre' }).click();
   for (let i = 0; i < 200 && !(await app.evaluate(() => globalThis.__prints.length)); i++) await win.waitForTimeout(100);
   await win.waitForTimeout(300); // print callback -> clean-up
   const printed = await app.evaluate(({ BrowserWindow }) => ({ prints: globalThis.__prints, mainId: BrowserWindow.getAllWindows().find((w) => !w.getParentWindow()).webContents.id, windows: BrowserWindow.getAllWindows().length }));
