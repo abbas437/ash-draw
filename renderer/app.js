@@ -47,7 +47,7 @@ import { initLayerCombo } from './layer-combo.js';
 import { initSymbolPalette } from './symbol-palette.js';
 import { el, message, modal, confirmDialog, textDialog, listDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
 import {
-  OPEN_FILTERS, loadDrawing, incompleteText, conversionSummary, saveDxf, saveDwg, droppedBySave, savedToast, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, savePathIn, extOf, UNIT_NAMES,
+  OPEN_FILTERS, loadDrawing, incompleteText, conversionSummary, saveDxf, saveDwg, droppedBySave, deliverWithWarnings, savedToast, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, savePathIn, extOf, UNIT_NAMES,
 } from './files.js';
 
 const api = window.api;
@@ -604,10 +604,12 @@ class App {
 
   // ---- exports ---------------------------------------------------------------------------------
   scene() { return buildScene(this.fileDoc); }
-  /** `fileName` overrides the suggested name (default `<drawing>.<ext>`) */
+  /** `fileName` overrides the suggested name (default `<drawing>.<ext>`). Whether the file was written (false: the save
+   *  dialog was cancelled) */
   async saveBytes(bytes, ext, label, fileName = null) {
     const r = await api.saveFile({ defaultPath: savePathIn(this.file.path, fileName ?? `${baseName(this.file.name)}.${ext}`), filters: [{ name: label, extensions: [ext] }], bytes });
     if (r) toast(`Exported ${ext.toUpperCase()}`, 2000);
+    return !!r;
   }
   /** Plot to PDF (the Print dialog with a Save button) */
   exportPdf() { return plotDialog(this, 'pdf'); }
@@ -619,8 +621,8 @@ class App {
   async exportSvg() {
     try {
       const warnings = [];
-      await this.saveBytes(await exportSvgBytes(this.fileDoc, this.scene(), { warnings }), 'svg', 'SVG image');
-      if (warnings.length) await message('SVG exported with warnings', warnings.join('\n'));
+      const bytes = await exportSvgBytes(this.fileDoc, this.scene(), { warnings });
+      await deliverWithWarnings(() => this.saveBytes(bytes, 'svg', 'SVG image'), warnings, 'SVG exported with warnings', message);
     } catch (err) { await message('Export failed', err.message || String(err)); }
   }
   async exportPng() {

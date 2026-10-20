@@ -286,6 +286,15 @@ export function verificationMessage(v, { oda = false } = {}) {
   return `The saved DWG differs from your drawing for: ${bad.join(', ') || 'some objects'}. DWG writing is experimental (text rotation and some hatch edges can be lost). Saving as DXF is lossless for everything this program supports.`;
 }
 
+/** an export's warnings box, only when the file got somewhere: `deliver()` resolves truthy when the file was written or
+ *  printed (falsy: the save or print dialog was cancelled, nothing was written); then `show(title, text)` lists
+ *  `warnings`. Whether it was delivered. */
+export async function deliverWithWarnings(deliver, warnings, title, show) {
+  const done = !!(await deliver());
+  if (done && warnings?.length) await show(title, warnings.join('\n'));
+  return done;
+}
+
 export async function exportSvgBytes(doc, scene, opts = {}) {
   return enc.encode(exportSvg(doc, { scene, unitsPerMm: unitsPerMm(doc), monochrome: !!opts.monochrome, background: opts.background ?? '#ffffff', warnings: opts.warnings }));
 }

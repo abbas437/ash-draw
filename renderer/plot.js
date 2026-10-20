@@ -5,7 +5,7 @@ import { screenToWorld } from '../src/core/render.js';
 import { layoutPage, layoutPlotRegion, layoutPlotWindow, layoutMmPerUnit } from '../src/core/layouts.js';
 import { plotSettingsFrom, plotSettingsToStore, LAYOUT_PAPERS, layoutPlotStart } from '../src/core/plotSettings.js';
 import { el, message, modal, toast } from './ui.js';
-import { exportPdfBytes, unitsPerMm, unicodeFonts, plotPdfName } from './files.js';
+import { exportPdfBytes, unitsPerMm, unicodeFonts, plotPdfName, deliverWithWarnings } from './files.js';
 import { bitmapRgba } from './images.js';
 import { viewsIn, findView, restorable, viewBox } from '../src/core/views.js';
 
@@ -129,13 +129,16 @@ export async function plotDialog(app, mode) {
       pageSize: s.pageSize, orientation: s.orientation, monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency,
       region, centre: s.centre, scale: s.fit ? null : plotScale(s.n, 1 / unitsPerMm(app.fileDoc)),
     });
-    if (mode === 'pdf') await app.saveBytes(out.bytes, 'pdf', 'PDF document');
-    else {
-      const res = await window.api.print(out.bytes);
-      if (res && !res.ok && res.reason && !/cancel/i.test(res.reason)) await message('Print failed', res.reason);
-    }
-    if (out.warnings.length) await message(mode === 'pdf' ? 'PDF exported with warnings' : 'Printed with warnings', out.warnings.join('\n'));
+    await deliverWithWarnings(() => deliverPlot(app, mode, out.bytes), out.warnings, mode === 'pdf' ? 'PDF exported with warnings' : 'Printed with warnings', message);
   } catch (err) { await message(mode === 'pdf' ? 'Export failed' : 'Print failed', err.message || String(err)); }
+}
+
+/** a plot to its destination: saved as PDF (the save dialog) or printed; whether it got there (false: a dialog was cancelled) */
+async function deliverPlot(app, mode, bytes, fileName = null) {
+  if (mode === 'pdf') return app.saveBytes(bytes, 'pdf', 'PDF document', fileName);
+  const res = await window.api.print(bytes);
+  if (res && !res.ok && res.reason && !/cancel/i.test(res.reason)) await message('Print failed', res.reason);
+  return !res || !!res.ok;
 }
 
 /** a layout tab plots its page setup: the sheet, extents or plot window, fitted or at 1:N, on the layout's own paper or
@@ -180,12 +183,7 @@ async function plotLayoutDialog(app, mode) {
   remember(s);
   try {
     const out = await exportPdfBytes(app.fileDoc, null, { layout, modelScene: app.vp.modelScene, paper: paperSel.value, area: area.value, fit: fitNow, layoutScale, monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency });
-    if (mode === 'pdf') await app.saveBytes(out.bytes, 'pdf', 'PDF document', plotPdfName(app.file.name, layout.name));
-    else {
-      const res = await window.api.print(out.bytes);
-      if (res && !res.ok && res.reason && !/cancel/i.test(res.reason)) await message('Print failed', res.reason);
-    }
-    if (out.warnings.length) await message(mode === 'pdf' ? 'PDF exported with warnings' : 'Printed with warnings', out.warnings.join('\n'));
+    await deliverWithWarnings(() => deliverPlot(app, mode, out.bytes, plotPdfName(app.file.name, layout.name)), out.warnings, mode === 'pdf' ? 'PDF exported with warnings' : 'Printed with warnings', message);
   } catch (err) { await message(mode === 'pdf' ? 'Export failed' : 'Print failed', err.message || String(err)); }
 }
 
@@ -228,8 +226,7 @@ export async function publishDialog(app) {
         monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency, unicodeFonts, imageRgba: bitmapRgba,
       });
       toast(`Published ${sheets.length} sheet${sheets.length > 1 ? 's' : ''}`, 1500);
-      await app.saveBytes(out.bytes, 'pdf', 'PDF document');
-      if (out.warnings.length) await message('PDF published with warnings', out.warnings.join('\n'));
+      await deliverWithWarnings(() => app.saveBytes(out.bytes, 'pdf', 'PDF document'), out.warnings, 'PDF published with warnings', message);
     } catch (err) { toast('', 1); await message('Publish failed', err.message || String(err)); }
     return;
   }
