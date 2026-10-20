@@ -21,7 +21,7 @@ export function missingCharsWarning(count, chars, reason, max = 10) {
   const code = (c) => `U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`;
   const list = chars.slice(0, max).map((c) => `${c} (${code(c)})`).join(', ');
   const more = chars.length > max ? `, and ${chars.length - max} more` : '';
-  return `${count} text characters could not be drawn (${reason})${list ? `: ${list}${more}` : ''}`;
+  return `${count} text character${count === 1 ? '' : 's'} could not be drawn (${reason})${list ? `: ${list}${more}` : ''}`;
 }
 
 const PT_PER_MM = 72 / 25.4;
