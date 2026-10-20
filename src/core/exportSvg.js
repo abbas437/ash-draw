@@ -66,16 +66,18 @@ export function exportNotes(bad, tints) {
 }
 
 const ACI_GREYS = [8, 9, 250, 251, 252, 253, 254].map((i) => aciToRgb(i).join(','));
-const isAciGrey = (rgb) => ACI_GREYS.includes(rgb.join(','));
+/** an ACI grey (8, 9, 250-254) or a true colour with r=g=b that is not black or white */
+export const isKeptGrey = (rgb) => ACI_GREYS.includes(rgb.join(',')) || (rgb[0] === rgb[1] && rgb[1] === rgb[2] && rgb[0] > 0 && rgb[0] < 255);
 const ACI_AMBER = aciToRgb(40).join(','), MONO_CHANGED = [96, 96, 96];
 
 /** item colour as [r,g,b] 0..255; `auto` colours contrast with the background (black on white / no background) */
-export function colorRgb(style, { monochrome = false, darkBackground = false, keepGreys = false } = {}) {
+export function colorRgb(style, { monochrome = false, darkBackground = false, keepGreys = false, compare = false } = {}) {
   const c = style && style.color;
   if (monochrome) {
-    // keepGreys (a compare drawing): the ACI greys 8, 9, 250-254 stay grey, and the changed amber (ACI 40, COMPARE-CHANGED)
-    // prints mid grey, so a changed wall fill or wide polyline stays distinct from an added (black) one
-    if (keepGreys && c && !c.auto && c.rgb) { if (isAciGrey(c.rgb)) return c.rgb; if (c.rgb.join(',') === ACI_AMBER) return MONO_CHANGED; }
+    // keepGreys (the plot dialog's "Keep greys", or a compare drawing): the greys (see isKeptGrey) stay grey, all else is black.
+    // compare: the changed amber (ACI 40, COMPARE-CHANGED) also prints mid grey, so a changed wall fill or wide polyline
+    // stays distinct from an added (black) one
+    if ((keepGreys || compare) && c && !c.auto && c.rgb) { if (isKeptGrey(c.rgb)) return c.rgb; if (compare && c.rgb.join(',') === ACI_AMBER) return MONO_CHANGED; }
     return [0, 0, 0];
   }
   if (!c || c.auto || !c.rgb) return darkBackground ? [255, 255, 255] : [0, 0, 0];
@@ -259,7 +261,7 @@ const fontFamily = (font) => {
 
 /**
  * exportSvg(doc, opts) -> standalone SVG 1.1 document string.
- * opts: scene (prebuilt), background ('#ffffff' default | null = transparent), monochrome (false),
+ * opts: scene (prebuilt), background ('#ffffff' default | null = transparent), monochrome (false), keepGreys (monochrome keeps the greys: ACI 8, 9, 250-254 and r=g=b true colours),
  * lineweights (true), unitsPerMm (drawing units per plotted millimetre; when given, width/height are in mm),
  * margin (fraction of the larger drawing dimension, 0.02), warnings (an array the export warnings are pushed to: objects
  * with non-finite coordinates are left out, dense hatches drawn as a tint; exportNotes).
@@ -270,10 +272,10 @@ const MIN_LW_MM = 0.18; // thinnest plotted stroke
 
 export function exportSvg(doc, opts = {}) {
   const scene = opts.scene || buildScene(doc);
-  const { background = '#ffffff', monochrome = false, lineweights = true, margin = 0.02 } = opts;
+  const { background = '#ffffff', monochrome = false, keepGreys = false, lineweights = true, margin = 0.02 } = opts;
   const upm = opts.unitsPerMm > 0 ? opts.unitsPerMm : 1;
   const bb = scene.bbox;
-  const colOpts = { monochrome, darkBackground: background != null && luminance(background) < 0.5 };
+  const colOpts = { monochrome, keepGreys, compare: !!doc.isCompare, darkBackground: background != null && luminance(background) < 0.5 };
   const rgb = (style) => `rgb(${colorRgb(style, colOpts).map((v) => Math.round(v)).join(',')})`;
   const strokeW = (style) => num(Math.max(lineweightMm(style, lineweights), MIN_LW_MM) * upm);
 

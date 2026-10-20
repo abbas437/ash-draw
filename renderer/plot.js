@@ -3,7 +3,7 @@
 import { plotScale, pageFit, placeOnPage, exportPdfPages } from '../src/core/exportPdf.js';
 import { screenToWorld } from '../src/core/render.js';
 import { layoutPage, layoutPlotRegion, layoutPlotWindow, layoutMmPerUnit } from '../src/core/layouts.js';
-import { plotSettingsFrom, plotSettingsToStore, LAYOUT_PAPERS, layoutPlotStart } from '../src/core/plotSettings.js';
+import { plotSettingsFrom, plotSettingsToStore, LAYOUT_PAPERS, PAGE_SIZES, PAPER_LABELS as SIZE_LABELS, validCustomMm, layoutPlotStart } from '../src/core/plotSettings.js';
 import { el, message, modal, toast, progressToast } from './ui.js';
 import { exportPdfBytes, unicodeFonts, plotPdfName, deliverWithWarnings, withExportProgress } from './files.js';
 import { mmPerUnit } from '../src/core/model.js';
@@ -25,7 +25,30 @@ async function withPlotProgress(app, text, cancelledText, run) {
 const options = (pairs) => pairs.map((s) => { const [v, l] = s.split('|'); return el('option', { value: v, text: l }); });
 const fmt = (v) => String(+v.toPrecision(6));
 const MONO = ' Monochrome (monochrome.ctb)';
-const PAPER_LABELS = { layout: "Layout's own paper", Tabloid: 'Tabloid / ANSI B' };
+const PAPER_LABELS = { layout: "Layout's own paper", ...SIZE_LABELS };
+const CUSTOM_ERR = 'Enter a custom page width and height from 10 to 5000 mm.';
+/** Monochrome and its "Keep greys" box (only usable while monochrome is on) as two label rows */
+function monoRows(s, cmp) {
+  const mono = el('input', { type: 'checkbox', name: 'monochrome', checked: cmp ? false : s.monochrome });
+  const greys = el('input', { type: 'checkbox', name: 'keepGreys', checked: s.keepGreys });
+  const sync = () => { greys.disabled = !mono.checked; };
+  mono.addEventListener('change', sync); sync();
+  return { mono, greys, rows: [el('label', {}, mono, MONO), el('label', {}, greys, ' Keep greys (grey linework prints grey, all else black)')] };
+}
+/** width x height (mm) inputs shown while `sel` is on Custom; take() stores them in `s` (false: invalid) */
+function customSize(s, sel) {
+  const w = el('input', { type: 'number', name: 'customW', min: '10', max: '5000', step: 'any', value: String(s.customW), style: 'width:6em' });
+  const h = el('input', { type: 'number', name: 'customH', min: '10', max: '5000', step: 'any', value: String(s.customH), style: 'width:6em' });
+  const row = el('label', {}, 'Custom size (mm)  ', w, ' × ', h);
+  const sync = () => { row.style.display = sel.value === 'Custom' ? '' : 'none'; };
+  sel.addEventListener('change', sync); sync();
+  return { row, w, h, take() {
+    if (sel.value !== 'Custom') return true;
+    const cw = Number(w.value), ch = Number(h.value);
+    if (!validCustomMm(cw) || !validCustomMm(ch)) return false;
+    s.customW = cw; s.customH = ch; return true;
+  } };
+}
 const paperSelect = (value) => { const e = el('select', { name: 'paper' }, LAYOUT_PAPERS.map((v) => el('option', { value: v, text: PAPER_LABELS[v] ?? v }))); e.value = value; return e; };
 
 /** the plot choices, loaded once from setting 'plot.settings' */
@@ -41,11 +64,12 @@ const remember = (s) => window.api?.settingsSet?.('plot.settings', plotSettingsT
 const AREA_LABELS = { layout: 'layout sheet', extents: 'extents', window: 'window' };
 /** scale readout of a layout plot: `area` (layout | extents | window; `extents` the paper-space extents) on `paper`,
  *  fitted or at 1:n (paper : layout), as exportPdf plots it with layoutScale = layoutMmPerUnit / n */
-export function sheetScaleText(layout, { paper, fit, area = 'layout', n = 1, extents = null }) {
+export function sheetScaleText(layout, { paper, fit, area = 'layout', n = 1, extents = null, custom = null }) {
+  if (paper === 'Custom' && !(custom && validCustomMm(custom.w) && validCustomMm(custom.h))) return CUSTOM_ERR;
   if (paper === 'layout' && area === 'layout') return 'Scale 1:1 on the layout\'s own paper';
   const lp = layoutPage(layout), reg = layoutPlotRegion(layout, area, extents), mm = layoutMmPerUnit(layout.plot), k0 = (mm / n) * (72 / 25.4);
   const w = (reg.maxx - reg.minx) * k0, h = (reg.maxy - reg.miny) * k0;
-  const f = paper === 'layout' ? { ...placeOnPage(w, h, lp.pw, lp.ph, { fit }), orientation: '' } : pageFit(w, h, paper, { fit });
+  const f = paper === 'layout' ? { ...placeOnPage(w, h, lp.pw, lp.ph, { fit }), orientation: '' } : pageFit(w, h, paper, { fit, custom });
   const s = f.scale / n; // paper : layout
   const r = s <= 1 ? `1:${+(1 / s).toFixed(2)}` : `${+s.toFixed(2)}:1`;
   const on = paper === 'layout' ? 'the layout\'s own paper' : `${paper} ${f.orientation}`;
@@ -100,30 +124,32 @@ export async function plotDialog(app, mode) {
   const cmp = !!app.active?.compare, storedMono = s.monochrome; // a comparison plots in colour; the remembered choice is kept for other tabs
   let monoNow = false;
   for (;;) {
-    const size = el('select', { name: 'pageSize' }, options(['fit|Fit to drawing', 'A4|A4', 'A3|A3', 'A2|A2', 'A1|A1', 'A0|A0', 'Letter|Letter']));
+    const size = el('select', { name: 'pageSize' }, options(['fit|Fit to drawing', ...PAGE_SIZES.map((v) => `${v}|${PAPER_LABELS[v] ?? v}`)]));
     const ori = el('select', { name: 'orientation' }, options(['auto|Automatic', 'landscape|Landscape', 'portrait|Portrait']));
     const what = el('select', { name: 'what' }, options(['extents|Extents', 'view|Current view', 'window|Window', 'named|Named view']));
     const named = viewsIn(app.doc, 'model').filter(restorable);
     const viewSel = el('select', { name: 'namedView', disabled: !named.length }, named.length ? named.map((v) => el('option', { value: v.name, text: v.name })) : el('option', { value: '', text: '(no named views)' }));
     if (named.some((v) => v.name === s.namedView)) viewSel.value = s.namedView;
     [size.value, ori.value, what.value] = [s.pageSize, s.orientation, s.what];
+    const cs = customSize(s, size);
     const fit = el('input', { type: 'checkbox', name: 'fit', checked: s.fit });
     const n = el('input', { type: 'number', name: 'scale', min: '0.000001', step: 'any', value: String(s.n), style: 'width:7em' });
     const centre = el('input', { type: 'checkbox', name: 'centre', checked: s.centre });
-    const mono = el('input', { type: 'checkbox', name: 'monochrome', checked: cmp ? false : s.monochrome }), lw = el('input', { type: 'checkbox', name: 'lineweights', checked: s.lineweights }), tp = el('input', { type: 'checkbox', name: 'transparency', checked: s.transparency });
+    const { mono, greys, rows: monoR } = monoRows(s, cmp), lw = el('input', { type: 'checkbox', name: 'lineweights', checked: s.lineweights }), tp = el('input', { type: 'checkbox', name: 'transparency', checked: s.transparency });
     const winText = s.window ? `Window: (${fmt(s.window.minx)}, ${fmt(s.window.miny)}) to (${fmt(s.window.maxx)}, ${fmt(s.window.maxy)})` : 'Window: not picked yet';
     const r = await modal(mode === 'print' ? 'Print' : 'Plot to PDF', [
-      el('label', {}, 'Page size'), size, el('label', {}, 'Orientation'), ori,
+      el('label', {}, 'Page size'), size, cs.row, el('label', {}, 'Orientation'), ori,
       el('label', {}, 'What to print'), what, el('p', { class: 'plot-window', text: winText }), el('label', {}, 'Named view ', viewSel),
       el('label', {}, fit, ' Fit to paper'), el('label', {}, 'Scale (paper : drawing)  1 : ', n),
       el('label', {}, centre, ' Centre the plot'),
-      el('label', {}, mono, MONO), el('label', {}, lw, ' Use lineweights'), el('label', {}, tp, ' Plot transparency'),
+      ...monoR, el('label', {}, lw, ' Use lineweights'), el('label', {}, tp, ' Plot transparency'),
       el('p', { text: 'The drawing is plotted as vector graphics. A 1 : N scale uses the drawing units (for a unitless drawing you are asked what a unit is). Latin, Greek, Cyrillic and Arabic text is drawn with the bundled Noto fonts; Chinese, Japanese and Korean text cannot be drawn in this version.' })],
     [{ label: mode === 'print' ? 'Print' : 'Save', value: 'ok', primary: true }, { label: 'Pick window…', value: 'pick' }, { label: 'Cancel', value: null }]);
     if (r == null) return;
     const nv = Number(n.value);
     monoNow = mono.checked;
-    Object.assign(s, { pageSize: size.value, orientation: ori.value, what: what.value, fit: fit.checked, centre: centre.checked, monochrome: cmp ? storedMono : mono.checked, lineweights: lw.checked, transparency: tp.checked });
+    Object.assign(s, { pageSize: size.value, orientation: ori.value, what: what.value, fit: fit.checked, centre: centre.checked, monochrome: cmp ? storedMono : mono.checked, keepGreys: greys.checked, lineweights: lw.checked, transparency: tp.checked });
+    if (!cs.take()) { await message('Invalid page size', CUSTOM_ERR); continue; }
     if (!s.fit && !(nv > 0)) { await message('Invalid scale', 'Enter a scale greater than zero, for example 1 : 50.'); continue; }
     if (nv > 0) s.n = nv;
     s.namedView = viewSel.value || null; // this session only, like a picked window
@@ -141,7 +167,7 @@ export async function plotDialog(app, mode) {
   const region = s.what === 'window' ? s.window : s.what === 'view' ? viewRect(app.vp) : s.what === 'named' ? viewBox(findView(app.doc, s.namedView)) : null;
   try {
     const out = await withPlotProgress(app, mode === 'pdf' ? 'Plotting…' : 'Preparing print…', mode === 'pdf' ? 'Plot cancelled.' : 'Print cancelled.', (p) => exportPdfBytes(app.fileDoc, app.scene(), {
-      pageSize: s.pageSize, orientation: s.orientation, monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency,
+      pageSize: s.pageSize, custom: { w: s.customW, h: s.customH }, orientation: s.orientation, monochrome: monoNow, keepGreys: s.keepGreys, lineweights: s.lineweights, transparency: s.transparency,
       region, centre: s.centre, scale: s.fit ? null : plotScale(s.n, mmPerUnit(units)), mmPerUnit: mmPerUnit(units), ...p,
     }));
     if (!out) return;
@@ -171,34 +197,36 @@ async function plotLayoutDialog(app, mode) {
   const paperSel = paperSelect(start.paper), fit = el('input', { type: 'checkbox', name: 'fit', checked: start.fit });
   const n0 = p.scaleNum > 0 && p.scaleDen > 0 ? p.scaleDen / p.scaleNum : 1;
   const n = el('input', { type: 'number', name: 'scale', min: '0.000001', step: 'any', value: String(+n0.toPrecision(6)), style: 'width:7em' });
-  const mono = el('input', { type: 'checkbox', name: 'monochrome', checked: cmp ? false : s.monochrome }), lw = el('input', { type: 'checkbox', name: 'lineweights', checked: s.lineweights }), tp = el('input', { type: 'checkbox', name: 'transparency', checked: s.transparency });
+  const { mono, greys, rows: monoR } = monoRows(s, cmp), lw = el('input', { type: 'checkbox', name: 'lineweights', checked: s.lineweights }), tp = el('input', { type: 'checkbox', name: 'transparency', checked: s.transparency });
+  const cs = customSize(s, paperSel);
   const own = `${p.paperName || 'Paper'}: ${fmt(swap ? p.paperH : p.paperW)} × ${fmt(swap ? p.paperW : p.paperH)} mm (${p.units === 0 ? 'inches' : 'millimetres'})`;
   const readout = el('p', { class: 'plot-scale' });
   const update = () => {
     const sheet11 = area.value === 'layout' && paperSel.value === 'layout';
     fit.disabled = sheet11; n.disabled = sheet11 || fit.checked;
     const nv = Number(n.value);
-    readout.textContent = sheetScaleText(layout, { paper: paperSel.value, fit: fit.checked || !(nv > 0), area: area.value, n: nv > 0 ? nv : 1, extents });
+    readout.textContent = sheetScaleText(layout, { paper: paperSel.value, fit: fit.checked || !(nv > 0), area: area.value, n: nv > 0 ? nv : 1, extents, custom: { w: Number(cs.w.value), h: Number(cs.h.value) } });
   };
-  area.onchange = update; paperSel.onchange = update; fit.onchange = update; n.oninput = update; update();
+  area.onchange = update; paperSel.onchange = update; fit.onchange = update; n.oninput = update; cs.w.oninput = update; cs.h.oninput = update; update();
   let r;
   for (;;) {
     r = await modal(mode === 'print' ? `Print ${layout.name}` : `Plot ${layout.name} to PDF`, [
       el('label', {}, 'Plot area'), area, el('p', { class: 'plot-paper', text: own }),
-      el('label', {}, 'Paper'), paperSel, el('label', {}, fit, ' Fit to paper'), el('label', {}, 'Scale (paper : layout)  1 : ', n), readout,
-      el('label', {}, mono, MONO), el('label', {}, lw, ' Use lineweights'), el('label', {}, tp, ' Plot transparency'),
+      el('label', {}, 'Paper'), paperSel, cs.row, el('label', {}, fit, ' Fit to paper'), el('label', {}, 'Scale (paper : layout)  1 : ', n), readout,
+      ...monoR, el('label', {}, lw, ' Use lineweights'), el('label', {}, tp, ' Plot transparency'),
       el('p', { text: 'The layout is plotted as vector graphics; viewports are clipped to their boundaries. Line weights keep their plotted width on any paper. The plot area, fit and scale start from the layout\'s page setup (a new layout without one starts from the paper and fit last used).' })],
     [{ label: mode === 'print' ? 'Print' : 'Save', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
     if (r == null) return;
+    if (!cs.take()) { await message('Invalid page size', CUSTOM_ERR); continue; }
     if (fit.disabled || fit.checked || Number(n.value) > 0) break;
     await message('Invalid scale', 'Enter a scale greater than zero, for example 1 : 1.');
   }
   const monoNow = mono.checked, sheet11 = fit.disabled, fitNow = !sheet11 && fit.checked;
   const layoutScale = sheet11 || fitNow ? null : layoutMmPerUnit(p) / Number(n.value);
-  Object.assign(s, { layoutPaper: paperSel.value, layoutFit: fit.checked, monochrome: cmp ? storedMono : monoNow, lineweights: lw.checked, transparency: tp.checked });
+  Object.assign(s, { layoutPaper: paperSel.value, layoutFit: fit.checked, monochrome: cmp ? storedMono : monoNow, keepGreys: greys.checked, lineweights: lw.checked, transparency: tp.checked });
   remember(s);
   try {
-    const out = await withPlotProgress(app, mode === 'pdf' ? 'Plotting…' : 'Preparing print…', mode === 'pdf' ? 'Plot cancelled.' : 'Print cancelled.', (p) => exportPdfBytes(app.fileDoc, null, { layout, modelScene: app.vp.modelScene, paper: paperSel.value, area: area.value, fit: fitNow, layoutScale, monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency, ...p }));
+    const out = await withPlotProgress(app, mode === 'pdf' ? 'Plotting…' : 'Preparing print…', mode === 'pdf' ? 'Plot cancelled.' : 'Print cancelled.', (p) => exportPdfBytes(app.fileDoc, null, { layout, modelScene: app.vp.modelScene, paper: paperSel.value, custom: { w: s.customW, h: s.customH }, area: area.value, fit: fitNow, layoutScale, monochrome: monoNow, keepGreys: s.keepGreys, lineweights: s.lineweights, transparency: s.transparency, ...p }));
     if (!out) return;
     await deliverWithWarnings(() => deliverPlot(app, mode, out.bytes, plotPdfName(app.file.name, layout.name)), out.warnings, mode === 'pdf' ? 'PDF exported with warnings' : 'Printed with warnings', message);
   } catch (err) { await message(mode === 'pdf' ? 'Export failed' : 'Print failed', err.message || String(err)); }
@@ -217,20 +245,22 @@ export async function publishDialog(app) {
   for (const r of rows) r.box = el('input', { type: 'checkbox', name: 'sheet', checked: r.on });
   const list = el('div', { class: 'publish-list', style: 'max-height:40vh;overflow:auto;border:1px solid var(--line);padding:4px 8px;margin-bottom:8px' }, rows.map((r) => el('label', { style: 'display:block' }, r.box, ` ${r.label}`)));
   const paperSel = paperSelect(s.layoutPaper), fit = el('input', { type: 'checkbox', name: 'fit', checked: s.layoutFit });
+  const cs = customSize(s, paperSel);
   const area = el('select', { name: 'area' }, options(['extents|Extents', 'view|Current view'])); area.value = s.publishArea;
   fit.disabled = paperSel.value === 'layout'; paperSel.onchange = () => { fit.disabled = paperSel.value === 'layout'; };
-  const mono = el('input', { type: 'checkbox', name: 'monochrome', checked: cmp ? false : s.monochrome }), lw = el('input', { type: 'checkbox', name: 'lineweights', checked: s.lineweights }), tp = el('input', { type: 'checkbox', name: 'transparency', checked: s.transparency });
+  const { mono, greys, rows: monoR } = monoRows(s, cmp), lw = el('input', { type: 'checkbox', name: 'lineweights', checked: s.lineweights }), tp = el('input', { type: 'checkbox', name: 'transparency', checked: s.transparency });
   for (;;) {
     const r = await modal('Publish to PDF', [
       el('label', {}, 'Sheets (one page each, in this order)'), list,
-      el('label', {}, 'Paper'), paperSel, el('label', {}, fit, ' Fit to paper'),
+      el('label', {}, 'Paper'), paperSel, cs.row, el('label', {}, fit, ' Fit to paper'),
       el('label', {}, 'Plot area of model sheets'), area,
-      el('label', {}, mono, MONO), el('label', {}, lw, ' Use lineweights'), el('label', {}, tp, ' Plot transparency'),
+      ...monoR, el('label', {}, lw, ' Use lineweights'), el('label', {}, tp, ' Plot transparency'),
       el('p', { text: "Model sheets are fitted to the plot area on the chosen paper (A3 with the layout's own paper). Current view is the part of the model each drawing tab shows now; anything outside it is not plotted." })],
     [{ label: 'Publish', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
     if (r == null) return;
     const monoNow = mono.checked;
-    Object.assign(s, { layoutPaper: paperSel.value, layoutFit: fit.checked, monochrome: cmp ? storedMono : monoNow, lineweights: lw.checked, transparency: tp.checked, publishArea: area.value });
+    if (!cs.take()) { await message('Invalid page size', CUSTOM_ERR); continue; }
+    Object.assign(s, { layoutPaper: paperSel.value, layoutFit: fit.checked, monochrome: cmp ? storedMono : monoNow, keepGreys: greys.checked, lineweights: lw.checked, transparency: tp.checked, publishArea: area.value });
     const model = rows.filter((x) => !x.layout);
     if (model.length) s.publishModel = model.some((x) => x.box.checked);
     remember(s);
@@ -239,7 +269,7 @@ export async function publishDialog(app) {
     try {
       toast(`Publishing ${sheets.length} sheet${sheets.length > 1 ? 's' : ''}…`, 60000);
       const out = await withPlotProgress(app, 'Publishing…', 'Publish cancelled.', (p) => exportPdfPages(sheets.map((x) => ({ doc: x.doc, layout: x.layout, label: x.label, region: !x.layout && s.publishArea === 'view' ? tabViewRect(app, x.tab) : null })), {
-        paper: s.layoutPaper, fit: s.layoutFit, pageSize: s.layoutPaper === 'layout' ? 'A3' : s.layoutPaper, orientation: 'auto', margin: 10, scale: null, centre: true,
+        paper: s.layoutPaper, custom: { w: s.customW, h: s.customH }, keepGreys: s.keepGreys, fit: s.layoutFit, pageSize: s.layoutPaper === 'layout' ? 'A3' : s.layoutPaper, orientation: 'auto', margin: 10, scale: null, centre: true,
         monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency, unicodeFonts, imageRgba: bitmapRgba, ...p,
       }));
       if (!out) return;

@@ -13,6 +13,7 @@ import {
   walkOps, finiteAnchor, finiteSeg, exportNotes, colorRgb, lineweightMm, dashUnits, hatchFamilies, layoutText, markerSize, arrowTriangle, runRgb, mtextItemLayout,
 } from './exportSvg.js';
 import { textShaper, textOps } from './pdfText.js';
+import { EXTRA_PAPERS, validCustomMm } from './plotSettings.js';
 import { reorderLines, reorderRules } from './bidiText.js';
 
 /** the PDF warning for `count` text characters drawn as '?': `chars`, the distinct ones, listed (up to `max`) as the
@@ -29,7 +30,13 @@ const MAX_PAGE_PT = 14400;          // PDF 1.x user-unit page size limit (200 in
 const MIN_LW_PT = 0.25;
 const fillEvenOdd = () => PDFOperator.of(PDFOperatorNames.FillEvenOdd);
 const fillEvenOddAndStroke = () => PDFOperator.of(PDFOperatorNames.FillEvenOddAndStroke);
-const SIZES = { A4: PageSizes.A4, A3: PageSizes.A3, A2: PageSizes.A2, A1: PageSizes.A1, A0: PageSizes.A0, Letter: PageSizes.Letter, Tabloid: PageSizes.Tabloid };
+const SIZES = { A4: PageSizes.A4, A3: PageSizes.A3, A2: PageSizes.A2, A1: PageSizes.A1, A0: PageSizes.A0, Letter: PageSizes.Letter, Tabloid: PageSizes.Tabloid,
+  ...Object.fromEntries(EXTRA_PAPERS.map(([name, , w, h]) => [name, [w * PT_PER_MM, h * PT_PER_MM]])) };
+/** a page size name (or 'Custom' with custom = {w, h} in mm) -> [a, b] points; null when unknown or the custom size is invalid */
+function paperPt(name, custom) {
+  if (name === 'Custom') return custom && validCustomMm(custom.w) && validCustomMm(custom.h) ? [custom.w * PT_PER_MM, custom.h * PT_PER_MM] : null;
+  return SIZES[name] ?? null;
+}
 /** printable margin (mm) round a layout sheet fitted to another paper */
 export const LAYOUT_FIT_MARGIN_MM = 5;
 
@@ -39,9 +46,10 @@ export const LAYOUT_FIT_MARGIN_MM = 5;
  * fit: scaled to the paper inside `margin` mm (larger or smaller), else 1:1. Centred: page = (ox, oy) + scale * sheet,
  * with the sheet's lower-left corner at sheet (0, 0). fits: the whole sheet lies inside the margins.
  */
-export function pageFit(sheetW, sheetH, paper, { fit = true, margin = LAYOUT_FIT_MARGIN_MM } = {}) {
-  if (!SIZES[paper]) throw new Error(`Unknown page size: ${paper}`);
-  const [a, b] = SIZES[paper], land = sheetW > sheetH;
+export function pageFit(sheetW, sheetH, paper, { fit = true, margin = LAYOUT_FIT_MARGIN_MM, custom = null } = {}) {
+  const size = paperPt(paper, custom);
+  if (!size) throw new Error(`Unknown page size: ${paper}`);
+  const [a, b] = size, land = sheetW > sheetH;
   const [pw, ph] = land ? [Math.max(a, b), Math.min(a, b)] : [Math.min(a, b), Math.max(a, b)];
   return { ...placeOnPage(sheetW, sheetH, pw, ph, { fit, margin }), orientation: land ? 'landscape' : 'portrait' };
 }
@@ -61,8 +69,8 @@ export function placeOnPage(sheetW, sheetH, pw, ph, { fit = true, margin = LAYOU
  * opts: pageSize, orientation, margin (mm), scale (null = fit | paper mm per drawing unit), centre (true = centred on the
  * page, false = region's lower-left corner at the lower-left margin).
  */
-export function plotLayout(region, { pageSize = 'fit', orientation = 'auto', margin = 10, scale = null, centre = true, mmPerUnit = 1 } = {}) {
-  if (pageSize !== 'fit' && !SIZES[pageSize]) throw new Error(`Unknown page size: ${pageSize}`);
+export function plotLayout(region, { pageSize = 'fit', orientation = 'auto', margin = 10, scale = null, centre = true, mmPerUnit = 1, custom = null } = {}) {
+  if (pageSize !== 'fit' && !paperPt(pageSize, custom)) throw new Error(`Unknown page size: ${pageSize}`);
   const bb = region;
   const warnings = [];
   const w = Math.max(bb.maxx - bb.minx, 1e-9), h = Math.max(bb.maxy - bb.miny, 1e-9);
@@ -77,7 +85,7 @@ export function plotLayout(region, { pageSize = 'fit', orientation = 'auto', mar
     }
     pw = w * k + 2 * mPt; ph = h * k + 2 * mPt;
   } else {
-    const [a, b] = SIZES[pageSize];
+    const [a, b] = paperPt(pageSize, custom);
     const land = orientation === 'landscape' || (orientation === 'auto' && w > h);
     [pw, ph] = land ? [Math.max(a, b), Math.min(a, b)] : [Math.min(a, b), Math.max(a, b)];
     k = scale > 0 ? scale * PT_PER_MM : Math.min((pw - 2 * mPt) / w, (ph - 2 * mPt) / h);
@@ -92,7 +100,7 @@ export const plotScale = (n, mmPerUnit = 1) => mmPerUnit / n;
 
 /**
  * exportPdf(doc, opts) -> Promise<{bytes:Uint8Array, warnings:string[]}> (one page, vector).
- * opts: pageSize 'fit'|'A4'|'A3'|'A2'|'A1'|'A0'|'Letter' ('fit'), orientation 'auto'|'landscape'|'portrait',
+ * opts: pageSize 'fit'|'A4'|'A3'|'A2'|'A1'|'A0'|'Letter'|'Tabloid'|ANSI/ARCH names|'Custom' ('fit'), custom {w, h} mm for 'Custom', keepGreys (monochrome keeps greys), orientation 'auto'|'landscape'|'portrait',
  * margin (mm, 10), scale (null = fit to page | page mm per drawing unit), centre (true), region (area to plot in drawing
  * units, clipped; default the drawing extents), monochrome, lineweights, unicodeFonts (TTF/OTF bytes for text outside
  * WinAnsi, in fallback order: an array, or an async function returning one, called only when such text is plotted;
@@ -281,14 +289,14 @@ async function addPdfPage(pdf, doc, opts) {
       reg = layoutPlotRegion(layout, area, scene.bbox);
       k = (opts.layoutScale ?? paperMmPerUnit(layout.plot)) * PT_PER_MM;
       const w = (reg.maxx - reg.minx) * k, h = (reg.maxy - reg.miny) * k, fit = opts.fit !== false;
-      const f = own ? placeOnPage(w, h, lp.pw, lp.ph, { fit }) : pageFit(w, h, opts.paper, { fit });
+      const f = own ? placeOnPage(w, h, lp.pw, lp.ph, { fit }) : pageFit(w, h, opts.paper, { fit, custom: opts.custom });
       ({ pw, ph } = f); s = f.scale; dx = f.ox; dy = f.oy; clipBox = reg;
       const paperName = own ? "the layout's paper" : opts.paper;
       if (!f.fits) warnings.push(area === 'layout' && opts.layoutScale == null ? `${layout.name}: the sheet is larger than ${opts.paper} at 1:1; its edges are cut off`
         : `${layout.name}: the plot area (${area}) is larger than ${paperName} at this scale; its edges are cut off`);
     }
     k *= s; ox = dx - reg.minx * k; oy = dy - reg.miny * k;
-  } else ({ pw, ph, k, ox, oy, warnings } = plotLayout(bb, opts));
+  } else ({ pw, ph, k, ox, oy, warnings } = plotLayout(bb, opts)); // opts.custom = {w, h} mm for pageSize 'Custom'
   const X = (x) => ox + x * k, Y = (y) => oy + y * k;
 
   const page = pdf.addPage([pw, ph]);
@@ -304,8 +312,8 @@ async function addPdfPage(pdf, doc, opts) {
   let missing = 0;
   const missedChars = new Set(); // the distinct characters behind `missing`, for the warning
 
-  const keepGreys = !!doc.isCompare; // a comparison keeps its unchanged-grey in monochrome, so it still stands back from the changes
-  const colOf = (style) => colorRgb(style, { monochrome, keepGreys }).map((v) => v / 255);
+  const keepGreys = !!opts.keepGreys, compare = !!doc.isCompare; // a comparison keeps its unchanged-grey in monochrome, so it still stands back from the changes
+  const colOf = (style) => colorRgb(style, { monochrome, keepGreys, compare }).map((v) => v / 255);
   const lwPt = (style) => Math.max(lineweightMm(style, lineweights) * PT_PER_MM, MIN_LW_PT);
   // objects left out for non-finite coordinates (a bad op skipped, the rest drawn) and hatches too dense to draw
   let bad = 0, tints = 0, itemBad = false;
@@ -487,7 +495,7 @@ async function addPdfPage(pdf, doc, opts) {
       const lay = mtextItemLayout(it, runWidth);
       const glyphs = fonts.shape ? reorderPdfLines(lay.glyphs) : lay.glyphs;
       const c = Math.cos(it.rot), s = Math.sin(it.rot);
-      const rc = (col) => runRgb(col, it.style, { monochrome, keepGreys }).map((v) => v / 255);
+      const rc = (col) => runRgb(col, it.style, { monochrome, keepGreys, compare }).map((v) => v / 255);
       page.pushOperators(pushGraphicsState(), concatTransformationMatrix(c, s, -s, c, X(it.p.x), Y(it.p.y)));
       // layout is in drawing units, y down; the text frame is in page points, y up
       for (const g of glyphs) {

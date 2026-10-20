@@ -296,7 +296,7 @@ export async function deliverWithWarnings(deliver, warnings, title, show) {
 }
 
 export async function exportSvgBytes(doc, scene, opts = {}) {
-  return enc.encode(exportSvg(doc, { scene, unitsPerMm: unitsPerMm(doc), monochrome: !!opts.monochrome, background: opts.background ?? '#ffffff', warnings: opts.warnings }));
+  return enc.encode(exportSvg(doc, { scene, unitsPerMm: unitsPerMm(doc), monochrome: !!opts.monochrome, keepGreys: !!opts.keepGreys, background: opts.background ?? '#ffffff', warnings: opts.warnings }));
 }
 /** the bundled Unicode PDF fonts (Noto Sans, Noto Sans Arabic, Noto Sans Math subset; OFL-1.1), fetched once on first use */
 const UNICODE_FONTS = ['NotoSans-Regular.ttf', 'NotoSansArabic-Regular.ttf', 'NotoSansMath-Regular.ttf'];
@@ -336,7 +336,7 @@ export async function withExportProgress(run, { delayMs = 1000, show } = {}) {
 }
 
 export async function exportPdfBytes(doc, scene, opts = {}) {
-  return exportPdf(doc, { scene, pageSize: opts.pageSize ?? 'A3', orientation: opts.orientation ?? 'auto', margin: opts.margin ?? 10, monochrome: !!opts.monochrome, lineweights: opts.lineweights !== false, scale: opts.scale ?? null, mmPerUnit: opts.mmPerUnit ?? 1, region: opts.region ?? null, centre: opts.centre !== false, unicodeFonts: opts.unicodeFonts ?? unicodeFonts, layout: opts.layout ?? null, modelScene: opts.modelScene ?? null, transparency: opts.transparency !== false, paper: opts.paper ?? 'layout', fit: opts.fit !== false, imageRgba: bitmapRgba, onProgress: opts.onProgress ?? null, signal: opts.signal ?? null });
+  return exportPdf(doc, { scene, pageSize: opts.pageSize ?? 'A3', orientation: opts.orientation ?? 'auto', margin: opts.margin ?? 10, monochrome: !!opts.monochrome, keepGreys: !!opts.keepGreys, custom: opts.custom ?? null, lineweights: opts.lineweights !== false, scale: opts.scale ?? null, mmPerUnit: opts.mmPerUnit ?? 1, region: opts.region ?? null, centre: opts.centre !== false, unicodeFonts: opts.unicodeFonts ?? unicodeFonts, layout: opts.layout ?? null, modelScene: opts.modelScene ?? null, transparency: opts.transparency !== false, paper: opts.paper ?? 'layout', fit: opts.fit !== false, imageRgba: bitmapRgba, onProgress: opts.onProgress ?? null, signal: opts.signal ?? null });
 }
 export async function exportPngBytes(doc, scene, { longSide = 3000, dark = false, lineweights = true } = {}) {
   const b = scene.bbox ?? { minx: 0, miny: 0, maxx: 1, maxy: 1 };
