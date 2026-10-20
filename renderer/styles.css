@@ -158,7 +158,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 #toast.show { opacity:1; }
 #toast.busy { pointer-events:auto; }
 #toast .toast-cancel { margin-left:10px; font:inherit; padding:1px 8px; cursor:pointer; }
-#measure-panel { position:absolute; left:10px; bottom:10px; min-width:240px; max-width:420px; background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:4px; padding:6px 8px; box-shadow:0 2px 8px var(--shadow); font-size:12px; }
+#measure-panel { position:absolute; right:10px; top:10px; /* top-right of the canvas: the command history floats over the bottom */ min-width:240px; max-width:420px; background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:4px; padding:6px 8px; box-shadow:0 2px 8px var(--shadow); font-size:12px; }
 #measure-panel .mp-body { margin:0; font:12px Consolas, "Cascadia Mono", monospace; white-space:pre-wrap; user-select:text; cursor:text; }
 #dlg .list-text { margin:0 0 8px; max-height:60vh; overflow:auto; font:12px Consolas, "Cascadia Mono", monospace; white-space:pre; user-select:text; border:1px solid var(--line); padding:8px; }
 #measure-panel .mp-foot { display:flex; align-items:center; gap:8px; margin-top:4px; }

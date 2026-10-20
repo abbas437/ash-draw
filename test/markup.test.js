@@ -56,7 +56,7 @@ test('delete, status, hide and CSV', () => {
   const [a, b] = listMarkups(s.doc);
   assert.equal(setMarkupStatus(s, b.uid, 'Closed'), 3);
   assert.equal(markupData(s.doc.entities.find((e) => e.id === b.ids[0])).status, 'Closed');
-  assert.equal(markupsCsv(listMarkups(s.doc)), 'No,Comment,Author,Date,Status\r\n1,"a, b",Ahmad,2026-10-08,Open\r\n2,Check damper access,Ahmad,2026-10-08,Closed\r\n');
+  assert.equal(markupsCsv(listMarkups(s.doc)), '\uFEFFNo,Comment,Author,Date,Status\r\n1,"a, b",Ahmad,2026-10-08,Open\r\n2,Check damper access,Ahmad,2026-10-08,Closed\r\n');
   assert.equal(deleteMarkup(s, a.uid), 3);
   assert.deepEqual(listMarkups(s.doc).map((m) => m.no), [2]);
   setMarkupsVisible(s, false);

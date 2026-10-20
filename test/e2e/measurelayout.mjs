@@ -64,6 +64,19 @@ try {
   assert.match(body, /^Delta X = 810\.72 mm, Delta Y = 0 mm$/m, body);
   assert.match(await page.evaluate(() => document.querySelector('#measure-panel .mp-units').textContent), /Units: mm/);
 
+  step = 'the result panel does not cover the command line or the command history (collapsed or open with F2)';
+  const overlaps = () => page.evaluate(() => {
+    const r = (s) => document.querySelector(s)?.getBoundingClientRect();
+    const p = r('#measure-panel');
+    const hit = (b) => b && b.width > 0 && !(p.right <= b.left || p.left >= b.right || p.bottom <= b.top || p.top >= b.bottom);
+    return { cmd: hit(r('#cmd')), bar: hit(r('#cmdbar')), hist: hit(r('#cmdhist .ch-box')), histH: r('#cmdhist .ch-box')?.height };
+  });
+  assert.deepEqual({ ...(await overlaps()), histH: 0 }, { cmd: false, bar: false, hist: false, histH: 0 }, 'panel over the command area');
+  await page.locator('#cmd').press('F2');
+  assert.equal(await page.evaluate(() => document.querySelector('#cmdhist')?.classList.contains('open')), true, 'F2 opens the history');
+  assert.deepEqual({ ...(await overlaps()), histH: 0 }, { cmd: false, bar: false, hist: false, histH: 0 }, 'panel over the open history');
+  await page.locator('#cmd').press('F2');
+
   step = 'outside the model viewport: the sheet distance only';
   await typeCmd('DIST');
   await click(100, 50); await click(110, 50);

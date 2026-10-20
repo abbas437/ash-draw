@@ -29,6 +29,12 @@ export function savePathIn(filePath, fileName) {
   return m && m[1] ? m[1] + fileName : fileName;
 }
 export const baseName = (name) => String(name || 'drawing').replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '');
+/** the suggested PDF name of a plot: `<drawing>.pdf` for the Model (no layout name), `<drawing>-<layout>.pdf` for a layout,
+ *  the layout name made safe for a Windows file name (<>:"/\|?* and control characters -> _, trailing dots and spaces cut) */
+export function plotPdfName(drawing, layoutName) {
+  const safe = String(layoutName ?? '').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '');
+  return `${baseName(drawing)}${safe ? `-${safe}` : ''}.pdf`;
+}
 
 /** INSUNITS -> drawing units per millimetre, e.g. 0.001 for metres (unitless drawings are assumed to be millimetres) */
 export function unitsPerMm(doc) {

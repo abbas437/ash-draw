@@ -5,7 +5,7 @@ import { screenToWorld } from '../src/core/render.js';
 import { layoutPage, layoutPlotRegion, layoutPlotWindow, layoutMmPerUnit } from '../src/core/layouts.js';
 import { plotSettingsFrom, plotSettingsToStore, LAYOUT_PAPERS, layoutPlotStart } from '../src/core/plotSettings.js';
 import { el, message, modal, toast } from './ui.js';
-import { exportPdfBytes, unitsPerMm, unicodeFonts } from './files.js';
+import { exportPdfBytes, unitsPerMm, unicodeFonts, plotPdfName } from './files.js';
 import { bitmapRgba } from './images.js';
 import { viewsIn, findView, restorable, viewBox } from '../src/core/views.js';
 
@@ -180,7 +180,7 @@ async function plotLayoutDialog(app, mode) {
   remember(s);
   try {
     const out = await exportPdfBytes(app.fileDoc, null, { layout, modelScene: app.vp.modelScene, paper: paperSel.value, area: area.value, fit: fitNow, layoutScale, monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency });
-    if (mode === 'pdf') await app.saveBytes(out.bytes, 'pdf', 'PDF document');
+    if (mode === 'pdf') await app.saveBytes(out.bytes, 'pdf', 'PDF document', plotPdfName(app.file.name, layout.name));
     else {
       const res = await window.api.print(out.bytes);
       if (res && !res.ok && res.reason && !/cancel/i.test(res.reason)) await message('Print failed', res.reason);

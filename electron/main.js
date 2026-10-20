@@ -13,7 +13,7 @@ import { createHandoffStore } from './handoff.js';
 import { createClipboardBridge } from './clipboard.js';
 import { createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isOdaExeName, ODA_DOWNLOAD_URL, ODA_DWG_VERSIONS } from './odaConverter.js';
 import { lockData, onSecondInstance } from './instance.js';
-import { saveDialogDefault } from './savePath.js';
+import { saveDialogDefault, openDialogDir } from './savePath.js';
 import { createSymbolLibrary } from './symbols.js';
 import { cleanSession, isPathString, pushRecent, startupModeOf } from './sessionLists.js';
 import { xrefCandidates } from '../src/core/xref.js';
@@ -276,7 +276,9 @@ function handle(channel, fn) {
 function registerIpc() {
   handle('dialog:open', async (opts) => {
     const o = plainObject(opts);
+    const isDir = (d) => { try { return statSync(d).isDirectory(); } catch { return false; } };
     const r = await dialog.showOpenDialog(win, {
+      defaultPath: openDialogDir(o.defaultPath, { isDir }), // the active drawing's folder, else the last-used one
       filters: asFilters(o.filters),
       properties: o.multiple === true ? ['openFile', 'multiSelections'] : ['openFile'],
     });
