@@ -10,7 +10,7 @@ import {
 import { buildScene, docWithFrozen, infiniteItem } from './render.js';
 import { layoutPage, layoutPlotRegion, paperMmPerUnit, viewportScale, isPaperViewport } from './layouts.js';
 import {
-  walkOps, colorRgb, lineweightMm, dashUnits, hatchFamilies, layoutText, markerSize, arrowTriangle, runRgb, mtextItemLayout,
+  walkOps, finiteAnchor, finiteSeg, exportNotes, colorRgb, lineweightMm, dashUnits, hatchFamilies, layoutText, markerSize, arrowTriangle, runRgb, mtextItemLayout,
 } from './exportSvg.js';
 import { textShaper, textOps } from './pdfText.js';
 import { reorderLines, reorderRules } from './bidiText.js';
@@ -194,7 +194,9 @@ async function addPdfPage(pdf, doc, opts) {
   const colOf = (style) => colorRgb(style, { monochrome, keepGreys }).map((v) => v / 255);
   const lwPt = (style) => Math.max(lineweightMm(style, lineweights) * PT_PER_MM, MIN_LW_PT);
   const ops = [];
-  const pathOps = (pathData) => walkOps(pathData, {
+  // objects left out for non-finite coordinates (a bad op skipped, the rest drawn) and hatches too dense to draw
+  let bad = 0, tints = 0, itemBad = false;
+  const pathOps = (pathData) => { if (walkOps(pathData, {
     moveTo: (x, y) => ops.push(moveTo(X(x), Y(y))),
     lineTo: (x, y) => ops.push(lineTo(X(x), Y(y))),
     close: () => ops.push(closePath()),
@@ -211,7 +213,7 @@ async function addPdfPage(pdf, doc, opts) {
         ));
       }
     },
-  });
+  })) itemBad = true; };
   const dashPt = (arr) => (arr ? arr.map((d) => d * k) : null);
   // transparency: one ExtGState (CA / ca) per opacity, set inside the item's graphics state
   const gsNames = new Map();
@@ -290,11 +292,13 @@ async function addPdfPage(pdf, doc, opts) {
   const drawItems = async (scn, box, cull = null) => {
   msize = markerSize(scn.bbox);
   for (let it of scn.items) {
+    if (itemBad) { bad++; itemBad = false; }
     // an item wholly outside the plot area is not written at all (the clip would hide it, but its points would stay in the file)
     if (cull && it.bbox && (it.bbox.maxx < cull.minx || it.bbox.minx > cull.maxx || it.bbox.maxy < cull.miny || it.bbox.miny > cull.maxy)) continue;
     if (it.oleFrame) continue; // an OLE object's border is shown on screen but not plotted (AutoCAD OLEFRAME=2)
     if (doc.layers.get(it.style?.layerName)?.plot === false) continue; // a non-plotting layer is shown, never plotted
     if (it.inf && !(it = infiniteItem(it, box))) continue;
+    if (!finiteAnchor(it)) { bad++; continue; }
     if (it.kind === 'image') {
       // a raster picture (OLE preview or IMAGE): pixel (x, y from the top row) sits at p + u x + v (rows - y)
       const im = it.image, bmp = im.ole ? im.ole : doc.images?.get(im.path)?.bitmap;
@@ -333,6 +337,7 @@ async function addPdfPage(pdf, doc, opts) {
       ops.push(pushGraphicsState());
       if (fams === null) {
         // too dense to draw line by line: a light tint of the hatch colour
+        tints++;
         const [r, g, b] = colOf(it.style).map((v) => 1 - (1 - v) * 0.3);
         alphaState(it.style); ops.push(setFillingRgbColor(r, g, b)); pathOps(it.ops); ops.push(fillEvenOdd(), popGraphicsState());
         continue;
@@ -340,7 +345,7 @@ async function addPdfPage(pdf, doc, opts) {
       pathOps(it.ops); ops.push(clipEvenOdd(), endPath());
       for (const f of fams) {
         ops.push(pushGraphicsState()); strokeState(it.style, dashPt(f.dashes));
-        for (const s of f.segs) ops.push(moveTo(X(s[0]), Y(s[1])), lineTo(X(s[2]), Y(s[3])));
+        for (const s of f.segs) if (!finiteSeg(s)) itemBad = true; else ops.push(moveTo(X(s[0]), Y(s[1])), lineTo(X(s[2]), Y(s[3])));
         ops.push(stroke(), popGraphicsState());
       }
       ops.push(popGraphicsState());
@@ -397,6 +402,7 @@ async function addPdfPage(pdf, doc, opts) {
     }
     if (ops.length > 5000) page.pushOperators(...ops.splice(0));
   }
+  if (itemBad) { bad++; itemBad = false; }
   };
   if (layout) {
     const modelScene = opts.modelScene ?? memoModelScene(doc);
@@ -417,6 +423,7 @@ async function addPdfPage(pdf, doc, opts) {
   await drawItems(scene, bb, layout ? null : region);
   if (ops.length) page.pushOperators(...ops.splice(0));
   if (cb) page.pushOperators(popGraphicsState());
+  warnings.push(...exportNotes(bad, tints));
   if (missing) warnings.push(`${missing} text characters could not be drawn (${fonts.loadFailed ? 'the Unicode font could not be loaded' : 'no Unicode font'})`);
   return warnings;
 }

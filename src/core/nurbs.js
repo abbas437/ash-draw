@@ -19,7 +19,7 @@ export const domain = (nu) => [nu.U[nu.p], nu.U[nu.P.length]];
  *  geom.js); fit-point-only splines become the C2 cubic interpolating the fit points (chord-length parameters). */
 export function nurbsOf(e) {
   let ctrl = e.ctrl, p = e.degree || 3, U = e.knots;
-  if ((!ctrl || ctrl.length < 2) && e.fit && e.fit.length >= 2) return fitNurbs(e.fit, !!e.closed);
+  if ((!ctrl || ctrl.length < 2) && e.fit && e.fit.length >= 2) return fitNurbs(e.fit, !!e.closed, e.startTan, e.endTan);
   if (!ctrl || ctrl.length < 2) return null;
   if (ctrl.length <= p) p = ctrl.length - 1;
   if (!U || U.length !== ctrl.length + p + 1) U = clampedKnots(ctrl.length, p);
@@ -268,14 +268,20 @@ function basis3(U, k, t) { // the 4 cubic basis functions nonzero on span k at t
   }
   return N;
 }
-/** Fit points -> interpolating cubic (chord-length parameters, Bessel end tangents; closed: periodic tangent). */
-function fitNurbs(fit, closed) {
-  const Q = fit.map((q) => ({ x: q.x, y: q.y }));
+/** Fit points -> interpolating cubic through every fit point (global C2 interpolation, chord-length parameters).
+ *  End derivatives: the stored start / end tangents (DXF 12 / 13, unit length = unit speed in chord length), as AutoCAD
+ *  uses them, else Bessel's; closed: one periodic-average tangent at the seam. Coincident neighbours count once; null
+ *  when fewer than two distinct points remain. */
+function fitNurbs(fit, closed, startTan = null, endTan = null) {
+  const Q = [];
+  for (const q of fit) if (!Q.length || Math.hypot(q.x - Q.at(-1).x, q.y - Q.at(-1).y) > 1e-12 * (1 + Math.abs(q.x) + Math.abs(q.y))) Q.push({ x: q.x, y: q.y });
+  if (Q.length < 2) return null;
   if (closed && Math.hypot(Q[0].x - Q[Q.length - 1].x, Q[0].y - Q[Q.length - 1].y) > 1e-12) Q.push({ ...Q[0] });
   const u = [0];
   for (let i = 1; i < Q.length; i++) u.push(u[i - 1] + (Math.hypot(Q[i].x - Q[i - 1].x, Q[i].y - Q[i - 1].y) || 1e-9));
   const m = Q.length - 1;
   const d = (i) => ({ x: (Q[i + 1].x - Q[i].x) / (u[i + 1] - u[i]), y: (Q[i + 1].y - Q[i].y) / (u[i + 1] - u[i]) });
+  const unit = (t) => { const l = t && Math.hypot(t.x, t.y); return l > 0 && Number.isFinite(l) ? { x: t.x / l, y: t.y / l } : null; };
   let D0, Dn;
   if (m === 1) D0 = Dn = d(0);
   else if (closed) {
@@ -284,9 +290,9 @@ function fitNurbs(fit, closed) {
   } else {
     const bessel = (d1, d2, h1, h2) => ({ x: ((2 * h1 + h2) * d1.x - h1 * d2.x) / (h1 + h2), y: ((2 * h1 + h2) * d1.y - h1 * d2.y) / (h1 + h2) });
     D0 = bessel(d(0), d(1), u[1] - u[0], u[2] - u[1]);
-    const e = bessel(d(m - 1), d(m - 2), u[m] - u[m - 1], u[m - 1] - u[m - 2]);
-    Dn = e;
+    Dn = bessel(d(m - 1), d(m - 2), u[m] - u[m - 1], u[m - 1] - u[m - 2]);
   }
+  if (!closed) { D0 = unit(startTan) ?? D0; Dn = unit(endTan) ?? Dn; }
   const nu = interpolateCubic(Q, u, D0, Dn);
   nu.closed = closed;
   return nu;

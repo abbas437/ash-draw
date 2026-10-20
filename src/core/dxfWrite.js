@@ -270,6 +270,8 @@ export function* writeDxfSteps(doc, opts = {}) {
         if (rational) e.weights.forEach((w) => o.p(41, w));
         e.ctrl.forEach((c) => o.pt(10, c.x, c.y));
         (e.fit || []).forEach((c) => o.pt(11, c.x, c.y));
+        if (e.fit?.length && e.startTan) o.pt(12, e.startTan.x, e.startTan.y);
+        if (e.fit?.length && e.endTan) o.pt(13, e.endTan.x, e.endTan.y);
         return true;
       }
       case 'TEXT': {
