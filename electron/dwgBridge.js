@@ -220,8 +220,8 @@ export function createDwgBridge(dir, platform = process.platform, opts = {}) {
       const bytes = new Uint8Array(await fs.readFile(outPath));
       return recover ? { bytes, warnings: [], errorCount, log: stderr } : bytes;
     } finally {
-      await fs.rm(tmp, { recursive: true, force: true });
-      registry.removeDir(tmp);
+      // a converter just killed (or an antivirus scan) may still hold a file: retry, and never hide the real error
+      await fs.rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).then(() => registry.removeDir(tmp), () => {}); // still there: removed at quit
     }
   }
 

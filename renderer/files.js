@@ -133,6 +133,7 @@ export async function loadDrawing(api, name, bytes, { onProgress = null, signal 
       const job = `open-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
       const cancel = () => api.dwgCancel?.(job)?.catch?.(() => {});
       signal?.addEventListener('abort', cancel);
+      if (signal?.aborted) throw new Error('cancelled before the conversion started'); // Cancel during the availability check
       try { res = api.dwgOpen ? await api.dwgOpen(path ?? bytes, job) : await api.dwgToDxf(bytes); } finally { signal?.removeEventListener('abort', cancel); onStage?.('read'); }
       dxfBytes = res.url ? { url: res.url } : res.dxfBytes;
       warnings = Array.isArray(res.warnings) ? res.warnings : [];

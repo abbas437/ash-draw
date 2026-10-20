@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { existsSync, promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createConverterRegistry, sweepConverterTemp, CONVERTER_TEMP } from './converterProcs.js';
+import { createConverterRegistry, sweepConverterTemp, CONVERTER_TEMP, taskkillPath } from './converterProcs.js';
 import { createDwgBridge } from './dwgBridge.js';
 import { createOdaBridge, createDwgService } from './odaConverter.js';
 
@@ -69,8 +69,12 @@ const g = cp.spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { st
 fs.writeFileSync(path.join(DIR, 'gpid'), String(g.pid)); ${LONG}`);
   let gpid = null;
   try {
-    const b = createDwgBridge(f.dir, 'linux', { tmpRoot: f.tmpRoot, timeoutMs: 200, graceMs: 200, closeWaitMs: 300, registry: createConverterRegistry() });
+    const reg = createConverterRegistry();
+    const b = createDwgBridge(f.dir, 'linux', { tmpRoot: f.tmpRoot, timeoutMs: 200, graceMs: 200, closeWaitMs: 300, registry: reg });
     await assert.rejects(b.toDxf(new Uint8Array([1])), /^Error: dwg2dxf failed \(timed out after 0 s and did not stop when it was ended\)$/);
+    assert.equal(reg.live().children.length, 1, 'a converter given up as stuck stays registered, so quitting tries again');
+    reg.killAll();
+    assert.equal(reg.live().children.length, 0);
     gpid = Number(await fs.readFile(path.join(f.dir, 'gpid'), 'utf8'));
     assert.ok(gone(Number(await fs.readFile(path.join(f.dir, 'pid'), 'utf8'))));
     assert.deepEqual(await fs.readdir(f.tmpRoot), []);
@@ -122,4 +126,14 @@ test('start-up sweep: old ash-dwg-/ash-oda- folders go; young, other names and s
     assert.equal(await fs.readFile(path.join(target, 'output.dxf'), 'utf8'), 'x', 'a symlink is never followed');
     assert.deepEqual(await sweepConverterTemp(path.join(root, 'missing')), []);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('taskkill is Windows\' own System32 copy, never a bare name searched in the current folder', () => {
+  const saved = process.env.SystemRoot;
+  try {
+    process.env.SystemRoot = 'D:\\Win';
+    assert.equal(taskkillPath(), 'D:\\Win\\System32\\taskkill.exe');
+    delete process.env.SystemRoot;
+    assert.equal(taskkillPath(), 'C:\\Windows\\System32\\taskkill.exe');
+  } finally { if (saved === undefined) delete process.env.SystemRoot; else process.env.SystemRoot = saved; }
 });

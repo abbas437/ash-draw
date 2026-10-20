@@ -98,3 +98,16 @@ test('loadDrawing: Cancel while a DWG converts asks main to kill that conversion
   assert.equal(cancelled, job);
   assert.equal(err.code, 'CANCELLED');
 });
+
+// Cancel pressed while the converter's availability is still being checked: the conversion is never started
+test('loadDrawing: a DWG open cancelled before the conversion starts never calls dwg:open', async () => {
+  const ac = new AbortController();
+  let opened = 0;
+  const api = {
+    isElectron: true,
+    dwgAvailable: async () => { ac.abort(); return { available: true }; },
+    dwgOpen: async () => { opened++; return { url: 'data:,', warnings: [] }; },
+  };
+  await assert.rejects(loadDrawing(api, 'plan.dwg', null, { path: '/d/plan.dwg', signal: ac.signal }), { code: 'CANCELLED' });
+  assert.equal(opened, 0);
+});

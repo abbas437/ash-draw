@@ -18,13 +18,26 @@ export const CONVERTER_TEMP = /^ash-(?:dwg|oda)-[A-Za-z0-9]{6}$/;
 
 export const cancelledError = () => Object.assign(new Error('The DWG conversion was cancelled.'), { code: 'CANCELLED' });
 
-/** Kills a child at once (synchronous): on Windows with the processes it started (`taskkill /pid <pid> /T /F`), else SIGKILL. */
+/** Windows' own taskkill.exe by full path: a bare name would be searched for in the current folder first. */
+export const taskkillPath = () => path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe');
+const taskkillArgs = (pid) => ['/pid', String(pid), '/T', '/F'];
+const gone = (child) => child.exitCode !== null || child.signalCode !== null;
+
+/** Kills a child at once, synchronously (quit): on Windows with the processes it started (taskkill /T /F), else SIGKILL. */
 export function killTree(child, platform = process.platform) {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  if (platform === 'win32' && child.pid) {
-    spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, shell: false, stdio: 'ignore', timeout: 5000 });
-  }
+  if (gone(child)) return;
+  if (platform === 'win32' && child.pid) spawnSync(taskkillPath(), taskkillArgs(child.pid), { windowsHide: true, shell: false, stdio: 'ignore', timeout: 5000 });
   try { child.kill('SIGKILL'); } catch { /* already gone */ }
+}
+/** The same without blocking the main process (Cancel, timeout): taskkill runs in the background. */
+export function killTreeSoon(child, platform = process.platform) {
+  if (gone(child)) return;
+  const last = () => { try { child.kill('SIGKILL'); } catch { /* already gone */ } };
+  if (platform !== 'win32' || !child.pid) { last(); return; }
+  let k;
+  try { k = spawn(taskkillPath(), taskkillArgs(child.pid), { windowsHide: true, shell: false, stdio: 'ignore' }); } catch { last(); return; }
+  k.once('error', last);
+  k.once('exit', last);
 }
 
 export function createConverterRegistry({ platform = process.platform } = {}) {
@@ -74,13 +87,13 @@ export function runConverter(file, args, { cwd, timeout, signal = null, registry
       settled = true;
       timers.forEach(clearTimeout);
       signal?.removeEventListener('abort', onAbort);
-      untrack();
+      if (!v.stuck) untrack(); // a process that would not stop stays registered, so quitting tries again
       resolve({ code: null, signal: null, stuck: false, ...v, timedOut, cancelled });
     };
     function hard() {
       if (hardKilled) return;
       hardKilled = true;
-      killTree(child, platform);
+      killTreeSoon(child, platform);
       timers.push(setTimeout(() => done({ stuck: true }), closeWaitMs));
     }
     timers.push(setTimeout(() => {
