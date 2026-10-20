@@ -2,15 +2,18 @@
 // Every part is an ordinary DXF entity on layer ASH-MARKUP, so markups plot, print and open in AutoCAD. The review
 // metadata (number, author, date, status, comment) is XDATA of application ASH_MARKUP on each part, so it round-trips:
 //   1000 "key=value" strings; keys: uid, no, role (shape | leader | text), kind (circle | rect | text), author, date,
-//   status (Open | Closed), comment (repeated in 200-character pieces when long).
+//   status (Open | Closed), code (review code A | B | C; absent = none), comment (repeated in 200-character pieces when long).
 // Pure ES module (no DOM).
 import { makeCircle, makeRect, makeLine, makeMText, addLinetype } from './model.js';
 import { bboxOf, unionBox } from './geom.js';
 import { csvText } from './csv.js';
+import { colName } from './xlsx.js';
 
 export const MARKUP_LAYER = 'ASH-MARKUP';
 export const MARKUP_APP = 'ASH_MARKUP';
 export const MARKUP_LINETYPE = 'DASHED';
+export const MARKUP_STATUSES = ['Open', 'Closed'];
+export const MARKUP_CODES = ['A', 'B', 'C'];
 const RED = 1;
 const PIECE = 200;
 
@@ -32,7 +35,7 @@ export function markupData(e) {
 /** XDATA for `data` (see the header for the keys) */
 export function markupXData(data) {
   const tags = [];
-  for (const k of ['uid', 'no', 'role', 'kind', 'author', 'date', 'status']) if (data[k] != null) tags.push([1000, `${k}=${data[k]}`]);
+  for (const k of ['uid', 'no', 'role', 'kind', 'author', 'date', 'status', 'code']) if (data[k] != null && data[k] !== '') tags.push([1000, `${k}=${data[k]}`]);
   const c = String(data.comment ?? '');
   for (let i = 0; i < Math.max(c.length, 1); i += PIECE) tags.push([1000, `comment=${c.slice(i, i + PIECE)}`]);
   return { [MARKUP_APP]: tags };
@@ -49,7 +52,7 @@ const newUid = () => `MK${Date.now().toString(36)}${Math.random().toString(36).s
 export function makeMarkup(doc, kind, geo, opts = {}) {
   const meta = {
     uid: opts.uid ?? newUid(), no: opts.no ?? nextNo(doc), kind, author: opts.author || 'unknown',
-    date: opts.date ?? today(), status: opts.status ?? 'Open', comment: String(opts.comment ?? '').trim(),
+    date: opts.date ?? today(), status: opts.status ?? 'Open', code: opts.code || '', comment: String(opts.comment ?? '').trim(),
   };
   const base = { layer: MARKUP_LAYER, color: RED };
   const tag = (e, role) => { e.xdata = markupXData({ ...meta, role }); return e; };
@@ -91,15 +94,15 @@ export function addMarkup(s, kind, geo, opts = {}) {
   });
 }
 
-/** every markup of the drawing: [{uid, no, kind, comment, author, date, status, ids, bbox}] by number */
+/** every markup of the drawing: [{uid, no, kind, comment, author, date, status, code ('' = none), ids, bbox}] by number */
 export function listMarkups(doc) {
   const by = new Map();
   for (const e of doc.entities) {
     const d = markupData(e);
     if (!d) continue;
     let m = by.get(d.uid);
-    if (!m) by.set(d.uid, (m = { uid: d.uid, no: d.no, kind: d.kind, comment: d.comment, author: d.author, date: d.date, status: d.status, ids: [], bbox: null }));
-    if (d.role === 'shape' || (d.role === 'text' && m.kind === 'text')) Object.assign(m, { comment: d.comment, status: d.status, author: d.author, date: d.date });
+    if (!m) by.set(d.uid, (m = { uid: d.uid, no: d.no, kind: d.kind, comment: d.comment, author: d.author, date: d.date, status: d.status, code: d.code ?? '', ids: [], bbox: null }));
+    if (d.role === 'shape' || (d.role === 'text' && m.kind === 'text')) Object.assign(m, { comment: d.comment, status: d.status, code: d.code ?? '', author: d.author, date: d.date });
     m.ids.push(e.id);
     let b = null;
     try { b = bboxOf(e, doc); } catch { b = null; }
@@ -108,17 +111,44 @@ export function listMarkups(doc) {
   return [...by.values()].sort((a, b) => a.no - b.no);
 }
 
-/** change the status (Open / Closed) of markup `uid`: one undo step */
-export function setMarkupStatus(s, uid, status) {
-  return s.transact('Markup status', (tx) => {
+/** set metadata field `key` of every part of markup `uid` to `value`: one undo step labelled `label`; returns the parts changed */
+function setMarkupField(s, uid, key, value, label) {
+  return s.transact(label, (tx) => {
     let n = 0;
     for (const e of s.doc.entities) {
       const d = markupData(e);
-      if (d?.uid !== uid || d.status === status) continue;
-      tx.replace({ ...structuredClone(e), xdata: markupXData({ ...d, status }) });
+      if (d?.uid !== uid || (d[key] ?? '') === value) continue;
+      tx.replace({ ...structuredClone(e), xdata: markupXData({ ...d, [key]: value }) });
       n++;
     }
     return n;
+  });
+}
+
+/** change the status (Open / Closed) of markup `uid`: one undo step */
+export const setMarkupStatus = (s, uid, status) => setMarkupField(s, uid, 'status', status, 'Markup status');
+
+/** change the review code (A / B / C, '' = none) of markup `uid`: one undo step */
+export const setMarkupCode = (s, uid, code) => setMarkupField(s, uid, 'code', MARKUP_CODES.includes(code) ? code : '', 'Markup code');
+
+/**
+ * renumber every markup of the drawing start, start+1, ... in their present order (number, then drawing order), as one
+ * undo step; the number drawn at the start of each comment text changes with it. Returns the number of markups renumbered.
+ */
+export function renumberMarkups(s, start = 1) {
+  const first = Math.trunc(Number(start)) || 1;
+  const order = new Map(listMarkups(s.doc).map((m, i) => [m.uid, first + i]));
+  return s.transact('Renumber markups', (tx) => {
+    const changed = new Set();
+    for (const e of s.doc.entities) {
+      const d = markupData(e), no = d && order.get(d.uid);
+      if (!d || no === d.no) continue;
+      const ne = { ...structuredClone(e), xdata: markupXData({ ...d, no }) };
+      if (d.role === 'text' && typeof ne.text === 'string') ne.text = ne.text.replace(new RegExp(`^${d.no}(?=:|$)`), String(no));
+      tx.replace(ne);
+      changed.add(d.uid);
+    }
+    return changed.size;
   });
 }
 
@@ -138,4 +168,44 @@ export function setMarkupsVisible(s, on) {
 /** the markup list as CSV for Excel (src/core/csv.js: quoting, BOM, formula guard) */
 export function markupsCsv(list) {
   return csvText(['No', 'Comment', 'Author', 'Date', 'Status'], list.map((m) => [m.no, m.comment, m.author, m.date, m.status]));
+}
+
+/** CRS (comment review sheet) fill colour of the Status cell for a review code: A green, B orange, C red, none no fill */
+export const CRS_CODE_FILLS = { A: '00B050', B: 'FFC000', C: 'FF0000' };
+const CRS_HEAD = ['No.', 'Sheet / Layout', 'Comment', 'Reviewer', 'Date', 'Status', 'Code'];
+
+/**
+ * the CRS sheet for xlsxBytes (src/core/xlsx.js): a header block (title, drawing file name, export date), then one row per
+ * markup: No. | Sheet / Layout | Comment | Reviewer | Date | Status | Code. Every cell Calibri 11; the Comment column wraps;
+ * the Status cell is filled in the colour of the row's review code; Status and Code have drop-down lists.
+ * spaces: [{ name: 'Model' | layout name, markups: listMarkups(...) }].
+ */
+export function markupsCrsSheet(spaces, { drawing = '', date = today() } = {}) {
+  const top = { vAlign: 'top' }, wrap = { vAlign: 'top', wrap: true };
+  const rows = [
+    [{ v: 'Comment Review Sheet (CRS) - drawing markups', style: { bold: true } }],
+    [{ v: 'Drawing', style: { bold: true } }, drawing],
+    [{ v: 'Export date', style: { bold: true } }, date],
+    [],
+    CRS_HEAD.map((v) => ({ v, style: { bold: true, wrap: true, vAlign: 'top' } })),
+  ];
+  const first = rows.length + 1;
+  for (const { name, markups } of spaces) {
+    for (const m of markups) {
+      const code = MARKUP_CODES.includes(m.code) ? m.code : '';
+      rows.push([
+        { v: m.no, style: top }, { v: name, style: top }, { v: m.comment ?? '', style: wrap }, { v: m.author ?? '', style: top },
+        { v: m.date ?? '', style: top }, { v: m.status ?? 'Open', style: code ? { ...top, fill: CRS_CODE_FILLS[code] } : top }, { v: code, style: top },
+      ]);
+    }
+  }
+  const last = Math.max(rows.length, first);
+  const col = (name) => colName(CRS_HEAD.indexOf(name));
+  return {
+    name: 'CRS', rows, boldRows: [], colWidths: [6, 16, 60, 18, 12, 10, 8],
+    validations: [
+      { sqref: `${col('Status')}${first}:${col('Status')}${last}`, list: MARKUP_STATUSES },
+      { sqref: `${col('Code')}${first}:${col('Code')}${last}`, list: MARKUP_CODES },
+    ],
+  };
 }
