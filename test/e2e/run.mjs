@@ -1279,7 +1279,7 @@ try {
   const csvDl = page.waitForEvent('download');
   await page.click('#mk-csv');
   const csv = await fs.readFile(await (await csvDl).path(), 'utf8');
-  assert.match(csv, /^No,Comment,Author,Date,Status\r\n1,Check damper access,A\. Reviewer,\d{4}-\d\d-\d\d,Closed\r\n$/);
+  assert.match(csv, /^\uFEFFNo,Comment,Author,Date,Status\r\n1,Check damper access,A\. Reviewer,\d{4}-\d\d-\d\d,Closed\r\n$/);
   const mkVisible = () => page.evaluate(() => window.app.doc.layers.get('ASH-MARKUP').visible);
   await page.locator('#menubar .menu > button', { hasText: 'View' }).click();
   await page.locator('#menubar .menu.open button', { hasText: 'Show markups' }).click();
