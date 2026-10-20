@@ -15,6 +15,15 @@ import {
 import { textShaper, textOps } from './pdfText.js';
 import { reorderLines, reorderRules } from './bidiText.js';
 
+/** the PDF warning for `count` text characters drawn as '?': `chars`, the distinct ones, listed (up to `max`) as the
+ *  character and its code, e.g. "2 text characters could not be drawn (no font has them): ⌀ (U+2300), ◊ (U+25CA)" */
+export function missingCharsWarning(count, chars, reason, max = 10) {
+  const code = (c) => `U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`;
+  const list = chars.slice(0, max).map((c) => `${c} (${code(c)})`).join(', ');
+  const more = chars.length > max ? `, and ${chars.length - max} more` : '';
+  return `${count} text characters could not be drawn (${reason})${list ? `: ${list}${more}` : ''}`;
+}
+
 const PT_PER_MM = 72 / 25.4;
 const MAX_PAGE_PT = 14400;          // PDF 1.x user-unit page size limit (200 inch)
 const MIN_LW_PT = 0.25;
@@ -189,6 +198,7 @@ async function addPdfPage(pdf, doc, opts) {
   const fonts = FONTS.get(pdf), helv = fonts.HELV['00'];
   const helvChars = new Set(helv.getCharacterSet());
   let missing = 0;
+  const missedChars = new Set(); // the distinct characters behind `missing`, for the warning
 
   const keepGreys = !!doc.isCompare; // a comparison keeps its unchanged-grey in monochrome, so it still stands back from the changes
   const colOf = (style) => colorRgb(style, { monochrome, keepGreys }).map((v) => v / 255);
@@ -268,6 +278,7 @@ async function addPdfPage(pdf, doc, opts) {
   /** draw shaped text (a shape() result) at (x, y) of a frame (cm a b c d e f) in the given fill colour */
   const shapedText = (sh, frame, size, x, y, rgbCol, style) => {
     missing += sh.miss;
+    for (const c of sh.missed ?? []) missedChars.add(c);
     ops.push(pushGraphicsState(), concatTransformationMatrix(...frame));
     alphaState(style); ops.push(setFillingRgbColor(...rgbCol), ...textOps(page, sh, size, x, y), popGraphicsState());
   };
@@ -436,6 +447,6 @@ async function addPdfPage(pdf, doc, opts) {
   if (ops.length) page.pushOperators(...ops.splice(0));
   if (cb) page.pushOperators(popGraphicsState());
   warnings.push(...exportNotes(bad, tints));
-  if (missing) warnings.push(`${missing} text characters could not be drawn (${fonts.loadFailed ? 'the Unicode font could not be loaded' : 'no Unicode font'})`);
+  if (missing) warnings.push(missingCharsWarning(missing, [...missedChars], fonts.loadFailed ? 'the Unicode font could not be loaded' : fonts.uni?.length ? 'no font has them' : 'no Unicode font'));
   return warnings;
 }

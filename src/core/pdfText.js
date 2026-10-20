@@ -16,13 +16,13 @@ export { hasRtl, bidiLevels, visualOrder };
 const STICKY = /^[\p{M}\p{Cf}\s]$/u;
 
 /**
- * textShaper(helv, uniFonts) -> shape(text, level?, hf?) => {width, runs, miss}: `text` laid out at size 1 in visual
+ * textShaper(helv, uniFonts) -> shape(text, level?, hf?) => {width, runs, miss, missed}: `text` laid out at size 1 in visual
  * (left-to-right) order. helv: the standard Helvetica PDFFont; uniFonts: embedded subset PDFFonts, fallback order.
  * level: the bidi embedding level of every character (a piece of an already ordered line), else the line's own levels.
  * hf: the Helvetica variant (bold / oblique) that draws the WinAnsi characters, default `helv`.
  * runs: {font, width, text} (Helvetica) or {font, width, glyphs: [{glyph, x, dx, dy}], logical} (font units, pen x
  * before the glyph; logical: the run's text in reading order, for /ActualText).
- * miss: characters no font has (drawn as '?').
+ * miss: characters no font has (drawn as '?'); missed: those characters, in text order.
  */
 export function textShaper(helv, uniFonts) {
   const helvChars = new Set(helv.getCharacterSet());
@@ -38,6 +38,7 @@ export function textShaper(helv, uniFonts) {
     // logical segments of one level and one font; characters at an odd level are mirrored ("(" -> ")")
     const segs = [];
     let miss = 0, prev = null;
+    const missed = [];
     for (let i = 0; i < text.length;) {
       const cp = text.codePointAt(i), n = cp > 0xffff ? 2 : 1, l = lv(i);
       let ch = text.slice(i, i + n);
@@ -45,7 +46,7 @@ export function textShaper(helv, uniFonts) {
       if (l & 1) ch = BIDI().getMirroredCharacter(ch) ?? ch;
       const c = ch.codePointAt(0);
       let f = prev && STICKY.test(ch) && has(prev, c) ? prev : chain.find((x) => has(x, c));
-      if (!f) { f = hf; ch = '?'; miss++; }
+      if (!f) { f = hf; ch = '?'; miss++; missed.push(orig); }
       const last = segs.at(-1);
       if (last && last.font === f && last.level === l) { last.text += ch; last.orig += orig; }
       else segs.push({ font: f, level: l, text: ch, orig });
@@ -72,7 +73,7 @@ export function textShaper(helv, uniFonts) {
       width += w;
       return { font: s.font, glyphs, width: w, logical: s.orig };
     });
-    const out = { width, runs, miss };
+    const out = { width, runs, miss, missed };
     cache.set(key, out);
     return out;
   };
