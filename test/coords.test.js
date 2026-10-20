@@ -20,7 +20,7 @@ test('bare number is a distance along the current direction', () => {
 });
 
 test('garbage returns null', () => {
-  for (const s of ['', 'abc', '1,2,3', '@', '10<', ',', '1 2', '1;2;3', '@5', '1<2<3']) assert.equal(parseCoordinate(s), null, s);
+  for (const s of ['', 'abc', '1,2,x', '1,2,3,4', '@', '10<', ',', '1 2', '1;2;3;4', '@5', '1<2<3']) assert.equal(parseCoordinate(s), null, s);
 });
 
 const near = (p, x, y) => { assert.ok(p && Math.abs(p.x - x) < 1e-9 && Math.abs(p.y - y) < 1e-9, `${JSON.stringify(p)} != (${x}, ${y})`); };
@@ -60,5 +60,16 @@ test("decimal comma: with a ';' the pair separator is ';' and ',' is a decimal c
   near(parseCoordinate('1,5'), 1, 5); // no ';': unchanged, ',' separates x and y
   near(parseCoordinate('@1,5', { x: 1, y: 1 }), 2, 6);
   near(parseCoordinate("12'6,5\";0", undefined, null, null, 1), 150.5, 0);
-  for (const s of ['1,5,5;2', '1,5;2;3', '1,,5;2']) assert.equal(parseCoordinate(s), null, s);
+  for (const s of ['1,5,5;2', '1,5;2;x', '1,,5;2']) assert.equal(parseCoordinate(s), null, s);
+});
+
+test('x,y,z input is accepted and z ignored (2D tool)', () => {
+  near(parseCoordinate('1,2,3'), 1, 2);
+  near(parseCoordinate(' -1.5 , 2e1 , 0 '), -1.5, 20);
+  near(parseCoordinate('@1,2,3', { x: 10, y: 10 }), 11, 12);
+  near(parseCoordinate('1;2;3'), 1, 2);
+  near(parseCoordinate('1,5;2,25;7,5'), 1.5, 2.25); // decimal-comma form
+  near(parseCoordinate('@1,5;2;3', { x: 10, y: 10 }), 11.5, 12);
+  assert.equal(parseCoordinate('1,2,3').z, undefined);
+  for (const s of ['1,2,', '1,2,abc', '1,2,3,4', '1;2;x']) assert.equal(parseCoordinate(s), null, s);
 });

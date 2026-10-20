@@ -4,6 +4,8 @@
 //   "10<45"     polar (distance < angle in degrees) from the origin
 //   "@10<45"    polar relative to the last point
 //   "25"        a bare number: distance along `direction` (the current rubber-band direction), if given
+//   "1,2,3"     x,y,z (also @dx,dy,dz and x;y;z): the 2D tool ignores z
+//   "1,2,3"     x,y,z (also "@dx,dy,dz" and "x;y;z"): this is a 2D tool, so z is checked and ignored
 //   "1,5;2"     with a ';' the pair separator is ';' and a ',' in a number is a decimal comma (1.5, 2); without one, ',' separates
 //   12' 12'6" 12'-6" 12'6-1/2" 6" 6-1/2" 1/2"   feet and inches for any length, when `units` ($INSUNITS) is 1 (inches) or 2 (feet)
 // parseCoordinate(text, last, direction, header, units) -> {x,y} | {distance} | null
@@ -43,10 +45,11 @@ export function parseCoordinate(text, last = { x: 0, y: 0 }, direction = null, h
   const semi = s.includes(';'); // ';' separates the pair, so a ',' is a decimal comma
   const len = (tok) => length(semi ? tok.replace(',', '.') : tok, units);
   const pair = s.split(semi ? ';' : ',');
-  if (pair.length > 2) return null;
-  if (pair.length === 2) {
+  if (pair.length > 3) return null;
+  if (pair.length >= 2) {
+    // x,y,z: this is a 2D tool, so a third number is checked and ignored
     const x = len(pair[0]), y = len(pair[1]);
-    return Number.isFinite(x) && Number.isFinite(y) ? at(x, y) : null;
+    return Number.isFinite(x) && Number.isFinite(y) && (pair.length === 2 || Number.isFinite(len(pair[2]))) ? at(x, y) : null;
   }
   const pol = s.split('<');
   if (pol.length === 2) {
