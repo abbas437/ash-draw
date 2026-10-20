@@ -107,7 +107,14 @@ export const plotScale = (n, mmPerUnit = 1) => mmPerUnit / n;
 export async function exportPdf(doc, opts = {}) {
   const pdf = await newPdf();
   const warnings = await addPdfPage(pdf, doc, opts);
-  return { bytes: await pdf.save(), warnings };
+  const bytes = await pdf.save();
+  opts.onProgress?.(1);
+  return { bytes, warnings };
+}
+
+/** opts.signal aborted -> throws Error code 'CANCELLED' (the export then returns nothing) */
+function checkAbort(opts) {
+  if (opts.signal?.aborted) { const e = new Error('PDF export cancelled'); e.code = 'CANCELLED'; throw e; }
 }
 
 /**
@@ -121,10 +128,13 @@ export async function exportPdfPages(sheets, opts = {}) {
   for (const sheet of sheets) {
     const { doc, layout = null, label = '' } = sheet;
     if (doc !== cur) { cur = doc; modelScene = memoModelScene(doc); }
-    const w = await addPdfPage(pdf, doc, { ...opts, layout, modelScene: opts.modelScene ?? modelScene, scene: layout ? opts.scene : opts.scene ?? modelScene([]), region: layout ? null : sheet.region ?? opts.region });
+    const i = sheets.indexOf(sheet), onProgress = opts.onProgress && ((f) => opts.onProgress((i + f) / sheets.length));
+    const w = await addPdfPage(pdf, doc, { ...opts, onProgress, layout, modelScene: opts.modelScene ?? modelScene, scene: layout ? opts.scene : opts.scene ?? modelScene([]), region: layout ? null : sheet.region ?? opts.region });
     warnings.push(...w.map((m) => (label ? `${label}: ${m}` : m)));
   }
-  return { bytes: await pdf.save(), warnings };
+  const bytes = await pdf.save();
+  opts.onProgress?.(1);
+  return { bytes, warnings };
 }
 
 async function newPdf() {
@@ -134,16 +144,72 @@ async function newPdf() {
   return pdf;
 }
 
-/** (frozen layers) -> model scene, kept for the last layer set asked for only: a drawing's scene can take a gigabyte,
- *  so the scene of one set is let go when another is built (viewports that alternate sets rebuild) */
+const layerSet = (fr) => new Set((fr ?? []).map((n) => String(n).toUpperCase()));
+const setKey = (s) => [...s].sort().join('\u0001');
+
+/**
+ * (frozen layers) -> model scene. A drawing's scene can take a gigabyte, so one full scene is kept: the base, built
+ * for prepare(sets)'s common frozen layers (those frozen in every viewport of the sheet). A viewport that freezes more
+ * gets a scene derived from the base (deriveScene: only the entities on those layers rebuilt), the last one kept.
+ * A set that is not a superset of the base's rebuilds the base.
+ */
 function memoModelScene(doc) {
-  let key = null, scene = null;
-  return (fr) => { const k = fr.join('\u0001'); if (k !== key) { scene = null; scene = buildScene(docWithFrozen(doc, fr)); key = k; } return scene; };
+  let base = null, baseKey = null, baseSet = null, der = null, derKey = null;
+  const full = (s) => { base = der = null; derKey = null; base = buildScene(docWithFrozen(doc, [...s])); baseKey = setKey(s); baseSet = s; return base; };
+  const get = (fr) => {
+    const s = layerSet(fr), k = setKey(s);
+    if (k === baseKey) return base;
+    if (k === derKey) return der;
+    if (!base || [...baseSet].some((n) => !s.has(n))) return full(s);
+    der = null; derKey = null;
+    der = deriveScene(doc, base, baseSet, s); derKey = k;
+    return der;
+  };
+  get.prepare = (sets) => {
+    const all = sets.map(layerSet), common = new Set([...(all[0] ?? [])].filter((n) => all.every((s) => s.has(n))));
+    if (setKey(common) !== baseKey) full(common);
+  };
+  return get;
+}
+
+/**
+ * the model scene with the layers in `s` frozen, from `base` (built with `baseSet` frozen, baseSet within s): items of
+ * the entities that may draw on a layer of s outside baseSet are rebuilt, the others' base items are reused (same
+ * order and extents as buildScene). An entity may draw on its own layer, its block's (nested) entity and attribute
+ * layers; a DIMENSION, MLINE, MLEADER or a block holding one is always rebuilt.
+ */
+export function deriveScene(doc, base, baseSet, s) {
+  const extra = new Set([...s].filter((n) => !baseSet.has(n)));
+  const ents = doc.entities;
+  for (let i = 1; i < ents.length; i++) if (ents[i].id === ents[i - 1].id) return buildScene(docWithFrozen(doc, [...s])); // items not attributable
+  const on = (l) => extra.has(String(l ?? '0').toUpperCase());
+  const blockHit = new Map();
+  const hits = (e) => {
+    if (on(e.layer) || e.type === 'DIMENSION' || e.type === 'MLINE' || e.type === 'MLEADER') return true;
+    if ((e.attribs ?? []).some((a) => on(a.layer))) return true;
+    if (e.type !== 'INSERT') return false;
+    if (blockHit.has(e.block)) return blockHit.get(e.block);
+    blockHit.set(e.block, true); // a block that (wrongly) holds itself: rebuilt
+    const hit = (doc.blocks.get(e.block)?.entities ?? []).some(hits);
+    blockHit.set(e.block, hit);
+    return hit;
+  };
+  const redo = ents.filter(hits);
+  const delta = buildScene({ ...docWithFrozen(doc, [...s]), entities: redo });
+  const items = [], bi = base.items, di = delta.items;
+  let p = 0, q = 0, r = 0, bbox = null, uiBox = null;
+  const grow = (b, x) => (b ? { minx: Math.min(b.minx, x.minx), miny: Math.min(b.miny, x.miny), maxx: Math.max(b.maxx, x.maxx), maxy: Math.max(b.maxy, x.maxy) } : { ...x });
+  const take = (arr, i, id) => { for (; i < arr.length && arr[i].id === id; i++) { const it = arr[i]; items.push(it); if (it.bbox) { if (it.ui) uiBox = grow(uiBox, it.bbox); else bbox = grow(bbox, it.bbox); } } return i; };
+  for (const e of ents) {
+    if (r < redo.length && redo[r] === e) { r++; q = take(di, q, e.id); for (; p < bi.length && bi[p].id === e.id; p++); } else p = take(bi, p, e.id);
+  }
+  return { items, bbox: bbox ?? uiBox };
 }
 
 /** a number as pdf-lib writes an operand (PDFNumber: no exponent notation) */
 const num = (v) => { const t = String(v); return t.includes('e') ? numberToString(v) : t; };
 const CHUNK = 1 << 16;
+const PROGRESS_STEP = 2048;
 /**
  * contentWriter() -> the page's content stream, written as text and deflated as it is produced (a large drawing's
  * millions of path operators are never held as pdf-lib PDFOperator objects): push(...operators) serialises pdf-lib
@@ -338,9 +404,20 @@ async function addPdfPage(pdf, doc, opts) {
   const loadedShape = (t, level, p) => fonts.shape(t, level, HELV[variant(p)]);
 
   // box: the world window plotted, to which XLINE / RAY items are clipped (AutoCAD plots their visible part)
-  const drawItems = async (scn, box, cull = null) => {
+  // progress: part `part` of `parts` (each viewport, then the sheet's own items) by items drawn; every PROGRESS_STEP
+  // items the abort signal is checked and, at most every 50 ms, the event loop gets a turn (a Cancel click)
+  let parts = 1, lastYield = performance.now();
+  const step = async (part, f) => {
+    checkAbort(opts);
+    opts.onProgress?.((part + f) / parts);
+    if ((opts.signal || opts.onProgress) && performance.now() - lastYield > 50) { await new Promise((r) => setTimeout(r, 0)); lastYield = performance.now(); }
+  };
+  const drawItems = async (scn, box, cull = null, part = 0) => {
   msize = markerSize(scn.bbox);
-  for (let it of scn.items) {
+  const all = scn.items, n = all.length;
+  for (let i = 0; i < n; i++) {
+    if (i % PROGRESS_STEP === 0) await step(part, i / n);
+    let it = all[i];
     if (itemBad) { bad++; itemBad = false; }
     // an item wholly outside the plot area is not written at all (the clip would hide it, but its points would stay in the file)
     if (cull && it.bbox && (it.bbox.maxx < cull.minx || it.bbox.minx > cull.maxx || it.bbox.maxy < cull.miny || it.bbox.miny > cull.maxy)) continue;
@@ -460,8 +537,11 @@ async function addPdfPage(pdf, doc, opts) {
   if (layout) {
     const modelScene = opts.modelScene ?? memoModelScene(doc);
     const paper = { ox, oy, k }, psl = doc.header?.psltscale !== 0; // PSLTSCALE 1: viewport linetypes at paper scale
-    for (const v of layout.entities) {
-      if (v.type !== 'VIEWPORT' || isPaperViewport(v) || v.on === false || !(v.width > 0 && v.height > 0)) continue;
+    const vps = layout.entities.filter((v) => v.type === 'VIEWPORT' && !isPaperViewport(v) && v.on !== false && v.width > 0 && v.height > 0);
+    parts = vps.length + 1;
+    await step(0, 0);
+    if (vps.length) modelScene.prepare?.(vps.map((v) => v.frozen ?? []));
+    for (const [part, v] of vps.entries()) {
       const s = viewportScale(v), cx = X(v.c.x), cy = Y(v.c.y), hw = (v.width / 2) * k, hh = (v.height / 2) * k;
       ops.push(pushGraphicsState(), moveTo(cx - hw, cy - hh), lineTo(cx + hw, cy - hh), lineTo(cx + hw, cy + hh), lineTo(cx - hw, cy + hh), closePath(), clip(), endPath());
       const ring = viewportClipRing(v, layout.entities); // a polygon-clipped viewport: and to its boundary
@@ -472,12 +552,13 @@ async function addPdfPage(pdf, doc, opts) {
       k = paper.k / s; ox = cx - v.viewCenter.x * k; oy = cy - v.viewCenter.y * k;
       const R = Math.hypot(v.width, v.height) / 2 * s; // the viewport's model window (any twist), clipped above
       const win = { minx: v.viewCenter.x - R, miny: v.viewCenter.y - R, maxx: v.viewCenter.x + R, maxy: v.viewCenter.y + R };
-      await drawItems(modelScene(v.frozen ?? []), win, win); // what lies outside the viewport's window is not written
+      await drawItems(modelScene(v.frozen ?? []), win, win, part); // what lies outside the viewport's window is not written
       ({ ox, oy, k } = paper); ltk = null;
       ops.push(popGraphicsState());
     }
   }
-  await drawItems(scene, bb, layout ? null : region);
+  await drawItems(scene, bb, layout ? null : region, parts - 1);
+  await step(parts - 1, 1);
   if (cb) page.pushOperators(popGraphicsState());
   page.contentStream = undefined;
   page.node.addContentStream(pdf.context.register(pdf.context.stream(await ops.finish(), { Filter: PDFName.of('FlateDecode') })));

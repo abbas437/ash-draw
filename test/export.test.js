@@ -12,8 +12,8 @@ import { readDxf } from '../src/core/dxfRead.js';
 import { newLayout, layoutPlotRegion, paperRects } from '../src/core/layouts.js';
 import { newDocument, addEntity, addLayer, makeXline, makeLine, makeCircle, makeArc, makeText } from '../src/core/model.js';
 import { exportSvg } from '../src/core/exportSvg.js';
-import { buildScene } from '../src/core/render.js';
-import { exportPdf, exportPdfPages, plotLayout, plotScale, pageFit } from '../src/core/exportPdf.js';
+import { buildScene, docWithFrozen } from '../src/core/render.js';
+import { exportPdf, exportPdfPages, plotLayout, plotScale, pageFit, deriveScene } from '../src/core/exportPdf.js';
 import { plotSettingsFrom, plotSettingsToStore, PLOT_DEFAULTS, layoutPlotStart } from '../src/core/plotSettings.js';
 
 const FIXTURES = ['basic', 'blocks', 'colors', 'dims', 'extrusion', 'hatch', 'polylines', 'splines', 'text', 'unsupported'];
@@ -283,6 +283,55 @@ test('layout PDF: each viewport draws the model without its own frozen layers (s
   // left viewport freezes A: only B (model y 10); right freezes B: only A (model y 0): 10 mm lower on the sheet
   assert.equal(left.length, 1, JSON.stringify(segs)); assert.equal(right.length, 1, JSON.stringify(segs));
   assert.ok(near(left[0].y - right[0].y, 10, 0.1), `left y ${left[0].y}, right y ${right[0].y}`);
+});
+
+test('viewport scene derived from the base scene = the scene built with those layers frozen (block, dimension, text fixtures)', () => {
+  // a block whose own entities sit on X and 0, inserted on Y and (nested) inside another block
+  const nest = newDocument();
+  for (const n of ['X', 'Y']) addLayer(nest, { name: n });
+  nest.blocks.set('B', { name: 'B', base: { x: 0, y: 0 }, entities: [makeLine({ x: 0, y: 0 }, { x: 5, y: 0 }, { layer: 'X' }), makeLine({ x: 0, y: 1 }, { x: 5, y: 1 }, { layer: '0' })] });
+  nest.blocks.set('C', { name: 'C', base: { x: 0, y: 0 }, entities: [{ type: 'INSERT', block: 'B', layer: '0', p: { x: 0, y: 3 } }] });
+  addEntity(nest, makeLine({ x: 0, y: -5 }, { x: 9, y: -5 }, { layer: 'Y' }));
+  addEntity(nest, { type: 'INSERT', block: 'B', layer: 'Y', p: { x: 10, y: 0 } });
+  addEntity(nest, { type: 'INSERT', block: 'C', layer: '0', p: { x: 20, y: 0 } });
+  addEntity(nest, makeLine({ x: 0, y: 9 }, { x: 40, y: 9 }));
+  for (const name of ['blocks', 'dims', 'text', 'basic', nest]) {
+    const doc = typeof name === 'string' ? readDxf(fixture(`${name}_r2000.dxf`)) : name, base = buildScene(doc);
+    for (const L of doc.layers.keys()) {
+      const want = buildScene(docWithFrozen(doc, [L])), got = deriveScene(doc, base, new Set(), new Set([L.toUpperCase()]));
+      assert.equal(got.items.length, want.items.length, `${name} ${L}`);
+      const j = (it) => JSON.stringify(it, (k, v) => (k === 'pos' ? undefined : v)); // pos: the base scene index (unused by the plot)
+      got.items.forEach((it, i) => assert.equal(j(it), j(want.items[i]), `${name} ${L} item ${i}`));
+      assert.deepEqual(got.bbox, want.bbox, `${name} ${L}`);
+    }
+  }
+});
+
+test('PDF export: progress rises to 1; an abort after the first report rejects CANCELLED with no bytes', async () => {
+  const doc = newDocument();
+  for (let i = 0; i < 5000; i++) addEntity(doc, makeLine({ x: i, y: 0 }, { x: i, y: 10 }));
+  const seen = [];
+  const out = await exportPdf(doc, { pageSize: 'A3', onProgress: (f) => seen.push(f) });
+  assert.ok(out.bytes.length > 0);
+  assert.ok(seen.length >= 3, JSON.stringify(seen));
+  for (let i = 1; i < seen.length; i++) assert.ok(seen[i] >= seen[i - 1], JSON.stringify(seen));
+  assert.equal(seen.at(-1), 1);
+  const ac = new AbortController();
+  let calls = 0, res = null;
+  await assert.rejects(async () => { res = await exportPdf(doc, { pageSize: 'A3', signal: ac.signal, onProgress: () => { calls++; ac.abort(); } }); }, (e) => e.code === 'CANCELLED');
+  assert.equal(res, null);
+  assert.equal(calls, 1);
+  // a sheet: one part per viewport, the abort checked between them
+  const lay = newLayout('L', 1);
+  lay.entities.push({ type: 'VIEWPORT', id: 98, layer: '0', color: 256, vpId: 2, on: true, c: { x: 100, y: 150 }, width: 100, height: 100, viewCenter: { x: 0, y: 0 }, viewHeight: 100, twist: 0 },
+    { type: 'VIEWPORT', id: 99, layer: '0', color: 256, vpId: 3, on: true, c: { x: 300, y: 150 }, width: 100, height: 100, viewCenter: { x: 0, y: 0 }, viewHeight: 100, twist: 0 });
+  doc.layouts = [lay];
+  const sheet = [];
+  await exportPdf(doc, { layout: lay, onProgress: (f) => sheet.push(f) });
+  for (let i = 1; i < sheet.length; i++) assert.ok(sheet[i] >= sheet[i - 1], JSON.stringify(sheet));
+  assert.ok(sheet.some((f) => f > 0 && f < 1) && sheet.at(-1) === 1, JSON.stringify(sheet));
+  const ac2 = new AbortController();
+  await assert.rejects(exportPdf(doc, { layout: lay, signal: ac2.signal, onProgress: (f) => { if (f > 0) ac2.abort(); } }), (e) => e.code === 'CANCELLED');
 });
 
 test('PUBLISH monochrome: no stroking colour but black in any page of a coloured drawing', async () => {
