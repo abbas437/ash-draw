@@ -1,9 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { newDocument, addEntity, makeText, makeMText, makeLine, makeDimension } from '../src/core/model.js';
+import { newDocument, addEntity, addBlock, getEntity, makeText, makeMText, makeLine, makeDimension, makeInsert } from '../src/core/model.js';
+import { makeAttdef, instantiate, ATT_INVISIBLE } from '../src/core/blocks.js';
 import { Session } from '../src/core/edit.js';
 import { plainText } from '../src/core/dxfRead.js';
-import { displayText, findInText, replaceInRaw, findInDocument, replaceInDocument } from '../src/core/find.js';
+import * as find from '../src/core/find.js';
+
+const { displayText, findInText, replaceInRaw, findInDocument, replaceInDocument } = find;
 
 test('displayed text agrees with the renderer (plainText)', () => {
   for (const raw of ['PUMP P-101', '%%c200 %%d %%p0.5 %%uUNDER%%u', '\\U+00C9TAGE', '{\\fArial|b1;PUMP} P-101\\PSTANDBY',
@@ -91,4 +94,73 @@ test('replace one match', () => {
   assert.equal(doc.entities.find((e) => e.id === t2.id).text, '{\\C1;Pump} room\\Pspare FAN');
   assert.equal(replaceInDocument(s, 'nothing', 'x'), 0);
   assert.equal(s.undoStack.length, 1, 'no-op replace is not recorded');
+});
+
+/** a P&ID-like drawing: VALVE block (tag attribute, a constant label, a nested BODY block with text), two INSERTs
+ *  in model space, a paper-space TEXT on layout SHEET-01 */
+function pidDoc() {
+  const doc = newDocument();
+  addBlock(doc, 'BODY', { x: 0, y: 0 }, [makeText({ x: 0, y: 0 }, 1, 'GATE BODY')]);
+  addBlock(doc, 'VALVE', { x: 0, y: 0 }, [
+    makeLine({ x: 0, y: 0 }, { x: 1, y: 0 }),
+    makeAttdef({ x: 0, y: 1 }, 1, 'TAG', { default: 'KV-0000' }),
+    makeAttdef({ x: 0, y: 2 }, 1, 'NOTE', { default: 'GATE SECRET', flags: ATT_INVISIBLE }),
+    makeMText({ x: 0, y: -1 }, 1, 'GATE VALVE'),
+    makeInsert('BODY', { x: 0, y: -3 }),
+  ]);
+  const v1 = addEntity(doc, instantiate(doc.blocks.get('VALVE'), { x: 10, y: 10 }, { values: { TAG: 'KV-1013', NOTE: 'GATE SECRET' }, layer: 'VALVES' }));
+  const v2 = addEntity(doc, instantiate(doc.blocks.get('VALVE'), { x: 30, y: 10 }, { values: { TAG: 'KV-1014' } }));
+  const plain = addEntity(doc, makeText({ x: 0, y: 0 }, 1, 'FLOWMETER'));
+  const sheet = { name: 'SHEET-01', tab: 1, entities: [] };
+  doc.layouts = [sheet];
+  const pt = makeText({ x: 5, y: 5 }, 2.5, 'KV-1013 SEE DETAIL'); pt.id = doc.nextId++; sheet.entities.push(pt);
+  return { doc, v1, v2, plain, pt, sheet };
+}
+
+test('findInDocument: INSERT attributes (shown ones only), block contents via the INSERT, paper space', () => {
+  const { doc, v1, v2, plain, pt } = pidDoc();
+  const kv = findInDocument(doc, 'KV-1013');
+  assert.deepEqual(kv.map((r) => [r.id, r.type, r.space, r.place, r.where, r.editable]), [
+    [v1.id, 'ATTRIB', 'Model', 'Model', 'attribute TAG of block VALVE', true],
+    [pt.id, 'TEXT', 'SHEET-01', 'Layout SHEET-01', '', true]]);
+  assert.equal(kv[0].attrib, 0); assert.equal(kv[0].text, 'KV-1013');
+  assert.equal(findInDocument(doc, 'TAG').length, 0, 'attribute tags are not searched');
+  const gate = findInDocument(doc, 'gate');
+  // invisible attribute value is not found; block text is reported once per INSERT occurrence, nested blocks too
+  assert.deepEqual(gate.map((r) => [r.id, r.where, r.editable, !!r.inBlock]), [
+    [v1.id, 'in block VALVE', false, true], [v1.id, 'in block BODY in block VALVE', false, true],
+    [v2.id, 'in block VALVE', false, true], [v2.id, 'in block BODY in block VALVE', false, true]]);
+  assert.equal(gate[1].text, 'GATE BODY');
+  assert.deepEqual(findInDocument(doc, 'flowmeter').map((r) => [r.id, r.place]), [[plain.id, 'Model']]);
+  // a layout's space doc (what the app searches while a layout is shown) finds the same matches
+  const spaceDoc = Object.create(doc, { entities: { value: doc.layouts[0].entities }, modelDoc: { value: doc } });
+  assert.deepEqual(findInDocument(spaceDoc, 'KV-1013').map((r) => r.id), [v1.id, pt.id]);
+});
+
+test('block-definition hits are capped; a block that contains itself does not loop', () => {
+  const doc = newDocument();
+  addBlock(doc, 'LOOP', { x: 0, y: 0 }, [makeText({ x: 0, y: 0 }, 1, 'ROOM'), makeInsert('LOOP', { x: 1, y: 0 })]);
+  for (let i = 0; i < find.BLOCK_HIT_CAP + 5; i++) addEntity(doc, makeInsert('LOOP', { x: i, y: 0 }));
+  const r = findInDocument(doc, 'room');
+  assert.equal(r.length, find.BLOCK_HIT_CAP); assert.equal(r.blockHitsCapped, true);
+});
+
+test('replace: attributes and paper-space text are replaced, block definitions never; one undo step', () => {
+  const { doc, v1, v2, pt, sheet } = pidDoc();
+  const s = new Session(doc);
+  const all = findInDocument(doc, 'KV-101');
+  assert.equal(all.length, 3);
+  assert.equal(replaceInDocument(s, 'KV-101', 'XV-201', {}, [all[0]]), 1, 'one attribute');
+  assert.equal(getEntity(doc, v1.id).attribs[0].text, 'XV-2013');
+  assert.equal(getEntity(doc, v2.id).attribs[0].text, 'KV-1014');
+  assert.equal(replaceInDocument(s, 'gate', 'BALL'), 0, 'text inside block definitions is not replaced');
+  assert.equal(doc.blocks.get('VALVE').entities[3].text, 'GATE VALVE');
+  assert.equal(getEntity(doc, v1.id).attribs[1].text, 'GATE SECRET', 'invisible attribute untouched');
+  assert.equal(replaceInDocument(s, 'KV-101', 'XV-201'), 2, 'replace all: the other attribute and the layout text');
+  assert.equal(getEntity(doc, v2.id).attribs[0].text, 'XV-2014');
+  assert.equal(sheet.entities[0].text, 'XV-2013 SEE DETAIL');
+  s.undo();
+  assert.equal(sheet.entities[0].text, 'KV-1013 SEE DETAIL');
+  assert.equal(getEntity(doc, v2.id).attribs[0].text, 'KV-1014');
+  assert.equal(pt.text, 'KV-1013 SEE DETAIL');
 });

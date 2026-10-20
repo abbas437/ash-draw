@@ -3,7 +3,7 @@
 //   displayText(raw)                             -> the displayed string (same result as dxfRead.plainText)
 //   findInText(plain, query, opts)               -> [[start, end], ...] matches in a displayed string
 //   replaceInRaw(raw, query, repl, opts, o)      -> { text, count } raw text with matches replaced
-//   findInDocument(doc, query, opts)             -> [{ id, type, layer, text, start, end, index, editable }]
+//   findInDocument(doc, query, opts)             -> [{ id, type, layer, text, start, end, index, editable, space, place, where, ... }]
 //   replaceInDocument(session, query, repl, opts, targets) -> number of matches replaced, as ONE undo step
 // opts: { matchCase = false, wholeWord = false }.
 //
@@ -12,9 +12,11 @@
 // are kept untouched; codes INSIDE the match (formatting that covered only part of the matched words) are kept
 // too, but moved after the replacement, so they no longer format any of it. A match that covers only part of
 // a stacked fraction (\S1/2;) turns the rest of that fraction into plain text.
-// TEXT (including attributes, which are read as TEXT) and MTEXT are replaceable; a dimension's text override
-// is find-only, because the drawing shows the dimension's own block, not the override.
-import { getEntity } from './model.js';
+// Searched: model space and every layout; TEXT, MTEXT, dimension overrides, INSERT attributes (the shown ones) and
+// the text an INSERT's block draws (nested blocks too), reported on the INSERT.
+// TEXT, MTEXT and attributes are replaceable; a dimension's text override is find-only, because the drawing shows
+// the dimension's own block, not the override; text inside a block definition is find-only (shared by every INSERT).
+import { blockContentView, ATT_INVISIBLE } from './blocks.js';
 
 const SPECIAL = { c: 'Ø', d: '°', p: '±' };
 const STACK = /\\S([^;^#\\]*)[\^#/]([^;]*);/y;
@@ -96,6 +98,9 @@ export function replaceInRaw(raw, query, replacement, opts = {}, { mtext = false
 }
 
 const EDITABLE = new Set(['TEXT', 'MTEXT']);
+/** at most this many block-definition results (one per INSERT occurrence and match) per search */
+export const BLOCK_HIT_CAP = 2000;
+const MAX_DEPTH = 8; // nested blocks searched this deep
 
 /** Text content searched for an entity, or null. ATTRIBs are TEXT entities after reading. */
 function rawOf(e) {
@@ -104,38 +109,119 @@ function rawOf(e) {
   return null;
 }
 
-/** Every match in the drawing's model space, in drawing order. */
+/** [attrib, index in e.attribs] of the attributes an INSERT shows (invisible ones are not drawn, so not found) */
+const shownAttribs = (e) => (e.attribs ?? []).map((a, k) => [a, k]).filter(([a]) => !((a.attrib?.flags ?? 0) & ATT_INVISIBLE));
+
+/** the spaces searched: model space, then every layout's paper space in tab order (the block editor: its block only) */
+function spacesOf(doc) {
+  if (doc.blockEdit) return [{ space: null, place: `Block ${doc.blockEdit.name}`, list: doc.entities }];
+  const root = doc.modelDoc ?? doc;
+  return [{ space: 'Model', place: 'Model', list: root.entities },
+    ...[...(root.layouts ?? [])].sort((a, b) => a.tab - b.tab).map((lo) => ({ space: lo.name, place: `Layout ${lo.name}`, list: lo.entities ?? [] }))];
+}
+
+/** matches inside block `name` as drawn by an INSERT (constant ATTDEFs show their value, others are not drawn),
+ *  nested INSERTs and their attributes included; xrefs are not searched. Memoised per search in `memo`. */
+function blockHits(blocks, name, query, opts, memo, depth = 0) {
+  if (memo.has(name)) return memo.get(name);
+  memo.set(name, []); // a block that contains itself stops here
+  const blk = blocks.get(name), out = [];
+  const add = (v, where) => {
+    const raw = rawOf(v);
+    if (raw == null) return;
+    const text = displayText(raw), ms = findInText(text, query, opts);
+    if (ms.length) out.push({ type: v.type, text, ms, where });
+  };
+  if (blk && !blk.xref && depth < MAX_DEPTH) {
+    for (const be of blk.entities ?? []) {
+      const v = blockContentView(be);
+      if (!v) continue;
+      add(v, `in block ${name}`);
+      if (v.type !== 'INSERT') continue;
+      for (const [a] of shownAttribs(v)) add(a, `attribute ${a.attrib.tag} of block ${v.block} in block ${name}`);
+      for (const h of blockHits(blocks, v.block, query, opts, memo, depth + 1)) out.push({ ...h, where: `${h.where} in block ${name}` });
+    }
+  }
+  memo.set(name, out);
+  return out;
+}
+
+/**
+ * Every match in the drawing: model space, then each layout, in drawing order. Searched: TEXT, MTEXT, dimension
+ * overrides, the shown attributes of INSERTs, and the text drawn by the INSERT's block (reported on the INSERT, one
+ * result per INSERT occurrence, find-only; at most BLOCK_HIT_CAP of them - `blockHitsCapped` is set when more were left out).
+ * Result: { id, type, layer, text, start, end, index, editable, space ('Model', a layout name, or null in the block
+ * editor), place ('Model' / 'Layout NAME'), where ('' / 'attribute TAG of block B' / 'in block B'), attrib? (index in
+ * the INSERT's attribs), inBlock? }.
+ */
 export function findInDocument(doc, query, opts = {}) {
   const out = [];
-  for (const e of doc.entities) {
-    const raw = rawOf(e);
-    if (raw == null) continue;
-    const text = displayText(raw);
-    findInText(text, query, opts).forEach(([start, end], index) => out.push({
-      id: e.id, type: e.type, layer: e.layer ?? '0', text, start, end, index, editable: EDITABLE.has(e.type),
-    }));
+  if (!query) return out;
+  const blocks = (doc.modelDoc ?? doc).blocks ?? new Map(), memo = new Map();
+  let blockN = 0;
+  for (const { space, place, list } of spacesOf(doc)) {
+    for (const e of list) {
+      const raw = rawOf(e);
+      const push = (text, extra) => (start, end, index) => out.push({ id: e.id, type: e.type, layer: e.layer ?? '0', text, start, end, index, space, place, where: '', ...extra });
+      if (raw != null) {
+        const text = displayText(raw);
+        findInText(text, query, opts).forEach(([a, b], i) => push(text, { editable: EDITABLE.has(e.type) })(a, b, i));
+      }
+      if (e.type !== 'INSERT') continue;
+      for (const [at, k] of shownAttribs(e)) {
+        const text = displayText(at.text ?? '');
+        findInText(text, query, opts).forEach(([a, b], i) => push(text, { type: 'ATTRIB', layer: at.layer ?? e.layer ?? '0', editable: true, attrib: k, where: `attribute ${at.attrib.tag} of block ${e.block}` })(a, b, i));
+      }
+      for (const h of blockHits(blocks, e.block, query, opts, memo)) {
+        for (const [[a, b], i] of h.ms.map((m, i) => [m, i])) {
+          if (blockN >= BLOCK_HIT_CAP) { out.blockHitsCapped = true; break; }
+          blockN++;
+          push(h.text, { type: h.type, editable: false, inBlock: true, where: h.where })(a, b, i);
+        }
+      }
+    }
   }
   return out;
 }
 
 /**
- * Replace matches in TEXT/MTEXT entities as one undo step ('Replace text').
- * targets: null = every match in the drawing; otherwise [{ id, index }] from findInDocument.
- * Find-only matches (dimension overrides) are skipped. Returns the number of matches replaced.
+ * Replace matches in TEXT/MTEXT entities and INSERT attributes (every space) as one undo step ('Replace text').
+ * targets: null = every match in the drawing; otherwise [{ id, index, attrib? }] from findInDocument.
+ * Find-only matches (dimension overrides, text inside block definitions) are skipped: a block definition is shared
+ * by all its INSERTs, so it is never changed from here. Returns the number of matches replaced.
  */
 export function replaceInDocument(session, query, replacement, opts = {}, targets = null) {
-  const want = new Map(); // id -> Set of match indices, or null for all
-  if (targets) for (const t of targets) { if (!want.has(t.id)) want.set(t.id, new Set()); want.get(t.id).add(t.index); }
+  const want = new Map(); // id -> Map(part -> Set of match indices); part = attribute index, -1 the entity's own text
+  if (targets) {
+    for (const t of targets) {
+      if (t.inBlock) continue;
+      const parts = want.get(t.id) ?? want.set(t.id, new Map()).get(t.id), part = t.attrib ?? -1;
+      (parts.get(part) ?? parts.set(part, new Set()).get(part)).add(t.index);
+    }
+  }
   return session.transact('Replace text', (tx) => {
     let n = 0;
-    const ids = targets ? [...want.keys()] : session.doc.entities.map((e) => e.id);
-    for (const id of ids) {
-      const e = getEntity(session.doc, id);
-      if (!e || !EDITABLE.has(e.type)) continue;
-      const r = replaceInRaw(e.text, query, replacement, opts, { mtext: e.type === 'MTEXT', only: targets ? want.get(id) : null });
-      if (!r.count || r.text === e.text) continue;
-      tx.replace({ ...structuredClone(e), text: r.text });
-      n += r.count;
+    for (const { list } of spacesOf(session.doc)) {
+      list.forEach((e, i) => {
+        const w = targets ? want.get(e.id) : null;
+        if (targets && !w) return;
+        let c = null;
+        if (EDITABLE.has(e.type) && (!w || w.has(-1))) {
+          const r = replaceInRaw(e.text, query, replacement, opts, { mtext: e.type === 'MTEXT', only: w?.get(-1) ?? null });
+          if (r.count && r.text !== e.text) { c = { ...structuredClone(e), text: r.text }; n += r.count; }
+        }
+        if (e.type === 'INSERT') {
+          for (const [a, k] of shownAttribs(e)) {
+            if (w && !w.has(k)) continue;
+            const r = replaceInRaw(a.text, query, replacement, opts, { mtext: a.type === 'MTEXT', only: w?.get(k) ?? null });
+            if (!r.count || r.text === a.text) continue;
+            c ??= structuredClone(e);
+            c.attribs[k].text = r.text; n += r.count;
+          }
+        }
+        if (!c) return;
+        if (list === session.doc.entities) tx.replace(c); else tx.set(list, i, c); // another space's list
+      });
     }
     return n;
   });
