@@ -6,6 +6,7 @@ import { viewportAt, viewportScale, paperToModel, viewportPrintScale } from '../
 import { findHatchBoundary } from './tools.js';
 import { angleFromWorld } from '../src/core/coords.js';
 import { el, toast } from './ui.js';
+import { unitsOf, ensureUnits } from './units-ask.js';
 
 const f4 = (v) => (Math.abs(v) < 5e-5 ? 0 : v).toFixed(4).replace(/\.?0+$/, '');
 const FILL = 'rgba(42,140,200,0.2)';
@@ -144,7 +145,15 @@ const MEA_OPTIONS = { d: 'distance', distance: 'distance', r: 'radius', radius: 
 export class MeasureGeomTool {
   /** command = 'MEASUREGEOM' (MEA, DI, DIST: starts in Distance) or 'AREA' (area only) */
   constructor(host, command = 'MEASUREGEOM') { this.h = host; this.vp = host.vp; this.command = command; }
-  activate() { this.vp.preview = (c) => this.draw(c); this.setMode(this.command === 'AREA' ? 'area' : 'distance'); }
+  activate() { this.vp.preview = (c) => this.draw(c); this.setMode(this.command === 'AREA' ? 'area' : 'distance'); this.askUnits(); }
+  /** a unitless drawing: ask once (per tab, this session) what a unit is before the first readout; Cancel ends the command */
+  async askUnits() {
+    const tab = this.h.active;
+    if (!tab || unitsOf(tab)) return;
+    const u = await ensureUnits(tab);
+    if (this.h.tool !== this || this.h.active !== tab) return;
+    if (u == null) this.h.setTool('select'); else { this.h.refreshStatus?.(); this.h.refreshPrompt?.(); }
+  }
   deactivate() {
     // the markers outlive the command while the results panel is open: leave a marks-only painter behind
     this.vp.preview = marks && panel?.isConnected ? (c, v, vp) => drawMarks(c, vp ?? this.vp) : null;
@@ -168,15 +177,17 @@ export class MeasureGeomTool {
   }
   /** the model value through viewport v first, the sheet value second: '810.31 mm  (sheet 16.21 mm, viewport 1:50)' */
   dual(model, sheet, v, fmt) {
-    const n = +viewportPrintScale(v, this.vp.layout.plot, this.file.units).toPrecision(6);
+    const n = +viewportPrintScale(v, this.vp.layout.plot, this.fileUnits).toPrecision(6);
     return `${fmt(model)}  (sheet ${fmt(sheet)}, viewport 1:${n})`;
   }
 
   /** units and precision belong to the whole drawing (UNITS), also while a layout is shown */
   get file() { return this.h.fileDoc ?? this.vp.doc; }
-  get units() { return unitLabel(this.file.units); }
-  len(v) { return formatLength(v, this.file.header?.luprec, this.file.units); }
-  area(v) { return formatLength(v, this.file.header?.luprec, this.file.units, 2); }
+  /** $INSUNITS, or the unit chosen for a unitless drawing this session */
+  get fileUnits() { return this.h.active ? unitsOf(this.h.active) : this.file.units; }
+  get units() { return unitLabel(this.fileUnits); }
+  len(v) { return formatLength(v, this.file.header?.luprec, this.fileUnits); }
+  area(v) { return formatLength(v, this.file.header?.luprec, this.fileUnits, 2); }
   /** lines() is called again when the units change while the panel is open */
   result(title, lines, label = null) { showResults(title, () => ({ lines: lines(), units: this.units }), label); }
 
