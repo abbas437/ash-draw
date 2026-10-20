@@ -16,7 +16,7 @@ import { lockData, onSecondInstance } from './instance.js';
 import { saveDialogDefault, openDialogDir } from './savePath.js';
 import { createSymbolLibrary } from './symbols.js';
 import { cleanSession, isPathString, pushRecent, startupModeOf } from './sessionLists.js';
-import { xrefCandidates } from '../src/core/xref.js';
+import { createRefAccess } from './refAccess.js';
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCHEME = 'app';
@@ -157,6 +157,7 @@ function writeJsonSync(n, value) { // sync: also runs in will-quit
   } catch (err) { console.error('could not save', n, err.message); }
 }
 const isFile = (p) => fs.stat(p).then((s) => s.isFile(), () => false);
+const refs = createRefAccess({ pathLib: path, isFile, isGranted: (p) => granted.has(key(p)) }); // xref/image paths (reviewer #22)
 function loadSessionAndRecent() {
   savedSession = cleanSession(readJsonSync('session.json'), () => true, key) ?? { files: [], active: null };
   const r = readJsonSync('recent.json');
@@ -289,31 +290,37 @@ function registerIpc() {
   });
   handle('file:read', (p) => readGranted(grantedPath(p)));
   // An external reference of an open drawing: the host must be a granted file; only the .dxf/.dwg files that the xref
-  // search order yields (host folder + relative path, the path itself, the file name in the host folder) are read.
-  // The renderer never names an arbitrary file, and the xref is not granted. DWG comes back converted to DXF.
+  // search order yields (host folder + relative path, the path itself, the file name in the host folder) are read, and
+  // one outside the host's folder only after the user agreed (refAccess.js, refs:decide); until then it comes back in
+  // { refused, declined } without being touched. The renderer never names an arbitrary file, and the xref is not
+  // granted. DWG comes back converted to DXF.
   handle('xref:read', async (hostPath, refPath) => {
     const host = grantedPath(hostPath);
     if (typeof refPath !== 'string' || !refPath || refPath.length > 1024 || refPath.includes('\0')) throw new TypeError('invalid xref path');
-    for (const p of xrefCandidates(host, refPath, path)) {
-      const ext = path.extname(p).toLowerCase();
-      if ((ext !== '.dxf' && ext !== '.dwg') || !(await isFile(p))) continue;
-      const bytes = await readGranted(p);
-      return { path: p, name: path.basename(p), format: ext.slice(1), bytes: ext === '.dwg' ? (await dwg.toDxf(bytes)).dxfBytes : bytes };
-    }
-    return null;
+    const r = await refs.find(host, refPath, (ext) => ext === '.dxf' || ext === '.dwg');
+    if (!r?.path) return r;
+    const p = r.path, ext = path.extname(p).toLowerCase();
+    const bytes = await readGranted(p);
+    return { path: p, name: path.basename(p), format: ext.slice(1), bytes: ext === '.dwg' ? (await dwg.toDxf(bytes)).dxfBytes : bytes };
   });
-  // A raster image of an open drawing (IMAGE entity): same search order and host check as xref:read; only
-  // png/jpg/jpeg/bmp/gif files up to MAX_IMAGE_BYTES are read.
+  // A raster image of an open drawing (IMAGE entity): same search order, host check and outside-folder rule as
+  // xref:read; only png/jpg/jpeg/bmp/gif files up to MAX_IMAGE_BYTES are read.
   handle('image:read', async (hostPath, refPath) => {
     const host = grantedPath(hostPath);
     if (typeof refPath !== 'string' || !refPath || refPath.length > 1024 || refPath.includes('\0')) throw new TypeError('invalid image path');
-    for (const p of xrefCandidates(host, refPath, path)) {
-      const ext = path.extname(p).toLowerCase();
-      if (!IMAGE_MIME[ext] || !(await isFile(p))) continue;
-      if ((await fs.stat(p)).size > MAX_IMAGE_BYTES) throw new RangeError('image file too large');
-      return { path: p, name: path.basename(p), mime: IMAGE_MIME[ext], bytes: new Uint8Array(await fs.readFile(p)) };
-    }
-    return null;
+    const r = await refs.find(host, refPath, (ext) => !!IMAGE_MIME[ext]);
+    if (!r?.path) return r;
+    const p = r.path;
+    if ((await fs.stat(p)).size > MAX_IMAGE_BYTES) throw new RangeError('image file too large');
+    return { path: p, name: path.basename(p), mime: IMAGE_MIME[path.extname(p).toLowerCase()], bytes: new Uint8Array(await fs.readFile(p)) };
+  });
+  // The user's answer to "This drawing refers to files outside its folder": load (the listed paths; only those that
+  // xref:read / image:read refused for this host are approved) or don't load (this host, for the rest of the session).
+  handle('refs:decide', (hostPath, load, paths) => {
+    const host = grantedPath(hostPath);
+    if (typeof load !== 'boolean') throw new TypeError('load must be a boolean');
+    if (!Array.isArray(paths) || paths.length > 1000) throw new TypeError('paths must be an array');
+    return refs.decide(host, load, paths.filter((p) => isPathString(p)));
   });
   handle('dialog:save', async (opts) => {
     const o = plainObject(opts);

@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('api', {
   readFile: (p) => invoke('file:read', p),
   xrefRead: (hostPath, refPath) => invoke('xref:read', hostPath, refPath),
   imageRead: (hostPath, refPath) => invoke('image:read', hostPath, refPath),
+  refsDecide: (hostPath, load, paths) => invoke('refs:decide', hostPath, load, paths),
   saveFile: (opts) => invoke('dialog:save', opts),
   writeFile: (p, bytes) => invoke('file:write', { path: p, bytes }),
   getLaunchFiles: () => invoke('app:launchFiles'),

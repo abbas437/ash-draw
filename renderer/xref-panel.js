@@ -1,7 +1,8 @@
 // ASH Draw Studio - external references: loading on open and the External References panel (XREF / XR).
 import { listXrefs, loadXref, unloadXref } from '../src/core/xref.js';
 import { loadDrawing, OPEN_FILTERS } from './files.js';
-import { loadOneXref, loadXrefs, relativePath, xrefStatusLabel } from './xrefs.js';
+import { loadOneXref, loadXrefs, refusalTracker, relativePath, xrefStatusLabel } from './xrefs.js';
+import { loadDrawingImages } from './images.js';
 import { el, modal, toast } from './ui.js';
 
 const BAD = ['Not found', 'Unreadable', 'Circular reference'];
@@ -9,10 +10,40 @@ const parser = (api) => async (bytes, r) => (await loadDrawing(api, 'xref.dxf', 
 const reader = (api, hostPath) => (ref) => (hostPath ? api.xrefRead(hostPath, ref) : Promise.resolve(null));
 const opts = (hostPath) => ({ chain: hostPath ? [hostPath] : [], depth: 3, host: hostPath });
 
-/** resolve and load every xref of a drawing being opened (before its scene is built) */
-export async function loadDrawingXrefs(api, doc, hostPath) {
-  if (![...doc.blocks.values()].some((b) => b.xref)) return {};
-  return loadXrefs(doc, reader(api, hostPath), parser(api), opts(hostPath));
+/** "This drawing refers to files outside its folder" (reviewer #22): true = Load. Main is told the answer with the
+ *  listed paths (refs:decide) and only then reads them. */
+async function allowOutside(api, hostPath, paths) {
+  const r = await modal('Files outside the drawing folder', el('div', {},
+    el('p', { text: 'This drawing refers to files outside its folder:' }),
+    el('ul', { class: 'refs-outside' }, paths.map((p) => el('li', { text: p }))),
+    el('p', { text: 'Load them?' })),
+  [{ label: 'Load', value: 'load', primary: true }, { label: "Don't load", value: 'skip' }]);
+  const load = r === 'load';
+  await api.refsDecide?.(hostPath, load, paths);
+  return load;
+}
+
+/** Resolve and load every xref and raster image of a drawing being opened (before its scene is built). Files outside
+ *  the drawing's folder are asked about once (a nested xref found only after loading may add one more question);
+ *  resolves { missingImages, notLoaded } (notLoaded: outside files the user did not allow). */
+export async function loadDrawingRefs(api, doc, hostPath) {
+  const t = refusalTracker();
+  const xread = t.wrap(reader(api, hostPath));
+  const iapi = { imageRead: t.wrap((h, p) => api.imageRead(h, p)) };
+  const hasXrefs = () => [...doc.blocks.values()].some((b) => b.xref && !b.xrefDep);
+  if (hasXrefs()) await loadXrefs(doc, xread, parser(api), opts(hostPath));
+  let missingImages = await loadDrawingImages(iapi, doc, hostPath);
+  const asked = new Set(), allowed = new Set();
+  for (let round = 0; round < 3 && hostPath && !t.declined; round++) {
+    const fresh = t.refused.filter((p) => !asked.has(p));
+    if (!fresh.length) break;
+    for (const p of fresh) asked.add(p);
+    if (!(await allowOutside(api, hostPath, fresh))) break;
+    for (const p of fresh) allowed.add(p);
+    for (const b of [...doc.blocks.values()]) if (b.xref && !b.xrefDep && b.xref.status === 'notfound') await loadOneXref(doc, b.name, xread, parser(api), opts(hostPath));
+    missingImages = await loadDrawingImages(iapi, doc, hostPath, { retry: true });
+  }
+  return { missingImages, notLoaded: t.refused.filter((p) => !allowed.has(p)) };
 }
 
 /** XATTACH step 1: choose a DXF/DWG and parse it. Resolves { file, path, xdoc } (path relative to the host when
@@ -29,7 +60,12 @@ export async function xrefPanel(app) {
   const api = window.api, body = el('div', { class: 'xref-panel' });
   const host = () => app.file.path;
   const done = (msg) => { app.vp.refreshStructure(); app.refreshPanels(); draw(); if (msg) toast(msg, 2000); };
-  const reload = async (x) => { const s = await loadOneXref(app.fileDoc, x.name, reader(api, host()), parser(api), opts(host())); done(`${x.name}: ${s === 'loaded' ? 'loaded' : xrefStatusLabel(x)}`); };
+  const reload = async (x) => {
+    const t = refusalTracker(), read = t.wrap(reader(api, host()));
+    let s = await loadOneXref(app.fileDoc, x.name, read, parser(api), opts(host()));
+    if (s !== 'loaded' && t.refused.length && !t.declined && await allowOutside(api, host(), t.refused)) s = await loadOneXref(app.fileDoc, x.name, read, parser(api), opts(host()));
+    done(`${x.name}: ${s === 'loaded' ? 'loaded' : t.refused.length ? 'not loaded (outside the drawing folder)' : xrefStatusLabel(x)}`);
+  };
   const browse = async (x) => {
     let f;
     try { [f] = await api.openFiles({ filters: OPEN_FILTERS, multiple: false }); } catch (err) { toast(`Could not open: ${err.message}`); return; }
