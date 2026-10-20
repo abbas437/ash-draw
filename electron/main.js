@@ -167,7 +167,10 @@ function saveSession() {
   const s = !current.files.length && sessionOffer ? savedSession : current;
   writeJsonSync('session.json', { version: 1, ...s });
 }
-app.on('will-quit', saveSession);
+// Also written shortly after every tab change, so an abnormal end (crash, power loss, Windows update) still restores the tabs.
+let sessionTimer = null;
+function saveSessionSoon() { clearTimeout(sessionTimer); sessionTimer = setTimeout(() => { sessionTimer = null; saveSession(); }, 1000); }
+app.on('will-quit', () => { clearTimeout(sessionTimer); sessionTimer = null; saveSession(); });
 // A conversion still running at quit: kill the converters (with ODA's own processes) and remove their temp folders, which
 // can hold a DWG and a 500 MB DXF. Not on before-quit: closing the window may still be cancelled at the unsaved-changes prompt.
 app.on('will-quit', () => converterProcs.killAll());
@@ -394,6 +397,7 @@ function registerIpc() {
     current = next;
     const added = next.files.filter((p) => !before.has(key(p)));
     if (added.length) { recent = pushRecent(recent, added, key); writeJsonSync('recent.json', recent); }
+    saveSessionSoon();
     return true;
   });
   // { mode, offer: { count, auto } | null }

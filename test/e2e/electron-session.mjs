@@ -173,6 +173,16 @@ try {
   await win.evaluate(() => window.api.settingsSet('startup.mode', 'new'));
   await quit();
 
+  step = 'run 9: tabs are recorded while the app runs, so a crash still leaves the session';
+  await fixture('text_r2000.dxf', 'b.dxf'); // removed in run 3
+  win = await launch(a, b);
+  await waitTabs(win, ['a.dxf', 'b.dxf']);
+  await win.evaluate(() => window.app.switchTo(window.app.tabs[1]));
+  await win.waitForTimeout(2000); // the session is written about 1 s after a tab change
+  await crash();
+  s = readJson('session.json');
+  expect('session written before the crash', JSON.stringify(s), JSON.stringify(s.files) === JSON.stringify([a, b]) && s.active === b);
+
   step = 'no renderer errors';
   if (problems.length) throw new Error(problems.join('\n'));
   console.log('draw electron session e2e: OK');
