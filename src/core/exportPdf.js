@@ -107,7 +107,14 @@ export const plotScale = (n, mmPerUnit = 1) => mmPerUnit / n;
 export async function exportPdf(doc, opts = {}) {
   const pdf = await newPdf();
   const warnings = await addPdfPage(pdf, doc, opts);
-  return { bytes: await pdf.save(), warnings };
+  const bytes = await pdf.save();
+  opts.onProgress?.(1);
+  return { bytes, warnings };
+}
+
+/** opts.signal aborted -> throws Error code 'CANCELLED' (the export then returns nothing) */
+function checkAbort(opts) {
+  if (opts.signal?.aborted) { const e = new Error('PDF export cancelled'); e.code = 'CANCELLED'; throw e; }
 }
 
 /**
@@ -121,10 +128,13 @@ export async function exportPdfPages(sheets, opts = {}) {
   for (const sheet of sheets) {
     const { doc, layout = null, label = '' } = sheet;
     if (doc !== cur) { cur = doc; modelScene = memoModelScene(doc); }
-    const w = await addPdfPage(pdf, doc, { ...opts, layout, modelScene: opts.modelScene ?? modelScene, scene: layout ? opts.scene : opts.scene ?? modelScene([]), region: layout ? null : sheet.region ?? opts.region });
+    const i = sheets.indexOf(sheet), onProgress = opts.onProgress && ((f) => opts.onProgress((i + f) / sheets.length));
+    const w = await addPdfPage(pdf, doc, { ...opts, onProgress, layout, modelScene: opts.modelScene ?? modelScene, scene: layout ? opts.scene : opts.scene ?? modelScene([]), region: layout ? null : sheet.region ?? opts.region });
     warnings.push(...w.map((m) => (label ? `${label}: ${m}` : m)));
   }
-  return { bytes: await pdf.save(), warnings };
+  const bytes = await pdf.save();
+  opts.onProgress?.(1);
+  return { bytes, warnings };
 }
 
 async function newPdf() {
@@ -199,6 +209,7 @@ export function deriveScene(doc, base, baseSet, s) {
 /** a number as pdf-lib writes an operand (PDFNumber: no exponent notation) */
 const num = (v) => { const t = String(v); return t.includes('e') ? numberToString(v) : t; };
 const CHUNK = 1 << 16;
+const PROGRESS_STEP = 2048;
 /**
  * contentWriter() -> the page's content stream, written as text and deflated as it is produced (a large drawing's
  * millions of path operators are never held as pdf-lib PDFOperator objects): push(...operators) serialises pdf-lib
@@ -393,9 +404,20 @@ async function addPdfPage(pdf, doc, opts) {
   const loadedShape = (t, level, p) => fonts.shape(t, level, HELV[variant(p)]);
 
   // box: the world window plotted, to which XLINE / RAY items are clipped (AutoCAD plots their visible part)
-  const drawItems = async (scn, box, cull = null) => {
+  // progress: part `part` of `parts` (each viewport, then the sheet's own items) by items drawn; every PROGRESS_STEP
+  // items the abort signal is checked and, at most every 50 ms, the event loop gets a turn (a Cancel click)
+  let parts = 1, lastYield = performance.now();
+  const step = async (part, f) => {
+    checkAbort(opts);
+    opts.onProgress?.((part + f) / parts);
+    if ((opts.signal || opts.onProgress) && performance.now() - lastYield > 50) { await new Promise((r) => setTimeout(r, 0)); lastYield = performance.now(); }
+  };
+  const drawItems = async (scn, box, cull = null, part = 0) => {
   msize = markerSize(scn.bbox);
-  for (let it of scn.items) {
+  const all = scn.items, n = all.length;
+  for (let i = 0; i < n; i++) {
+    if (i % PROGRESS_STEP === 0) await step(part, i / n);
+    let it = all[i];
     if (itemBad) { bad++; itemBad = false; }
     // an item wholly outside the plot area is not written at all (the clip would hide it, but its points would stay in the file)
     if (cull && it.bbox && (it.bbox.maxx < cull.minx || it.bbox.minx > cull.maxx || it.bbox.maxy < cull.miny || it.bbox.miny > cull.maxy)) continue;
@@ -516,8 +538,10 @@ async function addPdfPage(pdf, doc, opts) {
     const modelScene = opts.modelScene ?? memoModelScene(doc);
     const paper = { ox, oy, k }, psl = doc.header?.psltscale !== 0; // PSLTSCALE 1: viewport linetypes at paper scale
     const vps = layout.entities.filter((v) => v.type === 'VIEWPORT' && !isPaperViewport(v) && v.on !== false && v.width > 0 && v.height > 0);
+    parts = vps.length + 1;
+    await step(0, 0);
     if (vps.length) modelScene.prepare?.(vps.map((v) => v.frozen ?? []));
-    for (const v of vps) {
+    for (const [part, v] of vps.entries()) {
       const s = viewportScale(v), cx = X(v.c.x), cy = Y(v.c.y), hw = (v.width / 2) * k, hh = (v.height / 2) * k;
       ops.push(pushGraphicsState(), moveTo(cx - hw, cy - hh), lineTo(cx + hw, cy - hh), lineTo(cx + hw, cy + hh), lineTo(cx - hw, cy + hh), closePath(), clip(), endPath());
       const ring = viewportClipRing(v, layout.entities); // a polygon-clipped viewport: and to its boundary
@@ -528,12 +552,13 @@ async function addPdfPage(pdf, doc, opts) {
       k = paper.k / s; ox = cx - v.viewCenter.x * k; oy = cy - v.viewCenter.y * k;
       const R = Math.hypot(v.width, v.height) / 2 * s; // the viewport's model window (any twist), clipped above
       const win = { minx: v.viewCenter.x - R, miny: v.viewCenter.y - R, maxx: v.viewCenter.x + R, maxy: v.viewCenter.y + R };
-      await drawItems(modelScene(v.frozen ?? []), win, win); // what lies outside the viewport's window is not written
+      await drawItems(modelScene(v.frozen ?? []), win, win, part); // what lies outside the viewport's window is not written
       ({ ox, oy, k } = paper); ltk = null;
       ops.push(popGraphicsState());
     }
   }
-  await drawItems(scene, bb, layout ? null : region);
+  await drawItems(scene, bb, layout ? null : region, parts - 1);
+  await step(parts - 1, 1);
   if (cb) page.pushOperators(popGraphicsState());
   page.contentStream = undefined;
   page.node.addContentStream(pdf.context.register(pdf.context.stream(await ops.finish(), { Filter: PDFName.of('FlateDecode') })));

@@ -307,6 +307,33 @@ test('viewport scene derived from the base scene = the scene built with those la
   }
 });
 
+test('PDF export: progress rises to 1; an abort after the first report rejects CANCELLED with no bytes', async () => {
+  const doc = newDocument();
+  for (let i = 0; i < 5000; i++) addEntity(doc, makeLine({ x: i, y: 0 }, { x: i, y: 10 }));
+  const seen = [];
+  const out = await exportPdf(doc, { pageSize: 'A3', onProgress: (f) => seen.push(f) });
+  assert.ok(out.bytes.length > 0);
+  assert.ok(seen.length >= 3, JSON.stringify(seen));
+  for (let i = 1; i < seen.length; i++) assert.ok(seen[i] >= seen[i - 1], JSON.stringify(seen));
+  assert.equal(seen.at(-1), 1);
+  const ac = new AbortController();
+  let calls = 0, res = null;
+  await assert.rejects(async () => { res = await exportPdf(doc, { pageSize: 'A3', signal: ac.signal, onProgress: () => { calls++; ac.abort(); } }); }, (e) => e.code === 'CANCELLED');
+  assert.equal(res, null);
+  assert.equal(calls, 1);
+  // a sheet: one part per viewport, the abort checked between them
+  const lay = newLayout('L', 1);
+  lay.entities.push({ type: 'VIEWPORT', id: 98, layer: '0', color: 256, vpId: 2, on: true, c: { x: 100, y: 150 }, width: 100, height: 100, viewCenter: { x: 0, y: 0 }, viewHeight: 100, twist: 0 },
+    { type: 'VIEWPORT', id: 99, layer: '0', color: 256, vpId: 3, on: true, c: { x: 300, y: 150 }, width: 100, height: 100, viewCenter: { x: 0, y: 0 }, viewHeight: 100, twist: 0 });
+  doc.layouts = [lay];
+  const sheet = [];
+  await exportPdf(doc, { layout: lay, onProgress: (f) => sheet.push(f) });
+  for (let i = 1; i < sheet.length; i++) assert.ok(sheet[i] >= sheet[i - 1], JSON.stringify(sheet));
+  assert.ok(sheet.some((f) => f > 0 && f < 1) && sheet.at(-1) === 1, JSON.stringify(sheet));
+  const ac2 = new AbortController();
+  await assert.rejects(exportPdf(doc, { layout: lay, signal: ac2.signal, onProgress: (f) => { if (f > 0) ac2.abort(); } }), (e) => e.code === 'CANCELLED');
+});
+
 test('PUBLISH monochrome: no stroking colour but black in any page of a coloured drawing', async () => {
   const doc = readDxf(fixture('colors_r2000.dxf'));
   const out = await exportPdfPages([{ doc, layout: null, label: 'Model' }], { paper: 'A3', pageSize: 'A3', orientation: 'auto', margin: 10, scale: null, centre: true, monochrome: true });
