@@ -14,7 +14,21 @@ export function isForeignCopy(data, { exe, win = process.platform === 'win32' })
 }
 
 /** The message the running copy shows about the copy that was refused. */
-export function foreignCopyMessage(data, { exe, version }) {
+export function foreignCopyMessage(data, { exe, version }, opened = 0) {
   return `ASH Draw Studio ${version} is already running from ${exe}. The copy you started (${data.version ?? 'unknown version'}, ${data.exe}) `
-    + 'shares the same settings, so it was not opened. Close this window first to use the other copy.';
+    + 'shares the same settings, so it was not opened. Close this window first to use the other copy.'
+    + (opened ? ` The ${opened === 1 ? 'drawing' : `${opened} drawings`} you opened ${opened === 1 ? 'is' : 'are'} shown in this window.` : '');
+}
+
+/**
+ * The running copy's 'second-instance' handler (reviewer #21). The started copy quit at the lock; the drawings it was
+ * given (double-clicked files) open here in every case, and this window comes to the front. When the started copy is a
+ * different build sharing our settings, a notice says so. Electron-free: main passes
+ * `{ me, drawingArgs(argv, cwd), openFile(path), notify(message), focus() }`.
+ */
+export function onSecondInstance({ argv, cwd, additionalData }, { me, drawingArgs, openFile, notify, focus }) {
+  const files = drawingArgs(argv, cwd);
+  for (const p of files) openFile(p);
+  focus();
+  if (isForeignCopy(additionalData, me)) notify(foreignCopyMessage(additionalData, me, files.length));
 }

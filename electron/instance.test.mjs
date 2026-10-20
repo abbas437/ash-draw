@@ -1,7 +1,8 @@
 // Unit tests for the second-copy helpers. Run: node --test "electron/**/*.test.mjs"
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { foreignCopyMessage, isForeignCopy, lockData } from './instance.js';
+import { readFileSync } from 'node:fs';
+import { foreignCopyMessage, isForeignCopy, lockData, onSecondInstance } from './instance.js';
 
 const mine = { exe: '/apps/zip/ASH.exe', version: '1.2.0' };
 
@@ -25,4 +26,39 @@ test('missing or malformed lock data is not foreign (an older copy sends none)',
 
 test('lockData carries the exe and version only', () => {
   assert.deepEqual(lockData({ ...mine, extra: 1 }), mine);
+});
+
+// reviewer #21: a double-clicked drawing opens in the running window, whichever copy was started
+function secondInstance(additionalData) {
+  const log = [];
+  onSecondInstance({ argv: ['ASH.exe', '--flag', 'Plan A.dwg', 'b.dxf'], cwd: '/work', additionalData }, {
+    me: { ...mine, win: false },
+    drawingArgs: (argv, cwd) => argv.slice(1).filter((a) => !a.startsWith('-')).map((a) => `${cwd}/${a}`),
+    openFile: (p) => log.push(['open', p]),
+    notify: (m) => log.push(['notice', m]),
+    focus: () => log.push(['focus']),
+  });
+  return log;
+}
+
+test('second instance, the same copy: its files are opened here and the window is focused; no notice', () => {
+  assert.deepEqual(secondInstance(lockData(mine)), [['open', '/work/Plan A.dwg'], ['open', '/work/b.dxf'], ['focus']]);
+  assert.deepEqual(secondInstance(undefined), [['open', '/work/Plan A.dwg'], ['open', '/work/b.dxf'], ['focus']], 'an older copy sends no data');
+});
+
+test('second instance, a different copy: its files are opened here too, the window is focused, and the notice is shown', () => {
+  const other = { exe: '/Program Files/ASH/ASH.exe', version: '1.1.0' };
+  assert.deepEqual(secondInstance(other), [['open', '/work/Plan A.dwg'], ['open', '/work/b.dxf'], ['focus'],
+    ['notice', `${foreignCopyMessage(other, mine)} The 2 drawings you opened are shown in this window.`]]);
+  assert.match(foreignCopyMessage(other, mine, 1), / The drawing you opened is shown in this window\.$/);
+});
+
+test('main.js hands its second-instance event to onSecondInstance with forwardFile', () => {
+  const src = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
+  const at = src.indexOf("app.on('second-instance'");
+  assert.ok(at >= 0);
+  const body = src.slice(at, src.indexOf('\n}));', at));
+  assert.match(body, /onSecondInstance\(/);
+  assert.match(body, /openFile: forwardFile/);
+  assert.match(body, /drawingArgs,/);
 });
