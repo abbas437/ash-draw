@@ -48,7 +48,7 @@ import { initLayerCombo } from './layer-combo.js';
 import { initSymbolPalette } from './symbol-palette.js';
 import { el, message, modal, confirmDialog, textDialog, listDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
 import {
-  OPEN_FILTERS, loadDrawing, incompleteText, conversionSummary, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, savePathIn, extOf, UNIT_NAMES,
+  OPEN_FILTERS, loadDrawing, incompleteText, conversionSummary, saveDxf, saveDwg, savedToast, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, savePathIn, extOf, UNIT_NAMES,
 } from './files.js';
 
 const api = window.api;
@@ -535,14 +535,12 @@ class App {
       const r = await saveDxf(api, tab.doc, { path, name: tab.file.name, fromPath: tab.file.path });
       if (!r) return false;
       this.afterSave(tab, r.path ?? path, 'dxf');
-      this.writeReport(r.report);
+      this.writeReport(r);
       return true;
     } catch (err) { await message('Save failed', err.message || String(err)); return false; }
   }
-  writeReport(rep) {
-    if (rep?.skipped && Object.keys(rep.skipped).length) toast(`Saved. Not written: ${Object.entries(rep.skipped).map(([k, v]) => `${v} ${k}`).join(', ')}`, 6000);
-    else toast('Saved', 1500);
-  }
+  /** the "Saved" toast after a DXF save `r` (saveDxf): what was not written, and a .bak that could not be replaced */
+  writeReport(r) { toast(...savedToast('Saved', r)); }
   /** a finished save of `tab` (captured when the save started): its new file, and the save point recorded at the start */
   afterSave(tab, path, format, { clean = true } = {}) {
     if (!this.tabs.includes(tab)) return; // closed while it was being saved
@@ -572,7 +570,7 @@ class App {
       tab.dwgVersion = version;
       this.afterSave(tab, r.path, 'dwg', { clean: !!r.verification.ok });
       const label = DWG_SAVE_VERSIONS.find((v) => v.id === version)?.label ?? 'DWG';
-      if (r.verification.ok) toast(`Saved as ${label}${r.backup ? ` (previous file kept as ${r.backup.replace(/^.*[\\/]/, '')})` : ''}`, 3000);
+      if (r.verification.ok) toast(...savedToast(`Saved as ${label}`, { backup: r.backup, warning: r.warning }, { backupNote: true }));
       else await message('DWG saved — please check', verificationMessage(r.verification, { oda: true }));
       return true;
     } catch (err) { await message('Save failed', err.message || String(err)); return false; }
@@ -602,7 +600,7 @@ class App {
       }
       const r = await saveDxf(api, tab.doc, { path: null, name: tab.recoveredFrom?.name ?? tab.file.name, fromPath: tab.file.path ?? tab.recoveredFrom?.path ?? null });
       if (!r) return false;
-      this.afterSave(tab, r.path, 'dxf'); this.writeReport(r.report);
+      this.afterSave(tab, r.path, 'dxf'); this.writeReport(r);
       return true;
     } catch (err) { await message('Save failed', err.message || String(err)); return false; }
   }

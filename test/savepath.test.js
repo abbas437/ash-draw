@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { savePathIn } from '../renderer/files.js';
-import { saveDxf, saveDwg } from '../renderer/files.js';
+import { saveDxf, saveDwg, savedToast } from '../renderer/files.js';
+import { readFileSync } from 'node:fs';
 import { saveDialogDefault } from '../electron/savePath.js';
 
 test('savePathIn: the open file folder + the suggested name; no path = just the name', () => {
@@ -22,6 +23,32 @@ test('saveDxf / saveDwg pass the drawing folder to the save dialog', async () =>
   await saveDwg(api, newDocument(), { name: 'a.dxf', fromPath: '/srv/jobs/a.dxf' });
   await saveDxf(api, newDocument(), { path: null, name: 'Untitled-1' });
   assert.deepEqual(seen, ['D:\\Jobs\\a.dxf', '/srv/jobs/a.dwg', 'Untitled-1.dxf']);
+});
+
+test('a .bak that could not be replaced: main\'s warning reaches the "Saved" toast (DXF and DWG saves)', async () => {
+  const warning = 'The previous version could not be kept as Plan A.bak (it may be open in another program or held by a sync client); it is kept as Plan A (previous 2026-10-20 14-03-05).bak.';
+  const kept = 'C:\\Jobs\\Plan A (previous 2026-10-20 14-03-05).bak';
+  const api = { isElectron: true, writeFile: async (p) => ({ path: p, backup: kept, warning }),
+    dwgAvailable: async () => ({ available: true }), dxfToDwg: async () => ({ dwgBytes: new Uint8Array([1]) }),
+    dwgToDxf: async () => { throw new Error('skip verify'); } };
+  const { newDocument } = await import('../src/core/model.js');
+  const dxf = await saveDxf(api, newDocument(), { path: 'C:\\Jobs\\Plan A.dxf', name: 'Plan A.dxf' });
+  const dwg = await saveDwg(api, newDocument(), { name: 'Plan A.dwg', path: 'C:\\Jobs\\Plan A.dwg' });
+  assert.equal(dxf.warning, warning);
+  assert.equal(dwg.warning, warning);
+  assert.deepEqual(savedToast('Saved', dxf), [`Saved. ${warning}`, 10000]);
+  assert.deepEqual(savedToast('Saved as AutoCAD 2018', { backup: dwg.backup, warning: dwg.warning }, { backupNote: true }), [`Saved as AutoCAD 2018. ${warning}`, 10000]);
+  assert.deepEqual(savedToast('Saved', { report: { skipped: { IMAGE: 2 } }, warning }), [`Saved. Not written: 2 IMAGE. ${warning}`, 10000]);
+  // without a warning: as before
+  assert.deepEqual(savedToast('Saved', { report: null, backup: null, warning: null }), ['Saved', 1500]);
+  assert.deepEqual(savedToast('Saved', { report: { skipped: { IMAGE: 2, OLE2FRAME: 1 } } }), ['Saved. Not written: 2 IMAGE, 1 OLE2FRAME', 6000]);
+  assert.deepEqual(savedToast('Saved as AutoCAD 2018', { backup: 'C:\\Jobs\\Plan A.bak' }, { backupNote: true }), ['Saved as AutoCAD 2018 (previous file kept as Plan A.bak)', 3000]);
+  assert.deepEqual(savedToast('Saved as AutoCAD 2018', { backup: null }, { backupNote: true }), ['Saved as AutoCAD 2018', 3000]);
+  // app.js shows the toast from savedToast after a DXF save and after an ODA DWG save, with the save's warning
+  const app = readFileSync(new URL('../renderer/app.js', import.meta.url), 'utf8');
+  assert.match(app, /writeReport\(r\) \{ toast\(\.\.\.savedToast\('Saved', r\)\); \}/);
+  assert.equal(app.match(/this\.writeReport\(r\)/g)?.length, 2, 'both DXF saves pass the whole result');
+  assert.match(app, /toast\(\.\.\.savedToast\(`Saved as \$\{label\}`, \{ backup: r\.backup, warning: r\.warning \}, \{ backupNote: true \}\)\)/);
 });
 
 const dirs = (...d) => (p) => d.includes(p);

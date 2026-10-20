@@ -323,8 +323,8 @@ function registerIpc() {
     const isDir = (d) => { try { return statSync(d).isDirectory(); } catch { return false; } };
     const r = await dialog.showSaveDialog(win, { defaultPath: saveDialogDefault(o.defaultPath, { documents: app.getPath('documents'), isDir }), filters: asFilters(o.filters) });
     if (r.canceled || !r.filePath) return null;
-    const { backup } = await saveDrawingFile(r.filePath, bytes); // an existing .dxf/.dwg is copied to .bak first
-    return { path: grant(r.filePath), backup };
+    const { backup, warning } = await saveDrawingFile(r.filePath, bytes); // an existing .dxf/.dwg is copied to .bak first
+    return { path: grant(r.filePath), backup, ...(warning ? { warning } : {}) };
   });
   handle('file:write', async (opts) => {
     const o = plainObject(opts);

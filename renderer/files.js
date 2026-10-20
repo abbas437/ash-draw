@@ -227,7 +227,20 @@ export async function saveDxf(api, doc, { path, name, fromPath = null }) {
   const bytes = dxfBytesOf(doc);
   const res = path ? await api.writeFile(path, bytes) : await api.saveFile({ defaultPath: savePathIn(fromPath, `${baseName(name)}.dxf`), filters: [{ name: 'AutoCAD DXF', extensions: ['dxf'] }], bytes });
   if (!res) return null;
-  return { path: res.path ?? null, report: doc.lastWriteReport, backup: res.backup ?? null };
+  return { path: res.path ?? null, report: doc.lastWriteReport, backup: res.backup ?? null, warning: res.warning ?? null };
+}
+
+/** The "Saved" toast after a save, as [text, ms]. `base`: 'Saved' or 'Saved as AutoCAD 2018'. `report.skipped`: what was
+ *  not written; `backup`: where the previous file was kept (named only with `backupNote`); `warning`: the previous
+ *  version could not be kept as its .bak (main's saveDrawingFile), shown in full and for longer. */
+export function savedToast(base, { report = null, backup = null, warning = null } = {}, { backupNote = false } = {}) {
+  const skipped = report?.skipped && Object.keys(report.skipped).length
+    ? `Not written: ${Object.entries(report.skipped).map(([k, v]) => `${v} ${k}`).join(', ')}` : '';
+  const text = skipped ? `${base}. ${skipped}` : base;
+  if (warning) return [`${text}. ${warning}`, 10000];
+  if (skipped) return [text, 6000];
+  if (backupNote) return [`${text}${backup ? ` (previous file kept as ${backup.replace(/^.*[\\/]/, '')})` : ''}`, 3000];
+  return [text, 1500];
 }
 
 /** DWG versions written by the ODA File Converter ('acad2018', ...); 'r2000'/'r14' are LibreDWG's */
@@ -253,7 +266,7 @@ export async function saveDwg(api, doc, { name, fromPath = null, version = 'r200
   if (!verification.ok && confirmDifferences && !(await confirmDifferences(verification))) return null;
   const res = path ? await api.writeFile(path, dwgBytes) : await api.saveFile({ defaultPath: savePathIn(fromPath, `${baseName(name)}.dwg`), filters: [{ name: 'AutoCAD DWG', extensions: ['dwg'] }], bytes: dwgBytes });
   if (!res) return null;
-  return { path: res.path ?? path ?? null, verification, readBack: verification.converter, report: doc.lastWriteReport, version, backup: res.backup ?? null };
+  return { path: res.path ?? path ?? null, verification, readBack: verification.converter, report: doc.lastWriteReport, version, backup: res.backup ?? null, warning: res.warning ?? null };
 }
 
 /** `oda`: the DWG was written by the ODA File Converter; the read-back converter is `v.converter` (from saveDwg) */
