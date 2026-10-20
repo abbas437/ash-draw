@@ -90,6 +90,8 @@ paths the user chose in a dialog or passed on the command line during this sessi
 | `version()` | Application version. |
 | `openFiles(opts)` | Show the Open dialog (optional filters); returns the chosen files. |
 | `readFile(path)` | Read a granted file's bytes. |
+| `xrefRead(hostPath, refPath)` / `imageRead(hostPath, refPath)` | Find and read an external reference / raster image of an open drawing. Files in the drawing's folder (or below it) are read; any other path, including UNC and mapped-drive paths, comes back as `{refused, declined}` without being touched until the user agrees. |
+| `refsDecide(hostPath, load, paths)` | The answer to "This drawing refers to files outside its folder": Load (only the refused paths listed) or Don't load (for that drawing, for the session). |
 | `saveFile(opts)` | Show the Save dialog (default path, filters); returns the chosen path. |
 | `writeFile(path, bytes)` | Write bytes to a granted path. |
 | `getLaunchFiles()` | Files passed on the command line / "Open with" at start-up. |

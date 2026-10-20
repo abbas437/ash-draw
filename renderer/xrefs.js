@@ -61,5 +61,24 @@ export async function loadXrefs(doc, read, parse, opts = {}) {
   return out;
 }
 
+/** Main answers a reference outside the host drawing's folder with { refused: [paths], declined } until the user has
+ *  agreed (reviewer #22). `wrap(read)` turns such an answer into "not found" (null) and collects the paths:
+ *  `refused` (in order, once each), `declined` (the user already said "Don't load" for this host this session). */
+export function refusalTracker() {
+  const refused = new Set();
+  let declined = false;
+  return {
+    wrap: (read) => async (...args) => {
+      const r = await read(...args);
+      if (!r?.refused) return r;
+      if (r.declined) declined = true;
+      for (const p of r.refused) refused.add(p);
+      return null;
+    },
+    get refused() { return [...refused]; },
+    get declined() { return declined; },
+  };
+}
+
 /** status shown in the External References panel */
 export const xrefStatusLabel = (x) => ({ unreadable: 'Unreadable', circular: 'Circular reference' })[x.block.xref.status] ?? x.status;

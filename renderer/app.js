@@ -25,7 +25,7 @@ import { initLayouts, restoreSpace, openSavedSpace, noteSavedSpace, renderSpaceB
 import { ComparePanel, runCompare, compareUses } from './compare.js';
 import { viewCommands, viewMenuItems } from './views-ui.js';
 import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
-import { loadDrawingXrefs, xrefPanel } from './xref-panel.js';
+import { loadDrawingRefs, xrefPanel } from './xref-panel.js';
 import { TOOL_BUTTONS, buildToolPanel, iconButton, quickCommand, canvasDarkFrom, labelsFrom, placementFrom, PLACEMENTS, collapsedFrom, applyCollapsed, toolTitle, moreButton, fitToolBand, initToolBand } from './tool-panel.js';
 import { iconSvg } from './icons.js';
 import { initToolModes, LAYOUTS, LAYOUT_LABELS, modeAllows } from './tool-rail.js';
@@ -38,7 +38,6 @@ import { defaultLayout, cleanLayout, panelGroups, samePanel, quickRow, setQuickR
 import { openCustomize, initToolContextMenu } from './tool-custom.js';
 import { openTabMenu } from './tab-menu.js';
 import { renderMenu, menuKey, closeSubmenus } from './menu-items.js';
-import { loadDrawingImages } from './images.js';
 import { CommandHistory } from '../src/core/cmdhist.js';
 import { CmdHistView } from './cmdhist-view.js';
 import { qselectDialog, selectSimilarCommand, purgeDialog } from './selclean.js';
@@ -408,9 +407,10 @@ class App {
         notes.unshift(`${incompleteText(incomplete)} Objects after the cut are missing; the original file is kept as it is (Save writes a new file).`);
       }
       toast(`Opening ${f.name} …`, 60000); // read: now the view is built
-      await loadDrawingXrefs(api, doc, f.path ?? null); // before the scene is built: it is built once, with the xrefs
-      const missing = await loadDrawingImages(api, doc, f.path ?? null);
+      // before the scene is built: it is built once, with the xrefs and images (files outside the folder: asked once)
+      const { missingImages: missing, notLoaded } = await loadDrawingRefs(api, doc, f.path ?? null);
       if (missing.length) notes.push(`Raster images not found (shown as a red frame with the file name): ${missing.join(', ')}.`);
+      if (notLoaded.length) notes.push(`Not loaded because they are outside the drawing's folder and loading them was not allowed (shown as not found): ${notLoaded.join(', ')}.`);
       const pp = progressToast('Preparing drawing…', () => ac.abort());
       const prepared = await prepareView(doc, { signal: ac.signal, onProgress: (x) => pp.set(x) });
       this.installDoc(doc, { path: f.path ?? null, name: f.name, format }, { replaceBlank: true, prepared, firstView: true });

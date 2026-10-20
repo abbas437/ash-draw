@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { newDocument, addBlock, addEntity } from '../src/core/model.js';
-import { joinRel, loadXrefs, relativePath, samePath } from '../renderer/xrefs.js';
+import { joinRel, loadXrefs, refusalTracker, relativePath, samePath } from '../renderer/xrefs.js';
 
 test('xref paths: relative to the host folder on the same drive, absolute otherwise', () => {
   assert.equal(relativePath('C:\\w\\host.dwg', 'C:\\w\\sub\\ref.dxf'), '.\\sub\\ref.dxf');
@@ -39,4 +39,16 @@ test('xref loading: nested xrefs, cycle protection, missing files', async () => 
   assert.equal(host.blocks.get('R|N').entities.length, 1, 'nested xref (relative to the xref folder) loaded');
   assert.ok(host.blocks.get('R|BACK') && host.blocks.get('R|BACK').entities.length === 0, 'the cycle back to the host is not followed');
   assert.ok(!host.blocks.get('R|N').xref && host.blocks.get('R|N').xrefDep === 'R');
+});
+
+test('refusalTracker: a reference main refused (outside the host folder) is "not found", its paths are collected once', async () => {
+  const doc = fileDoc({ IN: 'in.dxf', OUT: '/far/out.dxf', OUT2: '/far/out.dxf' });
+  const t = refusalTracker();
+  const read = t.wrap(async (ref) => (ref === 'in.dxf' ? { path: '/w/in.dxf', bytes: '/w/in.dxf' } : { refused: [ref], declined: false }));
+  const st = await loadXrefs(doc, read, async () => fileDoc({}));
+  assert.deepEqual(st, { IN: 'loaded', OUT: 'notfound', OUT2: 'notfound' });
+  assert.deepEqual(t.refused, ['/far/out.dxf']);
+  assert.equal(t.declined, false);
+  assert.equal(await t.wrap(async () => ({ refused: ['/x.dxf'], declined: true }))(), null);
+  assert.equal(t.declined, true);
 });

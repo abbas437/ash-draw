@@ -12,13 +12,15 @@ function imagePaths(doc) {
   return [...out];
 }
 
-/** load the images of `doc` (paths resolved against the host drawing's folder); resolves the paths not loaded */
-export async function loadDrawingImages(api, doc, hostPath) {
+/** load the images of `doc` (paths resolved against the host drawing's folder); resolves the paths not loaded.
+ *  `retry`: only the images not loaded yet are read again. */
+export async function loadDrawingImages(api, doc, hostPath, { retry = false } = {}) {
   const paths = imagePaths(doc);
   if (!paths.length) return [];
-  doc.images = new Map();
+  if (!retry || !doc.images) doc.images = new Map();
   const missing = [];
   for (const p of paths) {
+    if (retry && doc.images.get(p)?.status === 'loaded') continue;
     let entry = { status: 'notfound', bitmap: null };
     try {
       const r = hostPath ? await api.imageRead(hostPath, p) : null;
