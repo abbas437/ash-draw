@@ -19,7 +19,7 @@ test('refAccess: host folder and subfolders load without asking; other folders a
     const host = path.join(proj, 'a.dwg');
     const touched = [];
     const isFile = (p) => { touched.push(p); return fs.stat(p).then((s) => s.isFile(), () => false); };
-    const refs = createRefAccess({ pathLib: path.posix, isFile });
+    const refs = createRefAccess({ pathLib: path, isFile });
     const UNC = '\\\\server\\share\\x.dwg';
     const viaUnc = (p) => /server/i.test(p);
 
