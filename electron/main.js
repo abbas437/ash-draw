@@ -12,7 +12,7 @@ import { cacheLimitBytes, createDwgCache, openCached } from './dwgCache.js';
 import { createHandoffStore } from './handoff.js';
 import { createClipboardBridge } from './clipboard.js';
 import { createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isOdaExeName, ODA_DOWNLOAD_URL, ODA_DWG_VERSIONS } from './odaConverter.js';
-import { foreignCopyMessage, isForeignCopy, lockData } from './instance.js';
+import { lockData, onSecondInstance } from './instance.js';
 import { saveDialogDefault } from './savePath.js';
 import { createSymbolLibrary } from './symbols.js';
 import { cleanSession, isPathString, pushRecent, startupModeOf } from './sessionLists.js';
@@ -130,13 +130,14 @@ function forwardFile(p) {
   else pendingFiles.push(file);
 }
 app.on('open-file', (e, p) => { e.preventDefault(); if (DRAWING_EXT.test(p)) forwardFile(p); });
-app.on('second-instance', (_e, argv, cwd, additionalData) => {
-  const me = { exe: process.execPath, version: app.getVersion() };
-  if (isForeignCopy(additionalData, me)) { // another build sharing our settings: it quit, so say so (non-blocking)
-    dialog.showMessageBox({ type: 'info', title: 'ASH Draw Studio', message: foreignCopyMessage(additionalData, me), buttons: ['OK'] }).catch(() => {});
-  } else for (const p of drawingArgs(argv, cwd)) forwardFile(p);
-  if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
-});
+// A started copy's files open here, also when it is another build sharing our settings (which gets a non-blocking notice).
+app.on('second-instance', (_e, argv, cwd, additionalData) => onSecondInstance({ argv, cwd, additionalData }, {
+  me: { exe: process.execPath, version: app.getVersion() },
+  drawingArgs,
+  openFile: forwardFile,
+  notify: (message) => { dialog.showMessageBox({ type: 'info', title: 'ASH Draw Studio', message, buttons: ['OK'] }).catch(() => {}); },
+  focus: () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } },
+}));
 for (const p of drawingArgs(process.argv)) forwardFile(p);
 
 // ---- last session and recent files ----
