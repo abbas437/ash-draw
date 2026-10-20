@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import { newDocument, addEntity, makeText, makeMText } from '../src/core/model.js';
-import { exportPdf } from '../src/core/exportPdf.js';
+import { exportPdf, missingCharsWarning } from '../src/core/exportPdf.js';
 import { textShaper } from '../src/core/pdfText.js';
 
 const FONT_DIR = new URL('../renderer/assets/fonts/', import.meta.url);
@@ -230,10 +230,17 @@ test('PDF: MTEXT lines with Arabic are put in visual order per line (number left
 test('PDF: a Unicode font that fails to load does not abort the export', async () => {
   const bad = [new Uint8Array([1, 2, 3, 4]), fontBytes[1], fontBytes[2]];
   const r = await exportPdf(docWith(makeText({ x: 0, y: 0 }, 2.5, 'Ωμέγα'), makeText({ x: 0, y: 10 }, 2.5, 'مخطط')), { unicodeFonts: bad });
-  assert.deepEqual(r.warnings, ['5 text characters could not be drawn (the Unicode font could not be loaded)']);
+  assert.deepEqual(r.warnings, ['5 text characters could not be drawn (the Unicode font could not be loaded): Ω (U+03A9), μ (U+03BC), έ (U+03AD), γ (U+03B3), α (U+03B1)']);
   const rejected = await exportPdf(docWith(makeText({ x: 0, y: 0 }, 2.5, 'Ωμέγα')), { unicodeFonts: async () => { throw new Error('x'); } });
-  assert.deepEqual(rejected.warnings, ['5 text characters could not be drawn (the Unicode font could not be loaded)']);
+  assert.deepEqual(rejected.warnings, ['5 text characters could not be drawn (the Unicode font could not be loaded): Ω (U+03A9), μ (U+03BC), έ (U+03AD), γ (U+03B3), α (U+03B1)']);
   const failedList = Object.assign([fontBytes[1], fontBytes[2]], { failed: ['NotoSans-Regular.ttf'] });
   const partial = await exportPdf(docWith(makeText({ x: 0, y: 0 }, 2.5, 'Ωμέγα')), { unicodeFonts: failedList });
-  assert.deepEqual(partial.warnings, ['5 text characters could not be drawn (the Unicode font could not be loaded)']);
+  assert.deepEqual(partial.warnings, ['5 text characters could not be drawn (the Unicode font could not be loaded): Ω (U+03A9), μ (U+03BC), έ (U+03AD), γ (U+03B3), α (U+03B1)']);
+});
+
+test('PDF: the missing-characters warning lists the distinct characters no bundled font has, with their codes', async () => {
+  const r = await exportPdf(docWith(makeText({ x: 0, y: 0 }, 2.5, 'Pump 中 P-101 文'), makeText({ x: 0, y: 5 }, 2.5, '中')), { unicodeFonts: fontBytes });
+  assert.deepEqual(r.warnings, ['3 text characters could not be drawn (no font has them): 中 (U+4E2D), 文 (U+6587)']);
+  const many = [...'一二三四五六七八九十百千'];
+  assert.match(missingCharsWarning(12, many, 'no font has them'), /: 一 \(U\+4E00\),.*十 \(U\+5341\), and 2 more$/);
 });

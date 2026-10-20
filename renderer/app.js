@@ -6,7 +6,6 @@ import { INSUNITS, unitLabel, lengthPrecision, looksLikeMapMetres } from '../src
 import { setShowLegs, refreshMeasureResults, clearMeasureResults } from './tools-measure.js';
 import { parseCoordinate } from '../src/core/coords.js';
 import { PATTERN_NAMES } from '../src/core/patterns.js';
-import { unkeptObjects } from '../src/core/dxfWrite.js';
 import { loadPatFile, patternsDialog, loadSavedPatterns, refreshPatternSelect } from './patterns-ui.js';
 import { layIsolate, layUnisolate, layFreeze, layOn, layThaw } from '../src/core/layers.js';
 import { Viewport, CANVAS_BG } from './viewport.js';
@@ -48,7 +47,7 @@ import { initLayerCombo } from './layer-combo.js';
 import { initSymbolPalette } from './symbol-palette.js';
 import { el, message, modal, confirmDialog, textDialog, listDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
 import {
-  OPEN_FILTERS, loadDrawing, incompleteText, conversionSummary, saveDxf, saveDwg, savedToast, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, savePathIn, extOf, UNIT_NAMES,
+  OPEN_FILTERS, loadDrawing, incompleteText, conversionSummary, saveDxf, saveDwg, droppedBySave, deliverWithWarnings, savedToast, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, savePathIn, extOf, UNIT_NAMES,
 } from './files.js';
 
 const api = window.api;
@@ -458,11 +457,6 @@ class App {
     document.getElementById('stage').append(box);
     return true;
   }
-  /** objects a save leaves out (they would vanish from an overwritten file): those not read, and those read but not
-   *  written (dxfWrite unkeptObjects, the writer's own rule) */
-  droppedContent() {
-    return Object.entries(unkeptObjects(this.doc)).map(([k, v]) => `${v} ${k}`);
-  }
   /** whether DWG can be written by the ODA File Converter now (installed, and the converter preference allows it); cached in this.odaWrite for the File menu */
   async refreshDwgWrite() {
     try { this.odaWrite = !!(await api.dwgAvailable?.())?.write?.oda; } catch { this.odaWrite = false; }
@@ -487,12 +481,13 @@ class App {
   autosaveNow() { return this.autosave.now(); }
   saveAs(kind) { return this.guardedSave((tab) => this.saveTabAs(tab, kind)); }
   async saveTab(tab) {
-    const dropped = this.droppedContent(); // before any await: the tab is still the shown one
     // a drawing opened from (or saved as) DWG goes back to its .dwg in the same DWG version when ODA can write it
     const odaWrite = tab.file.format === 'dwg' && !!tab.file.path && (await this.refreshDwgWrite());
     const route = tab.file.path ? ctrlSaveRoute({ format: tab.file.format, odaWrite, tabVersion: tab.dwgVersion, header: tab.conversion?.dwgHeader }) : null;
     if (route?.action === 'dxf-overwrite' || route?.action === 'dwg-writeback') {
       const dwgBack = route.action === 'dwg-writeback';
+      // objects this save leaves out (they would vanish from the overwritten file), by the options this route writes with
+      const dropped = droppedBySave(tab.doc, dwgBack ? 'dwg' : 'dxf', route.version);
       // opened from an incomplete DXF: overwriting would replace the original with the part that was read
       if (tab.incomplete && tab.incomplete.path === tab.file.path) {
         const r = await modal('Save as a new file', el('div', {},
@@ -583,8 +578,10 @@ class App {
           return version ? this.writeDwg(tab, { version }) : false;
         }
         if (!this.allowDwgSave) { await this.modalWithOdaLink('Save as DWG is turned off', [el('p', { text: DWG_SAVE_DISABLED_TEXT }), el('p', { text: ODA_NEEDED_TEXT })], [{ label: 'OK', value: true, primary: true }]); return false; }
-        const ok = await this.modalWithOdaLink('Save as DWG (experimental)', el('p', { text:
+        const dropped = droppedBySave(tab.doc, 'dwg', 'r2000'); // what LibreDWG's save (saveDwg's default version) leaves out
+        const ok = await this.modalWithOdaLink('Save as DWG (experimental)', [el('p', { text:
           `DWG is written through the free LibreDWG converter. AutoCAD and DWG TrueView may not open a DWG written this way (in a test, DWG TrueView 2026 stopped while loading one), layouts and viewports may appear empty, and text rotation and some hatch details can be lost. The program re-reads the saved file and tells you if anything differs. DXF keeps everything this program supports. ${ODA_SAVE_HINT} Save as DWG anyway?` }),
+          ...(dropped.length ? [el('p', { id: 'dwg-save-dropped', text: `Left out of this DWG: ${dropped.join(', ')}.` })] : [])],
           [{ label: 'Save as DWG', value: 'yes', primary: true }, { label: 'Cancel', value: 'no' }]);
         if (ok !== 'yes') return false;
         const r = await saveDwg(api, tab.doc, {
@@ -607,10 +604,12 @@ class App {
 
   // ---- exports ---------------------------------------------------------------------------------
   scene() { return buildScene(this.fileDoc); }
-  /** `fileName` overrides the suggested name (default `<drawing>.<ext>`) */
+  /** `fileName` overrides the suggested name (default `<drawing>.<ext>`). Whether the file was written (false: the save
+   *  dialog was cancelled) */
   async saveBytes(bytes, ext, label, fileName = null) {
     const r = await api.saveFile({ defaultPath: savePathIn(this.file.path, fileName ?? `${baseName(this.file.name)}.${ext}`), filters: [{ name: label, extensions: [ext] }], bytes });
     if (r) toast(`Exported ${ext.toUpperCase()}`, 2000);
+    return !!r;
   }
   /** Plot to PDF (the Print dialog with a Save button) */
   exportPdf() { return plotDialog(this, 'pdf'); }
@@ -622,8 +621,8 @@ class App {
   async exportSvg() {
     try {
       const warnings = [];
-      await this.saveBytes(await exportSvgBytes(this.fileDoc, this.scene(), { warnings }), 'svg', 'SVG image');
-      if (warnings.length) await message('SVG exported with warnings', warnings.join('\n'));
+      const bytes = await exportSvgBytes(this.fileDoc, this.scene(), { warnings });
+      await deliverWithWarnings(() => this.saveBytes(bytes, 'svg', 'SVG image'), warnings, 'SVG exported with warnings', message);
     } catch (err) { await message('Export failed', err.message || String(err)); }
   }
   async exportPng() {

@@ -34,11 +34,19 @@ test('angle readout: a line 0,0 -> 0,10 reads 0 deg with base north clockwise; 0
   near(angleFromWorld(180, { angbase: Math.PI / 2 }), 90, 'west, counter-clockwise from north');
 });
 
-test('$ANGBASE (radians) / $ANGDIR are read and written back', () => {
-  const raw = '0\nSECTION\n2\nHEADER\n9\n$ANGBASE\n50\n1.5707963267948966\n9\n$ANGDIR\n70\n1\n0\nENDSEC\n0\nEOF\n';
+// Spec change (beta.55 recheck #9): DXF stores $ANGBASE in DEGREES, like every group-50 angle (LibreDWG's
+// out_dxf.c writes header group-50 values through rad2deg). The earlier test read it as radians; that was wrong.
+test('$ANGBASE (degrees in the DXF) / $ANGDIR are read, used for polar entry and written back', () => {
+  const raw = '0\nSECTION\n2\nHEADER\n9\n$ANGBASE\n50\n90.0\n9\n$ANGDIR\n70\n1\n0\nENDSEC\n0\nEOF\n';
   const d = parseDxf(raw);
-  near(d.header.angbase, Math.PI / 2, 'angbase'); assert.equal(d.header.angdir, 1);
-  const out = writeDxf(d), back = parseDxf(typeof out === 'string' ? out : out.text);
+  near(d.header.angbase, Math.PI / 2, 'angbase (radians in the document)'); assert.equal(d.header.angdir, 1);
+  // as AutoCAD: angle 0 points north and angles run clockwise
+  let p = parseCoordinate('@10<0', O, null, d.header); near(p.x, 0, '@10<0 x'); near(p.y, 10, '@10<0 is north');
+  p = parseCoordinate('@10<90', O, null, d.header); near(p.x, 10, '@10<90 is east'); near(p.y, 0, '@10<90 y');
+  const out = writeDxf(d), text = typeof out === 'string' ? out : out.text;
+  const m = /\$ANGBASE\r?\n\s*50\r?\n\s*([^\r\n]+)/.exec(text);
+  assert.ok(m, '$ANGBASE written'); near(parseFloat(m[1]), 90, 'written in degrees');
+  const back = parseDxf(text);
   near(back.header.angbase, Math.PI / 2, 'angbase kept'); assert.equal(back.header.angdir, 1, 'angdir kept');
   const def = parseDxf((() => { const o = writeDxf(newDocument()); return typeof o === 'string' ? o : o.text; })());
   assert.equal(def.header.angbase, undefined); assert.equal(def.header.angdir, undefined);

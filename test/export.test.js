@@ -88,7 +88,7 @@ test('PDF: fit page = drawing at 1 unit = 1 mm plus margins', async () => {
 
 test('PDF: text outside WinAnsi warns once without a Unicode font, Latin text does not', async () => {
   const ar = await exportPdf(docWith(makeText({ x: 0, y: 0 }, 2.5, 'مرحبا'), makeText({ x: 0, y: 5 }, 2.5, 'مرحبا')));
-  assert.deepEqual(ar.warnings, ['10 text characters could not be drawn (no Unicode font)']);
+  assert.deepEqual(ar.warnings, ['10 text characters could not be drawn (no Unicode font): م (U+0645), ر (U+0631), ح (U+062D), ب (U+0628), ا (U+0627)']);
   const latin = await exportPdf(docWith(makeText({ x: 0, y: 0 }, 2.5, 'Hello Ø25 ±0.5')));
   assert.deepEqual(latin.warnings, []);
 });

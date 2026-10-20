@@ -182,3 +182,14 @@ test('the Save guard counts exactly what the writer leaves out (unkeptObjects = 
   assert.deepEqual(unkeptObjects(doc), { AECC_THING: 1, '3DSOLID': 1, 'LWPOLYLINE (fewer than 2 vertices)': 1, 'SPLINE (unusable)': 1,
     'INSERT (block missing)': 1, FOO: 1, 'HELIX (not read)': 2 });
 });
+
+test('the Save guard uses the save route\'s writer options: a proxy is kept by DXF and ODA, left out by LibreDWG', async () => {
+  const { droppedBySave } = await import('../renderer/files.js');
+  const doc = parseDxf(drawing());
+  doc.entities = doc.entities.filter((e) => e.type === 'PROXY' && e.name === 'ACAD_PROXY_ENTITY');
+  for (const b of doc.blocks.values()) b.entities = [];
+  assert.equal(doc.entities.length, 1);
+  assert.deepEqual(droppedBySave(doc, 'dxf'), [], 'DXF overwrite');
+  assert.deepEqual(droppedBySave(doc, 'dwg', 'acad2018'), [], 'DWG through ODA');
+  assert.deepEqual(droppedBySave(doc, 'dwg', 'r2000'), ['1 ACAD_PROXY_ENTITY'], 'DWG through LibreDWG');
+});

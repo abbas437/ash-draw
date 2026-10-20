@@ -959,7 +959,7 @@ function parseTokensInto(tk, onProgress) {
       else if (name === '$DIMSTYLE') doc.header.currentDimStyle = val(j);
       else if (name === '$LTSCALE') doc.header.ltscale = parseFloat(val(j)) || 1;
       else if (name === '$PSLTSCALE') { const v = parseInt(val(j), 10); if (v === 0 || v === 1) doc.header.psltscale = v; } // 1 (default): viewport linetypes at paper scale
-      else if (name === '$ANGBASE') { const v = parseFloat(val(j)); if (Number.isFinite(v) && v) doc.header.angbase = v; } // radians: the direction of angle 0
+      else if (name === '$ANGBASE') { const v = parseFloat(val(j)); if (Number.isFinite(v) && v) doc.header.angbase = v * Math.PI / 180; } // the direction of angle 0: DXF stores degrees (as every group-50 angle), kept in radians
       else if (name === '$ANGDIR') { if (parseInt(val(j), 10) === 1) doc.header.angdir = 1; } // 1: angles run clockwise
       else if (name === '$TILEMODE') { const v = parseInt(val(j), 10); if (v === 0 || v === 1) doc.header.tilemode = v; } // 0: a layout was current when saved
       else if (name === '$XCLIPFRAME') { const v = parseInt(val(j), 10); if (v >= 0 && v <= 2) doc.header.xclipframe = v; }

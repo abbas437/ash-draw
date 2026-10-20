@@ -597,7 +597,7 @@ export function* writeDxfSteps(doc, opts = {}) {
   out.p(9, '$LUNITS'); out.p(70, 2);
   out.p(9, '$LUPREC'); out.p(70, doc.header?.luprec ?? 4);
   out.p(9, '$AUNITS'); out.p(70, 0);
-  out.p(9, '$ANGBASE'); out.p(50, doc.header?.angbase || 0);
+  out.p(9, '$ANGBASE'); out.p(50, (doc.header?.angbase || 0) * 180 / Math.PI); // degrees in DXF, radians in doc.header
   out.p(9, '$ANGDIR'); out.p(70, doc.header?.angdir === 1 ? 1 : 0);
   out.p(9, '$AUPREC'); out.p(70, 2);
   out.p(9, '$INSUNITS'); out.p(70, doc.units || 0);
