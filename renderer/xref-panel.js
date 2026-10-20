@@ -1,6 +1,6 @@
 // ASH Draw Studio - external references: loading on open and the External References panel (XREF / XR).
 import { listXrefs, loadXref, unloadXref } from '../src/core/xref.js';
-import { loadDrawing, OPEN_FILTERS } from './files.js';
+import { loadDrawing, loadPicked, OPEN_FILTERS } from './files.js';
 import { loadOneXref, loadXrefs, refusalTracker, relativePath, xrefStatusLabel } from './xrefs.js';
 import { loadDrawingImages } from './images.js';
 import { el, modal, toast } from './ui.js';
@@ -52,7 +52,7 @@ export async function pickXref(app) {
   let f;
   try { [f] = await window.api.openFiles({ filters: OPEN_FILTERS, multiple: false }); } catch (err) { toast(`Could not open: ${err.message}`); return null; }
   if (!f) return null;
-  try { return { file: f, path: f.path ? relativePath(app.file.path, f.path) : f.name, xdoc: (await loadDrawing(window.api, f.name, f.bytes)).doc }; } catch (err) { toast(`XATTACH: ${f.name} could not be read (${err.message})`); return null; }
+  try { return { file: f, path: f.path ? relativePath(app.file.path, f.path) : f.name, xdoc: (await loadPicked(window.api, f)).doc }; } catch (err) { toast(`XATTACH: ${f.name} could not be read (${err.message})`); return null; }
 }
 
 /** the External References panel of the active drawing */
@@ -74,7 +74,7 @@ export async function xrefPanel(app) {
     app.session.transact('Xref path', (tx) => tx.block(x.name, { ...x.block, xref: { ...x.block.xref, path } }));
     const blk = app.fileDoc.blocks.get(x.name);
     try {
-      loadXref(app.fileDoc, x.name, (await loadDrawing(api, f.name, f.bytes)).doc, f.path);
+      loadXref(app.fileDoc, x.name, (await loadPicked(api, f)).doc, f.path);
     } catch { blk.xref.status = 'unreadable'; }
     done();
   };

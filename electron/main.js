@@ -17,6 +17,8 @@ import { saveDialogDefault, openDialogDir } from './savePath.js';
 import { createSymbolLibrary } from './symbols.js';
 import { cleanSession, isPathString, pushRecent, startupModeOf } from './sessionLists.js';
 import { createRefAccess } from './refAccess.js';
+import { createAppFileServer } from './appFiles.js';
+import { openedFiles } from './openedFiles.js';
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCHEME = 'app';
@@ -232,30 +234,8 @@ async function createWindow() {
   await win.loadURL(START_URL);
 }
 
-// ---- app:// protocol: serve renderer/ and src/ only ----
-const MIME = {
-  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png',
-  '.ttf': 'font/ttf', '.otf': 'font/otf', '.woff2': 'font/woff2',
-};
-async function serveAppFile(request) {
-  const url = new URL(request.url);
-  if (url.host !== HOST) return new Response('Not found', { status: 404 });
-  if (url.pathname.startsWith(OPEN_PREFIX)) {
-    const bytes = request.method === 'GET' ? handoffs.take(url.pathname.slice(OPEN_PREFIX.length)) : null;
-    if (!bytes) return new Response('Not found', { status: 404 });
-    return new Response(bytes, { headers: { 'content-type': 'application/octet-stream', 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' } });
-  }
-  const file = path.resolve(APP_ROOT, '.' + decodeURIComponent(url.pathname));
-  if (!SERVED_DIRS.some((d) => file.startsWith(d))) return new Response('Not found', { status: 404 });
-  try {
-    return new Response(await fs.readFile(file), {
-      headers: { 'content-type': MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream', 'x-content-type-options': 'nosniff' },
-    });
-  } catch {
-    return new Response('Not found', { status: 404 });
-  }
-}
+// ---- app:// protocol: serve renderer/ and src/ only (electron/appFiles.js) ----
+const serveAppFile = createAppFileServer({ host: HOST, root: APP_ROOT, servedDirs: SERVED_DIRS, openPrefix: OPEN_PREFIX, take: (t) => handoffs.take(t) });
 
 // Every web contents: no new windows, no navigation away, no webviews.
 app.on('web-contents-created', (_e, contents) => {
@@ -284,9 +264,7 @@ function registerIpc() {
       properties: o.multiple === true ? ['openFile', 'multiSelections'] : ['openFile'],
     });
     if (r.canceled) return [];
-    const out = [];
-    for (const p of r.filePaths) out.push({ path: grant(p), name: path.basename(p), bytes: await readGranted(p) });
-    return out;
+    return openedFiles(r.filePaths, { grant, read: readGranted }); // a .dwg without bytes: dwg:open converts it from the path
   });
   handle('file:read', (p) => readGranted(grantedPath(p)));
   // An external reference of an open drawing: the host must be a granted file; only the .dxf/.dwg files that the xref
