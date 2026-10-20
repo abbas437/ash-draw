@@ -672,6 +672,13 @@ export function transformEntity(e, m) {
         return { closed: true, pts: pts.map((p) => ({ ...apply(m, p), bulge: 0 })) };
       });
       if (e.pattern !== 'SOLID') { c.scale = (e.scale || 1) * s; c.angle = (e.angle || 0) + linearAngle(m) / DEG; }
+      // the hatch's own pattern lines are in drawing coordinates (base point, offset, dash lengths): they move with it
+      if (e.patLines?.length) {
+        c.patLines = e.patLines.map((l) => {
+          const d = applyVec(m, { x: Math.cos(l.angle * DEG), y: Math.sin(l.angle * DEG) });
+          return { angle: Math.atan2(d.y, d.x) / DEG, base: apply(m, l.base), offset: applyVec(m, l.offset), dashes: l.dashes.map((x) => x * s) };
+        });
+      }
       break;
     case 'INSERT': {
       const rot = (e.rot || 0) * DEG;
