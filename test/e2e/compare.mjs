@@ -26,7 +26,7 @@ const problems = [];
 let step = 'start';
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 try {
-  const ctx = await browser.newContext({ viewport: { width: 1400, height: 850 } });
+  const ctx = await browser.newContext({ viewport: { width: 1400, height: 850 }, permissions: ['clipboard-read', 'clipboard-write'] });
   const page = await ctx.newPage();
   page.on('console', (m) => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });
   page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
@@ -109,6 +109,23 @@ try {
   const numTexts = () => page.evaluate(() => window.app.fileDoc.entities.filter((e) => e.layer === 'COMPARE-MARKS' && e.type === 'TEXT').length);
   assert.equal(await numTexts(), await page.evaluate(() => window.app.active.compare.r.clusters.length), 'one number per cluster');
   assert.ok(await numTexts() >= 1);
+
+  step = 'Copy list and Export CSV…: the change list (one added LINE) as TSV on the clipboard and as a downloaded CSV';
+  await page.click('#cmp-copy');
+  const tsv = await page.evaluate(() => navigator.clipboard.readText());
+  const tsvLines = tsv.split('\n');
+  assert.equal(tsvLines[0], 'Group\tChange\tLayer\tObject type\tX\tY\tDetails');
+  assert.equal(tsvLines.length, 3, 'header, one change, trailing newline');
+  const cells = tsvLines[1].split('\t');
+  assert.deepEqual([cells[0], cells[1], cells[3]], ['1', 'added', 'LINE']);
+  assert.ok(Number.isFinite(+cells[4]) && Number.isFinite(+cells[5]), 'X, Y are numbers');
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 5000 }), page.click('#cmp-csv')]);
+  assert.equal(dl.suggestedFilename(), 'a-vs-b-changes.csv');
+  const csv = await fs.readFile(await dl.path(), 'utf8');
+  assert.equal(csv.charCodeAt(0), 0xfeff, 'BOM');
+  const csvLines = csv.slice(1).split('\r\n');
+  assert.equal(csvLines[0], 'Group,Change,Layer,Object type,X,Y,Details');
+  assert.equal(csvLines[1], tsvLines[1].split('\t').join(','), 'the CSV row equals the copied row');
 
   step = 'Plot to PDF… opens the Plot dialog for the compare tab';
   await page.evaluate(() => { window.app.plotSettings = { ...(window.app.plotSettings ?? {}), monochrome: true }; });

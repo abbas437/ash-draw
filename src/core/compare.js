@@ -653,11 +653,33 @@ export function* compareSteps(a, b, opts = {}) {
   const gp = new Grid(tol * 2), gm = new Grid(moveRadius);
   // shape key: identical shapes (relative points, numbers) share it, so a moved copy is only sought among its twins
   const q = tol * 4;
-  const shapeKey = (f) => {
-    let k = f.s;
-    for (let i = 2; i < Math.min(f.pts.length, MAX_PTS * 2); i += 2) k += `|${Math.round((f.pts[i] - f.ax) / q)},${Math.round((f.pts[i + 1] - f.ay) / q)}`;
-    for (let i = 0; i < Math.min(f.sc.length, MAX_PTS); i++) k += `|${Math.round(f.sc[i] / q)}`;
-    return k;
+  // The key rounds every component (relative points, then numbers) to a bin of q. Twins within tol can still straddle a
+  // bin boundary, so B is indexed under its own key only and A looks under its key and under the neighbouring bins
+  // (+-1 in a component) of the components that lie near a boundary (the 5 nearest: at most 32 keys).
+  const shapeSegs = (f) => {
+    const segs = [];
+    for (let i = 2; i < Math.min(f.pts.length, MAX_PTS * 2); i += 2) segs.push([(f.pts[i] - f.ax) / q, (f.pts[i + 1] - f.ay) / q]);
+    for (let i = 0; i < Math.min(f.sc.length, MAX_PTS); i++) segs.push([f.sc[i] / q]);
+    return segs;
+  };
+  const renderKey = (f, bins) => f.s + bins.map((b) => `|${b.join(',')}`).join('');
+  const shapeKey = (f) => renderKey(f, shapeSegs(f).map((s) => s.map(Math.round)));
+  const MAX_NEAR_COMPONENTS = 5;
+  const shapeKeysNear = (f) => {
+    const segs = shapeSegs(f), bins = segs.map((s) => s.map(Math.round)), amb = [];
+    segs.forEach((s, a) => s.forEach((v, b) => {
+      const d = v - bins[a][b], edge = 0.5 - Math.abs(d), reach = s.length === 2 ? 2 * tol / q : tol / q; // rel. point: 2 tol, number: tol
+      if (edge <= reach) amb.push({ a, b, dir: d >= 0 ? 1 : -1, edge });
+    }));
+    amb.sort((x, y) => x.edge - y.edge);
+    amb.length = Math.min(amb.length, MAX_NEAR_COMPONENTS);
+    const keys = [];
+    for (let mask = 0; mask < 1 << amb.length; mask++) { // mask 0 = the key itself, first
+      const bb = bins.map((x) => x.slice());
+      amb.forEach((c, i) => { if (mask & (1 << i)) bb[c.a][c.b] += c.dir; });
+      keys.push(renderKey(f, bb));
+    }
+    return keys;
   };
   for (let n = 0; n < rb.length; n++) {
     const j = rb[n], f = fb[j], t = f.e.type;
@@ -679,11 +701,13 @@ export function* compareSteps(a, b, opts = {}) {
     }
     const moved = [];
     let looked = 0;
-    for (const j of gm.near(shapeKey(f), f.ax, f.ay)) {
-      if (paired.has(j)) continue;
-      if (++looked > MAX_CAND) break;
-      const dx = fb[j].ax - f.ax, dy = fb[j].ay - f.ay, d = Math.hypot(dx, dy);
-      if (d <= moveRadius && within(f, fb[j], tol, dx, dy)) moved.push({ i, j, rank: 1, score: 0, d });
+    look: for (const key of shapeKeysNear(f)) {
+      for (const j of gm.near(key, f.ax, f.ay)) {
+        if (paired.has(j)) continue;
+        if (++looked > MAX_CAND) break look;
+        const dx = fb[j].ax - f.ax, dy = fb[j].ay - f.ay, d = Math.hypot(dx, dy);
+        if (d <= moveRadius && within(f, fb[j], tol, dx, dy)) moved.push({ i, j, rank: 1, score: 0, d });
+      }
     }
     moved.sort((p, q2) => p.d - q2.d);
     cand.push(...moved.slice(0, 4)); // the nearest twins only
@@ -729,9 +753,9 @@ export function* compareSteps(a, b, opts = {}) {
 function* clusterResultSteps(a, b, r, clusterProps) {
   const { groups, gap, groupA, realigned } = r.clusterCtx;
   const movedOf = (e) => { const k = groupA.get(e); return k !== undefined && realigned[k].moved ? k : -1; };
-  const gcl = groups.map((g) => ({ box: g.box, added: 0, removed: 0, changed: 0, moved: g.name }));
-  const outRemoved = r.removed.filter((e) => { const k = movedOf(e); if (k < 0) return true; gcl[k].removed++; return false; });
-  const outChanged = (clusterProps ? r.changed : r.changedGeometry).filter((p) => { const k = movedOf(p.a); if (k < 0) return true; gcl[k].changed++; return false; });
+  const gcl = groups.map((g) => withMembers({ box: g.box, added: 0, removed: 0, changed: 0, moved: g.name }, []));
+  const outRemoved = r.removed.filter((e) => { const k = movedOf(e); if (k < 0) return true; gcl[k].removed++; gcl[k].members.push({ k: 'removed', ref: e }); return false; });
+  const outChanged = (clusterProps ? r.changed : r.changedGeometry).filter((p) => { const k = movedOf(p.a); if (k < 0) return true; gcl[k].changed++; gcl[k].members.push({ k: 'changed', ref: p }); return false; });
   const rest = yield* clusterSteps(a, b, { added: r.added, removed: outRemoved, changed: outChanged }, gap);
   return [...gcl.filter((c) => c.box && c.removed + c.changed), ...rest];
 }
@@ -771,14 +795,18 @@ export function clusterChanges(a, b, r, gap) {
   return drain(clusterSteps(a, b, r, gap));
 }
 
+/** the objects of a cluster: c.members = [{ k: 'added' | 'removed' | 'changed', ref: entity or { a, b } pair }] (not enumerable:
+ *  the cluster stays the plain { box, added, removed, changed } of its counts); the change list reads them */
+const withMembers = (c, members) => Object.defineProperty(c, 'members', { value: members, writable: true });
+
 /** step generator behind clusterChanges */
 function* clusterSteps(a, b, r, gap) {
-  const items = [], unb = { added: 0, removed: 0, changed: 0 }, total = r.added.length + r.removed.length + r.changed.length;
+  const items = [], unb = { added: 0, removed: 0, changed: 0 }, unbMembers = [], total = r.added.length + r.removed.length + r.changed.length;
   const lists = [[r.added, (e) => bboxOf(e, b), 'added'], [r.removed, (e) => bboxOf(e, a), 'removed'], [r.changed, (p) => unionBox(bboxOf(p.a, a), bboxOf(p.b, b)), 'changed']];
   for (const [l, boxOf, k] of lists) {
     for (let i = 0; i < l.length; i++) {
       const box = boxOf(l[i]);
-      if (box && Number.isFinite(box.minx + box.maxx + box.miny + box.maxy)) items.push({ k, box }); else unb[k]++;
+      if (box && Number.isFinite(box.minx + box.maxx + box.miny + box.maxy)) items.push({ k, box, ref: l[i] }); else { unb[k]++; unbMembers.push({ k, ref: l[i] }); }
       if ((i & 1023) === 1023) yield 0.4 * items.length / total;
     }
   }
@@ -840,7 +868,7 @@ function* clusterSteps(a, b, r, gap) {
     }
     todo.push(l.slice(0, cut), l.slice(cut));
   }
-  const out = parts.map(({ box, l }) => { const c = { box, added: 0, removed: 0, changed: 0 }; for (const it of l) c[it.k]++; return c; });
+  const out = parts.map(({ box, l }) => { const c = { box, added: 0, removed: 0, changed: 0 }; for (const it of l) c[it.k]++; return withMembers(c, l.map(({ k, ref }) => ({ k, ref }))); });
   // 4. reading order: a row starts with the highest remaining top; clusters whose top reaches above its middle (or
   //    less than 2 gaps below its top) join it
   out.sort((p, q) => q.box.maxy - p.box.maxy || p.box.minx - q.box.minx);
@@ -855,7 +883,7 @@ function* clusterSteps(a, b, r, gap) {
   if (nUnb) { // changes without a box: one last cluster over the drawing extent
     let box = null;
     for (const d of [a, b]) for (const e of d.entities) { const x = bboxOf(e, d); if (x && Number.isFinite(x.minx + x.maxx + x.miny + x.maxy)) box = unionBox(box, x); }
-    sorted.push({ box: box ?? { minx: 0, miny: 0, maxx: limit, maxy: limit }, ...unb, unbounded: nUnb });
+    sorted.push(withMembers({ box: box ?? { minx: 0, miny: 0, maxx: limit, maxy: limit }, ...unb, unbounded: nUnb }, unbMembers));
   }
   return sorted;
 }
