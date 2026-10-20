@@ -208,6 +208,8 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 .mk-row.closed .mk-comment { text-decoration:line-through; opacity:.7; }
 .mk-row button { padding:0 6px; }
 #mk-filter { max-width:6em; }
+.mk-bar { display:flex; flex-wrap:wrap; gap:4px; padding:2px 0 4px; }
+.mk-code { padding:0; }
 #mk-panel .phead { flex-wrap:wrap; row-gap:4px; } /* narrow panel: CSV wraps rather than being cut off */
 .layer { display:flex; align-items:center; gap:2px; padding:2px 0; }
 .layer.current { background:var(--current-bg); }
