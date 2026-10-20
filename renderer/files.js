@@ -116,6 +116,10 @@ export function conversionSummary(c) {
   };
 }
 
+/** loadDrawing for a file from api.openFiles ({path, name, bytes}): in the desktop app a .dwg comes without bytes and is
+ *  converted by main from its path (dwg:open); in the browser there is no path and the bytes are used. */
+export const loadPicked = (api, f, opts = {}) => loadDrawing(api, f.name, f.bytes ?? null, { ...opts, path: f.path ?? null });
+
 /** Load a DWG/DXF. Returns {doc, format, notes[], warnings, conversion}; throws Error with a user-readable message.
  *  conversion (DWG only): {converter: 'LibreDWG'|'ODA', errorCount, log, objects, skipped} of this open.
  *  opts: {onProgress(fraction), signal} for the DXF read (see readDxfAsync); `path`: the granted file, which a DWG

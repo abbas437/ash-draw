@@ -3,7 +3,7 @@
 // around each change cluster (no revision clouds), and a side panel to step through the clusters, switch the view
 // (differences, overlay, A only, B only) and plot it. A is aligned onto B automatically, by picked points, or not at all.
 import * as core from '../src/core/compare.js'; // namespace: transformFromPoints may not exist yet (feature-detected)
-import { OPEN_FILTERS, loadDrawing, prepareView, savePathIn } from './files.js';
+import { OPEN_FILTERS, loadPicked, prepareView, savePathIn } from './files.js';
 import { compareChangeRows, compareChangeTsv, compareChangeCsv, compareChangeFileName } from '../src/core/comparelist.js';
 import { runSliced } from '../src/core/slice.js';
 import { Tool } from './tools.js';
@@ -219,7 +219,7 @@ async function chooseDrawings(app) {
     try { files = await window.api.openFiles({ filters: OPEN_FILTERS, multiple: false }); } catch (err) { toast(`Could not open: ${err.message}`); return; }
     const f = files?.[0]; if (!f) return;
     try {
-      const { doc } = await loadDrawing(window.api, f.name, f.bytes ?? await window.api.readFile(f.path));
+      const { doc } = await loadPicked(window.api, f);
       sources.push({ label: f.name, doc, file: { path: f.path ?? null, name: f.name, format: /\.dwg$/i.test(f.name) ? 'dwg' : 'dxf' } });
       fill(); sel.value = String(sources.length - 1); sel.dispatchEvent(new Event('change'));
     } catch (err) { await message('Cannot open this file', err.message || String(err)); }
