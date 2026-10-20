@@ -6,6 +6,7 @@ import { transparencyText, parseTransparency, percentFromAlpha } from '../src/co
 import { viewportFields } from './layouts-ui.js';
 import { editEntity, dimTextEdit } from './grips.js';
 import { iconSvg } from './icons.js';
+import { layerLinetypeText, lineweightText, layerTransparencyText } from '../src/core/layercols.js';
 
 export function el(tag, attrs = {}, ...kids) {
   const n = document.createElement(tag);
@@ -120,6 +121,11 @@ export function renderLayers(app) {
   for (const e of doc.entities) used.set(e.layer, (used.get(e.layer) ?? 0) + 1);
   const current = (n) => layerOps.makeCurrent(app, n);
   const lwText = (w) => (w >= 0 ? `${w.toFixed(2)} mm` : 'Default');
+  const cols = !!app.layerCols;
+  const colsBtn = document.getElementById('layer-cols');
+  colsBtn.setAttribute('aria-pressed', String(cols));
+  colsBtn.onclick = () => app.setLayerCols(!app.layerCols);
+  box.classList.toggle('cols', cols);
   box.replaceChildren(...rows.map((l) => {
     const row = el('div', { class: `layer${app.state.layer === l.name ? ' current' : ''}`, tabindex: '0', 'data-layer': l.name,
       onkeydown: (e) => { if (e.key === 'F2' && e.target === row) { e.preventDefault(); e.stopPropagation(); startRename(app, row, l); } },
@@ -134,6 +140,11 @@ export function renderLayers(app) {
     el('span', { class: 'swatch', style: `background:${cssOfAci(Math.abs(l.color))}`, title: 'Layer colour (click to change)', onclick: (e) => colorMenu(e, (c) => setLayerProps(session, l.name, { color: c })) }),
     el('span', { class: 'lname', title: `${l.name}\nLinetype ${l.linetype ?? 'CONTINUOUS'} · Lineweight ${lwText(l.lineweight)} · Transparency ${l.alpha >= 0 ? percentFromAlpha(l.alpha) : 0} % · ${used.get(l.name) ?? 0} object(s)\nDouble-click or F2 to rename; right-click for more`,
       ondblclick: () => startRename(app, row, l), text: l.name }),
+    ...(cols ? [
+      el('span', { class: 'lay-col lay-c0', 'data-col': 'linetype', title: 'Linetype (click to change)', onclick: () => layerPropsDialog(app, l), text: layerLinetypeText(l) }),
+      el('span', { class: 'lay-col lay-c1', 'data-col': 'lineweight', title: 'Lineweight (click to change)', onclick: () => layerPropsDialog(app, l), text: lineweightText(l.lineweight) }),
+      el('span', { class: 'lay-col lay-c2', 'data-col': 'transparency', title: 'Transparency (click to change)', onclick: () => layerPropsDialog(app, l), text: layerTransparencyText(l.alpha) }),
+    ] : []),
     el('button', { class: 'icon lay-ltlw', title: `Linetype ${l.linetype ?? 'CONTINUOUS'}, lineweight ${lwText(l.lineweight)}, transparency ${l.alpha >= 0 ? percentFromAlpha(l.alpha) : 0} % (click to change)`, onclick: () => layerPropsDialog(app, l) }, '≡'),
     app.state.layer === l.name ? el('span', { class: 'cur', text: '●', title: 'Current layer' }) : el('button', { class: 'icon', title: 'Make current', onclick: () => current(l.name) }, '○'),
     );

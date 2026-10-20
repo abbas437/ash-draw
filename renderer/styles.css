@@ -219,6 +219,11 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 .layer button.icon { width:18px; padding:0; }
 .layer button.icon > svg { display:block; margin:auto; }
 .layer .swatch { margin:0 2px; }
+.layer .lay-col { flex:none; font-size:11px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.layer .lay-col { cursor:pointer; }
+.lay-c0 { width:78px; } .lay-c1 { width:62px; } .lay-c2 { width:38px; text-align:right; }
+#layers.cols .layer { min-width:max-content; }
+#layers.cols .layer .lname { flex:none; width:140px; min-width:0; }
 .lay-search { display:flex; align-items:center; gap:2px; margin-bottom:4px; }
 .sym-row { display:flex; flex-wrap:wrap; align-items:center; gap:4px; margin-bottom:4px; }
 .sym-row select, .sym-row input[type=search] { flex:1 1 8em; min-width:0; }

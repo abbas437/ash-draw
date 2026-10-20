@@ -29,6 +29,7 @@ import { loadDrawingXrefs, xrefPanel } from './xref-panel.js';
 import { TOOL_BUTTONS, buildToolPanel, iconButton, quickCommand, canvasDarkFrom, labelsFrom, placementFrom, PLACEMENTS, collapsedFrom, applyCollapsed, toolTitle, moreButton, fitToolBand, initToolBand } from './tool-panel.js';
 import { iconSvg } from './icons.js';
 import { initToolModes, LAYOUTS, LAYOUT_LABELS, modeAllows } from './tool-rail.js';
+import { LAYER_COLS_KEY, layerColsFrom } from '../src/core/layercols.js';
 import { initSidePanel, applySide, markHead, windowTitle, setSideMode, revealSection } from './side-panel.js';
 import { initSymbolsPanel, SYMBOL_DOCKS, DOCK_LABELS } from './symbols-ui.js';
 import { symcountDialog } from './symcount-ui.js';
@@ -122,6 +123,8 @@ class App {
     this.panelOpts = { labels: false, colours: true };
     this.setToolPlacement('left', false);
     this.setToolPanel('labels', false, false); // compact icon grid by default
+    this.layerCols = false;
+    api.settingsGet?.(LAYER_COLS_KEY).then((v) => { if (layerColsFrom(v)) this.setLayerCols(true, false); }).catch(() => {});
     api.settingsGet?.('tools.labels').then((v) => this.setToolPanel('labels', labelsFrom(v), false)).catch(() => {});
     api.settingsGet?.('tools.placement').then((v) => this.setToolPlacement(placementFrom(v), false)).catch(() => {});
     api.settingsGet?.('tools.colours').then((v) => { if (v === false) this.setToolPanel('colours', false, false); }).catch(() => {});
@@ -180,6 +183,12 @@ class App {
   setSidePanel(shown, save = true) { setSideMode(this, shown ? 'expanded' : 'collapsed', save); }
   /** View > Side panel: 'expanded' / 'collapsed' (icon rail) / 'hidden' (no rail) */
   setSideMode(mode, save = true) { setSideMode(this, mode, save); }
+  /** Layers panel: show or hide the read-only Linetype / Lineweight / Transparency columns, saved as 'layers.columns' */
+  setLayerCols(on, save = true) {
+    this.layerCols = !!on;
+    renderLayers(this);
+    if (save) api.settingsSet?.(LAYER_COLS_KEY, this.layerCols)?.catch?.(() => {});
+  }
   /** fold or unfold one side panel section ('layers', 'markups', 'symbols', 'props'), saved as 'side.folded' */
   foldSideSection(key, folded = !this.sideFolded.includes(key)) {
     this.sideFolded = folded ? [...new Set([...this.sideFolded, key])] : this.sideFolded.filter((k) => k !== key);
