@@ -98,7 +98,7 @@ export function conversionSummary(c) {
   const errs = c.errorCount ? plural(c.errorCount, 'converter error') : 'no converter errors';
   const sk = Object.entries(c.skipped ?? {});
   return {
-    text: c.converter === 'ODA' ? name : `${name} · ${errs}`,
+    text: c.converter === 'ODA' ? `${name} · ${String(c.log ?? '').trim() ? 'log' : 'no messages'}` : `${name} · ${errs}`,
     title: [`Converted from DWG with ${name}.`, `Objects read: ${c.objects.toLocaleString('en-US')}.`,
       `Object types not shown: ${sk.length ? sk.map(([k, v]) => `${v.toLocaleString('en-US')} ${k}`).join(', ') : 'none'}.`,
       c.converter === 'ODA' ? null : `Converter errors: ${c.errorCount.toLocaleString('en-US')}.`, 'Click for the converter log.'].filter(Boolean).join('\n'),
@@ -124,12 +124,17 @@ export async function loadDrawing(api, name, bytes, { onProgress = null, signal 
       // dwg:open hands the DXF back as a URL the reader worker fetches (no big clone on this thread)
       onStage?.('convert');
       let res;
-      try { res = api.dwgOpen ? await api.dwgOpen(path ?? bytes) : await api.dwgToDxf(bytes); } finally { onStage?.('read'); }
+      // Cancel while converting: main kills the converter (dwg:cancel) and the open rejects; it is reported as cancelled
+      const job = `open-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      const cancel = () => api.dwgCancel?.(job)?.catch?.(() => {});
+      signal?.addEventListener('abort', cancel);
+      try { res = api.dwgOpen ? await api.dwgOpen(path ?? bytes, job) : await api.dwgToDxf(bytes); } finally { signal?.removeEventListener('abort', cancel); onStage?.('read'); }
       dxfBytes = res.url ? { url: res.url } : res.dxfBytes;
       warnings = Array.isArray(res.warnings) ? res.warnings : [];
       conv = { converter: res.converter === 'ODA' || res.engine === 'oda' ? 'ODA' : 'LibreDWG', errorCount: res.errorCount ?? 0, log: res.log ?? '', dwgSize: res.dwgSize ?? bytes?.byteLength ?? 0,
         dwgHeader: typeof res.header === 'string' ? res.header : bytes ? String.fromCharCode(...bytes.subarray(0, 6)) : '' };
     } catch (err) {
+      if (signal?.aborted) throw Object.assign(new Error('Opening was cancelled.'), { code: 'CANCELLED' });
       const m = String(err.message || err).replace(/^Error invoking remote method '[^']*': (Error: )?/, '');
       if (m.includes(ODA_HINT_MARK)) throw Object.assign(new Error(m), { odaHint: true });
       throw new Error(`${/^This DWG file could not be converted/.test(m) ? m.split('\n')[0] : `This DWG file could not be converted (${m.split('\n')[0]}).`} Try opening it in your CAD program and saving it as DXF.`);

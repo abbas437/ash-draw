@@ -63,6 +63,20 @@ test('ODA converter: failure without output reports the .err file and cleans up'
   } finally { await t.cleanup(); }
 });
 
+test('ODA converter: its console output and any .err file are the log of a successful conversion', { skip }, async () => {
+  const s = await stub(`process.stdout.write('Auditing drawing.dwg\\n3 errors fixed\\n'); process.stderr.write('warn: proxy objects\\n');
+fs.writeFileSync(path.join(a[1], 'drawing.dwg.err'), 'Error: 2 objects skipped'); ${WRITE_DXF}`);
+  try {
+    const r = await createOdaBridge(s.exe, { tmpRoot: s.tmpRoot }).toDxf(dwg);
+    assert.equal(Buffer.from(r.dxfBytes).toString(), KNOWN_DXF);
+    for (const line of ['Auditing drawing.dwg', '3 errors fixed', 'warn: proxy objects', 'Error: 2 objects skipped']) assert.ok(r.log.includes(line), line);
+    assert.equal(r.errorCount, 0);
+    assert.deepEqual(await fs.readdir(s.tmpRoot), []);
+  } finally { await s.cleanup(); }
+  const q = await stub(WRITE_DXF);
+  try { assert.equal((await createOdaBridge(q.exe, { tmpRoot: q.tmpRoot }).toDxf(dwg)).log, ''); } finally { await q.cleanup(); }
+});
+
 test('ODA converter: timeout kills it, reports it and cleans up', { skip }, async () => {
   const s = await stub('setTimeout(() => {}, 10000);');
   try {

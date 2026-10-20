@@ -76,7 +76,25 @@ test('loadDrawing returns the conversion quality of a DWG; conversionSummary wor
   assert.match(s.title, /Objects read: 1,234\.\nObject types not shown: 3 3DSOLID\.\nConverter errors: 12\./);
   assert.equal(conversionSummary({ converter: 'LibreDWG', errorCount: 0, objects: 1, skipped: {} }).text, 'LibreDWG · no converter errors');
   assert.equal(conversionSummary({ converter: 'LibreDWG', errorCount: 1, objects: 1, skipped: {} }).text, 'LibreDWG · 1 converter error');
-  const o = conversionSummary({ converter: 'ODA', errorCount: 0, objects: 1, skipped: {} });
-  assert.equal(o.text, 'ODA File Converter');
+  const o = conversionSummary({ converter: 'ODA', errorCount: 0, log: '', objects: 1, skipped: {} });
+  assert.equal(o.text, 'ODA File Converter · no messages');
   assert.match(o.title, /Object types not shown: none/);
+  assert.equal(conversionSummary({ converter: 'ODA', errorCount: 0, log: 'Auditing drawing.dwg\n', objects: 1, skipped: {} }).text, 'ODA File Converter · log');
+});
+
+test('loadDrawing: Cancel while a DWG converts asks main to kill that conversion and reports the open as cancelled', async () => {
+  let job = null, cancelled = null, fail;
+  const api = {
+    isElectron: true, dwgAvailable: async () => ({ available: true }),
+    dwgOpen: (_src, j) => { job = j; return new Promise((_r, rej) => { fail = rej; }); },
+    dwgCancel: async (j) => { cancelled = j; fail(new Error("Error invoking remote method 'dwg:open': Error: The DWG conversion was cancelled.")); },
+  };
+  const ac = new AbortController();
+  const open = loadDrawing(api, 'plan.dwg', null, { path: '/d/plan.dwg', signal: ac.signal }).then(() => null, (e) => e);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.match(job, /^open-/);
+  ac.abort();
+  const err = await open;
+  assert.equal(cancelled, job);
+  assert.equal(err.code, 'CANCELLED');
 });
