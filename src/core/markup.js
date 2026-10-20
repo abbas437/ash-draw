@@ -6,6 +6,7 @@
 // Pure ES module (no DOM).
 import { makeCircle, makeRect, makeLine, makeMText, addLinetype } from './model.js';
 import { bboxOf, unionBox } from './geom.js';
+import { csvText } from './csv.js';
 
 export const MARKUP_LAYER = 'ASH-MARKUP';
 export const MARKUP_APP = 'ASH_MARKUP';
@@ -134,8 +135,7 @@ export function setMarkupsVisible(s, on) {
   return true;
 }
 
-/** the markup list as CSV (RFC 4180 quoting) */
+/** the markup list as CSV for Excel (src/core/csv.js: quoting, BOM, formula guard) */
 export function markupsCsv(list) {
-  const q = (v) => { const t = String(v ?? ''); return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
-  return ['No,Comment,Author,Date,Status', ...list.map((m) => [m.no, m.comment, m.author, m.date, m.status].map(q).join(','))].join('\r\n') + '\r\n';
+  return csvText(['No', 'Comment', 'Author', 'Date', 'Status'], list.map((m) => [m.no, m.comment, m.author, m.date, m.status]));
 }

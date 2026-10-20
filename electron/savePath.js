@@ -18,3 +18,14 @@ export function saveDialogDefault(defaultPath, { documents, isDir, fallbackName 
   }
   return (hostSep === '\\' ? path.win32 : path.posix).join(documents, name);
 }
+
+/** Where an Open dialog starts: `dir` (the active drawing's folder, as the renderer sends it) when it is a folder of this
+ *  host that exists, else undefined, which leaves the dialog in the folder it used last. */
+export function openDialogDir(dir, { isDir, hostSep = path.sep }) {
+  const raw = dir ? String(dir) : '';
+  const win = WIN_ABS.test(raw);
+  if (!((win && hostSep === '\\') || (!win && POSIX_ABS.test(raw) && hostSep === '/'))) return undefined;
+  const f = win ? path.win32 : path.posix;
+  const d = f.dirname(f.join(raw, 'x')); // the folder without a trailing separator
+  return isDir(d) ? d : undefined;
+}

@@ -8,6 +8,7 @@
 // (block.effectiveName, read from the DXF). Skipped: other anonymous / internal blocks (*D dimensions, *X hatches…),
 // external references and their dependent blocks. An array insert (MINSERT rows x cols) counts rows x cols.
 
+import { csvText } from './csv.js';
 const U = (s) => String(s ?? '').toUpperCase();
 const findCI = (m, n) => { if (m.has(n)) return n; const u = U(n); for (const k of m.keys()) if (U(k) === u) return k; return null; };
 /** cells of an INSERT: rows x cols of a MINSERT, else 1 */
@@ -61,10 +62,9 @@ export function countSymbols(doc, { entities = null, nested = false, space = 'mo
   return { rows, total: rows.reduce((t, r) => t + r.count, 0) };
 }
 
-/** the count as CSV (RFC 4180 quoting, like markupsCsv); layers joined by "; " */
+/** the count as CSV for Excel (src/core/csv.js, like markupsCsv); layers joined by "; " */
 export function symcountCsv(rows) {
-  const q = (v) => { const t = String(v ?? ''); return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
-  return ['Symbol,Count,Layers', ...rows.map((r) => [r.name, r.count, r.layers.join('; ')].map(q).join(','))].join('\r\n') + '\r\n';
+  return csvText(['Symbol', 'Count', 'Layers'], rows.map((r) => [r.name, r.count, r.layers.join('; ')]));
 }
 
 /** the sheet of the .xlsx: title row (drawing, date), header, one row per symbol, total */

@@ -359,7 +359,7 @@ class App {
   }
   async open() {
     let files;
-    try { files = await api.openFiles({ filters: OPEN_FILTERS, multiple: true }); } catch (err) { toast(`Could not open: ${err.message}`); return; }
+    try { files = await api.openFiles({ filters: OPEN_FILTERS, multiple: true, defaultPath: savePathIn(this.file?.path, '') || undefined }); } catch (err) { toast(`Could not open: ${err.message}`); return; }
     for (const f of files ?? []) await this.loadFile(f);
   }
   /** a file handed over by the desktop shell (double-click, "Open with", second launch): {path, name} without bytes */
@@ -609,8 +609,9 @@ class App {
 
   // ---- exports ---------------------------------------------------------------------------------
   scene() { return buildScene(this.fileDoc); }
-  async saveBytes(bytes, ext, label) {
-    const r = await api.saveFile({ defaultPath: savePathIn(this.file.path, `${baseName(this.file.name)}.${ext}`), filters: [{ name: label, extensions: [ext] }], bytes });
+  /** `fileName` overrides the suggested name (default `<drawing>.<ext>`) */
+  async saveBytes(bytes, ext, label, fileName = null) {
+    const r = await api.saveFile({ defaultPath: savePathIn(this.file.path, fileName ?? `${baseName(this.file.name)}.${ext}`), filters: [{ name: label, extensions: [ext] }], bytes });
     if (r) toast(`Exported ${ext.toUpperCase()}`, 2000);
   }
   /** Plot to PDF (the Print dialog with a Save button) */
@@ -702,9 +703,9 @@ class App {
   }
   async limitations() {
     await message('What this program does and does not do', 'Please read before relying on it for important work:', el('ul', {},
-      ['Paper-space layouts, their objects and viewports are read and saved back; viewport clip boundaries other than the rectangle are not kept.',
+      ['Paper-space layouts, their objects and viewports are read and saved back; viewport clip boundaries (polygon, circle and other closed shapes) are drawn and kept.',
         'Supported objects: lines, polylines, circles, arcs, ellipses, splines, xlines and rays, text, multiline text, points, solids, 3D faces, hatches, blocks and attributes, dimensions (as drawn), leaders, multileaders, multilines, images, wipeouts and external references.',
-        'Not shown: 3D solids (3DSOLID), BODY, REGION and proxy objects (ACAD_PROXY_ENTITY, for example Civil 3D objects); OLE objects are drawn from their saved preview picture (a frame only when there is none it can show). Any other object type this program does not know is skipped too. Skipped objects are reported when you open the file, and they are not written when you save.',
+        'Proxy objects (ACAD_PROXY_ENTITY, for example Civil 3D objects) are drawn from their saved graphics and cannot be edited; Save as DXF keeps them as they were. Other custom objects (for example AECC_ ones) are drawn the same way but are not written when you save. 3D solids (3DSOLID), BODY, REGION and custom objects without saved graphics are not shown and are not written when you save. OLE objects are drawn from their saved preview picture (a frame only when there is none it can show). Any other object type this program does not know is skipped too. Skipped objects are reported when you open the file, and you are told before saving what a save leaves out.',
         'Dimensions are displayed from their stored drawing, but cannot be edited as dimensions; they can be moved, copied or exploded.',
         'Saving as DXF is the reliable option. With the free ODA File Converter installed, DWG is saved in AutoCAD 2018 format (or an older version you choose), and Save writes a drawing opened from DWG back to its file in its own version, keeping the previous file as a .bak copy. Without it, saving as DWG is experimental and off by default (Edit > Preferences); layouts and viewports may appear empty in AutoCAD, and text rotation and some hatches can be lost.',
         'The ODA File Converter is optional and installed separately: it adds saving to DWG (2000 to 2018) and opening drawings the built-in converter cannot read. Everything else works without it.',

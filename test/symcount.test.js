@@ -72,7 +72,7 @@ test('countSymbols: block names match case-insensitively and report the definiti
 
 test('symcountCsv: header, CRLF, RFC 4180 quoting', () => {
   const csv = symcountCsv([{ name: 'Grille, "600"', count: 3, layers: ['A', 'B'] }, { name: 'VAV', count: 1, layers: ['0'] }]);
-  assert.equal(csv, 'Symbol,Count,Layers\r\n"Grille, ""600""",3,A; B\r\nVAV,1,0\r\n');
+  assert.equal(csv, '\uFEFFSymbol,Count,Layers\r\n"Grille, ""600""",3,A; B\r\nVAV,1,0\r\n');
 });
 
 test('countSymbols: a block named $ABC is counted, anonymous * blocks are not', () => {
