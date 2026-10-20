@@ -131,7 +131,7 @@ export async function plotDialog(app, mode) {
   try {
     const out = await exportPdfBytes(app.fileDoc, app.scene(), {
       pageSize: s.pageSize, orientation: s.orientation, monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency,
-      region, centre: s.centre, scale: s.fit ? null : plotScale(s.n, mmPerUnit(units)),
+      region, centre: s.centre, scale: s.fit ? null : plotScale(s.n, mmPerUnit(units)), mmPerUnit: mmPerUnit(units),
     });
     await deliverWithWarnings(() => deliverPlot(app, mode, out.bytes), out.warnings, mode === 'pdf' ? 'PDF exported with warnings' : 'Printed with warnings', message);
   } catch (err) { await message(mode === 'pdf' ? 'Export failed' : 'Print failed', err.message || String(err)); }

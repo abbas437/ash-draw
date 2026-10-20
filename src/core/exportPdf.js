@@ -61,7 +61,7 @@ export function placeOnPage(sheetW, sheetH, pw, ph, { fit = true, margin = LAYOU
  * opts: pageSize, orientation, margin (mm), scale (null = fit | paper mm per drawing unit), centre (true = centred on the
  * page, false = region's lower-left corner at the lower-left margin).
  */
-export function plotLayout(region, { pageSize = 'fit', orientation = 'auto', margin = 10, scale = null, centre = true } = {}) {
+export function plotLayout(region, { pageSize = 'fit', orientation = 'auto', margin = 10, scale = null, centre = true, mmPerUnit = 1 } = {}) {
   if (pageSize !== 'fit' && !SIZES[pageSize]) throw new Error(`Unknown page size: ${pageSize}`);
   const bb = region;
   const warnings = [];
@@ -73,7 +73,7 @@ export function plotLayout(region, { pageSize = 'fit', orientation = 'auto', mar
     const kMax = Math.min((MAX_PAGE_PT - 2 * mPt) / w, (MAX_PAGE_PT - 2 * mPt) / h);
     if (k > kMax) {
       k = kMax;
-      warnings.push(`Drawing too large for one PDF page at the requested scale; scaled down to 1:${+(PT_PER_MM / k).toPrecision(4)}`);
+      warnings.push(`Drawing too large for one PDF page at the requested scale; scaled down to 1:${+(mmPerUnit * PT_PER_MM / k).toPrecision(4)}`); // real mm per paper mm
     }
     pw = w * k + 2 * mPt; ph = h * k + 2 * mPt;
   } else {

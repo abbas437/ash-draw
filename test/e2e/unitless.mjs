@@ -81,7 +81,7 @@ try {
   await page.evaluate(() => window.app.setTool('select'));
 
   step = 'a 1 : 1 plot takes 1 unit as 1000 mm (10 m does not fit a 200 inch page)';
-  assert.equal(await plotWarnings(), 'PDF exported with warningsDrawing too large for one PDF page at the requested scale; scaled down to 1:0.001976OK'); // the message's 1:N is per drawing unit (pre-existing): 1.976 / 1000
+  assert.equal(await plotWarnings(), 'PDF exported with warningsDrawing too large for one PDF page at the requested scale; scaled down to 1:1.976OK'); // 1:N in real millimetres per paper millimetre (1 unit taken as 1 m)
 
   step = 'the same plot of a millimetre drawing fits (control)';
   await install('mm.dxf', 4);

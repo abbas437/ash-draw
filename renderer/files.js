@@ -319,7 +319,7 @@ export function unicodeFonts() {
 }
 
 export async function exportPdfBytes(doc, scene, opts = {}) {
-  return exportPdf(doc, { scene, pageSize: opts.pageSize ?? 'A3', orientation: opts.orientation ?? 'auto', margin: opts.margin ?? 10, monochrome: !!opts.monochrome, lineweights: opts.lineweights !== false, scale: opts.scale ?? null, region: opts.region ?? null, centre: opts.centre !== false, unicodeFonts: opts.unicodeFonts ?? unicodeFonts, layout: opts.layout ?? null, modelScene: opts.modelScene ?? null, transparency: opts.transparency !== false, paper: opts.paper ?? 'layout', fit: opts.fit !== false, imageRgba: bitmapRgba });
+  return exportPdf(doc, { scene, pageSize: opts.pageSize ?? 'A3', orientation: opts.orientation ?? 'auto', margin: opts.margin ?? 10, monochrome: !!opts.monochrome, lineweights: opts.lineweights !== false, scale: opts.scale ?? null, mmPerUnit: opts.mmPerUnit ?? 1, region: opts.region ?? null, centre: opts.centre !== false, unicodeFonts: opts.unicodeFonts ?? unicodeFonts, layout: opts.layout ?? null, modelScene: opts.modelScene ?? null, transparency: opts.transparency !== false, paper: opts.paper ?? 'layout', fit: opts.fit !== false, imageRgba: bitmapRgba });
 }
 export async function exportPngBytes(doc, scene, { longSide = 3000, dark = false, lineweights = true } = {}) {
   const b = scene.bbox ?? { minx: 0, miny: 0, maxx: 1, maxy: 1 };
