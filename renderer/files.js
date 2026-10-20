@@ -318,8 +318,25 @@ export function unicodeFonts() {
   return unicodeFontBytes;
 }
 
+/** Run an export with a cancellable progress display that only appears if it is still running after `delayMs`.
+ *  run({onProgress, signal}) -> value; show(onCancel) -> {set(fraction), close()}. Resolves {cancelled:false, value}, or
+ *  {cancelled:true} when the signal was aborted (the export rejected with code 'CANCELLED', or finished anyway: nothing is
+ *  delivered). Other errors are rethrown. The display is closed when the export ends either way. */
+export async function withExportProgress(run, { delayMs = 1000, show } = {}) {
+  const ac = new AbortController();
+  let shown = null, last = 0;
+  const timer = setTimeout(() => { shown = show(() => ac.abort()); shown.set(last); }, delayMs);
+  try {
+    const value = await run({ onProgress: (f) => { last = f; shown?.set(f); }, signal: ac.signal });
+    return ac.signal.aborted ? { cancelled: true } : { cancelled: false, value };
+  } catch (err) {
+    if (err?.code === 'CANCELLED' || ac.signal.aborted) return { cancelled: true };
+    throw err;
+  } finally { clearTimeout(timer); shown?.close(); }
+}
+
 export async function exportPdfBytes(doc, scene, opts = {}) {
-  return exportPdf(doc, { scene, pageSize: opts.pageSize ?? 'A3', orientation: opts.orientation ?? 'auto', margin: opts.margin ?? 10, monochrome: !!opts.monochrome, lineweights: opts.lineweights !== false, scale: opts.scale ?? null, mmPerUnit: opts.mmPerUnit ?? 1, region: opts.region ?? null, centre: opts.centre !== false, unicodeFonts: opts.unicodeFonts ?? unicodeFonts, layout: opts.layout ?? null, modelScene: opts.modelScene ?? null, transparency: opts.transparency !== false, paper: opts.paper ?? 'layout', fit: opts.fit !== false, imageRgba: bitmapRgba });
+  return exportPdf(doc, { scene, pageSize: opts.pageSize ?? 'A3', orientation: opts.orientation ?? 'auto', margin: opts.margin ?? 10, monochrome: !!opts.monochrome, lineweights: opts.lineweights !== false, scale: opts.scale ?? null, mmPerUnit: opts.mmPerUnit ?? 1, region: opts.region ?? null, centre: opts.centre !== false, unicodeFonts: opts.unicodeFonts ?? unicodeFonts, layout: opts.layout ?? null, modelScene: opts.modelScene ?? null, transparency: opts.transparency !== false, paper: opts.paper ?? 'layout', fit: opts.fit !== false, imageRgba: bitmapRgba, onProgress: opts.onProgress ?? null, signal: opts.signal ?? null });
 }
 export async function exportPngBytes(doc, scene, { longSide = 3000, dark = false, lineweights = true } = {}) {
   const b = scene.bbox ?? { minx: 0, miny: 0, maxx: 1, maxy: 1 };

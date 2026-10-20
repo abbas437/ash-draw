@@ -4,12 +4,23 @@ import { plotScale, pageFit, placeOnPage, exportPdfPages } from '../src/core/exp
 import { screenToWorld } from '../src/core/render.js';
 import { layoutPage, layoutPlotRegion, layoutPlotWindow, layoutMmPerUnit } from '../src/core/layouts.js';
 import { plotSettingsFrom, plotSettingsToStore, LAYOUT_PAPERS, layoutPlotStart } from '../src/core/plotSettings.js';
-import { el, message, modal, toast } from './ui.js';
-import { exportPdfBytes, unicodeFonts, plotPdfName, deliverWithWarnings } from './files.js';
+import { el, message, modal, toast, progressToast } from './ui.js';
+import { exportPdfBytes, unicodeFonts, plotPdfName, deliverWithWarnings, withExportProgress } from './files.js';
 import { mmPerUnit } from '../src/core/model.js';
 import { ensureUnits } from './units-ask.js';
 import { bitmapRgba } from './images.js';
 import { viewsIn, findView, restorable, viewBox } from '../src/core/views.js';
+
+/** run an export under a progress toast with Cancel (shown after ~1 s; app.plotProgressDelayMs overrides, for tests);
+ *  null (and a quiet toast) when cancelled, else the export's result */
+async function withPlotProgress(app, text, cancelledText, run) {
+  const r = await withExportProgress(run, {
+    delayMs: app.plotProgressDelayMs ?? 1000,
+    show: (onCancel) => { const pt = progressToast(text, onCancel); return { set: (f) => pt.set(f), close: () => toast('', 1) }; },
+  });
+  if (r.cancelled) { toast(cancelledText, 2500); return null; }
+  return r.value;
+}
 
 const options = (pairs) => pairs.map((s) => { const [v, l] = s.split('|'); return el('option', { value: v, text: l }); });
 const fmt = (v) => String(+v.toPrecision(6));
@@ -129,10 +140,11 @@ export async function plotDialog(app, mode) {
   if (units == null) return;
   const region = s.what === 'window' ? s.window : s.what === 'view' ? viewRect(app.vp) : s.what === 'named' ? viewBox(findView(app.doc, s.namedView)) : null;
   try {
-    const out = await exportPdfBytes(app.fileDoc, app.scene(), {
+    const out = await withPlotProgress(app, mode === 'pdf' ? 'Plotting…' : 'Preparing print…', mode === 'pdf' ? 'Plot cancelled.' : 'Print cancelled.', (p) => exportPdfBytes(app.fileDoc, app.scene(), {
       pageSize: s.pageSize, orientation: s.orientation, monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency,
-      region, centre: s.centre, scale: s.fit ? null : plotScale(s.n, mmPerUnit(units)), mmPerUnit: mmPerUnit(units),
-    });
+      region, centre: s.centre, scale: s.fit ? null : plotScale(s.n, mmPerUnit(units)), mmPerUnit: mmPerUnit(units), ...p,
+    }));
+    if (!out) return;
     await deliverWithWarnings(() => deliverPlot(app, mode, out.bytes), out.warnings, mode === 'pdf' ? 'PDF exported with warnings' : 'Printed with warnings', message);
   } catch (err) { await message(mode === 'pdf' ? 'Export failed' : 'Print failed', err.message || String(err)); }
 }
@@ -186,7 +198,8 @@ async function plotLayoutDialog(app, mode) {
   Object.assign(s, { layoutPaper: paperSel.value, layoutFit: fit.checked, monochrome: cmp ? storedMono : monoNow, lineweights: lw.checked, transparency: tp.checked });
   remember(s);
   try {
-    const out = await exportPdfBytes(app.fileDoc, null, { layout, modelScene: app.vp.modelScene, paper: paperSel.value, area: area.value, fit: fitNow, layoutScale, monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency });
+    const out = await withPlotProgress(app, mode === 'pdf' ? 'Plotting…' : 'Preparing print…', mode === 'pdf' ? 'Plot cancelled.' : 'Print cancelled.', (p) => exportPdfBytes(app.fileDoc, null, { layout, modelScene: app.vp.modelScene, paper: paperSel.value, area: area.value, fit: fitNow, layoutScale, monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency, ...p }));
+    if (!out) return;
     await deliverWithWarnings(() => deliverPlot(app, mode, out.bytes, plotPdfName(app.file.name, layout.name)), out.warnings, mode === 'pdf' ? 'PDF exported with warnings' : 'Printed with warnings', message);
   } catch (err) { await message(mode === 'pdf' ? 'Export failed' : 'Print failed', err.message || String(err)); }
 }
@@ -225,10 +238,11 @@ export async function publishDialog(app) {
     if (!sheets.length) { await message('Nothing to publish', 'Tick at least one sheet.'); continue; }
     try {
       toast(`Publishing ${sheets.length} sheet${sheets.length > 1 ? 's' : ''}…`, 60000);
-      const out = await exportPdfPages(sheets.map((x) => ({ doc: x.doc, layout: x.layout, label: x.label, region: !x.layout && s.publishArea === 'view' ? tabViewRect(app, x.tab) : null })), {
+      const out = await withPlotProgress(app, 'Publishing…', 'Publish cancelled.', (p) => exportPdfPages(sheets.map((x) => ({ doc: x.doc, layout: x.layout, label: x.label, region: !x.layout && s.publishArea === 'view' ? tabViewRect(app, x.tab) : null })), {
         paper: s.layoutPaper, fit: s.layoutFit, pageSize: s.layoutPaper === 'layout' ? 'A3' : s.layoutPaper, orientation: 'auto', margin: 10, scale: null, centre: true,
-        monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency, unicodeFonts, imageRgba: bitmapRgba,
-      });
+        monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency, unicodeFonts, imageRgba: bitmapRgba, ...p,
+      }));
+      if (!out) return;
       toast(`Published ${sheets.length} sheet${sheets.length > 1 ? 's' : ''}`, 1500);
       await deliverWithWarnings(() => app.saveBytes(out.bytes, 'pdf', 'PDF document'), out.warnings, 'PDF published with warnings', message);
     } catch (err) { toast('', 1); await message('Publish failed', err.message || String(err)); }
