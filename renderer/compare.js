@@ -7,10 +7,13 @@ import { OPEN_FILTERS, loadDrawing, prepareView } from './files.js';
 import { runSliced } from '../src/core/slice.js';
 import { Tool } from './tools.js';
 import { el, modal, message, toast, progressToast } from './ui.js';
+import { unitsOf, ensureUnits } from './units-ask.js';
 
 const { alignQuality, buildCompareDoc, defaultTolerance, defaultClusterGap, setCompareView, reclusterCompare, rebuildMarks, COMPARE_LAYERS } = core;
 const VIEWS = [['differences', 'Differences'], ['overlay', 'Overlay'], ['a', 'A only'], ['b', 'B only']];
 const UNIT_NAMES = { 1: 'in', 2: 'ft', 4: 'mm', 5: 'cm', 6: 'm' };
+/** units of a compare source (an open tab, or a file holding its own session answer) */
+const srcUnits = (s) => (s ? unitsOf(s.tab ?? s) : 0);
 const CLUSTER_PAGE = 200; // rows of the cluster list shown at a time
 /** the reviewer's choice for "Show property-only changes", kept for the compares of this session (default: hidden) */
 let sessionShowProps = false;
@@ -199,7 +202,7 @@ async function chooseDrawings(app) {
   let tolEdited = false;
   tol.addEventListener('input', () => { tolEdited = true; });
   const tolDefault = () => {
-    const u = sources[Number(selB.value)]?.doc.units;
+    const u = srcUnits(sources[Number(selB.value)]);
     tolUnit.textContent = ` drawing units (1 mm${UNIT_NAMES[u] ? `; units: ${UNIT_NAMES[u]}` : ''})`;
     if (!tolEdited) tol.value = String(+defaultTolerance(u).toPrecision(6));
   };
@@ -213,7 +216,7 @@ async function chooseDrawings(app) {
   const bDefaults = () => {
     const d = sources[Number(selB.value)]?.doc;
     gapUnit.textContent = ' drawing units (1.5 m): changes closer than this form one group';
-    if (!gapEdited) gap.value = String(+defaultClusterGap(d?.units).toPrecision(6));
+    if (!gapEdited) gap.value = String(+defaultClusterGap(srcUnits(sources[Number(selB.value)])).toPrecision(6));
     const keep = new Set([...ignore.selectedOptions].map((o) => o.value));
     ignore.replaceChildren(...[...(d?.layers?.keys() ?? [])].sort((p, q) => p.localeCompare(q)).map((n) => el('option', { value: n, text: n, selected: keep.has(n) })));
   };
@@ -232,8 +235,10 @@ async function chooseDrawings(app) {
   const A = sources[Number(selA.value)], B = sources[Number(selB.value)];
   if (!A || !B) return null;
   if (A === B) { toast('Choose two different drawings.'); return null; }
-  const t = Number(tol.value), g = Number(gap.value);
-  return { A, B, align: align.value, tol: t > 0 ? t : defaultTolerance(B.doc.units), clusterGap: g > 0 ? g : defaultClusterGap(B.doc.units),
+  const ub = await ensureUnits(B.tab ?? B); // a unitless B: ask what a unit is (once) - the defaults below are in its units
+  if (ub == null) return null;
+  const t = tolEdited ? Number(tol.value) : 0, g = gapEdited ? Number(gap.value) : 0;
+  return { A, B, units: ub, align: align.value, tol: t > 0 ? t : defaultTolerance(ub), clusterGap: g > 0 ? g : defaultClusterGap(ub),
     ignoreLayers: [...ignore.selectedOptions].map((o) => o.value) };
 }
 
@@ -310,6 +315,8 @@ export async function runCompare(app) {
     if (!pts) { toast('Compare cancelled.', 2000); return; }
   }
   await showComparison(app, pick.A.doc, pick.B.doc, pick.A.label, pick.B.label, { align: pick.align, opts: compareOptions(pick.align, pick.tol, pts, { clusterGap: pick.clusterGap, ...(pick.ignoreLayers.length ? { ignoreLayers: pick.ignoreLayers } : {}) }) });
+  const res = app.active; // the result of a unitless B is in B's chosen unit too
+  if (res?.compare?.b === pick.B.doc && !res.doc.units) res.assumedUnits = pick.units;
 }
 
 /** the two drawings of the compare that is running (null = none): their tabs cannot be closed meanwhile */

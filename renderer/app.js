@@ -45,6 +45,7 @@ import { draftingSettings, loadDraftingSettings } from './osnap-ui.js';
 import { loadGridSettings } from './grid-ui.js';
 import { initLayerCombo } from './layer-combo.js';
 import { initSymbolPalette } from './symbol-palette.js';
+import { unitsOf, ASSUMED_UNITS } from './units-ask.js';
 import { el, message, modal, confirmDialog, textDialog, listDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
 import {
   OPEN_FILTERS, loadDrawing, incompleteText, conversionSummary, saveDxf, saveDwg, droppedBySave, deliverWithWarnings, savedToast, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, savePathIn, extOf, UNIT_NAMES,
@@ -226,8 +227,9 @@ class App {
     const last = this.vp.lastPoint ?? { x: 0, y: 0 };
     const dir = this.vp.lastPoint ? { x: this.vp.cursor.x - last.x, y: this.vp.cursor.y - last.y } : null;
     const hd = (this.active?.doc ?? this.doc).header; // polar angles from $ANGBASE, clockwise when $ANGDIR = 1
-    const tr = this.vp.snapMarker?.track, td = tr && parseCoordinate(s, tr.from, tr.dir, hd); // a distance typed on a tracking line goes along it
-    const pt = td?.distance !== undefined ? td : parseCoordinate(s, last, dir, hd);
+    const du = this.active ? unitsOf(this.active) : this.doc.units; // feet and inches are typed in inch and foot drawings
+    const tr = this.vp.snapMarker?.track, td = tr && parseCoordinate(s, tr.from, tr.dir, hd, du); // a distance typed on a tracking line goes along it
+    const pt = td?.distance !== undefined ? td : parseCoordinate(s, last, dir, hd, du);
     if (pt && Number.isFinite(pt.x) && (this.toolId !== 'select' || t.hot)) { this.vp.cursor = { x: pt.x, y: pt.y }; t.click({ x: pt.x, y: pt.y }); this.refreshPrompt(); this.vp.requestRender(); return; }
     toast(`Unknown command "${s}".`);
     this.log(`Unknown command "${s}".`);
@@ -431,11 +433,14 @@ class App {
     const prec = el('select', { id: 'units-precision' }, Array.from({ length: 9 }, (_, n) => el('option', { value: String(n), text: n ? (0).toFixed(n) : '0' })));
     prec.value = String(lengthPrecision(doc.header?.luprec));
     const row = (label, input) => el('label', { style: 'display:flex;justify-content:space-between;align-items:center;gap:12px;margin:6px 0' }, label, input);
+    const tab = this.active, assumed = !doc.units && tab?.assumedUnits ? el('select', { id: 'units-assumed' }, ASSUMED_UNITS.map(([c, name]) => el('option', { value: String(c), text: name }))) : null;
+    if (assumed) assumed.value = String(tab.assumedUnits);
     const r = await modal('Drawing units', el('div', {},
-      row('Drawing units', units), row('Precision', prec),
+      row('Drawing units', units), row('Precision', prec), assumed && row('Unitless: 1 unit is (this session)', assumed),
       el('p', { style: 'color:var(--dim);margin:8px 0 0', text: 'Changes how lengths are labelled; it does not scale the drawing.' })),
     [{ label: 'OK', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
     if (r !== 'ok') return false;
+    if (assumed) tab.assumedUnits = Number(assumed.value);
     document.getElementById('units-hint')?.remove();
     const changed = setDrawingUnits(this.session, { units: Number(units.value), luprec: Number(prec.value) }, doc);
     this.refreshStatus();
@@ -967,7 +972,8 @@ class App {
     document.getElementById('stage').classList.toggle('empty', this.doc.entities.length === 0);
     const fd = this.active?.doc ?? this.doc, u = fd.units, ab = fd.header?.angbase || 0, cw = fd.header?.angdir === 1;
     const angs = ab || cw ? `, angle base ${+(ab * 180 / Math.PI).toFixed(4)}°${cw ? ', clockwise' : ''}` : '';
-    document.getElementById('units').textContent = `Units: ${UNIT_NAMES[u] ?? (unitLabel(u) || u)}${angs}`;
+    const as = !u && this.active?.assumedUnits ? ` (taken as ${unitLabel(this.active.assumedUnits)})` : '';
+    document.getElementById('units').textContent = `Units: ${UNIT_NAMES[u] ?? (unitLabel(u) || u)}${as}${angs}`;
     const conv = this.active?.conversion, ci = document.getElementById('conv');
     if (ci) {
       ci.hidden = !conv;

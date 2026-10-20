@@ -5,7 +5,9 @@ import { screenToWorld } from '../src/core/render.js';
 import { layoutPage, layoutPlotRegion, layoutPlotWindow, layoutMmPerUnit } from '../src/core/layouts.js';
 import { plotSettingsFrom, plotSettingsToStore, LAYOUT_PAPERS, layoutPlotStart } from '../src/core/plotSettings.js';
 import { el, message, modal, toast } from './ui.js';
-import { exportPdfBytes, unitsPerMm, unicodeFonts, plotPdfName, deliverWithWarnings } from './files.js';
+import { exportPdfBytes, unicodeFonts, plotPdfName, deliverWithWarnings } from './files.js';
+import { mmPerUnit } from '../src/core/model.js';
+import { ensureUnits } from './units-ask.js';
 import { bitmapRgba } from './images.js';
 import { viewsIn, findView, restorable, viewBox } from '../src/core/views.js';
 
@@ -105,7 +107,7 @@ export async function plotDialog(app, mode) {
       el('label', {}, fit, ' Fit to paper'), el('label', {}, 'Scale (paper : drawing)  1 : ', n),
       el('label', {}, centre, ' Centre the plot'),
       el('label', {}, mono, MONO), el('label', {}, lw, ' Use lineweights'), el('label', {}, tp, ' Plot transparency'),
-      el('p', { text: 'The drawing is plotted as vector graphics. A 1 : N scale uses the drawing units (unitless drawings are taken as millimetres). Latin, Greek, Cyrillic and Arabic text is drawn with the bundled Noto fonts; Chinese, Japanese and Korean text cannot be drawn in this version.' })],
+      el('p', { text: 'The drawing is plotted as vector graphics. A 1 : N scale uses the drawing units (for a unitless drawing you are asked what a unit is). Latin, Greek, Cyrillic and Arabic text is drawn with the bundled Noto fonts; Chinese, Japanese and Korean text cannot be drawn in this version.' })],
     [{ label: mode === 'print' ? 'Print' : 'Save', value: 'ok', primary: true }, { label: 'Pick window…', value: 'pick' }, { label: 'Cancel', value: null }]);
     if (r == null) return;
     const nv = Number(n.value);
@@ -123,11 +125,13 @@ export async function plotDialog(app, mode) {
     break;
   }
   remember(s);
+  const units = s.fit ? 0 : await ensureUnits(app.active); // a 1 : N plot of a unitless drawing: ask what a unit is (once)
+  if (units == null) return;
   const region = s.what === 'window' ? s.window : s.what === 'view' ? viewRect(app.vp) : s.what === 'named' ? viewBox(findView(app.doc, s.namedView)) : null;
   try {
     const out = await exportPdfBytes(app.fileDoc, app.scene(), {
       pageSize: s.pageSize, orientation: s.orientation, monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency,
-      region, centre: s.centre, scale: s.fit ? null : plotScale(s.n, 1 / unitsPerMm(app.fileDoc)),
+      region, centre: s.centre, scale: s.fit ? null : plotScale(s.n, mmPerUnit(units)),
     });
     await deliverWithWarnings(() => deliverPlot(app, mode, out.bytes), out.warnings, mode === 'pdf' ? 'PDF exported with warnings' : 'Printed with warnings', message);
   } catch (err) { await message(mode === 'pdf' ? 'Export failed' : 'Print failed', err.message || String(err)); }
