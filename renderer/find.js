@@ -1,9 +1,11 @@
-// ASH Draw Studio - Find and Replace panel (Ctrl+F, command FIND). Searches the drawing shown in the
-// current tab: TEXT (attributes are read as TEXT), MTEXT and dimension text overrides (find only).
+// ASH Draw Studio - Find and Replace panel (Ctrl+F, command FIND). Searches the whole drawing of the current tab
+// (model space and every layout): TEXT, MTEXT, INSERT attributes, dimension text overrides and text inside blocks
+// (both find only). Each result names its place; choosing one shows its space (Model / layout) and zooms to it.
 // Matching and replacing live in src/core/find.js; Replace / Replace all are one undo step each.
 import { getEntity } from '../src/core/model.js';
 import { findInDocument, replaceInDocument } from '../src/core/find.js';
 import { el, toast } from './ui.js';
+import { setSpace } from './layouts-ui.js';
 
 const MAX_ROWS = 500;
 
@@ -25,7 +27,7 @@ export class FindPanel {
       el('div', { class: 'find-opts' }, el('label', {}, this.mc, ' Match case'), el('label', {}, this.ww, ' Whole words')),
       el('div', { class: 'find-btns' },
         btn('▲', 'Find previous (Shift+Enter)', () => this.step(-1), 'find-prev'), btn('▼', 'Find next (Enter)', () => this.step(1), 'find-next'),
-        btn('Replace', 'Replace the selected match', () => this.replaceOne(), 'find-replace'), btn('Replace all', 'Replace every match in this drawing', () => this.replaceAll(), 'find-all')),
+        btn('Replace', 'Replace the selected match', () => this.replaceOne(), 'find-replace'), btn('Replace all', 'Replace every match in this drawing, Model and layouts (not inside block definitions)', () => this.replaceAll(), 'find-all')),
       this.count, this.list);
     document.getElementById('stage').append(this.box);
     const rerun = () => this.search();
@@ -59,13 +61,13 @@ export class FindPanel {
 
   renderList() {
     const n = this.results.length;
-    this.count.textContent = !this.q.value ? '' : n ? `${n} match${n === 1 ? '' : 'es'}` : 'No matches';
+    this.count.textContent = !this.q.value ? '' : n ? `${n} match${n === 1 ? '' : 'es'}${this.results.blockHitsCapped ? ' (matches inside blocks capped)' : ''}` : 'No matches';
     this.list.replaceChildren(...this.results.slice(0, MAX_ROWS).map((r, i) => el('div', {
       class: `find-row${i === this.cur ? ' cur' : ''}`, role: 'option', 'aria-selected': i === this.cur ? 'true' : 'false',
-      title: r.editable ? '' : 'Dimension text: find only', onclick: () => this.goTo(i),
+      title: r.editable ? '' : r.inBlock ? 'Text inside a block definition: find only' : 'Dimension text: find only', onclick: () => this.goTo(i),
     }, el('span', { class: 'find-text' }, r.text.slice(Math.max(0, r.start - 20), r.start).replace(/\n/g, ' '),
       el('mark', { text: r.text.slice(r.start, r.end) }), r.text.slice(r.end, r.end + 30).replace(/\n/g, ' ')),
-    el('span', { class: 'find-layer', text: r.editable ? r.layer : `${r.layer} (dim)` }))));
+    el('span', { class: 'find-layer', text: [r.place, r.where || (r.type === 'DIMENSION' ? 'dimension' : ''), r.layer].filter(Boolean).join(' · ') }))));
     if (n > MAX_ROWS) this.list.append(el('div', { class: 'find-row', text: `… ${n - MAX_ROWS} more` }));
   }
 
@@ -74,7 +76,8 @@ export class FindPanel {
     const r = this.results[i];
     if (!r) return;
     this.cur = i;
-    const { vp } = this.app;
+    const { vp } = this.app, cur = this.app.active?.spaces?.cur ?? 'Model';
+    if (r.space && r.space !== cur) this.run(() => setSpace(this.app, r.space)); // the hit is on another layout / Model
     const e = getEntity(this.app.doc, r.id);
     const b = e && vp.index.bboxOf(e);
     if (b) {
@@ -97,9 +100,9 @@ export class FindPanel {
   replaceOne() {
     const r = this.results[this.cur];
     if (!r) { this.step(1); return; }
-    if (!r.editable) { toast('Dimension text can be found but not replaced.', 2500); return; }
+    if (!r.editable) { toast(r.inBlock ? 'Text inside a block definition can be found but not replaced (edit the block).' : 'Dimension text can be found but not replaced.', 3000); return; }
     const at = this.cur;
-    this.run(() => replaceInDocument(this.app.session, this.q.value, this.r.value, this.opts, [{ id: r.id, index: r.index }]));
+    this.run(() => replaceInDocument(this.app.session, this.q.value, this.r.value, this.opts, [{ id: r.id, index: r.index, attrib: r.attrib }]));
     this.search();
     if (this.results.length) this.goTo(Math.min(at, this.results.length - 1));
   }
@@ -107,8 +110,9 @@ export class FindPanel {
   replaceAll() {
     if (!this.q.value) return;
     const n = this.run(() => replaceInDocument(this.app.session, this.q.value, this.r.value, this.opts));
-    const left = this.results.filter((x) => !x.editable).length;
-    toast(`${n} replaced${left ? ` (${left} in dimension text not changed)` : ''}`, 2500);
+    const dims = this.results.filter((x) => !x.editable && !x.inBlock).length, inBlocks = this.results.filter((x) => x.inBlock).length;
+    const left = [dims && `${dims} in dimension text`, inBlocks && `${inBlocks} inside block definitions`].filter(Boolean).join(', ');
+    toast(`${n} replaced${left ? ` (${left} not changed)` : ''}`, 3000);
     this.search();
   }
 }

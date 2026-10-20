@@ -41,3 +41,27 @@ test('angle and unit label', () => {
   close(angleAt({ x: 0, y: 0 }, { x: 1, y: -1 }, { x: 1, y: 1 }), 90, 'across 0');
   assert.equal(unitLabel(4), 'mm'); assert.equal(unitLabel(0), '');
 });
+
+test('hatch area by even-odd nesting: separate outer loops add, holes subtract, islands add again', () => {
+  const sq = (x, y, s) => ({ pts: [{ x, y }, { x: x + s, y }, { x: x + s, y: y + s }, { x, y: y + s }], closed: true });
+  const two = entityMeasure(M.makeHatch([sq(0, 0, 10), sq(20, 0, 5)]));
+  close(two.area, 125, 'two disjoint rooms add up'); assert.equal(two.loops, 2);
+  close(two.perimeter, 60, 'perimeter of both');
+  const hole = entityMeasure(M.makeHatch([sq(2, 2, 4), sq(0, 0, 10)])); // loop order does not matter
+  close(hole.area, 84, 'outer minus hole'); assert.equal(hole.loops, 2);
+  const island = entityMeasure(M.makeHatch([sq(0, 0, 10), sq(2, 2, 6), sq(4, 4, 2)]));
+  close(island.area, 100 - 36 + 4, 'outer - hole + island'); assert.equal(island.loops, 3);
+  // a separate room beside a room with a hole: 100 - 36 + 25
+  close(entityMeasure(M.makeHatch([sq(0, 0, 10), sq(2, 2, 6), sq(20, 0, 5)])).area, 89, 'room with hole plus a second room');
+  // a hole that touches the outer boundary (shared corner) and a bulged (circular) island inside a hole
+  close(entityMeasure(M.makeHatch([sq(0, 0, 10), sq(0, 0, 4)])).area, 84, 'hole sharing a corner with the outer loop');
+  const disc = { pts: [{ x: 4, y: 5, bulge: 1 }, { x: 6, y: 5, bulge: 1 }], closed: true };
+  close(entityMeasure(M.makeHatch([sq(0, 0, 10), sq(2, 2, 6), disc])).area, 64 + Math.PI, 'round island in a hole');
+});
+
+test('hatch edge loops are measured from their tessellation, nested the same way', () => {
+  const edge = (x, y, s) => ({ segs: [{ type: 'line', p1: { x, y }, p2: { x: x + s, y } }], closed: true });
+  const poly = (x, y, s) => [{ x, y }, { x: x + s, y }, { x: x + s, y: y + s }, { x, y: y + s }];
+  const r = entityMeasure(M.makeHatch([edge(0, 0, 10), edge(20, 0, 5)]), [poly(0, 0, 10), poly(20, 0, 5)]);
+  close(r.area, 125, 'edge loops add'); assert.equal(r.loops, 2);
+});
