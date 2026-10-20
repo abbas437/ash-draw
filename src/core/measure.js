@@ -18,8 +18,66 @@ export function loopMeasure(verts) {
   return { area: Math.abs(a2) / 2, perimeter: per };
 }
 
-/** measure a closed object: LWPOLYLINE (closed), CIRCLE, full ELLIPSE, HATCH (outer minus islands) or a
- *  closed SPLINE given its tessellation `pts`. Returns null for objects that do not enclose an area. */
+/** the loop as a polygon for containment tests: chords, with bulge arcs sampled (16 points per arc) */
+function loopPolygon(verts) {
+  const out = [];
+  verts.forEach((p, i) => {
+    out.push(p);
+    const b = p.bulge || 0, q = verts[(i + 1) % verts.length];
+    if (!b) return;
+    const th = 4 * Math.atan(b), mx = (p.x + q.x) / 2, my = (p.y + q.y) / 2, dx = q.x - p.x, dy = q.y - p.y;
+    const k = 1 / (2 * Math.tan(th / 2)), cx = mx - dy * k, cy = my + dx * k; // centre left of the chord for b > 0
+    const a0 = Math.atan2(p.y - cy, p.x - cx), r = Math.hypot(p.x - cx, p.y - cy);
+    for (let j = 1; j < 16; j++) out.push({ x: cx + r * Math.cos(a0 + (th * j) / 16), y: cy + r * Math.sin(a0 + (th * j) / 16) });
+  });
+  return out;
+}
+function inPolygon(p, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+function onPolygon(p, poly, tol) {
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[j], b = poly[i], dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+    const t = l2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2)) : 0;
+    if (Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy) <= tol) return true;
+  }
+  return false;
+}
+
+/** HATCH loops (pts with bulges measured exactly; edge loops from their tessellation polys[i], aligned with
+ *  `loops`) by even-odd nesting, as AutoCAD fills them: a loop inside an even number of the other loops adds its
+ *  area (separate outer boundaries add up), inside an odd number subtracts (a hole; an island in it adds again).
+ *  A loop's nesting is tested at one of its own points that lies on no other loop. Returns { area, perimeter, loops }. */
+export function hatchMeasure(loops, polys = null) {
+  const ls = [];
+  (loops ?? []).forEach((l, i) => {
+    const poly = l.pts ? loopPolygon(l.pts) : polys?.[i];
+    if (!poly || poly.length < 3) return;
+    ls.push({ m: loopMeasure(l.pts ?? poly), poly });
+  });
+  if (!ls.length) return null;
+  let span = 0;
+  for (const { poly } of ls) for (const q of poly) span = Math.max(span, Math.abs(q.x), Math.abs(q.y));
+  const tol = Math.max(span, 1) * 1e-9;
+  let area = 0, perimeter = 0;
+  ls.forEach((l, i) => {
+    const others = ls.filter((_, j) => j !== i).map((o) => o.poly);
+    const cand = [...l.poly, ...l.poly.map((q, k) => { const r = l.poly[(k + 1) % l.poly.length]; return { x: (q.x + r.x) / 2, y: (q.y + r.y) / 2 }; })];
+    const at = cand.find((q) => !others.some((o) => onPolygon(q, o, tol))) ?? cand[0];
+    const depth = others.filter((o) => inPolygon(at, o)).length;
+    area += depth % 2 ? -l.m.area : l.m.area;
+    perimeter += l.m.perimeter;
+  });
+  return { area, perimeter, loops: ls.length };
+}
+
+/** measure a closed object: LWPOLYLINE (closed), CIRCLE, full ELLIPSE, HATCH (even-odd nesting of its loops; `pts`
+ *  its tessellated loops, used for edge loops) or a closed SPLINE given its tessellation `pts`. Returns null for objects that do not enclose an area. */
 export function entityMeasure(e, pts = null) {
   switch (e.type) {
     case 'CIRCLE': return { area: Math.PI * e.r * e.r, perimeter: 2 * Math.PI * e.r };
@@ -29,12 +87,7 @@ export function entityMeasure(e, pts = null) {
       const a = Math.hypot(e.major.x, e.major.y), b = a * e.ratio, h = ((a - b) / (a + b)) ** 2;
       return { area: Math.PI * a * b, perimeter: Math.PI * (a + b) * (1 + (3 * h) / (10 + Math.sqrt(4 - 3 * h))) };
     }
-    case 'HATCH': {
-      const loops = e.loops.filter((l) => l.pts).map((l) => loopMeasure(l.pts));
-      if (!loops.length) return null;
-      loops.sort((x, y) => y.area - x.area); // largest = outer boundary, the rest are islands
-      return { area: loops[0].area - loops.slice(1).reduce((s, l) => s + l.area, 0), perimeter: loops.reduce((s, l) => s + l.perimeter, 0) };
-    }
+    case 'HATCH': return hatchMeasure(e.loops, pts);
     case 'SPLINE': return e.closed && pts?.length > 2 ? loopMeasure(pts) : null;
     default: return null;
   }

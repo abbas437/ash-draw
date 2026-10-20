@@ -271,12 +271,12 @@ export class MeasureGeomTool {
     let m = null, shape = null;
     if (e) {
       shape = tessellate(e, doc, 0);
-      m = entityMeasure(e, e.type === 'SPLINE' ? shape[0] : null);
+      m = entityMeasure(e, e.type === 'SPLINE' ? shape[0] : e.type === 'HATCH' && shape.length === e.loops.length ? shape : null);
     }
     if (!m) { // nothing closed under the cursor: measure the closed boundary around the point, as HATCH finds it
       const loops = findHatchBoundary(doc, raw, this.vp);
       const b = loops && { type: 'HATCH', loops };
-      if (b) { m = entityMeasure(b); shape = tessellate(b, doc, 0); }
+      if (b) { shape = tessellate(b, doc, 0); m = entityMeasure(b, shape.length === loops.length ? shape : null); }
     }
     if (!m) { toast('Select a closed polyline, circle, ellipse, hatch or closed spline, or click inside a closed shape.'); return; }
     this.addArea(m, shape);
@@ -303,6 +303,7 @@ export class MeasureGeomTool {
     this.result(t ? `Area (${t.mode})` : 'Area', () => [
       ...(v ? [`Area = ${this.dual(m.area * s * s, m.area, v, A)}`, `Perimeter = ${this.dual(m.perimeter * s, m.perimeter, v, P)}`]
         : [`Area = ${A(m.area)}, Perimeter = ${P(m.perimeter)}`]),
+      ...(m.loops > 1 ? [`${m.loops} loops (separate areas added, holes subtracted)`] : []),
       ...(total === null ? [] : [`Total area = ${tv ? this.dual(tm, total, tv, A) : A(total)}`])]);
   }
 
