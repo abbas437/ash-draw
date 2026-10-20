@@ -460,6 +460,10 @@ export function* writeDxfSteps(doc, opts = {}) {
           // a named pattern this program does not know, read with no pattern lines (78 = 0, as stored in the source DWG),
           // is written back as read: its name, the pattern flag and 78 = 0 (not turned into a solid fill)
           lines = e.patLines && e.patLines.length ? e.patLines : (hasPattern(e.pattern) ? patternLines(e.pattern, e.scale || 1, e.angle || 0) : []);
+          if (!lines.length) {
+            const note = `Hatch pattern "${e.pattern}" has no pattern lines in this drawing; saved by name only.`;
+            if (!report.notes.includes(note)) report.notes.push(note);
+          }
         }
         head(o, e, 'HATCH', owner); o.p(100, 'AcDbHatch'); o.pt(10, 0, 0, 0); o.p(210, 0); o.p(220, 0); o.p(230, 1);
         o.s(2, solid ? 'SOLID' : e.pattern); o.p(70, solid ? 1 : 0); o.p(71, 0);

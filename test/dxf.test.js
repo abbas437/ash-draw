@@ -6,6 +6,7 @@ import path from 'node:path';
 import { readDxf, parseDxf, decodeDxfBytes, plainText } from '../src/core/dxfRead.js';
 import { writeDxf } from '../src/core/dxfWrite.js';
 import * as M from '../src/core/model.js';
+import { patternLines } from '../src/core/patterns.js';
 import { makeMLeader } from '../src/core/mleader.js';
 import { aciToRgb, resolveColor } from '../src/core/aci.js';
 import { fixture, expected, norm, ezdxfAvailable, validateWithEzdxf } from './helpers.js';
@@ -313,7 +314,7 @@ test('hatch: a named pattern with no pattern lines (78 = 0) is saved by name wit
   hatch.patLines = []; // as the reader leaves it for 78 = 0
   M.addEntity(doc, hatch);
   const out = writeDxf(doc);
-  assert.ok(!doc.lastWriteReport.notes.some((n) => /AR-BRSTD/.test(n)), JSON.stringify(doc.lastWriteReport.notes));
+  assert.deepEqual(doc.lastWriteReport.notes.filter((n) => /AR-BRSTD/.test(n)), ['Hatch pattern "AR-BRSTD" has no pattern lines in this drawing; saved by name only.']);
   let h = hatchTags(out);
   assert.equal(h.get(2), 'AR-BRSTD'); assert.equal(h.get(70), '0'); assert.equal(h.get(78), '0');
   near(+h.get(52), 30); near(+h.get(41), 2);
@@ -333,6 +334,25 @@ test('hatch: a named pattern with no pattern lines (78 = 0) is saved by name wit
     assert.equal(r.audit_errors, 0, JSON.stringify(r.audit_messages));
     assert.equal(r.counts.HATCH, 1);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('hatch: a known pattern name with no stored lines is written with the library lines at the hatch angle and scale', () => {
+  const doc = M.newDocument();
+  const hatch = M.makeHatch([{ pts: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 50 }, { x: 0, y: 50 }], closed: true }],
+    { pattern: 'ANSI31', solid: false, scale: 2, angle: 30 });
+  hatch.patLines = [];
+  M.addEntity(doc, hatch);
+  const out = writeDxf(doc);
+  assert.ok(!doc.lastWriteReport.notes.some((n) => /ANSI31/.test(n)), JSON.stringify(doc.lastWriteReport.notes));
+  const back = readDxf(Buffer.from(out)).entities.find((e) => e.type === 'HATCH');
+  const want = patternLines('ANSI31', 2, 30);
+  assert.ok(want.length > 0 && back.patLines.length === want.length, `lines ${back.patLines.length} vs ${want.length}`);
+  want.forEach((L, i) => {
+    const G = back.patLines[i];
+    near(G.angle, L.angle); near(G.base.x, L.base.x); near(G.base.y, L.base.y); near(G.offset.x, L.offset.x); near(G.offset.y, L.offset.y);
+    assert.deepEqual(G.dashes.map((d) => +d.toFixed(6)), L.dashes.map((d) => +d.toFixed(6)));
+  });
+  near(back.angle, 30); near(back.scale, 2);
 });
 
 test('every re-saved fixture passes the ezdxf audit', (t) => {
