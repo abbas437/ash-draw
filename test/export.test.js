@@ -445,3 +445,20 @@ test('layout plot starts from the page setup when it has one, else from the pape
   assert.deepEqual(layoutPlotStart({ ...fresh, stdScale: 0 }, s), { paper: 'layout', fit: true }, 'page setup: fit');
   assert.deepEqual(layoutPlotStart({ ...fresh, stdScale: 16 }, s), { paper: 'layout', fit: false }, 'page setup (AutoCAD file): 1:1');
 });
+
+test('PDF: path geometry is streamed as text, not built as pdf-lib operator objects (memory on large drawings)', async () => {
+  const { PDFOperator } = await import('pdf-lib');
+  const doc = newDocument();
+  for (let i = 0; i < 2000; i++) addEntity(doc, makeLine({ x: i, y: 0 }, { x: i + 0.5, y: 10 }));
+  const of = PDFOperator.of;
+  let n = 0;
+  PDFOperator.of = (...a) => { n++; return of(...a); };
+  let pdf;
+  try { pdf = await PDFDocument.load((await exportPdf(doc, { pageSize: 'A3' })).bytes); } finally { PDFOperator.of = of; }
+  assert.ok(n < 50, `${n} PDFOperator objects for 2000 lines`);
+  // the operators pdf-lib wrote before, one per line: q, colour, width, caps, the segment, S, Q for each line
+  const c = pdf.getPage(0).node.Contents(), s = c instanceof PDFArray ? pdf.context.lookup(c.get(0)) : c;
+  const text = Buffer.from(decodePDFRawStream(s).decode()).toString('latin1');
+  assert.equal(text.split('\n').filter((l) => / m$/.test(l)).length, 2000);
+  assert.match(text, /^q\n0 0 0 RG\n[\d.]+ w\n1 J\n1 j\n[\d.]+ [\d.]+ m\n[\d.]+ [\d.]+ l\nS\nQ\n/);
+});
