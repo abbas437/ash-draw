@@ -92,6 +92,11 @@ export const EMPTY_DWG_MIN = 100 * 1024;
 export const isEmptyConversion = (dwgSize, doc) => dwgSize > EMPTY_DWG_MIN && objectsRead(doc) === 0;
 
 const plural = (n, w) => `${n.toLocaleString('en-US')} ${w}${n === 1 ? '' : 's'}`;
+/** the reader's doc.header.incomplete ({section, objects}: a DXF cut short) as the sentence the open dialog shows */
+export function incompleteText(inc) {
+  const where = inc.section ? `it ends inside ${inc.section} without ENDSEC/EOF` : 'it ends without EOF';
+  return `This DXF file is incomplete (${where}; ${plural(inc.objects, 'object')} read). It may have been cut by a download or e-mail.`;
+}
 /** Status-bar item for a DWG's last conversion ({converter, errorCount, objects, skipped}): short text + tooltip. */
 export function conversionSummary(c) {
   const name = c.converter === 'ODA' ? 'ODA File Converter' : 'LibreDWG';

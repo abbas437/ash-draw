@@ -47,7 +47,7 @@ import { initLayerCombo } from './layer-combo.js';
 import { initSymbolPalette } from './symbol-palette.js';
 import { el, message, modal, confirmDialog, textDialog, listDialog, toast, progressToast, renderLayers, renderProperties } from './ui.js';
 import {
-  OPEN_FILTERS, loadDrawing, conversionSummary, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, savePathIn, extOf, UNIT_NAMES,
+  OPEN_FILTERS, loadDrawing, incompleteText, conversionSummary, saveDxf, saveDwg, verificationMessage, exportSvgBytes, exportPngBytes, buildScene, prepareView, baseName, savePathIn, extOf, UNIT_NAMES,
 } from './files.js';
 
 const api = window.api;
@@ -387,6 +387,14 @@ class App {
       let loaded;
       try { loaded = await loadDrawing(api, f.name, f.bytes, { onProgress: (x) => pt.set(x), signal: ac.signal, path: f.path ?? null, onStage }); } finally { clearInterval(clock); }
       const { doc, format, notes, warnings, conversion } = loaded;
+      // a DXF cut short (no ENDSEC / EOF): asked before anything is built; opened anyway, it cannot be saved over the original
+      const incomplete = format === 'dxf' ? doc.header?.incomplete ?? null : null;
+      if (incomplete) {
+        const r = await modal('Incomplete DXF file', el('p', { text: incompleteText(incomplete) }),
+          [{ label: 'Open anyway', value: 'open', primary: true }, { label: 'Cancel', value: null }]);
+        if (r !== 'open') { toast(`Opening ${f.name} was cancelled.`, 2500); return; }
+        notes.unshift(`${incompleteText(incomplete)} Objects after the cut are missing; the original file is kept as it is (Save writes a new file).`);
+      }
       toast(`Opening ${f.name} …`, 60000); // read: now the view is built
       await loadDrawingXrefs(api, doc, f.path ?? null); // before the scene is built: it is built once, with the xrefs
       const missing = await loadDrawingImages(api, doc, f.path ?? null);
@@ -396,6 +404,7 @@ class App {
       this.installDoc(doc, { path: f.path ?? null, name: f.name, format }, { replaceBlank: true, prepared, firstView: true });
       openSavedSpace(this); // saved on a layout ($TILEMODE 0): open on that layout tab, as AutoCAD does
       this.active.conversion = conversion ?? null; // the status-bar conversion item and Help > Converter log
+      this.active.incomplete = incomplete && { ...incomplete, path: f.path ?? null }; // saveTab: not saved over this path
       this.refreshStatus();
       toast(`${f.name}: ${doc.entities.length.toLocaleString()} objects`, 2500);
       this.unitsHint(doc);
@@ -482,6 +491,14 @@ class App {
     const route = tab.file.path ? ctrlSaveRoute({ format: tab.file.format, odaWrite, tabVersion: tab.dwgVersion, header: tab.conversion?.dwgHeader }) : null;
     if (route?.action === 'dxf-overwrite' || route?.action === 'dwg-writeback') {
       const dwgBack = route.action === 'dwg-writeback';
+      // opened from an incomplete DXF: overwriting would replace the original with the part that was read
+      if (tab.incomplete && tab.incomplete.path === tab.file.path) {
+        const r = await modal('Save as a new file', el('div', {},
+          el('p', { text: `${tab.file.name} was incomplete when it was opened (${tab.incomplete.objects.toLocaleString('en-US')} objects read).` }),
+          el('p', { text: 'Saving over it would replace the original with the part that was read. Save a new copy instead.' })),
+        [{ label: 'Save as new file…', value: 'copy', primary: true }, { label: 'Cancel', value: null }]);
+        return r === 'copy' ? this.saveTabAs(tab, 'dxf') : false;
+      }
       if (dropped.length) {
         const r = await modal('Overwrite the original file?', el('div', {},
           el('p', { text: `${tab.file.name} contains objects this program cannot keep: ${dropped.join(', ')}.` }),

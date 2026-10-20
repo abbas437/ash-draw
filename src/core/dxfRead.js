@@ -269,6 +269,7 @@ function sections(tk) {
       let j = i + 2;
       while (j < codes.length && !(codes[j] === 0 && val(j) === 'ENDSEC')) j++;
       secs[name] = { from: i + 2, to: j };
+      if (j >= codes.length) secs.unterminated ??= name; // the file ends inside this section (no ENDSEC)
       i = j;
     }
   }
@@ -1098,6 +1099,15 @@ function parseTokensInto(tk, onProgress) {
   }
   if (stats.errors.length) doc.header.readErrors = stats.errors.slice(0, 20);
   if (tk.repaired) doc.header.repairedValues = tk.repaired; // text values split over several lines, rejoined
+  // a file cut short (download, e-mail): it ends inside a section, or without the closing 0/EOF. Sections a writer
+  // leaves out do not count; only an unterminated section or a missing EOF does.
+  let last = tk.codes.length - 1;
+  while (last >= 0 && tk.codes[last] !== 0) last--;
+  const eof = last >= 0 && tk.val(last).trim() === 'EOF';
+  if (secs.unterminated || !eof) {
+    const objects = doc.entities.length + layouts.reduce((k, lo) => k + lo.entities.filter((e) => e.type !== 'VIEWPORT').length, 0);
+    doc.header.incomplete = { section: secs.unterminated ?? null, objects };
+  }
   return doc;
 }
 
