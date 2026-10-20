@@ -2,10 +2,10 @@
 //
 //   const { bytes, warnings } = await exportPdf(doc, { pageSize: 'A3', orientation: 'auto' });
 import {
-  PDFDocument, StandardFonts, PageSizes, rgb, PDFOperator, PDFOperatorNames,
+  PDFDocument, StandardFonts, PageSizes, rgb, PDFOperator, PDFOperatorNames, PDFName, numberToString,
   pushGraphicsState, popGraphicsState, setLineWidth, setDashPattern, setLineCap, setLineJoin,
-  setStrokingRgbColor, setFillingRgbColor, moveTo, lineTo, appendBezierCurve, closePath, stroke,
-  clip, clipEvenOdd, endPath, concatTransformationMatrix, setGraphicsState,
+  setStrokingRgbColor, setFillingRgbColor, moveTo, lineTo, closePath, stroke,
+  clip, endPath, concatTransformationMatrix, setGraphicsState,
 } from 'pdf-lib';
 import { buildScene, docWithFrozen, infiniteItem } from './render.js';
 import { layoutPage, layoutPlotRegion, paperMmPerUnit, viewportScale, isPaperViewport, viewportClipRing } from './layouts.js';
@@ -125,10 +125,45 @@ async function newPdf() {
   return pdf;
 }
 
-/** (frozen layers) -> model scene, built once per layer set */
+/** (frozen layers) -> model scene, kept for the last layer set asked for only: a drawing's scene can take a gigabyte,
+ *  so the scene of one set is let go when another is built (viewports that alternate sets rebuild) */
 function memoModelScene(doc) {
-  const m = new Map();
-  return (fr) => { const key = fr.join('\u0001'); if (!m.has(key)) m.set(key, buildScene(docWithFrozen(doc, fr))); return m.get(key); };
+  let key = null, scene = null;
+  return (fr) => { const k = fr.join('\u0001'); if (k !== key) { scene = null; scene = buildScene(docWithFrozen(doc, fr)); key = k; } return scene; };
+}
+
+/** a number as pdf-lib writes an operand (PDFNumber: no exponent notation) */
+const num = (v) => { const t = String(v); return t.includes('e') ? numberToString(v) : t; };
+const CHUNK = 1 << 16;
+/**
+ * contentWriter() -> the page's content stream, written as text and deflated as it is produced (a large drawing's
+ * millions of path operators are never held as pdf-lib PDFOperator objects): push(...operators) serialises pdf-lib
+ * operators as pdf-lib does (one per line); w(text) appends operator text; flush() hands a full chunk to the
+ * compressor; finish() -> the FlateDecode bytes.
+ */
+export function contentWriter() {
+  const cs = new CompressionStream('deflate'), wr = cs.writable.getWriter(), parts = [], enc = new TextEncoder();
+  const read = (async () => { for await (const c of cs.readable) parts.push(c); })();
+  const bytes = (t) => { // the text's char codes as bytes (copyStringIntoBuffer), ASCII in practice
+    if (!/[^\x00-\x7f]/.test(t)) return enc.encode(t);
+    const b = new Uint8Array(t.length);
+    for (let i = 0; i < t.length; i++) b[i] = t.charCodeAt(i);
+    return b;
+  };
+  const out = {
+    s: '',
+    push(...ops) { for (const op of ops) out.s += `${op}\n`; },
+    w(t) { out.s += t; },
+    async flush(all = false) { if (!out.s.length || (!all && out.s.length < CHUNK)) return; const t = out.s; out.s = ''; await wr.write(bytes(t)); },
+    async finish() {
+      await out.flush(true); await wr.close(); await read;
+      const r = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+      let o = 0;
+      for (const p of parts) { r.set(p, o); o += p.length; }
+      return r;
+    },
+  };
+  return out;
 }
 
 /** fonts embedded in a PDF, shared by its pages */
@@ -182,6 +217,9 @@ async function addPdfPage(pdf, doc, opts) {
   const X = (x) => ox + x * k, Y = (y) => oy + y * k;
 
   const page = pdf.addPage([pw, ph]);
+  // everything the page draws (pushOperators, drawText) goes into the streamed writer, set as the page's content stream
+  const ops = contentWriter();
+  page.contentStream = ops;
   // a window or view plots only what lies inside it; a sheet on other paper only the sheet
   const cb = clipBox;
   if (cb) page.pushOperators(pushGraphicsState(), moveTo(X(cb.minx), Y(cb.miny)), lineTo(X(cb.maxx), Y(cb.miny)), lineTo(X(cb.maxx), Y(cb.maxy)), lineTo(X(cb.minx), Y(cb.maxy)), closePath(), clip(), endPath());
@@ -193,13 +231,12 @@ async function addPdfPage(pdf, doc, opts) {
   const keepGreys = !!doc.isCompare; // a comparison keeps its unchanged-grey in monochrome, so it still stands back from the changes
   const colOf = (style) => colorRgb(style, { monochrome, keepGreys }).map((v) => v / 255);
   const lwPt = (style) => Math.max(lineweightMm(style, lineweights) * PT_PER_MM, MIN_LW_PT);
-  const ops = [];
   // objects left out for non-finite coordinates (a bad op skipped, the rest drawn) and hatches too dense to draw
   let bad = 0, tints = 0, itemBad = false;
   const pathOps = (pathData) => { if (walkOps(pathData, {
-    moveTo: (x, y) => ops.push(moveTo(X(x), Y(y))),
-    lineTo: (x, y) => ops.push(lineTo(X(x), Y(y))),
-    close: () => ops.push(closePath()),
+    moveTo: (x, y) => ops.w(`${num(X(x))} ${num(Y(y))} m\n`),
+    lineTo: (x, y) => ops.w(`${num(X(x))} ${num(Y(y))} l\n`),
+    close: () => ops.w('h\n'),
     arc: (cx, cy, rx, ry, rot, t0, sw) => {
       // cubic Bezier per <= 90 degree piece: control arms = 4/3 tan(dt/4) times the tangent P'(t)
       const n = Math.max(1, Math.ceil(Math.abs(sw) / (Math.PI / 2) - 1e-9)), dt = sw / n, a = (4 / 3) * Math.tan(dt / 4);
@@ -208,9 +245,7 @@ async function addPdfPage(pdf, doc, opts) {
       const D = (t) => [-rx * Math.sin(t) * c - ry * Math.cos(t) * s, -rx * Math.sin(t) * s + ry * Math.cos(t) * c];
       for (let i = 0; i < n; i++) {
         const ta = t0 + i * dt, tb = ta + dt, pa = P(ta), pb = P(tb), da = D(ta), db = D(tb);
-        ops.push(appendBezierCurve(
-          X(pa[0] + a * da[0]), Y(pa[1] + a * da[1]), X(pb[0] - a * db[0]), Y(pb[1] - a * db[1]), X(pb[0]), Y(pb[1]),
-        ));
+        ops.w(`${num(X(pa[0] + a * da[0]))} ${num(Y(pa[1] + a * da[1]))} ${num(X(pb[0] - a * db[0]))} ${num(Y(pb[1] - a * db[1]))} ${num(X(pb[0]))} ${num(Y(pb[1]))} c\n`);
       }
     },
   })) itemBad = true; };
@@ -230,7 +265,7 @@ async function addPdfPage(pdf, doc, opts) {
   const strokeState = (style, dashes) => {
     alphaState(style);
     const [r, g, b] = colOf(style);
-    ops.push(setStrokingRgbColor(r, g, b), setLineWidth(lwPt(style)), setLineCap(1), setLineJoin(1));
+    ops.w(`${num(r)} ${num(g)} ${num(b)} RG\n${num(lwPt(style))} w\n1 J\n1 j\n`);
     // a pattern too fine to see on paper is drawn continuous
     if (dashes && dashes.reduce((s, d) => s + d, 0) >= 1) ops.push(setDashPattern(dashes, 0));
   };
@@ -322,8 +357,8 @@ async function addPdfPage(pdf, doc, opts) {
       ops.push(concatTransformationMatrix(im.u.x * k * im.size.x, im.u.y * k * im.size.x, im.v.x * k * im.size.y, im.v.y * k * im.size.y, X(im.p.x), Y(im.p.y)));
       ops.push(PDFOperator.of(PDFOperatorNames.DrawObject, [page.node.newXObject('Img', ref)]), popGraphicsState());
     } else if (it.kind === 'path') {
-      ops.push(pushGraphicsState()); strokeState(it.style, ltDashPt(dashUnits(doc, it.style)));
-      pathOps(it.ops); ops.push(stroke(), popGraphicsState());
+      ops.w('q\n'); strokeState(it.style, ltDashPt(dashUnits(doc, it.style)));
+      pathOps(it.ops); ops.w('S\nQ\n');
       if (it.arrow) {
         const t = arrowTriangle(it.arrow, msize);
         ops.push(pushGraphicsState()); fillState(it.style);
@@ -345,10 +380,10 @@ async function addPdfPage(pdf, doc, opts) {
         alphaState(it.style); ops.push(setFillingRgbColor(r, g, b)); pathOps(it.ops); ops.push(fillEvenOdd(), popGraphicsState());
         continue;
       }
-      pathOps(it.ops); ops.push(clipEvenOdd(), endPath());
+      pathOps(it.ops); ops.w('W*\nn\n');
       for (const f of fams) {
         ops.push(pushGraphicsState()); strokeState(it.style, dashPt(f.dashes));
-        for (const s of f.segs) if (!finiteSeg(s)) itemBad = true; else ops.push(moveTo(X(s[0]), Y(s[1])), lineTo(X(s[2]), Y(s[3])));
+        for (const s of f.segs) if (!finiteSeg(s)) itemBad = true; else ops.w(`${num(X(s[0]))} ${num(Y(s[1]))} m\n${num(X(s[2]))} ${num(Y(s[3]))} l\n`);
         ops.push(stroke(), popGraphicsState());
       }
       ops.push(popGraphicsState());
@@ -362,14 +397,13 @@ async function addPdfPage(pdf, doc, opts) {
       const glyphs = fonts.shape ? reorderPdfLines(lay.glyphs) : lay.glyphs;
       const c = Math.cos(it.rot), s = Math.sin(it.rot);
       const rc = (col) => runRgb(col, it.style, { monochrome, keepGreys }).map((v) => v / 255);
-      page.pushOperators(...ops.splice(0), pushGraphicsState(), concatTransformationMatrix(c, s, -s, c, X(it.p.x), Y(it.p.y)));
+      page.pushOperators(pushGraphicsState(), concatTransformationMatrix(c, s, -s, c, X(it.p.x), Y(it.p.y)));
       // layout is in drawing units, y down; the text frame is in page points, y up
       for (const g of glyphs) {
         if (!g.text) continue;
         const frame = [g.wf || 1, 0, Math.tan((g.oblique || 0) * Math.PI / 180), 1, g.x * k, -g.y * k];
         if (g.level != null || needsUni(g.text)) {
           shapedText(fonts.shape(g.text, g.level ?? null, HELV[variant(g)]), frame, g.h * k, 0, 0, rc(g.color), it.style);
-          page.pushOperators(...ops.splice(0));
           continue;
         }
         page.pushOperators(pushGraphicsState(), concatTransformationMatrix(...frame));
@@ -378,7 +412,7 @@ async function addPdfPage(pdf, doc, opts) {
       }
       for (const r of reorderRules(lay.rules, glyphs)) {
         const [cr, cg, cb] = rc(r.color);
-        alphaState(it.style); page.pushOperators(...ops.splice(0));
+        alphaState(it.style);
         page.pushOperators(setStrokingRgbColor(cr, cg, cb), setLineWidth(r.h * k * 0.06), moveTo(r.x1 * k, -r.y * k), lineTo(r.x2 * k, -r.y * k), stroke());
       }
       page.pushOperators(popGraphicsState());
@@ -400,7 +434,6 @@ async function addPdfPage(pdf, doc, opts) {
         continue;
       }
       const font = helv, lay = layoutText({ ...it, lines }, (t) => font.widthOfTextAtSize(t, it.h));
-      page.pushOperators(...ops.splice(0));
       for (const l of lay.lines) {
         if (!l.text) continue;
         page.pushOperators(pushGraphicsState(), concatTransformationMatrix(...frame));
@@ -409,7 +442,7 @@ async function addPdfPage(pdf, doc, opts) {
         page.pushOperators(popGraphicsState());
       }
     }
-    if (ops.length > 5000) page.pushOperators(...ops.splice(0));
+    await ops.flush();
   }
   if (itemBad) { bad++; itemBad = false; }
   };
@@ -427,14 +460,16 @@ async function addPdfPage(pdf, doc, opts) {
       if (t) ops.push(concatTransformationMatrix(c, sn, -sn, c, cx - c * cx + sn * cy, cy - sn * cx - c * cy)); // turn about the viewport centre
       k = paper.k / s; ox = cx - v.viewCenter.x * k; oy = cy - v.viewCenter.y * k;
       const R = Math.hypot(v.width, v.height) / 2 * s; // the viewport's model window (any twist), clipped above
-      await drawItems(modelScene(v.frozen ?? []), { minx: v.viewCenter.x - R, miny: v.viewCenter.y - R, maxx: v.viewCenter.x + R, maxy: v.viewCenter.y + R });
+      const win = { minx: v.viewCenter.x - R, miny: v.viewCenter.y - R, maxx: v.viewCenter.x + R, maxy: v.viewCenter.y + R };
+      await drawItems(modelScene(v.frozen ?? []), win, win); // what lies outside the viewport's window is not written
       ({ ox, oy, k } = paper); ltk = null;
       ops.push(popGraphicsState());
     }
   }
   await drawItems(scene, bb, layout ? null : region);
-  if (ops.length) page.pushOperators(...ops.splice(0));
   if (cb) page.pushOperators(popGraphicsState());
+  page.contentStream = undefined;
+  page.node.addContentStream(pdf.context.register(pdf.context.stream(await ops.finish(), { Filter: PDFName.of('FlateDecode') })));
   warnings.push(...exportNotes(bad, tints));
   if (missing) warnings.push(`${missing} text characters could not be drawn (${fonts.loadFailed ? 'the Unicode font could not be loaded' : 'no Unicode font'})`);
   return warnings;
