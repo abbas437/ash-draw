@@ -9,6 +9,7 @@
 
 import { mmPerUnit } from './model.js';
 import { tessellate } from './geom.js';
+import { insidePoly } from './xclip.js';
 
 const VP_LOCKED = 16384, VP_OFF = 131072, VP_CLIP = 65536;
 
@@ -104,6 +105,30 @@ export function viewportClipRing(vp, entities) {
   const e = viewportClipEntity(vp, entities);
   const ring = e ? tessellate(e)[0] : null;
   return ring && ring.length >= 3 ? ring : null;
+}
+
+/** `ids` (a Set or array) widened to the clip partners: a polygon-clipped viewport brings its boundary entity and a
+ *  boundary brings the viewports it clips, so the two select, copy, move and erase together (as in AutoCAD). A Set. */
+export function withClipPartners(entities, ids) {
+  const set = new Set(ids), vps = [];
+  for (const e of entities) if (e.type === 'VIEWPORT' && e.clipId) vps.push(e);
+  if (!vps.length) return set;
+  const pairs = vps.map((v) => [v, viewportClipEntity(v, entities)]).filter(([, b]) => b);
+  for (const [v, b] of pairs) if (set.has(v.id)) set.add(b.id);
+  for (const [v, b] of pairs) if (set.has(b.id)) set.add(v.id);
+  return set;
+}
+
+/** After copies are added (ids assigned): `pairs` [[source, copy]...] of ONE copy set (one array item, one COPY). A copied
+ *  clipped viewport links to the copy of its boundary; one copied without its boundary is no longer clipped (its link
+ *  would name the original's boundary). */
+export function relinkClipCopies(pairs) {
+  const copyOf = new Map(pairs.map(([s, c]) => [s.id, c]));
+  for (const [s, c] of pairs) {
+    if (c.type !== 'VIEWPORT' || !s.clipId) continue;
+    const b = copyOf.get(s.clipId);
+    if (b) c.clipId = b.id; else delete c.clipId;
+  }
 }
 
 /** VIEWPORT body tags after AcDbEntity (R2000), frozen layer handles resolved through `layerHandle(name)`; `clipH`
@@ -204,12 +229,15 @@ export const viewportPrintScale = (vp, plot, units) => (viewportScale(vp) * mmPe
 /** the viewHeight that makes viewport `vp` print at 1:n (inverse of viewportPrintScale) */
 export const viewHeightForScale = (vp, n, plot, units) => (vp.height * n * layoutMmPerUnit(plot)) / mmPerUnit(units);
 
-/** the topmost (last drawn) usable viewport containing paper point p, or null */
+/** the topmost (last drawn) usable viewport containing paper point p, or null. A polygon-clipped viewport contains only
+ *  the points inside both its rectangle and its clip boundary (`entities` must hold the boundary: the layout's list). */
 export function viewportAt(entities, p) {
   for (let i = entities.length - 1; i >= 0; i--) {
     const v = entities[i];
     if (v.type !== 'VIEWPORT' || isPaperViewport(v) || v.on === false || !(v.width > 0 && v.height > 0)) continue;
-    if (Math.abs(p.x - v.c.x) <= v.width / 2 && Math.abs(p.y - v.c.y) <= v.height / 2) return v;
+    if (!(Math.abs(p.x - v.c.x) <= v.width / 2 && Math.abs(p.y - v.c.y) <= v.height / 2)) continue;
+    const ring = viewportClipRing(v, entities);
+    if (!ring || insidePoly(p.x, p.y, ring)) return v;
   }
   return null;
 }

@@ -13,6 +13,7 @@ import {
   translation, rotation, scaling, mirrorLine, compose, transformEntity, explode, offsetEntity, trimEntity, extendEntity,
 } from './geom.js';
 import { transformDimension, rebuildDimension } from './dims.js';
+import { relinkClipCopies } from './layouts.js';
 
 const UNDO_LIMIT = 500;
 
@@ -305,17 +306,18 @@ export function eraseEntities(s, ids) {
 export function transformEntities(s, ids, m, { copy = false, label = 'Transform' } = {}) {
   const failed = [];
   let done = 0;
-  const created = [];
+  const created = [], pairs = [];
   s.transact(label, (tx) => {
     for (const id of ids) {
       const e = getEntity(s.doc, id);
       if (!e) continue;
       try {
         const t = xform(s.doc, e, m);
-        if (copy) { t.id = 0; created.push(tx.add(t)); } else tx.replace(t);
+        if (copy) { t.id = 0; created.push(tx.add(t)); pairs.push([e, t]); } else tx.replace(t);
         done++;
       } catch (err) { failed.push(fail(id, err)); }
     }
+    relinkClipCopies(pairs);
   });
   return { done, failed, created };
 }
@@ -360,12 +362,16 @@ export function explodeEntities(s, ids) {
   return { done: created.length, failed, created };
 }
 
-/** Apply an edit set {add, remove, change} from modify.js as one undo step; returns the added entities. */
+/** Apply an edit set {add, remove, change} from modify.js as one undo step; returns the added entities. `copies` (the
+ *  arrays): [[source, copy]...] per array item, copies among `add`, so copied clipped viewports link to their copied
+ *  boundaries. */
 export function applyEditSet(s, label, set) {
   return s.transact(label, (tx) => {
     for (const e of set.change || []) tx.replace(e);
     if (set.remove && set.remove.length) tx.remove(set.remove);
-    return (set.add || []).map((e) => { e.id = 0; return tx.add(e); });
+    const added = (set.add || []).map((e) => { e.id = 0; return tx.add(e); });
+    for (const pairs of set.copies || []) relinkClipCopies(pairs);
+    return added;
   });
 }
 

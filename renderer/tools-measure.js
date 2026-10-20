@@ -171,7 +171,11 @@ export class MeasureGeomTool {
   throughViewport(pts) {
     const vp = this.vp;
     if (!vp.layout || vp.mspace || !pts.length) return null;
-    const vports = (this.vports ??= vp.doc.entities.filter((e) => e.type === 'VIEWPORT')); // kept for the rubber band
+    // kept for the rubber band: the viewports and their clip boundaries (viewportAt tests a clipped one against its boundary)
+    const vports = (this.vports ??= ((all) => {
+      const clips = new Set(all.filter((e) => e.type === 'VIEWPORT' && e.clipId).map((e) => e.clipId));
+      return all.filter((e) => e.type === 'VIEWPORT' || clips.has(e.id));
+    })(vp.doc.entities));
     const v = viewportAt(vports, pts[0]);
     return v && pts.every((q) => viewportAt(vports, q) === v) ? v : null;
   }

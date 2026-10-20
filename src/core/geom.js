@@ -615,6 +615,13 @@ export function transformEntity(e, m) {
       c.p1 = { ...a, x: Math.min(a.x, b.x), y: Math.max(a.y, b.y) }; c.p2 = { ...b, x: Math.max(a.x, b.x), y: Math.min(a.y, b.y) };
       break;
     }
+    case 'VIEWPORT': {
+      // the paper rectangle moves / scales / flips; the model view it shows (view centre, height, twist) stays
+      const k = 1e-9 * Math.max(Math.abs(m[0]) + Math.abs(m[3]), 1);
+      if (!(Math.abs(m[1]) < k && Math.abs(m[2]) < k)) throw Object.assign(new Error('A viewport cannot be turned (only moved, scaled or flipped).'), { code: 'SHEAR' });
+      c.c = apply(m, e.c); c.width = e.width * Math.abs(m[0]); c.height = e.height * Math.abs(m[3]);
+      break;
+    }
     case 'LEADER': c.pts = e.pts.map((p) => apply(m, p)); break;
     case 'MLEADER': return transformMLeader(e, (p) => apply(m, p));
     case 'MLINE': return transformMline(e, (p) => apply(m, p));

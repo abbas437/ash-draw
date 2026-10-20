@@ -1,6 +1,6 @@
 // ASH Draw Studio - freeze a layer in one viewport only: the Layers panel "VP" column and the VPLAYER command.
 // The UI over src/core/vpfreeze.js; every change is one undo step on the layout space the viewports live in.
-import { isPaperViewport } from '../src/core/layouts.js';
+import { isPaperViewport, viewportAt } from '../src/core/layouts.js';
 import { screenToWorld } from '../src/core/render.js';
 import { vpFrozen, layoutViewports, matchLayerNames, setVpFreeze, resetVpFreeze } from '../src/core/vpfreeze.js';
 import { Tool, TOOL_ALIASES } from './tools.js';
@@ -76,7 +76,7 @@ const vplayerTool = (app) => new (class VplayerTool extends Tool {
     const vp = this.vp, m = vp.mspace, sc = vp.toScreen(p);
     // in MSPACE the click is in model coordinates: the same screen point in the paper view
     const q = m ? screenToWorld({ ...m.paperView, width: vp.view.width, height: vp.view.height }, sc.x, sc.y) : p;
-    const v = layoutViewports(layoutSpace(app)?.entities ?? []).find((e) => Math.abs(q.x - e.c.x) <= e.width / 2 && Math.abs(q.y - e.c.y) <= e.height / 2);
+    const v = viewportAt(layoutSpace(app)?.entities ?? [], q); // a clipped viewport: inside its boundary
     if (v && !this.picked.includes(v)) this.picked.push(v);
     this.h.refreshPrompt();
   }

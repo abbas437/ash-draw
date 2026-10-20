@@ -529,7 +529,12 @@ export function stretch(ents, win, dx, dy, doc = null) {
 }
 
 // ---- ARRAY (non-associative copies) ---------------------------------------------------------
-function copiesBy(ents, m, out) { for (const e of ents) { const c = transformEntity(e, m); c.id = 0; out.add.push(c); } }
+/** one array item: copies of `ents` by m into out.add; out.copies keeps [source, copy] per item (see applyEditSet) */
+function copiesBy(ents, m, out) {
+  const pairs = [];
+  for (const e of ents) { const c = transformEntity(e, m); c.id = 0; out.add.push(c); pairs.push([e, c]); }
+  (out.copies ??= []).push(pairs);
+}
 function selectionCentre(ents, doc) {
   let b = null;
   for (const e of ents) b = unionBox(b, bboxOf(e, doc));

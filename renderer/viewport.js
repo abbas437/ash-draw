@@ -15,7 +15,7 @@ import { setTextMeasure } from '../src/core/textMetrics.js';
   const mctx = document.createElement('canvas').getContext('2d');
   setTextMeasure((t, font, b, i) => { mctx.font = `${i ? 'italic ' : ''}${b ? 'bold ' : ''}100px "${font}", Arial, "Segoe UI", sans-serif`; return mctx.measureText(t).width / 100; });
 }
-import { paperRects, paperMmPerUnit } from '../src/core/layouts.js';
+import { paperRects, paperMmPerUnit, withClipPartners } from '../src/core/layouts.js';
 import { frameKey, framePlan, placeFrame, exposedStrips, sameKey } from '../src/core/frameCache.js';
 import { nextTask } from '../src/core/slice.js';
 import { drawGrid, snapToGrid, GRID_DEFAULTS } from '../src/core/grid.js';
@@ -168,8 +168,9 @@ export class Viewport {
   get tolWorld() { return SNAP_PX / this.view.zoom; }
 
   // ---- selection -----------------------------------------------------------------------------
+  /** a clipped viewport and its boundary entity are selected together (withClipPartners) */
   setSelection(ids) {
-    this.selection = new Set(ids);
+    this.selection = this.layout ? withClipPartners(this.doc.entities, ids) : new Set(ids);
     this.requestRender();
     this.emit('selection', this.selection);
   }
