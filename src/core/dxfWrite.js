@@ -9,10 +9,23 @@ import { patternLines, hasPattern } from './patterns.js';
 const TAU = Math.PI * 2;
 const STD_LW = [0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70, 80, 90, 100, 106, 120, 140, 158, 200, 211];
 
-const num = (n) => {
+/** a number as DXF text: the shortest digits that read back as exactly `n` (String(n)), always in plain decimal (no
+ *  exponent, which String uses from 1e21 and below 1e-6). -0 is written 0; a non-finite value 0. */
+export const num = (n) => {
   if (!Number.isFinite(n)) return '0';
-  const s = String(Number(n.toPrecision(15)));
-  return s;
+  if (n === 0) return '0';
+  const s = String(n);
+  const ei = s.indexOf('e');
+  if (ei < 0) return s;
+  const neg = s[0] === '-';
+  const mant = s.slice(neg ? 1 : 0, ei), exp = Number(s.slice(ei + 1));
+  const dot = mant.indexOf('.');
+  const digits = dot < 0 ? mant : mant.slice(0, dot) + mant.slice(dot + 1);
+  const point = (dot < 0 ? mant.length : dot) + exp; // digits before the decimal point
+  const body = point <= 0 ? '0.' + '0'.repeat(-point) + digits
+    : point >= digits.length ? digits + '0'.repeat(point - digits.length)
+      : digits.slice(0, point) + '.' + digits.slice(point);
+  return (neg ? '-' : '') + body;
 };
 import { dimStyleTags, dimOverridesXData } from './dimsStyle.js';
 import { decodeColor } from './aci.js';
@@ -25,8 +38,12 @@ import { viewToDxf } from './views.js';
 import { drain, runSliced } from './slice.js';
 import { layerStateTags } from './layerstates.js';
 import { spatialFilterTags } from './xclip.js';
-const encode = (s) => String(s ?? '').replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7e]/g, (c) => {
-  const code = c.charCodeAt(0);
+// characters outside the Basic Multilingual Plane written as '?' (\U+ takes 4 hex digits): a running count, the writer
+// reports the ones its call added
+let nonBmpWritten = 0;
+const encode = (s) => String(s ?? '').replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7e]/gu, (c) => {
+  const code = c.codePointAt(0);
+  if (code > 0xffff) { nonBmpWritten++; return '?'; }
   return code < 32 ? ' ' : `\\U+${code.toString(16).toUpperCase().padStart(4, '0')}`;
 });
 function chunkEncoded(s, max = 240) {
@@ -120,7 +137,8 @@ export function writeDxfAsync(doc, opts = {}, { signal = null, sliceMs = 30 } = 
 export function* writeDxfSteps(doc, opts = {}) {
   let n = 0; // entities written, for the yields
   let reportedDim = false, reportedMleader = false;
-  const report = { version: 'AC1015', entities: 0, blocks: 0, skipped: {}, notes: [] };
+  const nonBmp0 = nonBmpWritten;
+  const report ={ version: 'AC1015', entities: 0, blocks: 0, skipped: {}, notes: [] };
   let nextHandle = 0x30;
   // MLINESTYLE objects keep their handles (MLINE 340 names them); fixed low handles are never reused for them
   const FIXED_H = new Set(['1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'C', 'D', '10', '12', '13', '17', '1A', '1B', '1E', '22']);
@@ -820,6 +838,8 @@ export function* writeDxfSteps(doc, opts = {}) {
   if (text.includes('__DIMTXSTY:')) text = text.replace(/__DIMTXSTY:(.*?)__/g, (_, u) => styleHandle.get(u) ?? styleHandle.get('STANDARD'));
 
   for (const [t, n] of Object.entries(doc.skipped)) report.skipped[`${t} (not read)`] = n;
+  const nonBmp = nonBmpWritten - nonBmp0;
+  if (nonBmp) report.notes.push(`${nonBmp} character${nonBmp === 1 ? '' : 's'} outside the Basic Multilingual Plane ${nonBmp === 1 ? 'was' : 'were'} saved as ?`);
   doc.lastWriteReport = report;
   void ccwSweep;
   return text;
