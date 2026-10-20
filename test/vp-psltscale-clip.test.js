@@ -6,7 +6,9 @@ import { PDFDocument, PDFArray, decodePDFRawStream } from 'pdf-lib';
 import { createCanvas } from '@napi-rs/canvas';
 import { parseDxf } from '../src/core/dxfRead.js';
 import { writeDxf } from '../src/core/dxfWrite.js';
-import { newLayout, paperRects } from '../src/core/layouts.js';
+import { newLayout, paperRects, viewportAt, viewportClipRing, withClipPartners, makeViewport } from '../src/core/layouts.js';
+import { Session, moveEntities, mirrorEntities, eraseEntities, applyEditSet } from '../src/core/edit.js';
+import { arrayRect, stretch } from '../src/core/modify.js';
 import { newDocument, addEntity, makeLine } from '../src/core/model.js';
 import { buildScene, docWithFrozen, drawLayout } from '../src/core/render.js';
 import { exportPdf } from '../src/core/exportPdf.js';
@@ -142,4 +144,82 @@ test('polygon-clipped viewport: read -> write -> re-read keeps flag 0x10000 and 
     assert.deepEqual(b.vertices.map((v) => [v.x, v.y]), [[100, 100], [300, 100], [100, 200]]);
     text = writeDxf(back);
   }
+});
+
+// ---- hit-testing, selection and copies of a polygon-clipped viewport ---------------------------------------------
+
+/** the clipped layout as an editing session on its paper space (the doc the layout tab edits) */
+function clippedSession() {
+  const { doc, lay, tri } = clippedDoc();
+  const paper = Object.create(doc, { entities: { value: lay.entities, writable: true } });
+  const vp = lay.entities.find((e) => e.type === 'VIEWPORT');
+  return { s: new Session(paper), lay, tri, vp };
+}
+
+test('viewportAt: a triangle-clipped viewport holds the points inside the triangle, not the rest of its rectangle', () => {
+  const { lay, vp } = clippedSession();
+  assert.equal(viewportAt(lay.entities, { x: 120, y: 120 }), vp, 'inside the triangle');
+  assert.equal(viewportAt(lay.entities, { x: 280, y: 180 }), null, 'in the rectangle, outside the triangle: paper');
+  // a rectangular viewport below it in the draw order wins there
+  const under = { ...makeViewport({ x: 250, y: 160 }, { x: 310, y: 195 }, null, 3), id: 99 };
+  lay.entities.unshift(under);
+  assert.equal(viewportAt(lay.entities, { x: 280, y: 180 }), under, 'the viewport underneath');
+  assert.equal(viewportAt(lay.entities, { x: 260, y: 105 }), vp, 'inside both: the clipped one (on top)');
+});
+
+test('selecting a clipped viewport or its boundary selects both', () => {
+  const { lay, tri, vp } = clippedSession();
+  assert.deepEqual([...withClipPartners(lay.entities, [vp.id])].sort(), [tri.id, vp.id].sort());
+  assert.deepEqual([...withClipPartners(lay.entities, [tri.id])].sort(), [tri.id, vp.id].sort());
+  assert.deepEqual([...withClipPartners(lay.entities, [])], []);
+});
+
+test('copy / mirror / array of a clipped viewport with its boundary: each copy is clipped by its own copied boundary', () => {
+  const { s, lay, tri, vp } = clippedSession();
+  const ids = [...withClipPartners(lay.entities, [vp.id])];
+  const check = (created, dx, dy, label) => {
+    const v = created.find((e) => e.type === 'VIEWPORT'), b = created.find((e) => e.type === 'LWPOLYLINE');
+    assert.ok(v && b, `${label}: both copied`);
+    assert.equal(v.clipId, b.id, `${label}: the copy's clipId names the copied boundary`);
+    assert.notEqual(b.id, tri.id);
+    if (dx != null) assert.deepEqual([v.c.x, v.c.y], [vp.c.x + dx, vp.c.y + dy], `${label}: the viewport moved with its boundary`);
+  };
+  check(moveEntities(s, ids, 300, 0, { copy: true }).created, 300, 0, 'copy');
+  check(mirrorEntities(s, ids, { x: 0, y: 0 }, { x: 0, y: 1 }).created, null, null, 'mirror');
+  const added = applyEditSet(s, 'Array', arrayRect(ids.map((id) => lay.entities.find((e) => e.id === id)), { rows: 1, cols: 3, colSpacing: 250 }));
+  assert.equal(added.length, 4);
+  check(added.slice(0, 2), 250, 0, 'array item 1');
+  check(added.slice(2), 500, 0, 'array item 2');
+  assert.equal(vp.clipId, tri.id, 'the original keeps its boundary');
+  // a viewport copied without its boundary is not clipped by the original's
+  const lone = moveEntities(s, [vp.id], 0, 300, { copy: true }).created[0];
+  assert.equal(lone.clipId, undefined);
+});
+
+test('erase of a clipped viewport with its boundary removes both; undo restores the link', () => {
+  const { s, tri, vp } = clippedSession(), ents = () => s.doc.entities; // erasing replaces the list
+  eraseEntities(s, [...withClipPartners(ents(), [vp.id])]);
+  assert.ok(!ents().includes(vp) && !ents().includes(tri), 'both gone');
+  s.undo();
+  assert.ok(ents().includes(vp) && ents().includes(tri), 'both back');
+  assert.ok(viewportClipRing(vp, ents()), 'clipped again');
+  // the boundary erased alone: the viewport is a rectangle (hit-tested and written as one); undo clips it again
+  eraseEntities(s, [tri.id]);
+  assert.equal(viewportClipRing(vp, ents()), null);
+  assert.equal(viewportAt(ents(), { x: 280, y: 180 }), vp);
+  s.undo();
+  assert.equal(viewportAt(ents(), { x: 280, y: 180 }), null);
+});
+
+test('moving or stretching the boundary keeps the viewport clipped to the new shape (linked by id)', () => {
+  const { s, lay, tri, vp } = clippedSession();
+  moveEntities(s, [tri.id, vp.id], 10, 0);
+  const moved = lay.entities.find((e) => e.id === tri.id), v = () => lay.entities.find((e) => e.id === vp.id);
+  assert.notEqual(moved, tri, 'the boundary was replaced by a moved object');
+  assert.deepEqual([v().c.x, v().c.y], [210, 150], 'the viewport moved with it');
+  assert.deepEqual(viewportClipRing(v(), lay.entities).slice(0, 3).map((p) => [p.x, p.y]), [[110, 100], [310, 100], [110, 200]]);
+  assert.equal(viewportAt(lay.entities, { x: 280, y: 180 }), null);
+  // stretch the apex (110,200) to (290,200): (280,180) is then inside the new triangle
+  applyEditSet(s, 'Stretch', stretch([moved], { minx: 100, miny: 190, maxx: 120, maxy: 210 }, 180, 0));
+  assert.equal(viewportAt(lay.entities, { x: 280, y: 180 }), v());
 });

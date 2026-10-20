@@ -15,6 +15,7 @@ import {
   addEntities, moveEntities, rotateEntities, scaleEntities, mirrorEntities, eraseEntities, explodeEntities,
   offsetCommand, trimCommand, extendCommand,
 } from '../src/core/edit.js';
+import { withClipPartners } from '../src/core/layouts.js';
 import { MeasureGeomTool } from './tools-measure.js';
 import { gripsOf, applyGrip, gripEdit, gripsStretch, matchPropsEdit, nextGripMode, GRIP_MODES, gripMatrix, gripModeEdit, MATCH_SETTINGS, defaultMatchSettings } from './grips.js';
 import { el, modal, popMenu } from './ui.js';
@@ -85,7 +86,8 @@ class Selector {
     const vp = this.vp, sel = new Set(vp.selection);
     const ids = ev.dragged ? vp.box(a, ev.raw, ev.raw.x < a.x) : [vp.pick(ev.raw)?.id].filter((id) => id != null);
     if (!ids.length) { if (!ev.dragged && !ev.shiftKey && this.clearOnEmpty) vp.setSelection([]); return true; }
-    for (const id of ids) { if (ev.shiftKey) sel.delete(id); else sel.add(id); }
+    const all = vp.layout ? withClipPartners(vp.doc.entities, ids) : ids; // Shift removes a clipped viewport with its boundary
+    for (const id of all) { if (ev.shiftKey) sel.delete(id); else sel.add(id); }
     vp.setSelection(sel);
     return true;
   }
