@@ -370,7 +370,9 @@ test('save: stale temporary files of an earlier save of this drawing (over 10 mi
       '.Plan A.dwg.4242-0123abcd.prev', // a copy to recover from
       '.Plan A.bak.4242-0123abcd.tmp', // a .bak copy
       '.Other.dwg.4242-0123abcd.tmp', // another drawing
-      'Plan A.dwg.4242-0123abcd.tmp', '.Plan A.dwg.4242-0123abcd.tmp.keep', '.Plan A.dwg.x-0123abcd.tmp', '.Plan A.dwg.4242-0123ABCD.tmp', 'notes.txt',
+      'Plan A.dwg.4242-0123abcd.tmp', '.Plan A.dwg.4242-0123abcd.tmp.keep', '.Plan A.dwg.x-0123abcd.tmp', 'notes.txt',
+      // upper-case hex is not our name; on Windows it is the same file as the stale lower-case one, so only elsewhere
+      ...(process.platform === 'win32' ? [] : ['.Plan A.dwg.4242-0123ABCD.tmp']),
     ];
     for (const n of [...stale, ...keep]) {
       await fs.writeFile(path.join(t.dir, n), n);
