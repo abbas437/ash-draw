@@ -297,6 +297,44 @@ test('new drawing built from factories saves and passes an independent audit', (
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('hatch: a named pattern with no pattern lines (78 = 0) is saved by name with the pattern flag, not as solid', (t) => {
+  // as LibreDWG's dwg2dxf writes a DWG hatch that stores no definition lines: 2 AR-BRSTD, 70 0, ... 78 0
+  const hatchTags = (text) => {
+    const L = text.split(/\r?\n/).map((s) => s.trim());
+    let k = 0;
+    while (k < L.length - 1 && !(L[k] === '0' && L[k + 1] === 'HATCH')) k += 2;
+    const out = new Map();
+    for (k += 2; k < L.length - 1 && L[k] !== '0'; k += 2) if (!out.has(+L[k])) out.set(+L[k], L[k + 1]);
+    return out;
+  };
+  const doc = M.newDocument();
+  const hatch = M.makeHatch([{ pts: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 50 }, { x: 0, y: 50 }], closed: true }],
+    { pattern: 'AR-BRSTD', solid: false, scale: 2, angle: 30 });
+  hatch.patLines = []; // as the reader leaves it for 78 = 0
+  M.addEntity(doc, hatch);
+  const out = writeDxf(doc);
+  assert.ok(!doc.lastWriteReport.notes.some((n) => /AR-BRSTD/.test(n)), JSON.stringify(doc.lastWriteReport.notes));
+  let h = hatchTags(out);
+  assert.equal(h.get(2), 'AR-BRSTD'); assert.equal(h.get(70), '0'); assert.equal(h.get(78), '0');
+  near(+h.get(52), 30); near(+h.get(41), 2);
+  const back = readDxf(Buffer.from(out)).entities.find((e) => e.type === 'HATCH');
+  assert.equal(back.pattern, 'AR-BRSTD'); assert.equal(back.solid, false); assert.deepEqual(back.patLines, []);
+  near(back.angle, 30); near(back.scale, 2);
+  // and saved again unchanged
+  h = hatchTags(writeDxf(readDxf(Buffer.from(out))));
+  assert.equal(h.get(2), 'AR-BRSTD'); assert.equal(h.get(70), '0'); assert.equal(h.get(78), '0');
+  if (!ezdxfAvailable()) return t.skip('ezdxf not installed');
+  const dir = mkdtempSync(path.join(tmpdir(), 'ash-draw-'));
+  try {
+    const f = path.join(dir, 'hatch78.dxf');
+    writeFileSync(f, out);
+    const r = validateWithEzdxf(f);
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.audit_errors, 0, JSON.stringify(r.audit_messages));
+    assert.equal(r.counts.HATCH, 1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('every re-saved fixture passes the ezdxf audit', (t) => {
   if (!ezdxfAvailable()) return t.skip('ezdxf not installed');
   const dir = mkdtempSync(path.join(tmpdir(), 'ash-draw-'));
