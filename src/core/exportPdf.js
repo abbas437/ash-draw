@@ -378,18 +378,24 @@ async function addPdfPage(pdf, doc, opts) {
       const lines = it.lines.map((l) => l.replace(/\t/g, ' '));
       const [r, g, b] = colOf(it.style);
       const c = Math.cos(it.rot), s = Math.sin(it.rot), wf = it.wf || 1;
+      let frame = [wf * c, wf * s, -s, c, X(it.p.x), Y(it.p.y)];
+      if (it.xf) { // backward / upside down (DXF 71): the drawing-unit mirror carried to page points, then the text frame
+        const [a, b, cc, d, e, f] = it.xf;
+        frame = [a * frame[0] + cc * frame[1], b * frame[0] + d * frame[1], a * frame[2] + cc * frame[3], b * frame[2] + d * frame[3],
+          a * frame[4] + cc * frame[5] + X(e) - a * X(0) - cc * Y(0), b * frame[4] + d * frame[5] + Y(f) - b * X(0) - d * Y(0)];
+      }
       if (lines.some(needsUni)) {
         // shaped: aligned (left / centre / right / fit) by the shaped width
         const shape = await loadUni();
         const lay = layoutText({ ...it, lines }, (t) => shape(t).width * it.h);
-        for (const l of lay.lines) if (l.text) shapedText(shape(l.text), [wf * c, wf * s, -s, c, X(it.p.x), Y(it.p.y)], it.h * k, l.x * k, -l.y * k, [r, g, b], it.style);
+        for (const l of lay.lines) if (l.text) shapedText(shape(l.text), frame, it.h * k, l.x * k, -l.y * k, [r, g, b], it.style);
         continue;
       }
       const font = helv, lay = layoutText({ ...it, lines }, (t) => font.widthOfTextAtSize(t, it.h));
       page.pushOperators(...ops.splice(0));
       for (const l of lay.lines) {
         if (!l.text) continue;
-        page.pushOperators(pushGraphicsState(), concatTransformationMatrix(wf * c, wf * s, -s, c, X(it.p.x), Y(it.p.y)));
+        page.pushOperators(pushGraphicsState(), concatTransformationMatrix(...frame));
         // layout is in drawing units, y down; the text frame is in page points, y up
         page.drawText(l.text, { x: l.x * k, y: -l.y * k, size: it.h * k, font, color: rgb(r, g, b), opacity: opacity(it.style) });
         page.pushOperators(popGraphicsState());

@@ -225,8 +225,9 @@ class App {
     if (sys[low]) { sys[low](); return; }
     const last = this.vp.lastPoint ?? { x: 0, y: 0 };
     const dir = this.vp.lastPoint ? { x: this.vp.cursor.x - last.x, y: this.vp.cursor.y - last.y } : null;
-    const tr = this.vp.snapMarker?.track, td = tr && parseCoordinate(s, tr.from, tr.dir); // a distance typed on a tracking line goes along it
-    const pt = td?.distance !== undefined ? td : parseCoordinate(s, last, dir);
+    const hd = (this.active?.doc ?? this.doc).header; // polar angles from $ANGBASE, clockwise when $ANGDIR = 1
+    const tr = this.vp.snapMarker?.track, td = tr && parseCoordinate(s, tr.from, tr.dir, hd); // a distance typed on a tracking line goes along it
+    const pt = td?.distance !== undefined ? td : parseCoordinate(s, last, dir, hd);
     if (pt && Number.isFinite(pt.x) && (this.toolId !== 'select' || t.hot)) { this.vp.cursor = { x: pt.x, y: pt.y }; t.click({ x: pt.x, y: pt.y }); this.refreshPrompt(); this.vp.requestRender(); return; }
     toast(`Unknown command "${s}".`);
     this.log(`Unknown command "${s}".`);
@@ -944,8 +945,9 @@ class App {
   refreshStatus() {
     document.getElementById('sel').textContent = this.vp.selection.size ? `${this.vp.selection.size} selected` : `${this.doc.entities.length.toLocaleString()} objects`;
     document.getElementById('stage').classList.toggle('empty', this.doc.entities.length === 0);
-    const u = (this.active?.doc ?? this.doc).units;
-    document.getElementById('units').textContent = `Units: ${UNIT_NAMES[u] ?? (unitLabel(u) || u)}`;
+    const fd = this.active?.doc ?? this.doc, u = fd.units, ab = fd.header?.angbase || 0, cw = fd.header?.angdir === 1;
+    const angs = ab || cw ? `, angle base ${+(ab * 180 / Math.PI).toFixed(4)}°${cw ? ', clockwise' : ''}` : '';
+    document.getElementById('units').textContent = `Units: ${UNIT_NAMES[u] ?? (unitLabel(u) || u)}${angs}`;
     const conv = this.active?.conversion, ci = document.getElementById('conv');
     if (ci) {
       ci.hidden = !conv;
