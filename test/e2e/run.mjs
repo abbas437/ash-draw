@@ -1260,10 +1260,14 @@ try {
   assert.equal(await page.locator('#markups .mk-comment').textContent(), 'Check damper access');
   assert.match(await page.locator('#markups .mk-meta').textContent(), /A\. Reviewer/);
   await page.evaluate(() => window.app.vp.zoomExtents());
-  await page.locator('#markups .mk-row').click();
+  await page.locator('#markups .mk-row .mk-text').click();
   assert.equal(await page.evaluate(() => window.app.vp.selection.size), mk.length, 'clicking the row selects the markup');
-  await page.locator('#markups .mk-status').click();
-  assert.equal(await page.locator('#markups .mk-status').textContent(), 'Closed');
+  await page.selectOption('#markups .mk-status', 'In progress');
+  assert.equal(await page.locator('#markups .mk-status').inputValue(), 'In progress');
+  assert.equal(await page.locator('#markups .mk-code').inputValue(), '', 'In progress sets no code');
+  await page.selectOption('#markups .mk-status', 'Closed');
+  assert.equal(await page.locator('#markups .mk-status').inputValue(), 'Closed');
+  assert.equal(await page.locator('#markups .mk-code').inputValue(), 'A', 'closing a markup with no code sets code A');
   await page.selectOption('#markups .mk-code', 'B');
   assert.equal(await page.locator('#markups .mk-code').inputValue(), 'B');
   const saved = page.waitForEvent('download');
@@ -1275,7 +1279,7 @@ try {
   await (await chooser).setFiles({ name: 'markup-saved.dxf', mimeType: 'application/dxf', buffer: await fs.readFile(dxfPath) });
   await page.waitForFunction(() => window.app.file.name === 'markup-saved.dxf');
   assert.equal(await page.locator('#markups .mk-row').count(), 1);
-  assert.equal(await page.locator('#markups .mk-status').textContent(), 'Closed', 'status Closed persists after save and reopen');
+  assert.equal(await page.locator('#markups .mk-status').inputValue(), 'Closed', 'status Closed persists after save and reopen');
   await page.selectOption('#mk-filter', 'Open');
   assert.equal(await page.locator('#markups .mk-row').count(), 0, 'filter by status');
   await page.selectOption('#mk-filter', 'all');

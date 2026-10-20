@@ -4,7 +4,7 @@
 // tools.js owns the Tool base class and passes it to createMarkupTools (a factory, so this module does not import tools.js).
 import {
   addMarkup, listMarkups, setMarkupStatus, setMarkupCode, deleteMarkup, setMarkupsVisible, renumberMarkups, markupsCsv, markupsCrsSheet,
-  MARKUP_LAYER, MARKUP_CODES,
+  MARKUP_LAYER, MARKUP_CODES, MARKUP_STATUSES,
 } from '../src/core/markup.js';
 import { xlsxBytes } from '../src/core/xlsx.js';
 import { dist } from '../src/core/geom.js';
@@ -176,7 +176,8 @@ export class MarkupPanel {
       const row = el('div', { class: `mk-row${status === 'Closed' ? ' closed' : ''}`, title: 'Click to zoom to this markup', onclick: () => this.show(m) },
         el('span', { class: 'mk-no', text: String(m.no) }),
         el('span', { class: 'mk-text' }, el('span', { class: 'mk-comment', text: m.comment }), el('span', { class: 'mk-meta', text: `${m.author ?? ''} · ${m.date ?? ''}` })),
-        el('button', { class: 'mk-status', title: 'Toggle Open / Closed', onclick: (e) => { e.stopPropagation(); setMarkupStatus(s, m.uid, status === 'Open' ? 'Closed' : 'Open'); } }, status),
+        el('select', { class: 'mk-status', title: 'Status (closing a markup without a code sets code A)', onclick: (e) => e.stopPropagation(), onchange: (e) => setMarkupStatus(s, m.uid, e.target.value) },
+          MARKUP_STATUSES.map((v) => el('option', { value: v, text: v, selected: status === v }))),
         el('select', { class: 'mk-code', title: 'Review code (A / B / C)', onclick: (e) => e.stopPropagation(), onchange: (e) => setMarkupCode(s, m.uid, e.target.value) },
           ['', ...MARKUP_CODES].map((c) => el('option', { value: c, text: c || '–', selected: (m.code ?? '') === c }))),
         el('button', { class: 'mk-del', title: 'Delete this markup', onclick: (e) => { e.stopPropagation(); deleteMarkup(s, m.uid); } }, '×'));
