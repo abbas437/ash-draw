@@ -2,10 +2,10 @@
 // as Windows-1252 when the file is opened by double-click), and a leading apostrophe on any cell that Excel would run
 // as a formula (it begins with = + - @, a tab or a carriage return). One writer for every CSV export of the program.
 
-/** one cell: formula-looking text gets a leading ', then quoted when it holds a comma, quote or line break */
+/** one cell: formula-looking text gets a leading ' (a JS number never: a negative coordinate stays a number), then quoted when it holds a comma, quote or line break */
 export function csvCell(v) {
   let t = String(v ?? '');
-  if (/^[=+\-@\t\r]/.test(t)) t = `'${t}`;
+  if (typeof v !== 'number' && /^[=+\-@\t\r]/.test(t)) t = `'${t}`;
   return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
 }
 

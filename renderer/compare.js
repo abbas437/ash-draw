@@ -3,7 +3,8 @@
 // around each change cluster (no revision clouds), and a side panel to step through the clusters, switch the view
 // (differences, overlay, A only, B only) and plot it. A is aligned onto B automatically, by picked points, or not at all.
 import * as core from '../src/core/compare.js'; // namespace: transformFromPoints may not exist yet (feature-detected)
-import { OPEN_FILTERS, loadDrawing, prepareView } from './files.js';
+import { OPEN_FILTERS, loadDrawing, prepareView, savePathIn } from './files.js';
+import { compareChangeRows, compareChangeTsv, compareChangeCsv, compareChangeFileName } from '../src/core/comparelist.js';
 import { runSliced } from '../src/core/slice.js';
 import { Tool } from './tools.js';
 import { el, modal, message, toast, progressToast } from './ui.js';
@@ -77,6 +78,7 @@ export class ComparePanel {
       el('label', { class: 'cmp-opt', title: 'Draw the legend (line samples, file names, date) below the drawing, so it is on the plot (layer COMPARE-LEGEND)' }, this.legend, ' Legend on sheet'),
       el('label', { class: 'cmp-opt', title: 'Also group the property-only changes into the cluster list' }, this.listProps, ' Include property-only changes in the list'),
       el('div', { class: 'cmp-btns' }, el('label', {}, 'View ', this.view), el('span', { class: 'spacer' }), btn('Plot to PDF…', 'Plot or publish this compare drawing (the Plot dialog)', () => this.app.exportPdf(), 'cmp-plot')),
+      el('div', { class: 'cmp-btns' }, btn('Copy list', 'Copy the change list (group, change, layer, object type, X, Y, details) as tab-separated text', () => this.copyList(), 'cmp-copy'), btn('Export CSV…', 'Save the change list as <A>-vs-<B>-changes.csv beside A', () => this.exportCsv(), 'cmp-csv')),
       el('div', { class: 'cmp-btns' }, btn('◀ Previous', 'Zoom to the previous change', () => this.step(-1), 'cmp-prev'), btn('Next ▶', 'Zoom to the next change', () => this.step(1), 'cmp-next'), this.pos),
       this.list);
     document.getElementById('stage').append(this.box);
@@ -142,6 +144,34 @@ export class ComparePanel {
     this.list.replaceChildren();
     this.more();
     this.mark();
+  }
+  /** the change list of the shown result: one row per object with its group number (as listed in the panel) */
+  changeRows() {
+    const c = this.app.active?.compare; if (!c) return null;
+    const rows = compareChangeRows(c.a, c.b, c.r);
+    if (!rows.length) { toast('No changes to list.'); return null; }
+    return rows;
+  }
+  /** Copy list: the change list as tab-separated text on the clipboard (pastes into Excel / the CRS) */
+  async copyList() {
+    const rows = this.changeRows(); if (!rows) return;
+    const text = compareChangeTsv(rows);
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+      else { // no async clipboard: the old way, through a selected text area
+        const ta = Object.assign(document.createElement('textarea'), { value: text });
+        document.body.append(ta); ta.select();
+        const ok = document.execCommand('copy'); ta.remove();
+        if (!ok) throw new Error('copy refused');
+      }
+      toast(`Copied ${rows.length} changes.`);
+    } catch (err) { toast(`Could not copy: ${err.message}`); }
+  }
+  /** Export CSV…: <A>-vs-<B>-changes.csv in A's folder */
+  async exportCsv() {
+    const rows = this.changeRows(); if (!rows) return;
+    const c = this.app.active.compare;
+    await window.api.saveFile({ defaultPath: savePathIn(c.pathA, compareChangeFileName(c.nameA, c.nameB)), filters: [{ name: 'CSV', extensions: ['csv'] }], bytes: new TextEncoder().encode(compareChangeCsv(rows)) });
   }
   /** show the compare tab as differences / overlay / A only / B only (layer colours and visibility) */
   setView(v) {
@@ -314,7 +344,7 @@ export async function runCompare(app) {
     pts = await pickPoints(app, pick.A, pick.B);
     if (!pts) { toast('Compare cancelled.', 2000); return; }
   }
-  await showComparison(app, pick.A.doc, pick.B.doc, pick.A.label, pick.B.label, { align: pick.align, opts: compareOptions(pick.align, pick.tol, pts, { clusterGap: pick.clusterGap, ...(pick.ignoreLayers.length ? { ignoreLayers: pick.ignoreLayers } : {}) }) });
+  await showComparison(app, pick.A.doc, pick.B.doc, pick.A.label, pick.B.label, { align: pick.align, pathA: pick.A.tab?.file?.path ?? pick.A.file?.path, opts: compareOptions(pick.align, pick.tol, pts, { clusterGap: pick.clusterGap, ...(pick.ignoreLayers.length ? { ignoreLayers: pick.ignoreLayers } : {}) }) });
   const res = app.active; // the result of a unitless B is in B's chosen unit too
   if (res?.compare?.b === pick.B.doc && !res.doc.units) res.assumedUnits = pick.units;
 }
@@ -325,7 +355,7 @@ export const compareUses = (doc) => !!running && (running.a === doc || running.b
 
 /** compare and show the result in a new tab. The work is time-sliced (progress toast with Cancel); while it runs no
  *  second compare starts and the tabs of A and B cannot be closed. */
-export async function showComparison(app, a, b, nameA, nameB, { align = 'auto', opts = { align: 'auto', tol: defaultTolerance(b.units) } } = {}) {
+export async function showComparison(app, a, b, nameA, nameB, { align = 'auto', pathA = null, opts = { align: 'auto', tol: defaultTolerance(b.units) } } = {}) {
   if (running) { toast('A compare is already running.'); return; }
   running = { a, b };
   const ac = new AbortController();
@@ -337,7 +367,7 @@ export async function showComparison(app, a, b, nameA, nameB, { align = 'auto', 
     const doc = await runSliced(core.buildCompareSteps(a, b, r, { nameA, nameB, date: new Date().toISOString().slice(0, 10) }), { signal: ac.signal, onProgress: (f) => pt.set(0.8 + 0.1 * f), cancelMessage });
     const prepared = await prepareView(doc, { signal: ac.signal, onProgress: (f) => pt.set(0.9 + 0.1 * f) });
     app.installDoc(doc, { path: null, name: `Compare ${nameA} vs ${nameB}`, format: 'dxf' }, { prepared });
-    app.active.compare = { r, a, b, nameA, nameB, align, view: 'differences', showProps: sessionShowProps, clusterProps: !!opts.clusterProps };
+    app.active.compare = { r, a, b, nameA, nameB, pathA, align, view: 'differences', showProps: sessionShowProps, clusterProps: !!opts.clusterProps };
     app.comparePanel.applyShowProps(app.active.compare); app.vp.refreshStructure();
     app.comparePanel.sync();
     toast(`${r.added.length} added, ${r.removed.length} removed, ${r.changedGeometry.length} changed, ${r.changedProps.length} property-only (pieces)`, 3000);
