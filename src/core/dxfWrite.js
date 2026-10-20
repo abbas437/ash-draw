@@ -454,11 +454,12 @@ export function* writeDxfSteps(doc, opts = {}) {
         return true;
       }
       case 'HATCH': {
-        let solid = e.solid !== false && (e.pattern === 'SOLID' || e.solid);
+        const solid = e.solid !== false && (e.pattern === 'SOLID' || e.solid);
         let lines = null;
         if (!solid) {
-          lines = e.patLines && e.patLines.length ? e.patLines : (hasPattern(e.pattern) ? patternLines(e.pattern, e.scale || 1, e.angle || 0) : null);
-          if (!lines) { solid = true; report.notes.push(`Hatch pattern "${e.pattern}" is unknown; saved as solid fill.`); }
+          // a named pattern this program does not know, read with no pattern lines (78 = 0, as stored in the source DWG),
+          // is written back as read: its name, the pattern flag and 78 = 0 (not turned into a solid fill)
+          lines = e.patLines && e.patLines.length ? e.patLines : (hasPattern(e.pattern) ? patternLines(e.pattern, e.scale || 1, e.angle || 0) : []);
         }
         head(o, e, 'HATCH', owner); o.p(100, 'AcDbHatch'); o.pt(10, 0, 0, 0); o.p(210, 0); o.p(220, 0); o.p(230, 1);
         o.s(2, solid ? 'SOLID' : e.pattern); o.p(70, solid ? 1 : 0); o.p(71, 0);
