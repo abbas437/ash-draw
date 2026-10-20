@@ -41,6 +41,7 @@ try {
     const { makeViewport } = await import('/src/core/layouts.js');
     const { addLayout, layoutsOf } = await import('/src/core/layoutmgmt.js');
     const doc = newDocument(), s = new Session(doc);
+    doc.units = 4; // millimetres (a unitless drawing asks what a unit is before measuring)
     s.transact('setup', (tx) => {
       tx.layer('A', { color: 1 }); tx.layer('B', { color: 5 });
       for (let i = 0; i < 2000; i++) tx.add({ type: 'LINE', id: 0, layer: i % 2 ? 'B' : 'A', color: 256, linetype: 'BYLAYER', lineweight: -1, ltscale: 1, p1: { x: 0, y: i / 20 }, p2: { x: 100, y: (i * 7) % 100 } });
