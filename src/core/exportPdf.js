@@ -420,7 +420,10 @@ async function addPdfPage(pdf, doc, opts) {
     let it = all[i];
     if (itemBad) { bad++; itemBad = false; }
     // an item wholly outside the plot area is not written at all (the clip would hide it, but its points would stay in the file)
-    if (cull && it.bbox && (it.bbox.maxx < cull.minx || it.bbox.minx > cull.maxx || it.bbox.maxy < cull.miny || it.bbox.miny > cull.maxy)) continue;
+    if (cull && it.bbox) {
+      const g = it.kind === 'point' || it.arrow ? msize : 0; // a point's cross and an arrowhead plot beyond their bbox
+      if (it.bbox.maxx + g < cull.minx || it.bbox.minx - g > cull.maxx || it.bbox.maxy + g < cull.miny || it.bbox.miny - g > cull.maxy) continue;
+    }
     if (it.oleFrame) continue; // an OLE object's border is shown on screen but not plotted (AutoCAD OLEFRAME=2)
     if (doc.layers.get(it.style?.layerName)?.plot === false) continue; // a non-plotting layer is shown, never plotted
     if (it.inf && !(it = infiniteItem(it, box))) continue;
@@ -562,6 +565,10 @@ async function addPdfPage(pdf, doc, opts) {
   if (cb) page.pushOperators(popGraphicsState());
   page.contentStream = undefined;
   page.node.addContentStream(pdf.context.register(pdf.context.stream(await ops.finish(), { Filter: PDFName.of('FlateDecode') })));
+  // the writer relies on pdf-lib drawing into page.contentStream (an internal): a second stream would put text and clips
+  // in a different order than the geometry, so a pdf-lib that ignores it must fail loudly, not plot wrongly
+  const contents = page.node.Contents();
+  if (contents && typeof contents.size === 'function' && contents.size() !== 1) throw new Error('PDF export: page content was split over several streams (unsupported pdf-lib version)');
   warnings.push(...exportNotes(bad, tints));
   if (missing) warnings.push(missingCharsWarning(missing, [...missedChars], fonts.loadFailed ? 'the Unicode font could not be loaded' : fonts.uni?.length ? 'no font has them' : 'no Unicode font'));
   return warnings;

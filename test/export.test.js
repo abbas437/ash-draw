@@ -511,3 +511,21 @@ test('PDF: path geometry is streamed as text, not built as pdf-lib operator obje
   assert.equal(text.split('\n').filter((l) => / m$/.test(l)).length, 2000);
   assert.match(text, /^q\n0 0 0 RG\n[\d.]+ w\n1 J\n1 j\n[\d.]+ [\d.]+ m\n[\d.]+ [\d.]+ l\nS\nQ\n/);
 });
+
+// review of the streamed export: an item outside a viewport's window is not written, but a point's cross (and an
+// arrowhead) plots beyond its bbox, so a point just outside the window whose cross reaches into the viewport must stay
+test('PDF viewport culling keeps a point whose plotted cross reaches into the viewport', async () => {
+  const lines = async (withPoint) => {
+    const d = newDocument();
+    addEntity(d, makeLine({ x: -40000, y: -40000 }, { x: 40000, y: 40000 })); // a large model: big point markers
+    if (withPoint) addEntity(d, { type: 'POINT', layer: '0', p: { x: 80, y: 10 } }); // outside the window, its cross is not
+    const lay = newLayout('L', 1);
+    lay.entities.push({ type: 'VIEWPORT', id: 98, layer: '0', color: 256, vpId: 2, on: true, c: { x: 150, y: 150 }, width: 100, height: 100, viewCenter: { x: 0, y: 0 }, viewHeight: 100, twist: 0 });
+    d.layouts = [lay];
+    const pdf = await PDFDocument.load((await exportPdf(d, { layout: lay })).bytes), c = pdf.getPage(0).node.Contents();
+    const streams = c instanceof PDFArray ? c.asArray().map((r) => pdf.context.lookup(r)) : [c];
+    assert.equal(streams.length, 1, 'one content stream per page');
+    return (new TextDecoder().decode(decodePDFRawStream(streams[0]).decode()).match(/ l\b/g) ?? []).length;
+  };
+  assert.ok(await lines(true) > await lines(false), 'the point marker is plotted');
+});
