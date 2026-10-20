@@ -590,6 +590,34 @@ export function copyEntity(e, skip = null) {
   return c;
 }
 
+/** VIEWPORT through m -> { vp (a copy, id kept), ring }. A DXF viewport is an axis-aligned rectangle: its centre goes
+ *  through m and its size becomes the box around the transformed rectangle. A turn (no flip) turns the view with the frame
+ *  (twist + the angle, as AutoCAD with VPROTATEASSOC = 1); a mirror moves the frame only (the view is not mirrored). The
+ *  model point at the frame centre stays, the view scale follows the transform's scale. `ring`: the transformed rectangle's
+ *  corners when it is off the axes (not a multiple of 90 degrees): the viewport must then be clipped by that boundary;
+ *  null otherwise. A non-uniform scale off the axes throws Error{code:'SHEAR'}. */
+export function transformViewport(e, m) {
+  const c = copyEntity(e, 'parent');
+  const k = 1e-9 * Math.max(Math.abs(m[0]) + Math.abs(m[1]) + Math.abs(m[2]) + Math.abs(m[3]), 1);
+  const straight = Math.abs(m[1]) < k && Math.abs(m[2]) < k, quarter = Math.abs(m[0]) < k && Math.abs(m[3]) < k;
+  const d = det(m);
+  const turn = (a) => { const t = (e.twist || 0) + a, r = Math.atan2(Math.sin(t), Math.cos(t)); c.twist = Math.abs(r) < 1e-12 ? 0 : r; };
+  c.c = apply(m, e.c);
+  if (straight) { // moved / scaled (also non-uniformly) / flipped / turned 180 degrees: the view height stays
+    c.width = e.width * Math.abs(m[0]); c.height = e.height * Math.abs(m[3]);
+    if (d > 0 && m[0] < 0) turn(Math.PI);
+    return { vp: c, ring: null };
+  }
+  if (!isSimilarity(m)) throw Object.assign(new Error('Transform would shear this viewport.'), { code: 'SHEAR' });
+  const a0 = quarter ? 0 : Math.abs(m[0]), a3 = quarter ? 0 : Math.abs(m[3]);
+  c.width = a0 * e.width + Math.abs(m[2]) * e.height; c.height = Math.abs(m[1]) * e.width + a3 * e.height;
+  if (e.height > 0) c.viewHeight = e.viewHeight * c.height / (e.height * matScale(m)); // model units per paper unit / scale
+  if (d > 0) turn(Math.atan2(m[1], m[0]));
+  const w = e.width / 2, h = e.height / 2;
+  const ring = quarter ? null : [[-w, -h], [w, -h], [w, h], [-w, h]].map(([x, y]) => apply(m, { x: e.c.x + x, y: e.c.y + y }));
+  return { vp: c, ring };
+}
+
 /** Returns a transformed COPY (id kept). Throws Error{code:'SHEAR'} where the result cannot be represented. */
 export function transformEntity(e, m) {
   const c = copyEntity(e, 'parent');
@@ -616,11 +644,10 @@ export function transformEntity(e, m) {
       break;
     }
     case 'VIEWPORT': {
-      // the paper rectangle moves / scales / flips; the model view it shows (view centre, height, twist) stays
-      const k = 1e-9 * Math.max(Math.abs(m[0]) + Math.abs(m[3]), 1);
-      if (!(Math.abs(m[1]) < k && Math.abs(m[2]) < k)) throw Object.assign(new Error('A viewport cannot be turned (only moved, scaled or flipped).'), { code: 'SHEAR' });
-      c.c = apply(m, e.c); c.width = e.width * Math.abs(m[0]); c.height = e.height * Math.abs(m[3]);
-      break;
+      // one entity alone cannot become a clipped viewport: edit.js transformEntities adds the boundary (transformViewport)
+      const r = transformViewport(e, m);
+      if (r.ring) throw Object.assign(new Error('A viewport turned off the axes needs a clip boundary (use ROTATE / MIRROR).'), { code: 'SHEAR' });
+      return r.vp;
     }
     case 'LEADER': c.pts = e.pts.map((p) => apply(m, p)); break;
     case 'MLEADER': return transformMLeader(e, (p) => apply(m, p));

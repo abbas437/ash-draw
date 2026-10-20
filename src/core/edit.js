@@ -10,10 +10,10 @@ import {
   addEntity, removeEntities, cloneEntity, getEntity, addLayer, getLayer,
 } from './model.js';
 import {
-  translation, rotation, scaling, mirrorLine, compose, transformEntity, explode, offsetEntity, trimEntity, extendEntity,
+  translation, rotation, scaling, mirrorLine, compose, transformEntity, transformViewport, explode, offsetEntity, trimEntity, extendEntity,
 } from './geom.js';
 import { transformDimension, rebuildDimension } from './dims.js';
-import { relinkClipCopies } from './layouts.js';
+import { relinkClipCopies, withClipPartners, viewportClipEntity, fitViewportToBoundary, viewportBoundary } from './layouts.js';
 
 const UNDO_LIMIT = 500;
 
@@ -302,22 +302,37 @@ export function eraseEntities(s, ids) {
   return s.transact('Erase', (tx) => tx.remove(ids).length);
 }
 
-/** Apply matrix m to entities. copy=true leaves the originals and adds transformed copies. */
+/** Apply matrix m to entities. copy=true leaves the originals and adds transformed copies.
+ *  Viewports (AutoCAD rules): a clipped viewport and its boundary are associated, so moving / turning either alone takes
+ *  the other along; a clipped viewport's rectangle is re-fitted to its transformed boundary; a viewport turned off the
+ *  axes becomes a clipped one (a new closed polyline, the turned rectangle, is its boundary). All in one undo step. */
 export function transformEntities(s, ids, m, { copy = false, label = 'Transform' } = {}) {
   const failed = [];
   let done = 0;
-  const created = [], pairs = [];
+  const created = [], pairs = [], vps = [], out = new Set();
+  if (!copy && s.doc.entities.some((e) => e.type === 'VIEWPORT' && e.clipId)) ids = withClipPartners(s.doc.entities, ids);
   s.transact(label, (tx) => {
     for (const id of ids) {
       const e = getEntity(s.doc, id);
       if (!e) continue;
       try {
-        const t = xform(s.doc, e, m);
+        let t, ring = null;
+        if (e.type === 'VIEWPORT') ({ vp: t, ring } = transformViewport(e, m)); else t = xform(s.doc, e, m);
         if (copy) { t.id = 0; created.push(tx.add(t)); pairs.push([e, t]); } else tx.replace(t);
+        if (e.type === 'VIEWPORT') vps.push([t, ring]);
+        out.add(t.id);
         done++;
       } catch (err) { failed.push(fail(id, err)); }
     }
     relinkClipCopies(pairs);
+    for (const [v, ring] of vps) {
+      const b = viewportClipEntity(v, s.doc.entities);
+      if (b) { if (out.has(b.id)) fitViewportToBoundary(v, b); continue; }
+      if (!ring) continue;
+      const nb = tx.add(viewportBoundary(v, ring)); // added before the viewport is re-linked: its id is the link
+      v.clipId = nb.id;
+      created.push(nb);
+    }
   });
   return { done, failed, created };
 }

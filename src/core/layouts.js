@@ -131,6 +131,26 @@ export function relinkClipCopies(pairs) {
   }
 }
 
+/** Re-fit a clipped viewport's rectangle (in place) to the extents of its boundary entity `b`, keeping what it shows: the
+ *  paper -> model mapping (scale, twist, model point under every paper point) stays. Returns vp. */
+export function fitViewportToBoundary(vp, b) {
+  const ring = tessellate(b)[0];
+  if (!ring?.length) return vp;
+  let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  for (const p of ring) { minx = Math.min(minx, p.x); miny = Math.min(miny, p.y); maxx = Math.max(maxx, p.x); maxy = Math.max(maxy, p.y); }
+  const s = viewportScale(vp), c = { x: (minx + maxx) / 2, y: (miny + maxy) / 2 };
+  vp.viewCenter = paperToModel(vp, c);
+  vp.c = c; vp.width = maxx - minx; vp.height = maxy - miny; vp.viewHeight = s * vp.height;
+  return vp;
+}
+
+/** a closed polyline through `ring` (paper points) on the viewport's layer and with its properties: the clip boundary a
+ *  viewport turned off the axes gets (AutoCAD turns such a viewport into a clipped one) */
+export const viewportBoundary = (vp, ring) => ({
+  type: 'LWPOLYLINE', id: 0, layer: vp.layer ?? '0', color: vp.color ?? 256, linetype: vp.linetype ?? 'BYLAYER', lineweight: vp.lineweight ?? -1,
+  ltscale: 1, closed: true, vertices: ring.map((p) => ({ x: p.x, y: p.y, bulge: 0 })),
+});
+
 /** VIEWPORT body tags after AcDbEntity (R2000), frozen layer handles resolved through `layerHandle(name)`; `clipH`
  *  the written handle of its clip boundary entity (polygon-clipped viewport), else null */
 export function viewportTags(vp, layerHandle, clipH = null) {
