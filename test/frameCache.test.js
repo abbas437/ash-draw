@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { frameKey, framePlan, placeFrame, sameKey, exposedStrips } from '../src/core/frameCache.js';
+import { zoomAt } from '../src/core/render.js';
 
 const scene = { version: 3 }, selection = new Set();
 const key = (o = {}) => frameKey({ scene, dark: false, lineweights: false, selection, dpr: 1, pxWidth: 800, pxHeight: 600, ...o });
@@ -62,4 +63,32 @@ test('exposed strips cover exactly the uncovered area', () => {
       assert.equal(hit[j * 40 + i], covered ? 0 : 1, `(${dx},${dy}) pixel ${i},${j}`);
     }
   }
+});
+
+test('a wheel burst: the cached frame is scaled about the cursor, accumulated over the steps, and stands in under the full redraw', () => {
+  const f0 = frame(), sx = 230, sy = 410; // the cursor, CSS pixels
+  const scr = (v, p) => ({ x: (p.x - v.cx) * v.zoom + v.width / 2, y: v.height / 2 - (p.y - v.cy) * v.zoom });
+  const under = { x: view.cx + (sx - view.width / 2) / view.zoom, y: view.cy - (sy - view.height / 2) / view.zoom }; // world point under the cursor
+  const other = { x: 37, y: 91 };
+  let v = view, s = 1;
+  for (const k of [1.25, 1.25, 1.25, 0.8, 1.5]) { // each wheel step zooms about the cursor (render.js zoomAt)
+    v = zoomAt(v, sx, sy, k); s *= k;
+    const p = framePlan(f0, key(), v, 'zoom');
+    assert.equal(p.mode, 'scale');
+    assert.ok(Math.abs(p.s - s) < 1e-12, `accumulated scale ${p.s} vs ${s}`);
+    assert.ok(Math.abs(sx * p.s + p.ox - sx) < 1e-9 && Math.abs(sy * p.s + p.oy - sy) < 1e-9, 'the point under the cursor stays put');
+    const a = scr(view, other), b = scr(v, other);
+    assert.ok(Math.abs(a.x * p.s + p.ox - b.x) < 1e-9 && Math.abs(a.y * p.s + p.oy - b.y) < 1e-9, 'any other point lands where the new view shows it');
+    const c = scr(v, under);
+    assert.ok(Math.abs(c.x - sx) < 1e-9 && Math.abs(c.y - sy) < 1e-9);
+  }
+  // the burst is over: a full render, with the last frame placed the same way to stand in until it is finished
+  const full = framePlan(f0, key(), v, null);
+  assert.equal(full.mode, 'full');
+  assert.deepEqual(full.under, placeFrame(view, v));
+  assert.deepEqual(framePlan(frame({ exact: false }), key(), view, null), { mode: 'full', under: { s: 1, ox: 0, oy: 0 } }, 'a gesture approximation stands in for its own exact redraw');
+  // no stand-in where the frame shows other content or another canvas size
+  assert.equal(framePlan(f0, key({ dark: true }), v, null).under, undefined);
+  assert.equal(framePlan(f0, key({ pxWidth: 900 }), { ...v, width: 900 }, null).under, undefined);
+  assert.equal(framePlan(null, key(), v, null).under, undefined);
 });
