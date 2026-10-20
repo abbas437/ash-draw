@@ -1,6 +1,6 @@
 // ASH Draw Studio - opening, saving and exporting drawings.
 import { readDxf } from '../src/core/dxfRead.js';
-import { writeDxf, writeDxfAsync } from '../src/core/dxfWrite.js';
+import { writeDxf, writeDxfAsync, unkeptObjects } from '../src/core/dxfWrite.js';
 import { compareDocuments } from '../src/core/verify.js';
 import { exportSvg } from '../src/core/exportSvg.js';
 import { exportPdf } from '../src/core/exportPdf.js';
@@ -245,6 +245,13 @@ export function savedToast(base, { report = null, backup = null, warning = null 
 
 /** DWG versions written by the ODA File Converter ('acad2018', ...); 'r2000'/'r14' are LibreDWG's */
 export const isOdaDwgVersion = (v) => /^acad\d{4}$/.test(String(v));
+/** the writer options of a save as `format` ('dxf' | 'dwg') in DWG `version`: DXF writes everything it can; DWG through
+ *  ODA writes MLEADERs as geometry; DWG through LibreDWG ('r2000', 'r14') writes dimensions and MLEADERs as geometry and
+ *  leaves out the ACAD_PROXY_ENTITYs (dxfWrite unwritable) */
+export const saveWriterOpts = (format, version) => (format !== 'dwg' ? {} : isOdaDwgVersion(version) ? { mleadersAsGeometry: true } : { dimensionsAsGeometry: true });
+/** the Save guard: objects of `doc` a save as `format` / `version` leaves out (the writer's own rule with that save's
+ *  options), as "count KEY" strings */
+export const droppedBySave = (doc, format, version) => Object.entries(unkeptObjects(doc, saveWriterOpts(format, version))).map(([k, v]) => `${v} ${k}`);
 
 /** Write the document as DWG and verify it by reading the result back.
  *  ODA versions ('acad2018', ...) get the full DXF (real dimensions); LibreDWG ('r2000', 'r14') gets dimensions as
@@ -254,7 +261,7 @@ export async function saveDwg(api, doc, { name, fromPath = null, version = 'r200
   if (!api.isElectron) throw new Error('Saving DWG needs the desktop app.');
   const av = await api.dwgAvailable();
   if (!av.available) throw new Error(`The DWG converter is not available: ${av.reason ?? 'unknown reason'}.`);
-  const dxf = isOdaDwgVersion(version) ? dxfBytesOf(doc, { mleadersAsGeometry: true }) : dxfBytesOf(doc, { dimensionsAsGeometry: true });
+  const dxf = dxfBytesOf(doc, saveWriterOpts('dwg', version));
   const { dwgBytes } = await api.dxfToDwg(dxf, version);
   // verification.converter: which converter read the DWG back ('ODA' | 'LibreDWG'; null when the read-back failed)
   let verification;
