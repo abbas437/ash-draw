@@ -12,8 +12,8 @@ import { readDxf } from '../src/core/dxfRead.js';
 import { newLayout, layoutPlotRegion, paperRects } from '../src/core/layouts.js';
 import { newDocument, addEntity, addLayer, makeXline, makeLine, makeCircle, makeArc, makeText } from '../src/core/model.js';
 import { exportSvg } from '../src/core/exportSvg.js';
-import { buildScene } from '../src/core/render.js';
-import { exportPdf, exportPdfPages, plotLayout, plotScale, pageFit } from '../src/core/exportPdf.js';
+import { buildScene, docWithFrozen } from '../src/core/render.js';
+import { exportPdf, exportPdfPages, plotLayout, plotScale, pageFit, deriveScene } from '../src/core/exportPdf.js';
 import { plotSettingsFrom, plotSettingsToStore, PLOT_DEFAULTS, layoutPlotStart } from '../src/core/plotSettings.js';
 
 const FIXTURES = ['basic', 'blocks', 'colors', 'dims', 'extrusion', 'hatch', 'polylines', 'splines', 'text', 'unsupported'];
@@ -283,6 +283,28 @@ test('layout PDF: each viewport draws the model without its own frozen layers (s
   // left viewport freezes A: only B (model y 10); right freezes B: only A (model y 0): 10 mm lower on the sheet
   assert.equal(left.length, 1, JSON.stringify(segs)); assert.equal(right.length, 1, JSON.stringify(segs));
   assert.ok(near(left[0].y - right[0].y, 10, 0.1), `left y ${left[0].y}, right y ${right[0].y}`);
+});
+
+test('viewport scene derived from the base scene = the scene built with those layers frozen (block, dimension, text fixtures)', () => {
+  // a block whose own entities sit on X and 0, inserted on Y and (nested) inside another block
+  const nest = newDocument();
+  for (const n of ['X', 'Y']) addLayer(nest, { name: n });
+  nest.blocks.set('B', { name: 'B', base: { x: 0, y: 0 }, entities: [makeLine({ x: 0, y: 0 }, { x: 5, y: 0 }, { layer: 'X' }), makeLine({ x: 0, y: 1 }, { x: 5, y: 1 }, { layer: '0' })] });
+  nest.blocks.set('C', { name: 'C', base: { x: 0, y: 0 }, entities: [{ type: 'INSERT', block: 'B', layer: '0', p: { x: 0, y: 3 } }] });
+  addEntity(nest, makeLine({ x: 0, y: -5 }, { x: 9, y: -5 }, { layer: 'Y' }));
+  addEntity(nest, { type: 'INSERT', block: 'B', layer: 'Y', p: { x: 10, y: 0 } });
+  addEntity(nest, { type: 'INSERT', block: 'C', layer: '0', p: { x: 20, y: 0 } });
+  addEntity(nest, makeLine({ x: 0, y: 9 }, { x: 40, y: 9 }));
+  for (const name of ['blocks', 'dims', 'text', 'basic', nest]) {
+    const doc = typeof name === 'string' ? readDxf(fixture(`${name}_r2000.dxf`)) : name, base = buildScene(doc);
+    for (const L of doc.layers.keys()) {
+      const want = buildScene(docWithFrozen(doc, [L])), got = deriveScene(doc, base, new Set(), new Set([L.toUpperCase()]));
+      assert.equal(got.items.length, want.items.length, `${name} ${L}`);
+      const j = (it) => JSON.stringify(it, (k, v) => (k === 'pos' ? undefined : v)); // pos: the base scene index (unused by the plot)
+      got.items.forEach((it, i) => assert.equal(j(it), j(want.items[i]), `${name} ${L} item ${i}`));
+      assert.deepEqual(got.bbox, want.bbox, `${name} ${L}`);
+    }
+  }
 });
 
 test('PUBLISH monochrome: no stroking colour but black in any page of a coloured drawing', async () => {
