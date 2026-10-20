@@ -8,7 +8,7 @@ import {
   clip, clipEvenOdd, endPath, concatTransformationMatrix, setGraphicsState,
 } from 'pdf-lib';
 import { buildScene, docWithFrozen, infiniteItem } from './render.js';
-import { layoutPage, layoutPlotRegion, paperMmPerUnit, viewportScale, isPaperViewport } from './layouts.js';
+import { layoutPage, layoutPlotRegion, paperMmPerUnit, viewportScale, isPaperViewport, viewportClipRing } from './layouts.js';
 import {
   walkOps, colorRgb, lineweightMm, dashUnits, hatchFamilies, layoutText, markerSize, arrowTriangle, runRgb, mtextItemLayout,
 } from './exportSvg.js';
@@ -213,6 +213,9 @@ async function addPdfPage(pdf, doc, opts) {
     },
   });
   const dashPt = (arr) => (arr ? arr.map((d) => d * k) : null);
+  // linetype dashes: points per drawing unit of their pattern - inside a viewport with PSLTSCALE 1 the paper's (ltk)
+  let ltk = null;
+  const ltDashPt = (arr) => (arr ? arr.map((d) => d * (ltk ?? k)) : null);
   // transparency: one ExtGState (CA / ca) per opacity, set inside the item's graphics state
   const gsNames = new Map();
   const opacity = (style) => (opts.transparency === false ? 1 : style.alpha ?? 1);
@@ -315,7 +318,7 @@ async function addPdfPage(pdf, doc, opts) {
       ops.push(concatTransformationMatrix(im.u.x * k * im.size.x, im.u.y * k * im.size.x, im.v.x * k * im.size.y, im.v.y * k * im.size.y, X(im.p.x), Y(im.p.y)));
       ops.push(PDFOperator.of(PDFOperatorNames.DrawObject, [page.node.newXObject('Img', ref)]), popGraphicsState());
     } else if (it.kind === 'path') {
-      ops.push(pushGraphicsState()); strokeState(it.style, dashPt(dashUnits(doc, it.style)));
+      ops.push(pushGraphicsState()); strokeState(it.style, ltDashPt(dashUnits(doc, it.style)));
       pathOps(it.ops); ops.push(stroke(), popGraphicsState());
       if (it.arrow) {
         const t = arrowTriangle(it.arrow, msize);
@@ -400,17 +403,20 @@ async function addPdfPage(pdf, doc, opts) {
   };
   if (layout) {
     const modelScene = opts.modelScene ?? memoModelScene(doc);
-    const paper = { ox, oy, k };
+    const paper = { ox, oy, k }, psl = doc.header?.psltscale !== 0; // PSLTSCALE 1: viewport linetypes at paper scale
     for (const v of layout.entities) {
       if (v.type !== 'VIEWPORT' || isPaperViewport(v) || v.on === false || !(v.width > 0 && v.height > 0)) continue;
       const s = viewportScale(v), cx = X(v.c.x), cy = Y(v.c.y), hw = (v.width / 2) * k, hh = (v.height / 2) * k;
       ops.push(pushGraphicsState(), moveTo(cx - hw, cy - hh), lineTo(cx + hw, cy - hh), lineTo(cx + hw, cy + hh), lineTo(cx - hw, cy + hh), closePath(), clip(), endPath());
+      const ring = viewportClipRing(v, layout.entities); // a polygon-clipped viewport: and to its boundary
+      if (ring) { ring.forEach((p, i) => ops.push(i ? lineTo(X(p.x), Y(p.y)) : moveTo(X(p.x), Y(p.y)))); ops.push(closePath(), clip(), endPath()); }
+      ltk = psl ? paper.k : null;
       const t = v.twist || 0, c = Math.cos(t), sn = Math.sin(t);
       if (t) ops.push(concatTransformationMatrix(c, sn, -sn, c, cx - c * cx + sn * cy, cy - sn * cx - c * cy)); // turn about the viewport centre
       k = paper.k / s; ox = cx - v.viewCenter.x * k; oy = cy - v.viewCenter.y * k;
       const R = Math.hypot(v.width, v.height) / 2 * s; // the viewport's model window (any twist), clipped above
       await drawItems(modelScene(v.frozen ?? []), { minx: v.viewCenter.x - R, miny: v.viewCenter.y - R, maxx: v.viewCenter.x + R, maxy: v.viewCenter.y + R });
-      ({ ox, oy, k } = paper);
+      ({ ox, oy, k } = paper); ltk = null;
       ops.push(popGraphicsState());
     }
   }

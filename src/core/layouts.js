@@ -8,6 +8,7 @@
 //   entities: paper-space entities, including { type:'VIEWPORT', ... } (see readViewport).
 
 import { mmPerUnit } from './model.js';
+import { tessellate } from './geom.js';
 
 const VP_LOCKED = 16384, VP_OFF = 131072, VP_CLIP = 65536;
 
@@ -88,12 +89,30 @@ export function markPaperViewport(entities) {
 /** true for a layout's overall paper viewport (see markPaperViewport; viewports never marked fall back to ID 1) */
 export const isPaperViewport = (v) => v.paper ?? v.vpId === 1;
 
-/** VIEWPORT body tags after AcDbEntity (R2000), frozen layer handles resolved through `layerHandle(name)` */
-export function viewportTags(vp, layerHandle) {
+/** paper-space entity types a viewport can be clipped to (VPCLIP: a closed polyline, circle, ellipse or spline) */
+const CLIP_TYPES = new Set(['LWPOLYLINE', 'CIRCLE', 'ELLIPSE', 'SPLINE']);
+
+/** the clip boundary entity of a polygon-clipped viewport (flag 0x10000, 340 -> the entity; the reader links it as
+ *  vp.clipId) among its layout's entities, or null for a rectangular viewport */
+export function viewportClipEntity(vp, entities) {
+  if (!vp.clipId) return null;
+  return entities.find((e) => e.id === vp.clipId && CLIP_TYPES.has(e.type)) ?? null;
+}
+
+/** the clip boundary of a polygon-clipped viewport as a paper-space ring [{x,y}...] (curves tessellated), or null */
+export function viewportClipRing(vp, entities) {
+  const e = viewportClipEntity(vp, entities);
+  const ring = e ? tessellate(e)[0] : null;
+  return ring && ring.length >= 3 ? ring : null;
+}
+
+/** VIEWPORT body tags after AcDbEntity (R2000), frozen layer handles resolved through `layerHandle(name)`; `clipH`
+ *  the written handle of its clip boundary entity (polygon-clipped viewport), else null */
+export function viewportTags(vp, layerHandle, clipH = null) {
   let flags = vp.flags ?? 32768;
   flags = vp.locked ? flags | VP_LOCKED : flags & ~VP_LOCKED;
   flags = vp.on === false ? flags | VP_OFF : flags & ~VP_OFF;
-  flags &= ~VP_CLIP; // clip boundary entities are not written back (rectangular clip is kept)
+  flags = clipH ? flags | VP_CLIP : flags & ~VP_CLIP;
   const tw = vp.twist || 0, ct = Math.cos(tw), st = Math.sin(tw), tg = vp.target ?? { x: 0, y: 0 };
   const ox = vp.viewCenter.x - tg.x, oy = vp.viewCenter.y - tg.y; // back to DCS: R(twist) . (centre - target)
   const out = [[100, 'AcDbViewport'], [10, vp.c.x], [20, vp.c.y], [30, 0], [40, vp.width], [41, vp.height],
@@ -102,7 +121,9 @@ export function viewportTags(vp, layerHandle) {
     [16, 0], [26, 0], [36, 1], [17, tg.x], [27, tg.y], [37, 0],
     [42, 50], [43, 0], [44, 0], [45, vp.viewHeight], [50, 0], [51, tw * 180 / Math.PI], [72, 1000]];
   for (const n of vp.frozen ?? []) { const h = layerHandle(n); if (h) out.push([331, h]); }
-  out.push([90, flags], [1, ''], [281, 0], [71, 1], [74, 0], [110, 0], [120, 0], [130, 0], [111, 1], [121, 0], [131, 0],
+  out.push([90, flags]);
+  if (clipH) out.push([340, clipH]);
+  out.push([1, ''], [281, 0], [71, 1], [74, 0], [110, 0], [120, 0], [130, 0], [111, 1], [121, 0], [131, 0],
     [112, 0], [122, 1], [132, 0], [79, 0], [146, 0]);
   return out;
 }

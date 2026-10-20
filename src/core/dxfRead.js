@@ -827,6 +827,7 @@ function readEntityList(recs, doc, target, stats) {
     if (e === null) { doc.skipped[`${t} (unusable)`] = (doc.skipped[`${t} (unusable)`] ?? 0) + 1; continue; }
     addEntity(doc, e, list);
     if (stats.handles) stats.handles.set(e, normHandle(rec.str(5))); // only kept when the file has draw-order tables
+    if (CLIP_CANDIDATES.has(e.type) && stats.paperSet.has(list)) stats.clipH.set(normHandle(rec.str(5)), e); // a viewport's clip boundary (340)?
     if (attribs) linkAttribs(e, attribs.map((a) => buildEntity(a, doc, {})));
   }
 }
@@ -873,6 +874,8 @@ function blockRepTag(tags) {
 }
 
 /** a handle as one canonical string: upper case, no leading zeros (tables may write either) */
+/** paper-space entity types that may be a viewport's clip boundary (their handles are kept while reading) */
+const CLIP_CANDIDATES = new Set(['LWPOLYLINE', 'CIRCLE', 'ELLIPSE', 'SPLINE']);
 function normHandle(v) { return String(v ?? '').trim().toUpperCase().replace(/^0+(?=.)/, ''); }
 /** reorder list in place by the table (entity handle -> sort handle); stable for equal keys. An entity without a
  *  readable handle keeps to the entity before it. */
@@ -911,7 +914,10 @@ function parseTokensInto(tk, onProgress) {
   const paperLists = new Map();
   const blockRecH = new Map();
   const dynRefs = []; // [anonymous block name, handle of its dynamic block's BLOCK_RECORD] (AcDbBlockRepBTag)
-  const stats = { errors: [], layerH: new Map(), tick: onProgress && ((i) => onProgress(i / tk.count)), paperList: (n) => paperLists.get(n.toUpperCase()) ?? paperLists.set(n.toUpperCase(), []).get(n.toUpperCase()) };
+  const stats = { errors: [], layerH: new Map(), clipH: new Map(), paperSet: new WeakSet(), tick: onProgress && ((i) => onProgress(i / tk.count)),
+    paperList: (n) => paperLists.get(n.toUpperCase()) ?? paperLists.set(n.toUpperCase(), []).get(n.toUpperCase()) };
+  const paperList0 = stats.paperList;
+  stats.paperList = (n) => { const l = paperList0(n); stats.paperSet.add(l); return l; };
 
   // HEADER
   if (secs.HEADER) {
@@ -927,6 +933,7 @@ function parseTokensInto(tk, onProgress) {
       else if (name === '$DWGCODEPAGE') doc.header.codepage = val(j);
       else if (name === '$DIMSTYLE') doc.header.currentDimStyle = val(j);
       else if (name === '$LTSCALE') doc.header.ltscale = parseFloat(val(j)) || 1;
+      else if (name === '$PSLTSCALE') { const v = parseInt(val(j), 10); if (v === 0 || v === 1) doc.header.psltscale = v; } // 1 (default): viewport linetypes at paper scale
       else if (name === '$TILEMODE') { const v = parseInt(val(j), 10); if (v === 0 || v === 1) doc.header.tilemode = v; } // 0: a layout was current when saved
       else if (name === '$XCLIPFRAME') { const v = parseInt(val(j), 10); if (v >= 0 && v <= 2) doc.header.xclipframe = v; }
       else if (name === '$INSBASE' && first === 10) { const b = { x: parseFloat(val(j)), y: parseFloat(val(j + 1)) }; if (Number.isFinite(b.x) && Number.isFinite(b.y) && (b.x || b.y)) doc.header.insbase = b; }
@@ -1081,7 +1088,15 @@ function parseTokensInto(tk, onProgress) {
     layouts.push(lo);
   }
   layouts.sort((a, b) => a.tab - b.tab);
-  for (const lo of layouts) markPaperViewport(lo.entities);
+  for (const lo of layouts) {
+    markPaperViewport(lo.entities);
+    // a polygon-clipped viewport (flag 0x10000): its 340 handle -> the boundary entity of the same layout, kept by id
+    for (const v of lo.entities) {
+      if (v.type !== 'VIEWPORT' || !v.clipHandle) continue;
+      const b = stats.clipH.get(normHandle(v.clipHandle));
+      if (b && lo.entities.includes(b)) v.clipId = b.id;
+    }
+  }
   doc.layouts = layouts;
   const active = layouts.find((lo) => /^\*paper_space$/i.test(lo.block)); // the layout current when saved ($TILEMODE 0 shows it)
   if (active) doc.header.activeLayout = active.name;
