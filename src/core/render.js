@@ -27,7 +27,7 @@ import { drain } from './slice.js';
 import { strokeLayout, shxSubstitute } from './shx.js';
 import { isGdtFont, gdtText, gdtModel } from './gdt.js';
 import { textFrame, textCorners, textAdvance } from './textMetrics.js';
-import { isPaperViewport, paperToModel } from './layouts.js';
+import { isPaperViewport, paperToModel, viewportClipRing } from './layouts.js';
 import { worldClip, clipItem, clipOn } from './xclip.js';
 
 const TAU = Math.PI * 2;
@@ -1095,7 +1095,7 @@ export function* drawSceneSteps(ctx, scene, view, opts = {}) {
 
     // 2. line work, batched by style
     for (const { st, items } of batches.values()) {
-      const dash = dashFor(doc, st, z), period = dash ? dash.reduce((a, b) => a + b, 0) : 0;
+      const dash = dashFor(doc, st, opts.ltZoom ?? z), period = dash ? dash.reduce((a, b) => a + b, 0) : 0;
       for (let i0 = 0; i0 < items.length; i0 += STROKE_CHUNK) {
         ctx.beginPath();
         for (let i = i0, i1 = Math.min(items.length, i0 + STROKE_CHUNK); i < i1; i++) {
@@ -1486,7 +1486,11 @@ export function drawLayout(ctx, paperScene, view, layout, paperRectsOf, modelSce
   ctx.fillStyle = PAPER_COLOUR; ctx.fillRect(...sr);
   if (opts.paperGrid) { ctx.save(); ctx.beginPath(); ctx.rect(...sr); ctx.clip(); opts.paperGrid(ctx, view); ctx.restore(); } // display grid (viewport only)
   ctx.strokeStyle = '#888'; ctx.lineWidth = 1; ctx.setLineDash([4, 3]); ctx.strokeRect(...r(printable)); ctx.setLineDash([]);
-  const vports = layoutViewports(paperScene);
+  const vports = layoutViewports(paperScene), paperEnts = paperScene.doc.entities;
+  // PSLTSCALE 1 (default): linetype dashes seen through a viewport are as long on paper as in paper space, whatever its scale
+  const ltZoom = paperScene.doc.header?.psltscale === 0 ? undefined : z;
+  const rings = new Map(vports.map((v) => [v, viewportClipRing(v, paperEnts)])); // polygon-clipped viewports
+  const ringPath = (ring) => { ctx.beginPath(); ring.forEach((p, i) => (i ? ctx.lineTo(sx(p.x), sy(p.y)) : ctx.moveTo(sx(p.x), sy(p.y)))); ctx.closePath(); };
   for (const v of vports) {
     const k = (v.height / (v.viewHeight || 1)) * z, cx = sx(v.c.x), cy = sy(v.c.y), w = v.width * z, h = v.height * z;
     // only the part of the viewport on the canvas is drawn: zoomed far into a sheet the viewport is far larger than the
@@ -1498,11 +1502,12 @@ export function drawLayout(ctx, paperScene, view, layout, paperRectsOf, modelSce
     ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.beginPath(); ctx.rect(x0, y0, x1 - x0, y1 - y0); ctx.clip();
+    if (rings.get(v)) { ringPath(rings.get(v)); ctx.clip(); } // and to its clip boundary (VPCLIP polygon / circle ...)
     // model view centred on the visible part, D x D pixels so culling covers the rotated window
     ctx.translate(vx, vy); ctx.rotate(-(v.twist || 0)); ctx.translate(-D / 2, -D / 2);
     const mv = { cx: mc.x, cy: mc.y, zoom: k, width: D, height: D };
     drawScene(ctx, modelScene(v.frozen ?? []), mv,
-      { ...opts, background: PAPER_COLOUR, noClear: true, baseTransform: ctx.getTransform(), highlight: v === opts.activeVp ? opts.modelHighlight : null });
+      { ...opts, background: PAPER_COLOUR, noClear: true, ltZoom, baseTransform: ctx.getTransform(), highlight: v === opts.activeVp ? opts.modelHighlight : null });
     if (opts.modelGrid && v === opts.activeVp) opts.modelGrid(ctx, mv); // MSPACE: the model grid in the active viewport
     ctx.restore();
   }
@@ -1514,11 +1519,13 @@ export function drawLayout(ctx, paperScene, view, layout, paperRectsOf, modelSce
     const sel = opts.highlight instanceof Set && opts.highlight.has(v.id), act = v === opts.activeVp;
     // the frame in its own colour (ByLayer: the viewport's layer), hidden with its layer as in AutoCAD - unless it is
     // the active (MSPACE) or a selected viewport, whose frame is the cue
-    const layer = layers?.get(v.layer ?? '0') ?? null;
-    if (!act && !sel && layer && (layer.visible === false || layer.frozen)) continue;
+    // a clipped viewport's frame is its boundary entity, drawn with the paper space; the cue goes along that boundary
+    const layer = layers?.get(v.layer ?? '0') ?? null, ring = rings.get(v);
+    if (!act && !sel && (ring || (layer && (layer.visible === false || layer.frozen)))) continue;
     const c = resolveColor(v, layer);
     ctx.strokeStyle = sel ? (opts.highlightColor ?? '#0a6fd1') : c.auto ? '#000000' : rgbCss(c.rgb);
-    ctx.lineWidth = act ? 3 : sel ? 2 : 1; ctx.strokeRect(sx(v.c.x - v.width / 2), sy(v.c.y + v.height / 2), v.width * z, v.height * z);
+    ctx.lineWidth = act ? 3 : sel ? 2 : 1;
+    if (ring) { ringPath(ring); ctx.stroke(); } else ctx.strokeRect(sx(v.c.x - v.width / 2), sy(v.c.y + v.height / 2), v.width * z, v.height * z);
   }
 }
 

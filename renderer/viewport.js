@@ -367,6 +367,7 @@ export class Viewport {
     const paperMoved = view.cx !== f.view.cx || view.cy !== f.view.cy || view.zoom !== f.view.zoom;
     const modelMoved = f.key.msView !== key.msView;
     if (paperMoved === modelMoved) return false; // unchanged: blit as usual; both moved: no stand-in
+    if (modelMoved && this.mspace.vp.clipId) return false; // a polygon-clipped viewport: the rectangle stand-in would spill past its boundary
     this.gridDrawn = f.gridDrawn;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     if (paperMoved) {

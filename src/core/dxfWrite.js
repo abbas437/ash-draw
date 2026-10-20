@@ -18,7 +18,7 @@ import { dimStyleTags, dimOverridesXData } from './dimsStyle.js';
 import { decodeColor } from './aci.js';
 import { dimensionTags, arrowEntities, r2000DimensionTags } from './dims.js';
 import { mleaderTags, mleaderStyleTags, mleaderParts } from './mleader.js';
-import { viewportTags } from './layouts.js';
+import { viewportTags, viewportClipEntity } from './layouts.js';
 import { imageTags, imageDefTags } from './image.js';
 import { oleDataWithCorners } from './ole.js';
 import { viewToDxf } from './views.js';
@@ -142,8 +142,11 @@ export function* writeDxfSteps(doc, opts = {}) {
   };
 
   // ---- entity writer -------------------------------------------------------------------------
+  const writtenH = new WeakMap(); // entity -> its handle in this file (a clipped viewport's 340 names its boundary's)
+  const vpClip = new Map(); // polygon-clipped VIEWPORT -> its boundary entity (written before it: see paperOrder)
   function head(o, e, type, owner, xd) {
     const hd = H();
+    writtenH.set(e, hd);
     o.p(0, type);
     o.p(5, hd);
     if (xd) { o.p(102, '{ACAD_XDICTIONARY'); o.p(360, xd); o.p(102, '}'); }
@@ -452,7 +455,8 @@ export function* writeDxfSteps(doc, opts = {}) {
       }
       case 'VIEWPORT': {
         head(o, e, 'VIEWPORT', owner);
-        for (const [c, v] of viewportTags(e, (n) => layerH.get(n))) o.p(c, v);
+        const clipH = vpClip.has(e) ? writtenH.get(vpClip.get(e)) ?? null : null;
+        for (const [c, v] of viewportTags(e, (n) => layerH.get(n), clipH)) o.p(c, v);
         return true;
       }
       default:
@@ -493,6 +497,9 @@ export function* writeDxfSteps(doc, opts = {}) {
   let blkN = 0;
   const paperLayouts = los.map((lo, i) => (i === act ? { lo, name: '*Paper_Space', rec: hPaperRec, layoutH: hPaperLayout }
     : { lo, name: `*Paper_Space${blkN++}`, rec: H(), layoutH: H() }));
+  for (const { lo } of paperLayouts) {
+    for (const v of lo.entities ?? []) { const b = v.type === 'VIEWPORT' ? viewportClipEntity(v, lo.entities) : null; if (b) vpClip.set(v, b); }
+  }
   paperMode = true;
   for (const pl of paperLayouts) {
     const ents = paperOrder(pl.lo.entities ?? []);
@@ -523,6 +530,7 @@ export function* writeDxfSteps(doc, opts = {}) {
   out.p(9, '$EXTMIN'); if (ext) out.pt(10, ext.minx, ext.miny, 0); else out.pt(10, 1e20, 1e20, 1e20);
   out.p(9, '$EXTMAX'); if (ext) out.pt(10, ext.maxx, ext.maxy, 0); else out.pt(10, -1e20, -1e20, -1e20);
   out.p(9, '$LTSCALE'); out.p(40, doc.header.ltscale || 1);
+  out.p(9, '$PSLTSCALE'); out.p(70, doc.header.psltscale === 0 ? 0 : 1); // viewport linetypes at paper scale (default) or model
   out.p(9, '$TILEMODE'); out.p(70, space.tilemode === 0 ? 0 : 1); // 0: open on the active layout (*Paper_Space)
   // $XCLIPFRAME is read (doc.header.xclipframe) but not written: its group code differs between DXF versions
   out.p(9, '$TEXTSTYLE'); out.p(7, 'Standard');
