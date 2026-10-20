@@ -325,6 +325,7 @@ export function* writeDxfSteps(doc, opts = {}) {
         if (e.oblique) o.p(51, e.oblique);
         const st = String(e.style || 'STANDARD').toUpperCase();
         o.s(7, styleDefs.has(st) ? styleDefs.get(st).name : 'Standard');
+        if (e.genFlags) o.p(71, e.genFlags); // 2 backward, 4 upside down
         if (ha) o.p(72, ha);
         if (fit) o.pt(11, e.p2.x, e.p2.y);
         else if (ha || va) o.pt(11, e.p.x, e.p.y);
@@ -578,6 +579,8 @@ export function* writeDxfSteps(doc, opts = {}) {
   out.p(9, '$LUNITS'); out.p(70, 2);
   out.p(9, '$LUPREC'); out.p(70, doc.header?.luprec ?? 4);
   out.p(9, '$AUNITS'); out.p(70, 0);
+  out.p(9, '$ANGBASE'); out.p(50, doc.header?.angbase || 0);
+  out.p(9, '$ANGDIR'); out.p(70, doc.header?.angdir === 1 ? 1 : 0);
   out.p(9, '$AUPREC'); out.p(70, 2);
   out.p(9, '$INSUNITS'); out.p(70, doc.units || 0);
   // UCS axes: a zero axis makes AutoCAD report "Non-unitary UCS ... normalizing" on a DWG made from this file

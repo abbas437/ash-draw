@@ -476,8 +476,15 @@ function buildText(rec, o) {
   else if ((hAlign || vAlign) && rec.has(11)) p = pt(rec, 11);
   return makeText(p, rec.num(40, 1), rec.str(1), {
     ...o, p2, rot: rec.num(50), widthFactor: rec.num(41, 1), style: rec.str(7, 'STANDARD').toUpperCase(), hAlign, vAlign,
-    oblique: rec.num(51),
+    oblique: rec.num(51), genFlags: textGenFlags(rec),
   });
+}
+/** group 71 text generation flags (2 backward, 4 upside down) of TEXT / ATTRIB / ATTDEF; an attribute's embedded
+ *  MTEXT (after 101) has its own 71 (attachment point), which is not read here */
+function textGenFlags(rec) {
+  const { codes, val } = rec.tk;
+  for (let i = rec.a + 1; i < rec.b && codes[i] !== 101; i++) if (codes[i] === 71) return (parseInt(val(i), 10) || 0) & 6;
+  return 0;
 }
 
 function buildMText(rec, o) {
@@ -952,6 +959,8 @@ function parseTokensInto(tk, onProgress) {
       else if (name === '$DIMSTYLE') doc.header.currentDimStyle = val(j);
       else if (name === '$LTSCALE') doc.header.ltscale = parseFloat(val(j)) || 1;
       else if (name === '$PSLTSCALE') { const v = parseInt(val(j), 10); if (v === 0 || v === 1) doc.header.psltscale = v; } // 1 (default): viewport linetypes at paper scale
+      else if (name === '$ANGBASE') { const v = parseFloat(val(j)); if (Number.isFinite(v) && v) doc.header.angbase = v; } // radians: the direction of angle 0
+      else if (name === '$ANGDIR') { if (parseInt(val(j), 10) === 1) doc.header.angdir = 1; } // 1: angles run clockwise
       else if (name === '$TILEMODE') { const v = parseInt(val(j), 10); if (v === 0 || v === 1) doc.header.tilemode = v; } // 0: a layout was current when saved
       else if (name === '$XCLIPFRAME') { const v = parseInt(val(j), 10); if (v >= 0 && v <= 2) doc.header.xclipframe = v; }
       else if (name === '$INSBASE' && first === 10) { const b = { x: parseFloat(val(j)), y: parseFloat(val(j + 1)) }; if (Number.isFinite(b.x) && Number.isFinite(b.y) && (b.x || b.y)) doc.header.insbase = b; }

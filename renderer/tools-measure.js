@@ -4,6 +4,7 @@ import { entityMeasure, loopMeasure, AreaTotal, angleAt, unitLabel, formatLength
 import { tessellate, ccwSweep, dist, DEG } from '../src/core/geom.js';
 import { viewportAt, viewportScale, paperToModel, viewportPrintScale } from '../src/core/layouts.js';
 import { findHatchBoundary } from './tools.js';
+import { angleFromWorld } from '../src/core/coords.js';
 import { el, toast } from './ui.js';
 
 const f4 = (v) => (Math.abs(v) < 5e-5 ? 0 : v).toFixed(4).replace(/\.?0+$/, '');
@@ -225,7 +226,7 @@ export class MeasureGeomTool {
       if (!this.pts.length) { setMarks(this.vp, null); this.pts = [p]; this.vp.lastPoint = p; return; }
       // through a layout viewport the result is the model distance (scale and twist), the sheet distance second
       const a = this.pts[0], v = this.throughViewport([a, p]);
-      const A = v ? paperToModel(v, a) : a, B = v ? paperToModel(v, p) : p, ang = ((Math.atan2(B.y - A.y, B.x - A.x) / DEG) + 360) % 360;
+      const A = v ? paperToModel(v, a) : a, B = v ? paperToModel(v, p) : p, ang = angleFromWorld(Math.atan2(B.y - A.y, B.x - A.x) / DEG, this.file.header);
       const label = () => this.len(dist(A, B));
       const d = () => (v ? this.dual(dist(A, B), dist(a, p), v, (x) => this.len(x)) : this.len(dist(a, p)));
       this.reset(); setMarks(this.vp, { a, b: p, label: label() });

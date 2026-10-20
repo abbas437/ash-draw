@@ -463,14 +463,16 @@ class Builder {
         for (const [x, y] of corners) {
           box = growBox(box, { x: p.x + x * Math.cos(rot) - y * Math.sin(rot), y: p.y + x * Math.sin(rot) + y * Math.cos(rot) });
         }
+        let xf = null; // DXF 71 backward / upside down: a mirror over the laid-out text (it.xf) that every drawer applies
         if (e.type === 'TEXT') {
           // real width and the 15 justifications (Aligned / Fit: drawn from p with the fitted height / width factor)
           const f = textFrame({ ...e, p, p2: e.p2 && P(e.p2), height: h, rot: rot / DEG }, this.doc);
           box = textCorners(f).reduce((b, q) => growBox(b, q), null);
           if (f.stroke) { this.pushStrokeText(strokeLayout(raw, f.h), f, style, box, rootId); return; }
+          xf = f.xf;
           if (e.hAlign === 3 || e.hAlign === 5) {
             this.push({ kind: 'text', p: f.o, h: f.h, rot: f.rot, lines, wf: f.wf, style, bbox: box, mtext: false, attach: 1, boxW: 0, hAlign: 0, vAlign: 0,
-              font: faceOf(tst), ...faceFlags(tst), mt: null, lineSpacing: 1 }, rootId);
+              font: faceOf(tst), ...faceFlags(tst), mt: null, lineSpacing: 1, ...(xf ? { xf } : {}) }, rootId);
             return;
           }
         }
@@ -480,7 +482,7 @@ class Builder {
           boxW: e.type === 'MTEXT' ? (e.width || 0) * s : 0, hAlign: e.hAlign || 0, vAlign: e.vAlign || 0,
           font: faceOf(tst), ...faceFlags(tst),
           // MTEXT: the parsed run model (heights in drawing units of this item)
-          mt, lineSpacing: e.lineSpacing || 1,
+          mt, lineSpacing: e.lineSpacing || 1, ...(xf ? { xf } : {}),
         }, rootId);
         return;
       }
@@ -490,13 +492,14 @@ class Builder {
 
   /** TEXT in an SHX style: the stroke font's glyphs as one path item (width factor, oblique, justification) */
   pushStrokeText(sl, f, style, estBox, rootId) {
-    const { wf, t, o: p0, h, rot } = f, W = sl.width * wf;
+    const { wf, t, o: p0, h, rot, xf } = f, W = sl.width * wf;
     const c = Math.cos(rot), sn = Math.sin(rot), ops = [];
     let bbox = null;
     for (const st of sl.strokes) {
       for (let i = 0; i < st.length; i += 2) {
         const y = st[i + 1], x = st[i] * wf + y * t;
-        const q = { x: p0.x + x * c - y * sn, y: p0.y + x * sn + y * c };
+        let q = { x: p0.x + x * c - y * sn, y: p0.y + x * sn + y * c };
+        if (xf) q = apply(xf, q); // backward / upside down (DXF 71)
         ops.push(i ? OP_L : OP_M, q.x, q.y);
         bbox = growBox(bbox, q);
       }
@@ -505,7 +508,8 @@ class Builder {
     bbox = unionBox(bbox, estBox);
     // text strokes ignore the entity linetype (as in AutoCAD); start of the baseline and length for the LOD bar
     const st = style.lt === 'CONTINUOUS' ? style : { ...style, lt: 'CONTINUOUS', _ks: undefined, _key: undefined };
-    this.push({ kind: 'path', ops, style: st, bbox, strokeText: { p: p0, h, rot, w: W } }, rootId);
+    const bar = xf ? { p: apply(xf, p0), rot: Math.atan2(xf[1] * c + xf[3] * sn, xf[0] * c + xf[2] * sn) } : { p: p0, rot };
+    this.push({ kind: 'path', ops, style: st, bbox, strokeText: { p: bar.p, h, rot: bar.rot, w: W } }, rootId);
   }
 
   /**
@@ -1155,7 +1159,11 @@ export function* drawSceneSteps(ctx, scene, view, opts = {}) {
       if (++work >= DRAW_TICK) { work = 0; yield; }
       ctx.globalAlpha = aOf(it.style);
       if (it.mt) drawMText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style), dark);
-      else drawText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style));
+      else if (it.xf) { // backward / upside down: the mirror in screen space (y down) about the same point
+        const [a, b, c, d, e, f] = it.xf, X0 = sx(0), Y0 = sy(0);
+        ctx.save(); ctx.transform(a, -b, -c, d, sx(e) - a * X0 + c * Y0, sy(f) + b * X0 - d * Y0);
+        drawText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style)); ctx.restore();
+      } else drawText(ctx, it, sx(it.p.x), sy(it.p.y), z, colorOf(it.style));
     }
     ctx.globalAlpha = 1;
     prof?.('text');

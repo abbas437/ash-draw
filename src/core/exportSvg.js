@@ -351,7 +351,9 @@ export function exportSvg(doc, opts = {}) {
     } else if (it.kind === 'text') {
       const lay = layoutText(it, (s) => s.length * it.h * 0.6);
       const deg = num(-it.rot * 180 / Math.PI);
-      const tf = `translate(${num(it.p.x)} ${num(-it.p.y)})${deg !== '0' ? ` rotate(${deg})` : ''}${it.wf !== 1 ? ` scale(${num(it.wf)} 1)` : ''}`;
+      // backward / upside down (DXF 71): the mirror it.xf in SVG space (y down) ahead of the text frame
+      const mx = it.xf ? `matrix(${[it.xf[0], -it.xf[1], -it.xf[2], it.xf[3], it.xf[4], -it.xf[5]].map(num).join(' ')}) ` : '';
+      const tf = `${mx}translate(${num(it.p.x)} ${num(-it.p.y)})${deg !== '0' ? ` rotate(${deg})` : ''}${it.wf !== 1 ? ` scale(${num(it.wf)} 1)` : ''}`;
       const spans = lay.lines.map((l) => `<tspan x="0" y="${num(l.y)}">${xmlEscape(l.text)}</tspan>`).join('');
       out.push(`<text transform="${tf}" font-family="${xmlEscape(fontFamily(it.font))}" font-size="${num(it.h)}" text-anchor="${lay.anchor}" fill="${col}" stroke="none"${oa} xml:space="preserve">${spans}</text>`);
     } else if (it.kind === 'point') {
