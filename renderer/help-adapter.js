@@ -82,7 +82,10 @@ export function initHelpAdapter(app, api) {
     const ref = dialogTopic(title);
     if (!ref || !known.has(String(ref).split('/')[0])) return;
     dialog.setAttribute('data-help', ref);
-    titleEl.append(helpButton(ref));
+    const q = helpButton(ref);
+    q.classList.add('ah-q-dlg'); // beside the title, not inside it (the title is the dialog's accessible name)
+    if (getComputedStyle(dialog).position === 'static') dialog.style.position = 'relative';
+    titleEl.after(q);
   });
   return {
     hasTours: !!data.tours?.length,
