@@ -1,0 +1,45 @@
+{
+  "id": "review-a-drawing",
+  "title": "Review a drawing",
+  "description": "Mark up a drawing, track the comments and export a review sheet.",
+  "steps": [
+    {
+      "target": "tool:mkc",
+      "title": "Markup circle",
+      "text": "Choose the Markup circle tool (or type MKC in the command line). Click the centre of the item, then click again to set the radius.",
+      "placement": "right",
+      "advanceOn": "event:tool:mkc"
+    },
+    {
+      "target": "panel:canvas",
+      "title": "Add a comment",
+      "text": "When the Markup comment box opens, type a short comment and confirm. A markup with no comment is not added.",
+      "placement": "top"
+    },
+    {
+      "target": "panel:markups",
+      "title": "The Markups panel",
+      "text": "Every markup is listed here with its number, comment and status. Click one to find it in the drawing.",
+      "placement": "left"
+    },
+    {
+      "target": "el:mk-panel",
+      "title": "Filter by status",
+      "text": "Use the status list at the top of the panel to show All, Open, In progress or Closed markups.",
+      "placement": "left"
+    },
+    {
+      "target": "el:mk-crs",
+      "title": "Export to CRS",
+      "text": "Click Export to CRS (xlsx)… to save the markups as a Comment Review Sheet in Excel.",
+      "placement": "left",
+      "advanceOn": "click"
+    },
+    {
+      "target": "menu:File",
+      "title": "Compare drawings",
+      "text": "To see what changed between two revisions, open the File menu and choose Compare…, then pick the two drawings.",
+      "placement": "bottom"
+    }
+  ]
+}

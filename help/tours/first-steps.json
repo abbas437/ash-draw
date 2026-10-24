@@ -1,0 +1,54 @@
+{
+  "id": "first-steps",
+  "title": "First steps",
+  "description": "Open a drawing, find your way around, draw a line and save.",
+  "steps": [
+    {
+      "target": "menu:File",
+      "title": "Open a drawing",
+      "text": "Open the File menu, choose Open… and pick a DWG or DXF file.",
+      "placement": "bottom",
+      "advanceOn": "event:file:opened"
+    },
+    {
+      "target": "el:z-fit",
+      "title": "Zoom to fit",
+      "text": "Click Zoom to fit to see the whole drawing. You can also turn the mouse wheel to zoom, or drag with the middle button to pan.",
+      "placement": "left",
+      "advanceOn": "click"
+    },
+    {
+      "target": "el:cmd",
+      "title": "The command line",
+      "text": "Click here, type L and press Enter. Every tool has a short command like this.",
+      "placement": "top"
+    },
+    {
+      "target": "tool:line",
+      "title": "Draw a line",
+      "text": "Choose the Line tool (or use the command you just typed). Click two points in the drawing, then press Enter to finish.",
+      "placement": "right",
+      "advanceOn": "event:tool:line"
+    },
+    {
+      "target": "status:snap",
+      "title": "Object snap",
+      "text": "SNAP makes the cursor jump to ends, midpoints and centres. Click it, or press F3, to switch it on or off.",
+      "placement": "top",
+      "advanceOn": "click"
+    },
+    {
+      "target": "menu:File",
+      "title": "Save your work",
+      "text": "Open the File menu and choose Save, or press Ctrl+S.",
+      "placement": "bottom",
+      "advanceOn": "event:file:saved"
+    },
+    {
+      "target": "menu:Help",
+      "title": "Help",
+      "text": "Open the Help menu to read what the program can and cannot do, check the converter log, or see the About box.",
+      "placement": "bottom"
+    }
+  ]
+}

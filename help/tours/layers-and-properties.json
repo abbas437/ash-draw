@@ -1,0 +1,45 @@
+{
+  "id": "layers-and-properties",
+  "title": "Layers and properties",
+  "description": "Create a layer, make it current and change an object's layer and colour.",
+  "steps": [
+    {
+      "target": "panel:layers",
+      "title": "The Layers panel",
+      "text": "This panel lists every layer in the drawing. New objects go on the current layer, marked with a filled dot.",
+      "placement": "left"
+    },
+    {
+      "target": "el:layer-add",
+      "title": "Make a layer",
+      "text": "Click + and give the new layer a name.",
+      "placement": "left",
+      "advanceOn": "click"
+    },
+    {
+      "target": "panel:layers",
+      "title": "Make it current",
+      "text": "Click the empty circle beside the new layer to make it current. Anything you draw next will be on it.",
+      "placement": "left"
+    },
+    {
+      "target": "tool:select",
+      "title": "Select an object",
+      "text": "Choose the Select tool, then click an object in the drawing.",
+      "placement": "right",
+      "advanceOn": "event:tool:select"
+    },
+    {
+      "target": "panel:props",
+      "title": "Change layer and colour",
+      "text": "In Properties, use the Layer list to move the object to another layer, and the Colour list to change its colour.",
+      "placement": "left"
+    },
+    {
+      "target": "el:layer-filter",
+      "title": "Filter the layers",
+      "text": "Type part of a layer name here to show only matching layers. Clear the box to see them all again.",
+      "placement": "left"
+    }
+  ]
+}
