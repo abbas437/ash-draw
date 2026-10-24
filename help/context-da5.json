@@ -1,0 +1,14 @@
+{
+  "#spacebar": "layouts-viewports",
+  "#vpscale": "layouts-viewports",
+  "dialog:LAYOUT": "layouts-viewports",
+  "dialog:New layout": "layouts-viewports",
+  "dialog:Delete layout": "layouts-viewports",
+  "dialog:Viewport scale": "layouts-viewports",
+  "dialog:External References": "xrefs-images",
+  "dialog:Files outside the drawing folder": "xrefs-images",
+  "dialog:Print": "plot-and-pdf",
+  "dialog:Plot to PDF": "plot-and-pdf",
+  "dialog:Publish to PDF": "plot-and-pdf",
+  "dialog:Drawing units": "plot-and-pdf"
+}
