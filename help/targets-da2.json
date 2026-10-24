@@ -1,0 +1,13 @@
+{
+  "el:menubar": {"selector": "#menubar", "source": "renderer/index.html:18"},
+  "el:qat": {"selector": "#qat", "source": "renderer/app.js:848"},
+  "cmd:save": {"selector": "#qat button[data-cmd=\"save\"]", "source": "renderer/app.js:857"},
+  "panel:tools": {"selector": "#tools", "source": "renderer/index.html:20"},
+  "el:cmd": {"selector": "#cmd", "source": "renderer/index.html:38"},
+  "el:prompt": {"selector": "#prompt", "source": "renderer/index.html:38"},
+  "panel:side": {"selector": "#side", "source": "renderer/index.html:31"},
+  "el:spacebar": {"selector": "#spacebar", "source": "renderer/layouts-ui.js:418"},
+  "el:status": {"selector": "#status", "source": "renderer/index.html:39"},
+  "el:conv": {"selector": "#conv", "source": "renderer/app.js:941"},
+  "el:tabbar": {"selector": "#tabbar", "source": "renderer/index.html:22"}
+}
