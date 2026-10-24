@@ -1,0 +1,10 @@
+{
+  "el:z-fit": {"selector": "#z-fit", "source": "renderer/index.html:25"},
+  "el:theme-btn": {"selector": "#theme-btn", "source": "renderer/app.js:943"},
+  "el:tools": {"selector": "#tools", "source": "renderer/index.html:20"},
+  "el:qat": {"selector": "#qat", "source": "renderer/app.js:848"},
+  "status:grid": {"selector": "#status button[data-key=\"grid\"]", "source": "renderer/app.js:939"},
+  "status:lineweights": {"selector": "#status button[data-key=\"lineweights\"]", "source": "renderer/app.js:939"},
+  "status:transparency": {"selector": "#status button[data-key=\"transparency\"]", "source": "renderer/app.js:939"},
+  "panel:side": {"selector": "#side", "source": "renderer/index.html:31"}
+}
