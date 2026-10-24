@@ -139,20 +139,26 @@ GPL source offer contact: https://github.com/abbas437/ash-draw/issues
 DWG is used here only as the descriptive name of a file format. ASH Draw Studio is not
 affiliated with or endorsed by Autodesk. See `docs/COPYRIGHT-REVIEW.md`.
 
+## Help
+
+The user guide is built into the app: press F1 or use Help ▸ User guide (search, guided tours, and "Show me" links that
+point at the real buttons). The same guide is published on https://ashdesignsuite.com. Its sources are in `help/`
+(`npm run help:build`, `npm run help:shots`).
+
 ## Limitations
 
 Please read these before relying on the program for important work.
 
-- **Model space only.** Paper-space layouts and viewports are ignored (the count is reported when a file is opened).
-- **Unsupported objects are skipped and reported on opening**: 3D solids, regions, 3D faces, xlines/rays, multilines,
-  multileaders, tolerances, images and OLE objects. Attributes become plain text.
+- **Layouts and viewports** are read, edited and saved back; viewport clip boundaries are drawn and kept.
+- **Objects not shown or not saved**: 3D solids, bodies and regions are not shown; proxy and other custom objects are drawn from
+  their saved graphics but cannot be edited (Save as DXF keeps proxy objects). Skipped objects are reported when a file opens and
+  before a save. Help ▸ "What this program can and cannot do" in the app has the full list.
 - **Dimensions** are displayed from their stored drawing and can be moved, copied and exploded, but not edited as dimensions.
-- **DWG reading** quality depends on LibreDWG; newer proprietary objects and proxy entities are not shown.
-- **DWG saving is experimental.** DWG is written through LibreDWG's DXF import, which can lose text rotation, width factor and
-  alignment and some hatch edges. The program reads the saved DWG back, compares it with your drawing and warns about
-  differences. DXF is the reliable format. Only the R2000 and R14 DWG formats can be written.
+- **DWG** is read through the built-in LibreDWG converter or, when installed, the free ODA File Converter. Saving as DWG needs
+  the ODA File Converter (AutoCAD 2000–2018 formats); without it, DWG saving is experimental and off by default (Edit ▸
+  Preferences), and text rotation and some hatches can be lost. DXF is the reliable format.
 - **Autodesk SHX fonts are not available**; text is drawn with system fonts, so spacing and appearance differ from the original.
-- **PDF export** draws text in Western Latin characters only (no Arabic or other scripts yet); everything else is vector.
+- **PDF export** draws Latin, Greek, Cyrillic and Arabic text; Chinese, Japanese and Korean characters cannot be drawn yet. Everything else is vector.
 - **Binary DXF** is not supported; save as ASCII DXF.
 - **Unsigned executables**: Windows SmartScreen warns on first run (see above).
 
