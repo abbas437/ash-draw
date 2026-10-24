@@ -1,0 +1,6 @@
+{
+  "tool:block": {"selector": "#tools button[data-tool=\"block\"]", "source": "renderer/tool-panel.js:11"},
+  "tool:insert": {"selector": "#tools button[data-tool=\"insert\"]", "source": "renderer/tool-panel.js:11"},
+  "tool:attdef": {"selector": "#tools button[data-tool=\"attdef\"]", "source": "renderer/tool-panel.js:11"},
+  "tool:eattedit": {"selector": "#tools button[data-tool=\"eattedit\"]", "source": "renderer/tool-panel.js:11"}
+}
