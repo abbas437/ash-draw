@@ -1,0 +1,16 @@
+{
+  "#status": "interface-tour/status-bar",
+  "#tools": "interface-tour/tool-panel",
+  "#qat": "interface-tour/menu-bar-and-quick-access",
+  "#cmd": "interface-tour/command-line",
+  "#side": "interface-tour/side-panel",
+  "#spacebar": "interface-tour/model-and-layout-tabs",
+  "#tabbar": "tabs-and-sessions",
+  "#conv": "dwg-converter",
+  "dialog:Preferences": "preferences",
+  "dialog:Converter log": "dwg-converter",
+  "dialog:Recover unsaved drawings": "tabs-and-sessions",
+  "dialog:Recent files": "tabs-and-sessions",
+  "dialog:Some files are not available": "tabs-and-sessions",
+  "dialog:Customize tools": "customize-toolbars"
+}
