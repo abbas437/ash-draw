@@ -1,0 +1,13 @@
+{
+  "#tools": "customize-toolbars",
+  "#qat": "customize-toolbars",
+  "#side": "customize-toolbars",
+  "#zoombar": "navigate-zoom-pan",
+  "#theme-btn": "display-options",
+  "#status button[data-key=\"grid\"]": "display-options",
+  "#status button[data-key=\"lineweights\"]": "display-options",
+  "#status button[data-key=\"transparency\"]": "display-options",
+  "dialog:Customize tools": "customize-toolbars",
+  "dialog:New view": "named-views",
+  "dialog:Named views: Model": "named-views"
+}
