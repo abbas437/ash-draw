@@ -1,0 +1,14 @@
+{
+  "el:mk-panel": { "selector": "#mk-panel", "source": "renderer/index.html:33" },
+  "el:mk-crs": { "selector": "#mk-crs", "source": "renderer/index.html:33" },
+  "el:compare-panel": { "selector": "#compare-panel", "source": "renderer/compare.js:73" },
+  "el:sym-panel": { "selector": "#sym-panel", "source": "renderer/index.html:34" },
+  "el:sym-source": { "selector": "#sym-source", "source": "renderer/index.html:34" },
+  "el:sym-cat": { "selector": "#sym-cat", "source": "renderer/index.html:34" },
+  "el:sym-search": { "selector": "#sym-search", "source": "renderer/index.html:34" },
+  "el:sym-combo": { "selector": "#sym-combo", "source": "renderer/symbol-palette.js:15" },
+  "el:sym-count": { "selector": "#sym-count", "source": "renderer/index.html:34" },
+  "tool:mkc": { "selector": "button[data-tool=\"mkc\"]", "source": "renderer/tool-panel.js:65" },
+  "tool:mkr": { "selector": "button[data-tool=\"mkr\"]", "source": "renderer/tool-panel.js:65" },
+  "tool:mkt": { "selector": "button[data-tool=\"mkt\"]", "source": "renderer/tool-panel.js:65" }
+}

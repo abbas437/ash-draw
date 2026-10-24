@@ -1,0 +1,9 @@
+{
+  "#mk-panel": "markup-review",
+  "#compare-panel": "compare-drawings",
+  "#sym-panel": "symbols",
+  "#sym-palette": "symbols",
+  "dialog:Compare drawings": "compare-drawings",
+  "dialog:Markup comment": "markup-review",
+  "dialog:Symbol count": "symbol-count"
+}
