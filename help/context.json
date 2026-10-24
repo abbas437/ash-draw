@@ -1,0 +1,14 @@
+{
+  "#units": "open-and-units/units",
+  "#cmd": "keyboard-shortcuts",
+  "dialog:Drawing units": "open-and-units/units",
+  "dialog:Incomplete DXF file": "open-and-units/messages-you-may-see",
+  "dialog:Opened with limitations": "open-and-units/messages-you-may-see",
+  "dialog:Cannot open this file": "open-and-units/dwg-conversion-and-progress",
+  "dialog:Save as DXF": "save-and-formats",
+  "dialog:Save as DWG": "save-and-formats/save-as-dwg",
+  "dialog:Save as DWG (experimental)": "save-and-formats/save-as-dwg",
+  "dialog:Overwrite the original file?": "save-and-formats",
+  "dialog:The DWG does not match your drawing": "save-and-formats/save-as-dwg",
+  "dialog:What this program does and does not do": "limitations"
+}
