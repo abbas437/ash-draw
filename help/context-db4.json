@@ -1,0 +1,14 @@
+{
+  "#status button[data-key=\"snap\"]": "object-snaps",
+  "#status button[data-key=\"ortho\"]": "drafting-aids",
+  "#status button[data-key=\"polar\"]": "drafting-aids",
+  "#status button[data-key=\"otrack\"]": "drafting-aids",
+  "#status button[data-key=\"grid\"]": "drafting-aids",
+  "#status button[data-key=\"gridSnap\"]": "drafting-aids",
+  "#tools button[data-tool=\"measure\"]": "measure",
+  "#tools button[data-tool=\"area\"]": "measure",
+  "#measure-panel": "measure",
+  "#find-panel": "find-replace",
+  "dialog:Drafting Settings": "object-snaps",
+  "dialog:LIST": "measure"
+}
