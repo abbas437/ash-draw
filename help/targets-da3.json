@@ -1,0 +1,4 @@
+{
+  "el:cmd": { "selector": "#cmd", "source": "renderer/index.html:38" },
+  "el:prompt": { "selector": "#prompt", "source": "renderer/index.html:38" }
+}
