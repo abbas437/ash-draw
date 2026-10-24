@@ -25,15 +25,21 @@ export function el(tag, attrs = {}, ...kids) {
 // ---------------------------------------------------------------------------------------------
 // dialogs
 const dlg = () => document.getElementById('dlg');
+let decorate = null;
+/** fn({dialog, titleEl, title}) runs for every modal after its title is built (the help adapter adds data-help and a "?" button). */
+export function setDialogDecorator(fn) { decorate = fn; }
 
 /** generic modal: body = DOM node, buttons = [{label, value, primary}] -> resolves with the chosen value (null on Esc) */
 export function modal(title, body, buttons = [{ label: 'OK', value: true, primary: true }]) {
   return new Promise((resolve) => {
     const d = dlg();
+    const titleEl = el('h2', { text: title });
+    d.removeAttribute('data-help');
     d.replaceChildren(
-      el('h2', { text: title }), el('div', { class: 'dlg-body' }, body),
+      titleEl, el('div', { class: 'dlg-body' }, body),
       el('div', { class: 'dlg-btns' }, buttons.map((b) => el('button', { class: b.primary ? 'primary' : '', onclick: () => { d.close(); resolve(b.value); } }, b.label))),
     );
+    try { decorate?.({ dialog: d, titleEl, title: String(title ?? '') }); } catch { /* help is optional */ }
     d.onclose = () => { if (!d.open) resolve(null); }; // Esc. A button's close() fires its event later, maybe after the next modal() opened: ignore that stale one
     d.showModal();
     d.querySelector('input,textarea,select,button.primary')?.focus();

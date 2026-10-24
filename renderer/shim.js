@@ -119,6 +119,8 @@
     }),
     setTitle: (t) => { document.title = String(t).slice(0, 200); return Promise.resolve(); },
     showItem: () => Promise.resolve(false),
+    // help links open in a new browser tab (recorded for the e2e tests)
+    openExternal: (url) => { (window.__ashShim ??= { opened: [] }).opened.push(String(url)); window.open(String(url), '_blank', 'noopener'); return Promise.resolve(true); },
     settingsGet: (k) => {
       try { const v = localStorage.getItem(KEY + k); return Promise.resolve(v == null ? undefined : JSON.parse(v)); } catch { return Promise.resolve(undefined); }
     },

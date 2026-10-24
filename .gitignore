@@ -6,3 +6,4 @@ build/libredwg/
 *.log
 test/e2e/out/
 .scratch/
+help-site/

@@ -1,0 +1,10 @@
+{
+  "status:snap": { "selector": "#status button[data-key=\"snap\"]", "source": "renderer/app.js:939" },
+  "status:ortho": { "selector": "#status button[data-key=\"ortho\"]", "source": "renderer/app.js:939" },
+  "status:polar": { "selector": "#status button[data-key=\"polar\"]", "source": "renderer/app.js:939" },
+  "status:otrack": { "selector": "#status button[data-key=\"otrack\"]", "source": "renderer/app.js:939" },
+  "status:grid": { "selector": "#status button[data-key=\"grid\"]", "source": "renderer/app.js:939" },
+  "status:gridSnap": { "selector": "#status button[data-key=\"gridSnap\"]", "source": "renderer/app.js:939" },
+  "tool:measure": { "selector": "#tools button[data-tool=\"measure\"]", "source": "renderer/icons.js:92" },
+  "tool:area": { "selector": "#tools button[data-tool=\"area\"]", "source": "renderer/icons.js:93" }
+}

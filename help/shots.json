@@ -1,0 +1,4 @@
+[
+  { "name": "interface-tour", "viewport": { "width": 1400, "height": 860 }, "open": ["dims_r2000.dxf"], "eval": "document.getElementById('z-fit').click();", "wait": 4500 },
+  { "name": "layers-panel", "viewport": { "width": 1400, "height": 860 }, "open": ["layouts_r2000.dxf"], "clip": ".panel[data-sec=\"layers\"]", "pad": 2, "wait": 600 }
+]

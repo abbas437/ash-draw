@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld('api', {
   dwgSetConfig: (c) => invoke('dwg:setConfig', c),
   dwgBrowseOda: () => invoke('dwg:browseOda'),
   openOdaDownload: () => invoke('shell:openOdaDownload'),
+  openExternal: (url) => invoke('shell:openHelpLink', String(url)),
   dwgToDxf: (bytes) => invoke('dwg:toDxf', bytes),
   dwgOpen: (pathOrBytes, job) => invoke('dwg:open', pathOrBytes, job),
   dwgCancel: (job) => invoke('dwg:cancel', job),

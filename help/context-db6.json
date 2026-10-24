@@ -1,0 +1,8 @@
+{
+  ".panel[data-sec=\"layers\"]": "layers",
+  ".panel[data-sec=\"props\"]": "properties-panel",
+  "dialog:Layer states": "layer-states",
+  "dialog:Quick Select": "quick-select-purge",
+  "dialog:Purge": "quick-select-purge",
+  "dialog:Property Settings": "properties-panel"
+}
