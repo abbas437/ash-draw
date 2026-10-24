@@ -1,0 +1,7 @@
+{
+  "panel:layers": {"selector": ".panel[data-sec=\"layers\"]", "source": "renderer/index.html:32"},
+  "panel:props": {"selector": ".panel[data-sec=\"props\"]", "source": "renderer/index.html:35"},
+  "el:layer-states": {"selector": "#layer-states", "source": "renderer/index.html:32"},
+  "el:layer-add": {"selector": "#layer-add", "source": "renderer/index.html:32"},
+  "el:layer-filter": {"selector": "#layer-filter", "source": "renderer/index.html:32"}
+}
