@@ -1,0 +1,15 @@
+{
+  "#tools button[data-tool=\"block\"]": "blocks",
+  "#tools button[data-tool=\"insert\"]": "blocks",
+  "#tools button[data-tool=\"attdef\"]": "attributes",
+  "#tools button[data-tool=\"eattedit\"]": "attributes",
+  "#beditbar button[data-bedit=\"save\"]": "block-editor",
+  "#beditbar button[data-bedit=\"base\"]": "block-editor",
+  "#beditbar button[data-bedit=\"close\"]": "block-editor",
+  "dialog:Block definition": "blocks",
+  "dialog:Insert": "blocks",
+  "dialog:Purge": "quick-select-purge",
+  "dialog:Edit block definition": "block-editor",
+  "dialog:Block editor": "block-editor",
+  "dialog:Attribute definition": "attributes"
+}
