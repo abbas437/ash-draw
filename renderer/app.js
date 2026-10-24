@@ -38,6 +38,7 @@ import { defaultLayout, cleanLayout, panelGroups, samePanel, quickRow, setQuickR
 import { openCustomize, initToolContextMenu } from './tool-custom.js';
 import { openTabMenu } from './tab-menu.js';
 import { renderMenu, menuKey, closeSubmenus } from './menu-items.js';
+import { initHelpAdapter } from './help-adapter.js';
 import { CommandHistory } from '../src/core/cmdhist.js';
 import { CmdHistView } from './cmdhist-view.js';
 import { qselectDialog, selectSimilarCommand, purgeDialog } from './selclean.js';
@@ -74,6 +75,7 @@ class App {
     this.toolId = null;
     this.sessionStore = initSession(this); // last session and recent files
     this.autosave = initAutosave(this); // timed copies of unsaved drawings, recovered at the next start
+    this.help = initHelpAdapter(this, api); // Help > User guide (F1), Guided tours, context help
     this.buildMenus();
     this.buildToolbar();
     this.toolModes = initToolModes(this, api, el); // tool panel layout: Full / Compact rail / Floating (tool-rail.js)
@@ -146,7 +148,8 @@ class App {
     // is offered (or reopened, per startup.mode) - without the files just recovered
     api.getLaunchFiles?.().then(async (files) => { for (const f of files ?? []) await this.openFromFile(f); }).catch(() => {})
       .then(() => this.autosave.recover()).catch(() => {})
-      .then(() => this.sessionStore.start());
+      .then(() => this.sessionStore.start())
+      .then(() => this.help.welcome(), () => this.help.welcome());
   }
 
   // ---- host interface for tools ---------------------------------------------------------------
@@ -213,6 +216,7 @@ class App {
     this.refreshPrompt();
     this.vp.requestRender();
     this.vp.canvas.focus();
+    this.help?.event(`tool:${id}`);
   }
 
   // ---- commands ---------------------------------------------------------------------------------
@@ -308,6 +312,7 @@ class App {
     const blank = replaceBlank && isBlankTab(this.active) ? this.active : null;
     if (blank) this.tabs.splice(this.tabs.indexOf(blank), 1, tab); else this.tabs.push(tab);
     this.switchTo(tab, { fit: true, firstView });
+    this.help?.event('file:opened');
   }
   /** bring a tab to the front: the shown tab keeps its view, selection and caches for when it comes back */
   switchTo(tab, { fit = false, firstView = false } = {}) {
@@ -556,6 +561,7 @@ class App {
     tab.file = { path, name: path ? path.replace(/^.*[\\/]/, '') : `${baseName(tab.file.name)}.${format}`, format };
     if (clean) { tab.session.markSaved(tab.saving?.step); tab.recoveredFrom = null; this.autosave.discard(tab); }
     this.updateTitle();
+    this.help?.event('file:saved');
   }
   /** Save as DWG with ODA: the DWG version to write (the last choice is remembered), or null when cancelled */
   async chooseDwgVersion() {
@@ -756,7 +762,7 @@ class App {
       ['Format', [['Units…', 'UNITS', () => this.unitsDialog()], ['Drafting settings…', 'DSETTINGS', () => draftingSettings(this)], ['Purge…', 'PURGE', () => blockedByEditor(this, 'purge') || purgeDialog(this)], '-',
         ['Load patterns from .pat file…', '', () => this.loadPatterns()], ['Hatch patterns…', '', () => patternsDialog(this, api)]]],
       ['Dimension', [...TOOL_BUTTONS.find(([g]) => g === 'Dimension')[2].map(([id, label, alias]) => [label, alias, () => this.setTool(id)]), '-', ['Dimension style…', 'D', () => this.dimStyles()]]],
-      ['Help', [['What this program can and cannot do', '', () => this.limitations()], ['Converter log…', '', () => this.converterLog()], ['About', '', () => this.about()]]],
+      ['Help', [['User guide', 'F1', () => this.help.open()], ...(this.help.hasTours ? [['Guided tours…', '', () => this.help.open()]] : []), '-', ['Keyboard shortcuts', '', () => this.help.open('keyboard-shortcuts')], '-', ['What this program can and cannot do', '', () => this.limitations()], ['Converter log…', '', () => this.converterLog()], ['About', '', () => this.about()]]],
     ];
     const bar = document.getElementById('menubar');
     bar.setAttribute('role', 'menubar');
@@ -765,7 +771,7 @@ class App {
       const { nodes, refresh } = renderMenu(items, { close: () => closeMenus() });
       // opens on pointerdown, so the click that only re-focuses the window is not lost; click with detail 0 = keyboard (Enter / Space)
       const toggle = () => { const open = menu.classList.contains('open'); closeMenus(); if (!open) { refresh(); menu.classList.add('open'); top.setAttribute('aria-expanded', 'true'); } };
-      const top = el('button', { 'aria-haspopup': 'menu', 'aria-expanded': 'false', onpointerdown: (e) => { if (e.button === 0) { e.preventDefault(); toggle(); } }, onclick: (e) => { e.stopPropagation(); if (e.detail === 0) toggle(); } }, label);
+      const top = el('button', { 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'data-menu': label, onpointerdown: (e) => { if (e.button === 0) { e.preventDefault(); toggle(); } }, onclick: (e) => { e.stopPropagation(); if (e.detail === 0) toggle(); } }, label);
       const menu = el('div', { class: 'menu' }, top, el('div', { class: 'drop', role: 'menu', 'aria-label': label }, nodes));
       bar.append(menu);
     }

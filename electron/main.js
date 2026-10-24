@@ -424,6 +424,13 @@ function registerIpc() {
     if (u.protocol !== 'https:' || u.hostname !== 'www.opendesign.com') throw new Error('download address not allowed');
     return shell.openExternal(u.href).then(() => true);
   });
+  // Help links (in-app help): https only, to the ASH sites and the project's GitHub pages.
+  handle('shell:openHelpLink', (url) => {
+    const u = new URL(String(url));
+    const ok = u.protocol === 'https:' && (/^(www\.)?(ashdesignsuite|ashpmcs)\.com$/.test(u.hostname) || (u.hostname === 'github.com' && u.pathname.startsWith('/abbas437/')) || u.hostname === 'www.opendesign.com');
+    if (!ok) throw new Error('link not allowed');
+    return shell.openExternal(u.href).then(() => true);
+  });
   handle('dwg:available', () => dwg.available());
   handle('dwg:toDxf', (bytes) => dwg.toDxf(asBytes(bytes, 'DWG data')));
   // Opening a DWG: the source is a granted path (read here, not in the window) or the DWG bytes; the DXF comes back
