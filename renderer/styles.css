@@ -7,7 +7,7 @@
   --shadow:rgba(20,32,40,.18); --shadow-lg:rgba(20,32,40,.28); --backdrop:rgba(20,32,40,.35);
   --drop-bg:rgba(241,236,226,.9); --swatch-border:rgba(0,0,0,.45);
   --toast-bg:#fff6d6; --toast-text:#5a3c00; --selection:#ddd0ad; --scroll-thumb:#b9ae99;
-  --danger:#b3261e;
+  --danger:#b3261e; --muted:var(--dim); /* help.css (shared with ASH PDF Studio) reads --muted */
 }
 [data-theme="dark"] {
   color-scheme: dark;
