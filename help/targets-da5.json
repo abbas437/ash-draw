@@ -1,0 +1,5 @@
+{
+  "el:spacebar": { "selector": "#spacebar", "source": "renderer/layouts-ui.js:419" },
+  "el:vpscale": { "selector": "#vpscale", "source": "renderer/layouts-ui.js:357" },
+  "panel:layers": { "selector": ".panel[data-sec=\"layers\"]", "source": "renderer/index.html:32" }
+}
