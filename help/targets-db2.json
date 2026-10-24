@@ -1,0 +1,90 @@
+{
+  "tool:move": {
+    "selector": "#tools button[data-tool=\"move\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:copy": {
+    "selector": "#tools button[data-tool=\"copy\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:rotate": {
+    "selector": "#tools button[data-tool=\"rotate\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:scale": {
+    "selector": "#tools button[data-tool=\"scale\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:align": {
+    "selector": "#tools button[data-tool=\"align\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:mirror": {
+    "selector": "#tools button[data-tool=\"mirror\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:offset": {
+    "selector": "#tools button[data-tool=\"offset\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:trim": {
+    "selector": "#tools button[data-tool=\"trim\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:extend": {
+    "selector": "#tools button[data-tool=\"extend\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:explode": {
+    "selector": "#tools button[data-tool=\"explode\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:erase": {
+    "selector": "#tools button[data-tool=\"erase\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:fillet": {
+    "selector": "#tools button[data-tool=\"fillet\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:chamfer": {
+    "selector": "#tools button[data-tool=\"chamfer\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:break": {
+    "selector": "#tools button[data-tool=\"break\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:breakatpoint": {
+    "selector": "#tools button[data-tool=\"breakatpoint\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:join": {
+    "selector": "#tools button[data-tool=\"join\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:pedit": {
+    "selector": "#tools button[data-tool=\"pedit\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:lengthen": {
+    "selector": "#tools button[data-tool=\"lengthen\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:stretch": {
+    "selector": "#tools button[data-tool=\"stretch\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:arrayrect": {
+    "selector": "#tools button[data-tool=\"arrayrect\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:arraypolar": {
+    "selector": "#tools button[data-tool=\"arraypolar\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  },
+  "tool:arraypath": {
+    "selector": "#tools button[data-tool=\"arraypath\"]",
+    "source": "renderer/tool-panel.js:8-10"
+  }
+}
