@@ -10,6 +10,8 @@ keywords: interface, menus, tool panel, quick access, command line, side panel, 
 
 ASH Draw Studio is laid out like AutoCAD, so most things are where you expect them. This tour goes from the top of the window to the bottom.
 
+![The main window with a drawing open](img/interface-tour.png)
+
 ## Menu bar and Quick Access
 
 [Show me](#showme:el:menubar) the menu bar. It has **File, Edit, View, Format, Dimension** and **Help**. Use the arrow keys to move through a menu and <kbd>Esc</kbd> to close it.

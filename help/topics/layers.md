@@ -10,6 +10,8 @@ keywords: layer, layers, freeze, thaw, lock, plot, colour, linetype, lineweight,
 
 Layers group objects so you can show, hide, lock or restyle them together. The **Layers** panel lists every layer in the drawing. Open it with `LAYER` (`LA`), or [show me the panel](#showme:panel:layers).
 
+![The Layers panel](img/layers-panel.png)
+
 ## Each row
 
 From left to right a row holds:
