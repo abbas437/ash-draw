@@ -10,5 +10,5 @@
   "dialog:Save as DWG (experimental)": "save-and-formats/save-as-dwg",
   "dialog:Overwrite the original file?": "save-and-formats",
   "dialog:The DWG does not match your drawing": "save-and-formats/save-as-dwg",
-  "dialog:What this program does and does not do": "limitations"
+  "dialog:What this program can and cannot do": "limitations"
 }

@@ -323,6 +323,23 @@ try {
   assert.deepEqual(await win.evaluate(() => window.app.doc.entities.map((e) => [e.type, e.layer])), [['LINE', 'ODA']]);
   await win.evaluate(() => window.api.dwgSetConfig({ mode: 'auto', odaPath: '' })); // leave the user's settings as found
 
+  setStep('a dropped drawing keeps its path (webUtils, granted by main) and opens in its own tab');
+  {
+    const dropFile = path.join(path.dirname(hostDxf), 'dropped-basic.dxf');
+    await fs.copyFile(path.join(ROOT, 'test', 'fixtures', 'basic_r2000.dxf'), dropFile);
+    await win.evaluate(() => { const i = Object.assign(document.createElement('input'), { type: 'file', id: 'e2e-drop-input' }); i.style.display = 'none'; document.body.append(i); });
+    await win.setInputFiles('#e2e-drop-input', dropFile);
+    const got = await win.evaluate(async () => window.api.openDropped(document.getElementById('e2e-drop-input').files[0]));
+    assert.ok(got && got.name === 'dropped-basic.dxf' && /dropped-basic\.dxf$/.test(got.path), JSON.stringify(got));
+    // drop it on the stage: the tab opens with that path, so Save writes back to the file
+    await win.evaluate(() => { const f = document.getElementById('e2e-drop-input').files[0]; const dt = new DataTransfer(); dt.items.add(f); document.getElementById('stage').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); });
+    await win.waitForFunction(() => window.app.file?.name === 'dropped-basic.dxf', null, { timeout: 15000 });
+    assert.match(await win.evaluate(() => window.app.file.path ?? ''), /dropped-basic\.dxf$/);
+    // a path the user did not drop is refused (not a drawing / not a file)
+    assert.equal(await win.evaluate(() => window.api.openDropped(new File(['x'], 'fake.dxf'))), null);
+    await win.evaluate(() => document.getElementById('e2e-drop-input').remove());
+  }
+
   setStep('no renderer errors');
   assert.deepEqual(errors, []);
   console.log('draw electron e2e: OK');

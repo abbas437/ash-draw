@@ -1,6 +1,6 @@
 // Sandboxed preload (runs as a classic CommonJS-style script; ESM is not supported
 // in sandboxed preloads). Exposes the minimal window.api contract documented in README.md.
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const invoke = (channel, ...args) => ipcRenderer.invoke(channel, ...args);
 
@@ -61,6 +61,9 @@ contextBridge.exposeInMainWorld('api', {
   dwgSetConfig: (c) => invoke('dwg:setConfig', c),
   dwgBrowseOda: () => invoke('dwg:browseOda'),
   openOdaDownload: () => invoke('shell:openOdaDownload'),
+  // A file dropped on the window: its path comes from Electron (webUtils) for a real dropped File only, so the
+  // renderer cannot name an arbitrary path; main grants it like a file chosen in the Open dialog. null if none.
+  openDropped: (file) => { let p = ''; try { p = webUtils.getPathForFile(file); } catch { /* not a file on disk */ } return p ? invoke('file:dropped', p) : Promise.resolve(null); },
   openExternal: (url) => invoke('shell:openHelpLink', String(url)),
   dwgToDxf: (bytes) => invoke('dwg:toDxf', bytes),
   dwgOpen: (pathOrBytes, job) => invoke('dwg:open', pathOrBytes, job),

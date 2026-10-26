@@ -719,7 +719,7 @@ class App {
     try { await api.dwgSetConfig({ mode: mode.value, odaPath: odaPath.value.trim() }); this.refreshDwgWrite(); toast('Preferences saved', 2000); } catch (err) { await message('Preferences not saved', String(err.message || err).replace(/^Error invoking remote method '[^']*': (\w*Error: )?/, '')); }
   }
   async limitations() {
-    await message('What this program does and does not do', 'Please read before relying on it for important work:', el('ul', {},
+    await message('What this program can and cannot do', 'Please read before relying on it for important work:', el('ul', {},
       ['Paper-space layouts, their objects and viewports are read and saved back; viewport clip boundaries (polygon, circle and other closed shapes) are drawn and kept.',
         'Supported objects: lines, polylines, circles, arcs, ellipses, splines, xlines and rays, text, multiline text, points, solids, 3D faces, hatches, blocks and attributes, dimensions (as drawn), leaders, multileaders, multilines, images, wipeouts and external references.',
         'Proxy objects (ACAD_PROXY_ENTITY, for example Civil 3D objects) are drawn from their saved graphics and cannot be edited; Save as DXF keeps them as they were. Other custom objects (for example AECC_ ones) are drawn the same way but are not written when you save. 3D solids (3DSOLID), BODY, REGION and custom objects without saved graphics are not shown and are not written when you save. OLE objects are drawn from their saved preview picture (a frame only when there is none it can show). Any other object type this program does not know is skipped too. Skipped objects are reported when you open the file, and you are told before saving what a save leaves out.',
@@ -1073,10 +1073,16 @@ class App {
     stage.addEventListener('dragleave', () => stage.classList.remove('dragover'));
     stage.addEventListener('drop', async (e) => {
       e.preventDefault(); stage.classList.remove('dragover');
-      const f = e.dataTransfer?.files?.[0];
-      if (!f) return;
-      if (!['dwg', 'dxf'].includes(extOf(f.name))) { toast('Drop a DWG or DXF file.'); return; }
-      await this.loadFile({ path: null, name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) });
+      const files = [...(e.dataTransfer?.files ?? [])];
+      if (!files.length) return;
+      const drawings = files.filter((f) => ['dwg', 'dxf'].includes(extOf(f.name)));
+      if (!drawings.length) { toast('Drop a DWG or DXF file.'); return; }
+      for (const f of drawings) {
+        // On the desktop the dropped file keeps its path (Save writes back to it; xrefs and images beside it are found).
+        const granted = await api.openDropped?.(f).catch(() => null);
+        if (granted?.path) await this.openFromFile(granted);
+        else await this.loadFile({ path: null, name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) });
+      }
     });
   }
 }

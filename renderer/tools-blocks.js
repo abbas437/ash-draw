@@ -386,7 +386,7 @@ export function createBlockTools(h, { Tool, ModifyTool }) {
     click(p, ev) {
       const hit = this.vp.pick(ev?.raw ?? p);
       if (hit?.type === 'DIMENSION' && hit.def) this.run(hit);
-      else this.h.toast('TEXTEDIT: select a dimension (double-click a text or multiline text to edit it).');
+      else this.h.toast('TEXTEDIT edits a dimension\'s text. To edit multiline text, double-click it; for single-line text, select it and change it in Properties.');
     }
   }
 

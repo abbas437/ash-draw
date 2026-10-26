@@ -7,7 +7,7 @@ keywords: open, dwg, dxf, drag, drop, recent, convert, oda, incomplete, xref, im
 ---
 ## Open a drawing
 - **File ▸ Open…** (<kbd>Ctrl</kbd>+<kbd>O</kbd>, or `OPEN`): choose one or more DWG or DXF files. Each opens in its own tab.
-- **Drag and drop:** drop a DWG or DXF file on the drawing area. Only the first dropped file is opened.
+- **Drag and drop:** drop one or more DWG or DXF files on the drawing area; each opens in its own tab. A dropped file keeps its location, so **Save** writes back to it and xrefs and images beside it are found.
 - **File ▸ Recent files…**: the drawings you opened recently. See [Tabs and sessions](#topic:tabs-and-sessions).
 - Double-click a file in Windows Explorer, or use **Open with**.
 

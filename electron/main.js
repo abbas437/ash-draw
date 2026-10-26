@@ -267,6 +267,11 @@ function registerIpc() {
     return openedFiles(r.filePaths, { grant, read: readGranted }); // a .dwg without bytes: dwg:open converts it from the path
   });
   handle('file:read', (p) => readGranted(grantedPath(p)));
+  // A drawing dropped on the window (path from webUtils.getPathForFile in the preload): granted like an opened file.
+  handle('file:dropped', async (p) => {
+    if (typeof p !== 'string' || !path.isAbsolute(p) || !/\.(dwg|dxf)$/i.test(p) || !(await isFile(p))) return null;
+    return { path: grant(p), name: path.basename(p) };
+  });
   // An external reference of an open drawing: the host must be a granted file; only the .dxf/.dwg files that the xref
   // search order yields (host folder + relative path, the path itself, the file name in the host folder) are read, and
   // one outside the host's folder only after the user agreed (refAccess.js, refs:decide); until then it comes back in
