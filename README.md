@@ -4,6 +4,18 @@ A free, MIT-licensed drawing viewer and editor for Windows that opens, edits and
 DXF drawings, with DWG file support through the separately bundled LibreDWG converters.
 Built with Electron by ASH Technical & Project Management Services (ASH PMCS).
 
+<p>
+  <a href="https://github.com/abbas437/ash-draw/releases/latest"><img alt="Download for Windows" src="https://img.shields.io/badge/Download-Windows%2010%2F11%20x64-1f4d3a?style=for-the-badge&logo=windows&logoColor=white"></a>
+  <a href="https://github.com/abbas437/ash-draw/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/abbas437/ash-draw?style=for-the-badge&label=latest&color=b08d3c"></a>
+  <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-555555?style=for-the-badge"></a>
+</p>
+
+**[Download the latest version](https://github.com/abbas437/ash-draw/releases/latest)** (installer, portable .exe or zip, no admin rights needed) ·
+[Download page on ashdesignsuite.com](https://ashdesignsuite.com/studio/#draw) ·
+[User guide](https://ashdesignsuite.com/help/draw-studio/)
+
+![ASH Draw Studio with a DXF drawing open: draw and modify toolbars on the left, layers, markups and the symbol library on the right, command line below](help/img/interface-tour.png)
+
 ## Features
 
 - **Open** DXF (ASCII, R12 to R2018) and DWG drawings; drag-and-drop, File > Open, or "Open with" from Explorer.
@@ -76,6 +88,8 @@ builds the patched LibreDWG converters on `ubuntu-latest` (mingw-w64), then buil
 `windows-latest` and uploads the two .exe files, `SHA256SUMS.txt` and the LibreDWG source tarball,
 patch and build scripts as workflow artifacts; pushing a tag `v*` additionally creates a GitHub
 Release with those files attached. A separate `ubuntu-latest` job runs the unit tests.
+After a release, `node scripts/winget-manifest.mjs <version> SHA256SUMS.txt` writes the Windows Package Manager
+manifests to `winget/manifests/`; `winget/README.md` explains how to test and submit them.
 
 ## The `window.api` contract
 
