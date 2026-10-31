@@ -55,7 +55,7 @@ Windows 10 or 11, 64-bit (x64). Each release provides two builds:
 
 `SHA256SUMS.txt` on each release lists the SHA-256 of both executables.
 
-The executables are not code-signed yet, so Windows SmartScreen shows a warning
+The executables are not code-signed yet (see [Code signing policy](#code-signing-policy)), so Windows SmartScreen shows a warning
 ("Windows protected your PC") on first run. Check the SHA-256 against `SHA256SUMS.txt`,
 then choose **More info > Run anyway**.
 
@@ -126,6 +126,23 @@ paths the user chose in a dialog or passed on the command line during this sessi
 | `symbolsList(id)` | `{files: [{rel, name, category, size, mtimeMs}], truncated}`: the .dxf/.dwg files under a stored folder. |
 | `symbolsRead(id, rel)` | A listed file as DXF `{name, format: 'dxf', sourceFormat, bytes}` (a DWG is converted). |
 | `symbolsThumbGet(id, rel)` / `symbolsThumbPut(id, rel, png)` | The cached PNG thumbnail (or null) / cache one (a PNG of at most 256 KB); keyed by the file's path, mtime and size. |
+
+## Code signing policy
+
+Releases are **not code-signed yet** (see the install notes above). We are applying for the free code signing
+that SignPath Foundation offers open-source projects. Once it is granted, Windows releases will be signed with
+free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by
+[SignPath Foundation](https://signpath.org/), and this section will say so.
+
+- **What gets signed:** only the installer and portable files built by this repository's GitHub Actions workflow
+  (`.github/workflows/build.yml`) from the tagged source. Nothing built elsewhere is signed.
+- **Team roles:** committers and reviewers: the repository owner, [abbas437](https://github.com/abbas437)
+  (Ahmad Abbas, ASH PMCS); code changes are prepared with an AI coding assistant working in this repository
+  and every change is tested by the CI build. Approver for each signed release: Ahmad Abbas.
+- **Privacy:** ASH Draw Studio makes no network connections of its own: no telemetry, no update check, no account.
+  Your files stay on your computer. The only connections are web links you click (help pages, project pages),
+  which open in your default browser. The optional ODA File Converter for DWG is a separate program that you
+  download and install yourself; it is not part of these releases.
 
 ## Licence
 
