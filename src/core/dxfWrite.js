@@ -82,6 +82,8 @@ class Out {
   }
 }
 
+/** the save note (lastWriteReport.notes) when a drawing with tables is written (DXF, and DWG through either converter) */
+export const TABLE_NOTE = 'Tables are saved as blocks: their look is kept, but they are no longer editable as tables (edit cell text in AutoCAD).';
 const WRITTEN = new Set(['LINE', 'XLINE', 'RAY', 'CIRCLE', 'ARC', 'ELLIPSE', 'LWPOLYLINE', 'SPLINE', 'TEXT', 'MTEXT', '3DFACE',
   'OLE2FRAME', 'POINT', 'SOLID', 'INSERT', 'DIMENSION', 'MLEADER', 'LEADER', 'HATCH', 'IMAGE', 'WIPEOUT', 'MLINE', 'PROXY', 'VIEWPORT']);
 /** why `e` cannot be written (the lastWriteReport.skipped key), or null when it is written. The one rule for both the
@@ -139,7 +141,7 @@ export function* writeDxfSteps(doc, opts = {}) {
   let n = 0; // entities written, for the yields
   let reportedDim = false, reportedMleader = false;
   const nonBmp0 = nonBmpWritten;
-  const report ={ version: 'AC1015', entities: 0, blocks: 0, skipped: {}, notes: [] };
+  const report ={ version: 'AC1015', entities: 0, blocks: 0, skipped: {}, notes: [], renamedBlocks: {} };
   let nextHandle = 0x30;
   // MLINESTYLE objects keep their handles (MLINE 340 names them); fixed low handles are never reused for them
   const FIXED_H = new Set(['1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'C', 'D', '10', '12', '13', '17', '1A', '1B', '1E', '22']);
@@ -185,12 +187,20 @@ export function* writeDxfSteps(doc, opts = {}) {
   }
   const blockNames = [...allBlocks.keys()];
   const blockRec = new Map(blockNames.map((n) => [n, H()]));
+  // a table (ACAD_TABLE, dxfRead buildTable) is saved as a plain reference to its graphics block: AutoCAD has tables
+  // from 2005 only, and these carry the 2007+ layout this R2000 file cannot declare. *T names are a table's own, so
+  // those blocks are written as ordinary anonymous blocks (*U, flag 1), numbered past the drawing's own *U names.
+  let nextU = 1 + Math.max(0, ...blockNames.map((n) => /^\*U(\d+)$/i.exec(n)?.[1] ?? 0).map(Number));
+  const renamed = new Map(blockNames.filter((n) => /^\*T/i.test(n)).map((n) => [n, `*U${nextU++}`]));
+  const outName = (n) => renamed.get(n) ?? n;
+  report.renamedBlocks = Object.fromEntries(renamed); // source name -> name in the file (the DWG read-back check, verify.js)
   const allLists = [doc.entities, ...[...doc.blocks.values()].map((b) => b.entities)];
   const ltDefs = new Map(); // upper name -> def
   for (const lt of doc.linetypes.values()) if (!/^(CONTINUOUS|BYLAYER|BYBLOCK)$/.test(lt.name)) ltDefs.set(lt.name.toUpperCase(), lt);
   const styleDefs = new Map();
   for (const st of doc.textStyles.values()) styleDefs.set(st.name.toUpperCase(), st);
   if (!styleDefs.has('STANDARD')) styleDefs.set('STANDARD', { name: 'STANDARD', font: 'Arial', height: 0, widthFactor: 1, oblique: 0 });
+  const undefinedLt = new Set(); // linetypes used but not defined: one note at the end
   const ltKnown = (n) => {
     const u = String(n).toUpperCase();
     return u === 'CONTINUOUS' || u === 'BYLAYER' || u === 'BYBLOCK' || ltDefs.has(u);
@@ -211,7 +221,7 @@ export function* writeDxfSteps(doc, opts = {}) {
     o.s(8, e.layer || '0');
     if (e.linetype && e.linetype !== 'BYLAYER') {
       if (ltKnown(e.linetype)) o.s(6, ltDefs.get(String(e.linetype).toUpperCase())?.name ?? e.linetype);
-      else report.notes.push(`Linetype "${e.linetype}" is not defined; written as BYLAYER.`);
+      else undefinedLt.add(e.linetype);
     }
     const col = decodeColor(e.color); // only ACI 0..256 or 420 true colour are written (raw CmColor values decoded)
     if (typeof col === 'number') { if (col !== 256) o.p(62, col); }
@@ -270,7 +280,7 @@ export function* writeDxfSteps(doc, opts = {}) {
   const xdApps = new Set();
   const imageDefsOut = new Map(); // file path -> { h, def, reactors: [{ img: IMAGE handle, r: IMAGEDEF_REACTOR handle }] }
   const hImageDict = H(), hWipeoutVars = H();
-  let hasWipeouts = false, hasArcDims = false, hasJoggedDims = false;
+  let hasWipeouts = false, hasArcDims = false, hasJoggedDims = false, reportedTable = false;
   function writeEntity(o, e, owner) {
     const why = unwritable(e, doc, opts);
     if (why) { report.skipped[why] = (report.skipped[why] ?? 0) + 1; return false; }
@@ -402,11 +412,12 @@ export function* writeDxfSteps(doc, opts = {}) {
         o.pt(10, p[0].x, p[0].y); o.pt(11, p[1].x, p[1].y); o.pt(12, p[2].x, p[2].y); o.pt(13, p4.x, p4.y); return true;
       }
       case 'INSERT': {
+        if (e.table && !reportedTable) { reportedTable = true; report.notes.push(TABLE_NOTE); }
         const atts = e.attribs?.length ? e.attribs : null;
         // XCLIP: extension dictionary -> ACAD_FILTER -> SPATIAL -> SPATIAL_FILTER, written with the OBJECTS
         const hX = e.clip?.pts?.length >= 2 ? H() : null;
         const hIns = head(o, e, 'INSERT', owner, hX); o.p(100, 'AcDbBlockReference');
-        if (hX) clipRefs.push({ hIns, hX, e }); if (atts) o.p(66, 1); o.s(2, e.block); o.pt(10, e.p.x, e.p.y);
+        if (hX) clipRefs.push({ hIns, hX, e }); if (atts) o.p(66, 1); o.s(2, outName(e.block)); o.pt(10, e.p.x, e.p.y);
         if (e.sx !== 1) o.p(41, e.sx); if (e.sy !== 1) o.p(42, e.sy); if (e.sx !== 1 || e.sy !== 1) o.p(43, 1);
         if (e.rot) o.p(50, e.rot);
         if ((e.cols || 1) > 1 || (e.rows || 1) > 1) { o.p(70, e.cols || 1); o.p(71, e.rows || 1); o.p(44, e.colSp || 0); o.p(45, e.rowSp || 0); }
@@ -430,7 +441,7 @@ export function* writeDxfSteps(doc, opts = {}) {
           for (const [c, v] of dimensionTags(e)) if (typeof v === 'string') o.s(c, v); else o.p(c, v);
           return true;
         }
-        head(o, { ...e }, 'INSERT', owner); o.p(100, 'AcDbBlockReference'); o.s(2, e.block); o.pt(10, 0, 0);
+        head(o, { ...e }, 'INSERT', owner); o.p(100, 'AcDbBlockReference'); o.s(2, outName(e.block)); o.pt(10, 0, 0);
         if (!reportedDim) { reportedDim = true; report.notes.push(asGeometry ? 'Dimensions are saved as plain geometry in DWG files (they stay visible but are no longer editable as dimensions).' : 'A dimension without full source data was saved as plain geometry.'); }
         return true;
       }
@@ -533,8 +544,8 @@ export function* writeDxfSteps(doc, opts = {}) {
   for (const [name, blk] of allBlocks) {
     const rec = blockRec.get(name);
     blocksOut.p(0, 'BLOCK'); blocksOut.p(5, H()); blocksOut.p(330, rec); blocksOut.p(100, 'AcDbEntity'); blocksOut.p(8, '0');
-    blocksOut.p(100, 'AcDbBlockBegin'); blocksOut.s(2, name); blocksOut.p(70, blk.xref ? (blk.xref.flags ?? (blk.xref.overlay ? 12 : 4)) | 4 : name.startsWith('*') ? 1 : 0);
-    blocksOut.pt(10, blk.base.x, blk.base.y); blocksOut.s(3, name); blocksOut.s(1, blk.xref ? blk.xref.path : '');
+    blocksOut.p(100, 'AcDbBlockBegin'); blocksOut.s(2, outName(name)); blocksOut.p(70, blk.xref ? (blk.xref.flags ?? (blk.xref.overlay ? 12 : 4)) | 4 : name.startsWith('*') ? 1 : 0);
+    blocksOut.pt(10, blk.base.x, blk.base.y); blocksOut.s(3, outName(name)); blocksOut.s(1, blk.xref ? blk.xref.path : '');
     if (!blk.xref) {
       for (const e of blk.entities) {
         if (writeEntity(blocksOut, e, rec)) report.entities++;
@@ -735,7 +746,7 @@ export function* writeDxfSteps(doc, opts = {}) {
   out.p(0, 'BLOCK_RECORD'); out.p(5, hModelRec); out.p(330, tbl.BLOCK_RECORD); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, 'AcDbBlockTableRecord'); out.p(2, '*Model_Space'); out.p(340, hModelLayout);
   out.p(0, 'BLOCK_RECORD'); out.p(5, hPaperRec); out.p(330, tbl.BLOCK_RECORD); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, 'AcDbBlockTableRecord'); out.p(2, '*Paper_Space'); out.p(340, hPaperLayout);
   for (const pl of paperLayouts.filter((x) => x.rec !== hPaperRec)) { out.p(0, 'BLOCK_RECORD'); out.p(5, pl.rec); out.p(330, tbl.BLOCK_RECORD); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, 'AcDbBlockTableRecord'); out.s(2, pl.name); out.p(340, pl.layoutH); }
-  for (const n of blockNames) { out.p(0, 'BLOCK_RECORD'); out.p(5, blockRec.get(n)); out.p(330, tbl.BLOCK_RECORD); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, 'AcDbBlockTableRecord'); out.s(2, n); }
+  for (const n of blockNames) { out.p(0, 'BLOCK_RECORD'); out.p(5, blockRec.get(n)); out.p(330, tbl.BLOCK_RECORD); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, 'AcDbBlockTableRecord'); out.s(2, outName(n)); }
   out.p(0, 'ENDTAB');
   out.p(0, 'ENDSEC');
 
@@ -847,8 +858,15 @@ export function* writeDxfSteps(doc, opts = {}) {
   if (text.includes('__DIMTXSTY:')) text = text.replace(/__DIMTXSTY:(.*?)__/g, (_, u) => styleHandle.get(u) ?? styleHandle.get('STANDARD'));
 
   for (const [t, n] of Object.entries(doc.skipped)) report.skipped[`${t} (not read)`] = n;
+  if (undefinedLt.size) {
+    const l = [...undefinedLt];
+    report.notes.push(`Linetypes not defined, written as BYLAYER: ${l.slice(0, 5).join(', ')}${l.length > 5 ? ` and ${l.length - 5} more` : ''}`);
+  }
   const nonBmp = nonBmpWritten - nonBmp0;
   if (nonBmp) report.notes.push(`${nonBmp} character${nonBmp === 1 ? '' : 's'} outside the Basic Multilingual Plane ${nonBmp === 1 ? 'was' : 'were'} saved as ?`);
+  // the notes that change what the file is (tables, dimensions, multileaders) first: the Saved toast shows only the first few
+  const major = (n) => n === TABLE_NOTE || /^(Dimensions are saved|A dimension without|Multileaders are saved)/.test(n);
+  report.notes = [...report.notes.filter(major), ...report.notes.filter((n) => !major(n))];
   doc.lastWriteReport = report;
   void ccwSweep;
   return text;

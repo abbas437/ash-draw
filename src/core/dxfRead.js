@@ -359,7 +359,7 @@ function ocsMatrix(rec, elev) {
   return o && [o.ax[0], o.ax[1], o.ay[0], o.ay[1], o.n[0] * elev, o.n[1] * elev];
 }
 const OCS_ELEVATION = {
-  LWPOLYLINE: 38, POLYLINE: 30, CIRCLE: 30, ARC: 30, TEXT: 30, ATTRIB: 30, ATTDEF: 30, INSERT: 30, SOLID: 30, TRACE: 30, HATCH: 30, DIMENSION: 31, ARC_DIMENSION: 31, LARGE_RADIAL_DIMENSION: 31,
+  LWPOLYLINE: 38, POLYLINE: 30, CIRCLE: 30, ARC: 30, TEXT: 30, ATTRIB: 30, ATTDEF: 30, INSERT: 30, ACAD_TABLE: 30, SOLID: 30, TRACE: 30, HATCH: 30, DIMENSION: 31, ARC_DIMENSION: 31, LARGE_RADIAL_DIMENSION: 31,
 };
 const HALIGN_MIRROR = { 0: 2, 2: 0 };
 /** TEXT seen through a mirroring map m (det < 0) is drawn backwards in AutoCAD. Glyphs are not mirrored here: the
@@ -538,6 +538,24 @@ function buildInsert(rec, o) {
     const clip = sf?.type === 'SPATIAL_FILTER' ? clipFromSpatialFilter(sf.tags()) : null;
     if (clip) ins.clip = clip;
   }
+  return ins;
+}
+
+// ACAD_TABLE: shown as a reference to its graphics block (*Tn, group 2), so it draws, selects, plots, compares,
+// snaps and explodes like an INSERT (and is saved as one, dxfWrite). The placement is the AcDbBlockReference part's:
+// 10 the insertion point, 41/42 scale and 50 rotation only when they lie in that subclass (AutoCAD writes none there;
+// in AcDbTable 40/41 are cell margins), else scale 1 and the rotation of the 11 direction (AcDbTable). Its own tags from
+// AcDbBlockReference on (cells, style, XDATA) are kept in e.table.raw; nothing writes them.
+function buildTable(rec, o) {
+  const all = rec.tags();
+  const sub = (name, from = 0) => all.findIndex(([c, v], i) => i >= from && c === 100 && v.trim() === name);
+  const br = sub('AcDbBlockReference'), tb = br < 0 ? -1 : sub('AcDbTable', br);
+  const ref = tb < 0 ? [] : all.slice(br + 1, tb); // no AcDbTable marker: the codes after AcDbBlockReference are not known to be its own
+  const refNum = (c, d) => { const t = ref.find(([k]) => k === c); const x = t ? parseFloat(t[1]) : NaN; return Number.isFinite(x) ? x : d; };
+  const dir = rec.has(11) ? pt(rec, 11) : null;
+  const rot = refNum(50, null) ?? (dir && (dir.x || dir.y) ? Math.atan2(dir.y, dir.x) * 180 / Math.PI : 0);
+  const ins = makeInsert(rec.str(2), pt(rec, 10), { ...o, sx: refNum(41, 1), sy: refNum(42, 1), rot });
+  ins.table = { raw: br >= 0 ? all.slice(br) : [] };
   return ins;
 }
 
@@ -797,6 +815,7 @@ function buildEntity(rec, doc, extra) {
       break;
     }
     case 'INSERT': e = buildInsert(rec, o); break;
+    case 'ACAD_TABLE': e = buildTable(rec, o); break;
     case 'HATCH': e = buildHatch(rec, o, doc); break;
     case 'DIMENSION': case 'ARC_DIMENSION': case 'LARGE_RADIAL_DIMENSION': e = buildDimension(rec, o); break; // def.kind 'arc' / 'jogged'
     case 'LEADER': e = buildLeader(rec, o); break;

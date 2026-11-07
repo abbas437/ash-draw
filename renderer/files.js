@@ -192,6 +192,8 @@ export async function loadDrawing(api, name, bytes, { onProgress = null, signal 
   if (back.length) notes.push(`Shown from ${back.length === 1 ? 'its' : 'their'} saved graphics, read-only (they can be erased but not moved or edited, and are saved back as read): ${byName(back)}.`);
   if (lost.length) notes.push(`Shown from ${lost.length === 1 ? 'its' : 'their'} saved graphics, read-only (they can be erased but not moved or edited, and are left out when the drawing is saved): ${byName(lost)}.`);
   if (kept.length) sk.push(...Object.entries(kept.reduce((a, x) => ({ ...a, [x.name]: (a[x.name] ?? 0) + 1 }), {})).map(([k, v]) => [`${k} (not drawn; left out when saving)`, v]));
+  const noBlock = [doc.entities, ...[...doc.blocks.values()].map((b) => b.entities)].reduce((n, l) => n + l.filter((x) => x.table && !doc.blocks.has(x.block)).length, 0);
+  if (noBlock) notes.push(`${noBlock} table${noBlock === 1 ? '' : 's'} without ${noBlock === 1 ? 'its' : 'their'} graphics block (nothing to show; left out when the drawing is saved).`);
   if (sk.length) notes.push(`Not displayed (unsupported object types): ${sk.map(([k, v]) => `${v} ${k}`).join(', ')}.`);
   const conversion = conv && { converter: conv.converter, errorCount: conv.errorCount, log: conv.log, objects: objectsRead(doc), skipped: { ...(doc.skipped || {}) }, dwgHeader: conv.dwgHeader };
   return { doc, format, notes, warnings, conversion };
@@ -235,14 +237,18 @@ export async function saveDxf(api, doc, { path, name, fromPath = null }) {
 }
 
 /** The "Saved" toast after a save, as [text, ms]. `base`: 'Saved' or 'Saved as AutoCAD 2018'. `report.skipped`: what was
- *  not written; `backup`: where the previous file was kept (named only with `backupNote`); `warning`: the previous
- *  version could not be kept as its .bak (main's saveDrawingFile), shown in full and for longer. */
+ *  not written; `report.notes`: how things were written (tables as blocks, ...), the first three distinct ones;
+ *  `backup`: where the previous file was kept (named only with `backupNote`); `warning`: the previous version could not
+ *  be kept as its .bak (main's saveDrawingFile), shown in full and for longer. */
 export function savedToast(base, { report = null, backup = null, warning = null } = {}, { backupNote = false } = {}) {
   const skipped = report?.skipped && Object.keys(report.skipped).length
     ? `Not written: ${Object.entries(report.skipped).map(([k, v]) => `${v} ${k}`).join(', ')}` : '';
-  const text = skipped ? `${base}. ${skipped}` : base;
+  const notes = [...new Set(Array.isArray(report?.notes) ? report.notes.filter((n) => typeof n === 'string' && n) : [])];
+  const noteText = notes.length
+    ? notes.slice(0, 3).map((n) => n.replace(/\.$/, '')).join('. ') + (notes.length > 3 ? ` (and ${notes.length - 3} more)` : '') : '';
+  const text = [base, skipped, noteText].filter(Boolean).join('. ');
   if (warning) return [`${text}. ${warning}`, 10000];
-  if (skipped) return [text, 6000];
+  if (skipped || noteText) return [text, notes.length ? 8000 : 6000];
   if (backupNote) return [`${text}${backup ? ` (previous file kept as ${backup.replace(/^.*[\\/]/, '')})` : ''}`, 3000];
   return [text, 1500];
 }
@@ -272,7 +278,7 @@ export async function saveDwg(api, doc, { name, fromPath = null, version = 'r200
   try {
     const res = await api.dwgToDxf(dwgBytes);
     const converter = res.converter === 'ODA' || res.engine === 'oda' ? 'ODA' : 'LibreDWG';
-    verification = { ...compareDocuments(doc, readDxf(res.dxfBytes)), converter };
+    verification = { ...compareDocuments(doc, readDxf(res.dxfBytes), undefined, doc.lastWriteReport?.renamedBlocks), converter };
   } catch (err) { verification = { ok: false, error: String(err.message || err), converter: null }; }
   if (!verification.ok && confirmDifferences && !(await confirmDifferences(verification))) return null;
   const res = path ? await api.writeFile(path, dwgBytes) : await api.saveFile({ defaultPath: savePathIn(fromPath, `${baseName(name)}.dwg`), filters: [{ name: 'AutoCAD DWG', extensions: ['dwg'] }], bytes: dwgBytes });
