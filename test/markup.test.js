@@ -150,7 +150,7 @@ test('numbering: an explicit start number, renumber in order with the drawn numb
   assert.deepEqual(texts(), ['11: First', '12: Second', '10: Third']);
 });
 
-const hasOpenpyxl = (() => { try { execFileSync('python3', ['-I', '-c', 'import openpyxl'], { stdio: 'ignore' }); return true; } catch { return false; } })();
+const hasOpenpyxl = (() => { try { execFileSync('python3', ['-P', '-c', 'import openpyxl'], { stdio: 'ignore' }); return true; } catch { return false; } })();
 test('Export to CRS: 8 columns (Rev. after No.), header block, Calibri 11, wrapped comments, Status filled by code, drop-downs; well-formed parts', { skip: !hasOpenpyxl && 'python3 openpyxl not available' }, (t) => {
   const s = new Session(newDocument());
   addMarkup(s, 'circle', { c: { x: 0, y: 0 }, r: 2 }, { ...meta, comment: 'Damper access <600> & "east"' });
@@ -175,7 +175,7 @@ test('Export to CRS: 8 columns (Rev. after No.), header block, Calibri 11, wrapp
     'print(json.dumps({"missing": missing, "head": [ws["A2"].value, ws["B2"].value, ws["A3"].value, ws["B3"].value], "rows": rows,',
     '  "fills": [fill(r[6]) for r in data], "fonts": sorted({(c.font.name, c.font.sz) for r in data for c in r}),',
     '  "wrap": [r[3].alignment.wrap_text for r in data], "dv": sorted((str(d.sqref), d.formula1) for d in ws.data_validations.dataValidation)}))'].join('\n');
-  const r = spawnSync('python3', ['-I', '-c', py, file], { encoding: 'utf8' });
+  const r = spawnSync('python3', ['-P', '-c', py, file], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   const got = JSON.parse(r.stdout.trim());
   assert.deepEqual(got.missing, [], 'every part is listed in [Content_Types].xml');
@@ -394,7 +394,7 @@ test('Export to CRS with follow-ups: rich-text comment, blue plain Rev.xx lines,
     '  "rows": [[runs(c.value) for c in r] for r in data], "fills": [fill(r[6]) for r in data],',
     '  "fonts": sorted({(c.font.name, c.font.sz) for r in data for c in r}), "wrap": [r[3].alignment.wrap_text for r in data],',
     '  "dv": sorted((str(d.sqref), d.formula1) for d in ws.data_validations.dataValidation)}))'].join('\n');
-  const r = spawnSync('python3', ['-I', '-c', py, file], { encoding: 'utf8' });
+  const r = spawnSync('python3', ['-P', '-c', py, file], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   const got = JSON.parse(r.stdout.trim());
   const pad = (row) => [...row, ...Array(8 - row.length).fill(null)];
