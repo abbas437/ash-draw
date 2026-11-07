@@ -177,7 +177,7 @@ class App {
   /** F2 / View > Command history: expand or collapse the history (closing gives the keyboard back to the canvas) */
   toggleHistory(on) { this.histView.toggle(on); if (!this.histView.open) this.vp.canvas.focus(); }
   refreshPanels(selectionOnly = false) {
-    if (!selectionOnly) renderLayers(this);
+    if (!selectionOnly) { renderLayers(this); this.markupPanel?.render(); } // the markup list of the drawing shown (also on a tab switch)
     renderProperties(this);
     this.layerCombo?.refresh(); // the Quick Access layer combo shows the current layer or the selection's
     markHead(document.querySelector('#side .panel[data-sec="props"]')); // its header is rebuilt on each render
@@ -234,7 +234,7 @@ class App {
     const low = s.toLowerCase();
     if (blockedByEditor(this, low)) return;
     if (TOOL_ALIASES[low]) { this.setTool(TOOL_ALIASES[low]); return; }
-    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => { this.viewHistory.breakGesture(this.viewKey()); this.vp.zoomExtents(); }, all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), publish: () => this.publish(), find: () => this.find.open(), compare: () => this.compare(), symcount: () => symcountDialog(this), bcount: () => symcountDialog(this), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), copyclip: () => this.copySel(), copybase: () => this.copySel(true), pasteclip: () => this.paste(), pasteblock: () => this.paste('block'), pasteorig: () => this.paste('orig'), units: () => this.unitsDialog(), un: () => this.unitsDialog(), ddunits: () => this.unitsDialog(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), qselect: () => qselectDialog(this), selectsimilar: () => selectSimilarCommand(this), purge: () => purgeDialog(this), pu: () => purgeDialog(this), osnap: () => draftingSettings(this), os: () => draftingSettings(this), dsettings: () => draftingSettings(this), ds: () => draftingSettings(this), ...this.panelCommands(), ...this.layerCommands(), ...this.layoutCommands, ...viewCommands(this) };
+    const sys = { u: () => this.undo(), undo: () => this.undo(), redo: () => this.redo(), ze: () => { this.viewHistory.breakGesture(this.viewKey()); this.vp.zoomExtents(); }, all: () => this.selectAll(), new: () => this.newDrawing(), open: () => this.open(), save: () => this.save(), saveas: () => this.saveAs('dxf'), pdf: () => this.exportPdf(), plot: () => this.print(), print: () => this.print(), publish: () => this.publish(), find: () => this.find.open(), compare: () => this.compare(), mkimport: () => this.markupPanel.importFromFile(), symcount: () => symcountDialog(this), bcount: () => symcountDialog(this), d: () => this.dimStyles(), dimstyle: () => this.dimStyles(), ddim: () => this.dimStyles(), copyclip: () => this.copySel(), copybase: () => this.copySel(true), pasteclip: () => this.paste(), pasteblock: () => this.paste('block'), pasteorig: () => this.paste('orig'), units: () => this.unitsDialog(), un: () => this.unitsDialog(), ddunits: () => this.unitsDialog(), xref: () => xrefPanel(this), xr: () => xrefPanel(this), qselect: () => qselectDialog(this), selectsimilar: () => selectSimilarCommand(this), purge: () => purgeDialog(this), pu: () => purgeDialog(this), osnap: () => draftingSettings(this), os: () => draftingSettings(this), dsettings: () => draftingSettings(this), ds: () => draftingSettings(this), ...this.panelCommands(), ...this.layerCommands(), ...this.layoutCommands, ...viewCommands(this) };
     if (sys[low]) { sys[low](); return; }
     const last = this.vp.lastPoint ?? { x: 0, y: 0 };
     const dir = this.vp.lastPoint ? { x: this.vp.cursor.x - last.x, y: this.vp.cursor.y - last.y } : null;
@@ -762,7 +762,7 @@ class App {
           ['Command history', 'F2', () => this.toggleHistory(), () => this.histView.open]] }, '-',
         ['Grid', 'F7', () => this.toggle('grid'), () => this.vp.settings.grid], ['Snap to grid', 'F9', () => this.toggle('gridSnap'), () => this.vp.settings.gridSnap], ['Show lineweights', '', () => this.toggle('lineweights')], ['Model space background: dark', '', () => this.toggle('dark'), () => this.vp.settings.dark],
         ['Dark theme', '', () => this.setTheme(this.theme === 'dark' ? 'light' : 'dark'), () => this.theme === 'dark'], '-',
-        ['Show markups', '', () => toggleMarkups(this), () => markupsShown(this.doc)], '-',
+        ['Show markups', '', () => toggleMarkups(this), () => markupsShown(this.doc)], ['Import markups…', 'MKIMPORT', () => this.markupPanel.importFromFile()], '-',
         ['External references…', 'XREF', () => xrefPanel(this)]]],
       ['Format', [['Units…', 'UNITS', () => this.unitsDialog()], ['Drafting settings…', 'DSETTINGS', () => draftingSettings(this)], ['Purge…', 'PURGE', () => blockedByEditor(this, 'purge') || purgeDialog(this)], '-',
         ['Load patterns from .pat file…', '', () => this.loadPatterns()], ['Hatch patterns…', '', () => patternsDialog(this, api)]]],

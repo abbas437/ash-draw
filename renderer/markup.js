@@ -4,14 +4,16 @@
 // tools.js owns the Tool base class and passes it to createMarkupTools (a factory, so this module does not import tools.js).
 import {
   addMarkup, listMarkups, setMarkupStatus, setMarkupCode, deleteMarkup, setMarkupsVisible, renumberMarkups, markupsCsv, markupsCrsSheet,
-  addFollowUp, editFollowUp, removeFollowUp, latestRevLabel, MARKUP_LAYER, MARKUP_CODES, MARKUP_STATUSES,
+  addFollowUp, editFollowUp, removeFollowUp, latestRevLabel, nextRevLabel, MARKUP_LAYER, MARKUP_CODES, MARKUP_STATUSES,
 } from '../src/core/markup.js';
+import { alignForImportSteps, importMarkups } from '../src/core/markupImport.js';
+import { runSliced } from '../src/core/slice.js';
 import { ROUND_KEY, defaultRound, cleanRounds, recallRound, rememberRound } from './markup-round.js';
 import { unitKey } from './unit-memory.js';
 import { xlsxBytes } from '../src/core/xlsx.js';
 import { dist } from '../src/core/geom.js';
-import { el, toast, promptDialog, modal } from './ui.js';
-import { savePathIn } from './files.js';
+import { el, toast, promptDialog, modal, message, progressToast } from './ui.js';
+import { savePathIn, OPEN_FILTERS, loadPicked } from './files.js';
 
 export const DEFAULT_AUTHOR = 'ASH user';
 const PREVIEW = '#e02020';
@@ -106,7 +108,8 @@ export function toggleMarkups(app) {
   if (!setMarkupsVisible(app.session, !markupsShown(app.doc))) app.toast('This drawing has no markups.');
 }
 
-/** the Markups panel in #side: list, status toggle, review code, delete, filter, reviewer name, start number, renumber, CSV and CRS (xlsx) export */
+/** the Markups panel in #side: list, status toggle, review code, delete, filter, reviewer name, start number, renumber, CSV and CRS (xlsx) export,
+ *  import from the previous revision */
 export class MarkupPanel {
   constructor(app) {
     this.app = app;
@@ -118,6 +121,7 @@ export class MarkupPanel {
     document.getElementById('mk-start').onclick = () => this.startNumber();
     document.getElementById('mk-renum').onclick = () => this.renumber();
     document.getElementById('mk-crs').onclick = () => this.exportCrs();
+    document.getElementById('mk-import').onclick = () => this.importFromFile();
     this.roundIn = document.getElementById('mk-round');
     this.roundIn.addEventListener('change', () => this.setRound(this.roundIn.value));
     this.rounds = []; this.tabRounds = new WeakMap(); this.tabDefaults = new WeakMap();
@@ -192,6 +196,70 @@ export class MarkupPanel {
     try {
       if (index >= 0) editFollowUp(s, uid, index, fu); else addFollowUp(s, uid, { ...fu, rev: round });
     } catch (err) { if (err instanceof RangeError) toast(err.message); else throw err; }
+  }
+  /** Import… (MKIMPORT): the markups of the previous revision's file (read without a tab), aligned onto this drawing's
+   *  content automatically (time-sliced, with Cancel) or placed at the same coordinates; one undo step */
+  async importFromFile() {
+    const app = this.app;
+    if (!app.doc) return;
+    if (this.importing) { toast('An import is already running.'); return; }
+    let f;
+    try { [f] = await window.api.openFiles({ filters: OPEN_FILTERS, multiple: false }); } catch (err) { toast(`Could not open: ${err.message}`); return; }
+    if (!f) return;
+    this.importing = true;
+    try {
+      let src;
+      try { ({ doc: src } = await loadPicked(window.api, f)); } catch (err) { await message('Cannot open this file', err.message || String(err)); return; }
+      const all = [listMarkups(src), ...(src.layouts ?? []).map((l) => listMarkups({ ...src, entities: l.entities ?? [] }))].flat();
+      if (!all.length) { toast(`No markups in ${f.name}`); return; }
+      const target = app.doc.modelDoc ?? app.doc;
+      const ac = new AbortController();
+      const pt = progressToast('Aligning…', () => ac.abort());
+      let a;
+      try {
+        await new Promise((res) => requestAnimationFrame(() => setTimeout(res, 0))); // let the toast paint
+        a = await runSliced(alignForImportSteps(src, target), { signal: ac.signal, onProgress: (v) => pt.set(v), cancelMessage: 'Import was cancelled.' });
+        toast('', 1);
+      } catch (err) {
+        if (err.code === 'CANCELLED') toast('Import cancelled.', 2500); else toast(`Alignment failed: ${err?.message || err}`, 8000);
+        return;
+      }
+      const only = el('select', { id: 'mk-imp-only' }, el('option', { value: 'all', text: 'All' }), el('option', { value: 'open', text: 'Only open (codes B, C and not closed)' }));
+      const auto = a.method === 'auto';
+      const place = el('select', { id: 'mk-imp-place' }, ...(auto ? [el('option', { value: 'auto', text: 'Aligned to the content' })] : []), el('option', { value: 'same', text: 'Place at same coordinates' }));
+      const r = await modal('Import markups', el('div', { class: 'mk-imp' },
+        el('p', { id: 'mk-imp-src', text: `${f.name}: ${all.length} markup${all.length === 1 ? '' : 's'} found` }),
+        el('label', {}, 'Bring ', only),
+        el('p', { id: 'mk-imp-align', text: auto ? `Aligned automatically (quality ${a.quality} %)` : `Could not align automatically (${a.quality} %)` }),
+        el('label', {}, 'Placement ', place)),
+      [{ label: 'Import', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
+      if (r !== 'ok') return;
+      const spaceUids = (d) => [listMarkups(d), ...(d.layouts ?? []).map((l) => listMarkups({ ...d, entities: l.entities ?? [] }))].flat().map((m) => m.uid);
+      const before = new Set(spaceUids(target));
+      const res = importMarkups(app.session, src, { transform: place.value === 'auto' ? a.transform : undefined, only: only.value });
+      const skipped = [res.skippedClosed && `${res.skippedClosed} closed`, res.skippedDuplicate && `${res.skippedDuplicate} already here`, res.skippedNoLayout && `${res.skippedNoLayout} on a layout this drawing lacks`].filter(Boolean);
+      const parts = [`Imported ${res.imported} markup${res.imported === 1 ? '' : 's'}`];
+      if (skipped.length) parts.push(`skipped ${skipped.join(', ')}`);
+      if (res.numberCollisions.length) parts.push(`numbers already used: ${res.numberCollisions.join(', ')}`);
+      if (res.imported) parts.push('Undo removes them');
+      toast(`${parts.join('; ')}.`, 6000);
+      if (!res.imported) return;
+      const now = new Set(spaceUids(app.doc.modelDoc ?? app.doc));
+      const got = all.filter((m) => !before.has(m.uid) && now.has(m.uid));
+      const ids = new Set(got.map((m) => m.uid));
+      const here = listMarkups(app.doc).filter((m) => ids.has(m.uid));
+      if (here.length) this.showAll(here);
+      if (!this.setRoundOf()) await this.setRound(nextRevLabel(got.flatMap((m) => [m.rev, ...(m.followUps ?? []).map((u) => u.rev)])));
+    } finally { this.importing = false; }
+  }
+  /** zoom to (and select) several markups */
+  showAll(ms) {
+    const bs = ms.map((m) => m.bbox).filter(Boolean);
+    if (!bs.length) return;
+    const b = { minx: Math.min(...bs.map((q) => q.minx)), miny: Math.min(...bs.map((q) => q.miny)), maxx: Math.max(...bs.map((q) => q.maxx)), maxy: Math.max(...bs.map((q) => q.maxy)) };
+    const pad = Math.max(b.maxx - b.minx, b.maxy - b.miny) * 0.25 || 1;
+    this.app.vp.zoomBox({ minx: b.minx - pad, miny: b.miny - pad, maxx: b.maxx + pad, maxy: b.maxy + pad });
+    this.app.vp.setSelection(ms.flatMap((m) => m.ids));
   }
   async editAuthor() {
     const a = (await promptDialog('Reviewer name or initials (shown on every markup)', this.app.markupAuthor))?.trim();
