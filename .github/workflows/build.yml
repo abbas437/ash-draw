@@ -217,6 +217,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - run: pip install openpyxl ezdxf  # markuprev checks the CRS xlsx with openpyxl
       - run: npm ci && npm run vendor
       - name: Chromium for playwright-core
         run: |
