@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { promises as fs, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { checkRendererSettingKey, createOdaBridge, createDwgService, emptyReferencedBlocks, findOdaConverter, implausibleConversion, isSafeOdaPath, MAIN_OWNED_SETTING_KEYS, odaPathProblem, resolveOdaPathChange, odaArgs, odaVersion, ODA_DWG_VERSIONS, ODA_HINT, ODA_TIMEOUT_MS } from './odaConverter.js';
+import { checkRendererSettingKey, settingsObject, createOdaBridge, createDwgService, emptyReferencedBlocks, findOdaConverter, implausibleConversion, isSafeOdaPath, MAIN_OWNED_SETTING_KEYS, odaPathProblem, resolveOdaPathChange, odaArgs, odaVersion, ODA_DWG_VERSIONS, ODA_HINT, ODA_TIMEOUT_MS } from './odaConverter.js';
 import { DWG_SAVE_VERSIONS } from '../src/core/dwgpref.js';
 
 const skip = process.platform === 'win32' ? 'the stub converter is a shebang script' : false;
@@ -408,4 +408,17 @@ test('the engine ignores a UNC / device converter path from saved settings, befo
   const local = process.platform === 'win32' ? 'C:\\ODA\\ODAFileConverter.exe' : '/opt/oda/ODAFileConverter';
   assert.equal((await service(local).available()).oda.available, true);
   assert.deepEqual(made, [local]);
+});
+
+test('settings keys: __proto__ and friends are refused; loaded settings inherit nothing', () => {
+  for (const k of ['__proto__', 'constructor', 'prototype']) assert.throws(() => checkRendererSettingKey(k), /invalid settings key/, k);
+  // the attack: settings[k] = value with k '__proto__' would make dwg.odaPath an inherited value
+  const s = settingsObject({ 'startup.mode': 'ask' });
+  s['__proto__'] = { 'dwg.odaPath': 'C:\\Users\\Public\\Downloads\\ODAFileConverter.exe', 'dwg.converter': 'oda' };
+  assert.equal(s['dwg.odaPath'], undefined);
+  assert.equal(s['dwg.converter'], undefined);
+  assert.equal(Object.getPrototypeOf(settingsObject(JSON.parse('{"__proto__": {"dwg.odaPath": "x"}}'))), null);
+  assert.equal(settingsObject(JSON.parse('{"__proto__": {"dwg.odaPath": "x"}}'))['dwg.odaPath'], undefined);
+  assert.deepEqual({ ...settingsObject([1, 2]) }, {});
+  assert.equal(JSON.stringify(settingsObject({ a: 1 })), '{"a":1}');
 });

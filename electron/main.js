@@ -11,7 +11,7 @@ import { converterPath, createDwgBridge, DWG_OUT_VERSIONS } from './dwgBridge.js
 import { cacheLimitBytes, createDwgCache, openCached } from './dwgCache.js';
 import { createHandoffStore } from './handoff.js';
 import { createClipboardBridge } from './clipboard.js';
-import { checkRendererSettingKey, createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isSafeOdaPath, ODA_DOWNLOAD_URL, ODA_DWG_VERSIONS, odaPathProblem, resolveOdaPathChange } from './odaConverter.js';
+import { checkRendererSettingKey, settingsObject, createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isSafeOdaPath, ODA_DOWNLOAD_URL, ODA_DWG_VERSIONS, odaPathProblem, resolveOdaPathChange } from './odaConverter.js';
 import { lockData, onSecondInstance } from './instance.js';
 import { saveDialogDefault, openDialogDir } from './savePath.js';
 import { createSymbolLibrary } from './symbols.js';
@@ -370,14 +370,14 @@ function registerIpc() {
   handle('shell:showItem', (p) => { shell.showItemInFolder(grantedPath(p)); return true; });
   handle('app:settingsGet', async (k) => {
     checkRendererSettingKey(k); // the converter keys (dwg.converter, dwg.odaPath) are main's: dwg:setConfig / dwg:browseOda
-    settings ??= await loadJson('settings.json');
+    settings ??= settingsObject(await loadJson('settings.json'));
     return Object.hasOwn(settings, k) ? settings[k] : undefined;
   });
   handle('app:settingsSet', async (k, v) => {
     checkRendererSettingKey(k); // the converter keys (dwg.converter, dwg.odaPath) are main's: dwg:setConfig / dwg:browseOda
     const json = JSON.stringify(v ?? null);
     if (json.length > 64 * 1024) throw new RangeError('settings value too large');
-    settings ??= await loadJson('settings.json');
+    settings ??= settingsObject(await loadJson('settings.json'));
     settings[k] = JSON.parse(json);
     await saveJson('settings.json', settings);
   });
@@ -394,7 +394,7 @@ function registerIpc() {
   });
   // { mode, offer: { count, auto } | null }
   handle('app:sessionInfo', async () => {
-    settings ??= await loadJson('settings.json');
+    settings ??= settingsObject(await loadJson('settings.json'));
     const count = savedSession.files.length;
     return { mode: startupModeOf(settings['startup.mode']), offer: sessionOffer && count ? { count, auto: sessionOffer.auto } : null };
   });
@@ -412,11 +412,11 @@ function registerIpc() {
   // A UNC / device path in saved settings is ignored; a new path is accepted only from dwg:browseOda (see resolveOdaPathChange).
   let browsedOda = null;
   const savedOda = () => (isSafeOdaPath(settings?.['dwg.odaPath']) ? settings['dwg.odaPath'] : '');
-  handle('dwg:config', async () => { settings ??= await loadJson('settings.json'); return { mode: settings['dwg.converter'] ?? 'auto', odaPath: savedOda() }; });
+  handle('dwg:config', async () => { settings ??= settingsObject(await loadJson('settings.json')); return { mode: settings['dwg.converter'] ?? 'auto', odaPath: savedOda() }; });
   handle('dwg:setConfig', async (opts) => {
     const o = plainObject(opts);
     if (!DWG_MODES.includes(o.mode)) throw new RangeError(`mode must be one of ${DWG_MODES.join(', ')}`);
-    settings ??= await loadJson('settings.json');
+    settings ??= settingsObject(await loadJson('settings.json'));
     const odaPath = resolveOdaPathChange({ requested: o.odaPath, saved: savedOda(), browsed: browsedOda });
     settings['dwg.converter'] = o.mode; settings['dwg.odaPath'] = odaPath;
     await saveJson('settings.json', settings);
@@ -460,7 +460,7 @@ function registerIpc() {
   async function openDwg(src, signal) {
     if (typeof src === 'string') {
       const p = grantedPath(src);
-      settings ??= await loadJson('settings.json');
+      settings ??= settingsObject(await loadJson('settings.json'));
       const av = await dwg.available();
       const binStat = async (f) => { try { const st = await fs.stat(f); return [st.size, st.mtimeMs]; } catch { return null; } }; // the binary itself, not only its reported version
       const converter = JSON.stringify([av.mode, av.libredwg?.version ?? null, await binStat(converterPath(libredwgDir, process.platform, 'dwg2dxf')),
@@ -474,7 +474,7 @@ function registerIpc() {
     return { url: handOff(dxfBytes), size: dxfBytes.byteLength, dwgSize: bytes.byteLength, header, warnings, engine, converter, errorCount, log };
   }
   handle('dwg:cacheInfo', async () => {
-    settings ??= await loadJson('settings.json');
+    settings ??= settingsObject(await loadJson('settings.json'));
     return { ...(await dwgCache.info()), limitBytes: cacheLimitBytes(settings['dwg.cacheMaxMB']) };
   });
   handle('dwg:cacheClear', () => dwgCache.clear());
@@ -505,7 +505,7 @@ app.whenReady().then(async () => {
   });
   registerIpc();
   // Files given at start-up take priority: the previous session is then only offered, never reopened automatically.
-  settings ??= await loadJson('settings.json');
+  settings ??= settingsObject(await loadJson('settings.json'));
   loadSessionAndRecent();
   const mode = startupModeOf(settings['startup.mode']);
   if (mode !== 'new' && savedSession.files.length) sessionOffer = { auto: mode === 'restore' && pendingFiles.length === 0 };

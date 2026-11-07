@@ -179,7 +179,16 @@ export const MAIN_OWNED_SETTING_KEYS = Object.freeze(['dwg.converter', 'dwg.odaP
 /** Throws unless `k` is a settings key the renderer may read or write through app:settingsGet / app:settingsSet. */
 export function checkRendererSettingKey(k) {
   if (typeof k !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(k)) throw new TypeError('invalid settings key');
+  if (k === '__proto__' || k === 'constructor' || k === 'prototype') throw new TypeError('invalid settings key');
   if (MAIN_OWNED_SETTING_KEYS.includes(k)) throw new TypeError(`the setting ${k} is changed only in Edit > Preferences`);
+}
+
+/** settings.json as loaded (`parsed`) in a null-prototype object: no key can be inherited, so `settings['dwg.odaPath']`
+ *  is only ever the file's own value (a '__proto__' value from the renderer would otherwise replace the prototype). */
+export function settingsObject(parsed) {
+  const out = Object.create(null);
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) for (const k of Object.keys(parsed)) out[k] = parsed[k];
+  return out;
 }
 
 /**
