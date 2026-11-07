@@ -12,6 +12,7 @@ The most recent user-visible additions, newest first. For what the program still
 
 ## Beta 57
 
+- **Review rounds, follow-ups and import of earlier markups.** Answer each comment of a resubmission with a follow-up shown as a blue `Rev.xx:` line, export the rounds to the CRS and CSV, and bring in the previous revision's markups with **Import…** or MKIMPORT. Long Arabic comments now save safely in DXF. See [Markup and review](#topic:markup-review).
 - **Rotate and mirror viewports as AutoCAD does.** Turning a viewport off-axis makes it a clipped viewport, and the view turns with the frame. A viewport and its boundary now move together. See [Layouts and viewports](#topic:layouts-viewports).
 - **Coordinate entry accepts x,y,z.** Typing three values, or relative values with a third part, is accepted and the height is ignored.
 - **Markups have an "In progress" status.** Closing a markup that has no review code sets it to Code A. See [Markup and review](#topic:markup-review).

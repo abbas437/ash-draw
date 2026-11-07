@@ -214,5 +214,6 @@ See [Drafting aids](#topic:drafting-aids) and [Object snaps](#topic:object-snaps
 | `MKC` | | Marks an item with a dashed circle and a comment. |
 | `MKR` | | Marks an item with a dashed rectangle and a comment. |
 | `MKT` | | Places a note with a comment and no shape. |
+| `MKIMPORT` | | Imports the markups of the previous revision (DXF or DWG) into this drawing. |
 
 See [Markup and review](#topic:markup-review).

@@ -1286,7 +1286,7 @@ try {
   const csvDl = page.waitForEvent('download');
   await page.click('#mk-csv');
   const csv = await fs.readFile(await (await csvDl).path(), 'utf8');
-  assert.match(csv, /^\uFEFFNo,Comment,Author,Date,Status\r\n1,Check damper access,A\. Reviewer,\d{4}-\d\d-\d\d,Closed\r\n$/);
+  assert.match(csv, /^\uFEFFNo,Rev\.,Comment,Author,Date,Status,Follow-ups\r\n1,Rev\.\d+,Check damper access,A\. Reviewer,\d{4}-\d\d-\d\d,Closed,\r\n$/);
   assert.equal(await page.locator('#markups .mk-code').inputValue(), 'B', 'review code B persists after save and reopen');
   const crsDl = page.waitForEvent('download');
   await page.click('#mk-crs');

@@ -14,13 +14,13 @@ test('markupsCsv: starts with the UTF-8 BOM, formula cells get an apostrophe, no
   assert.equal(csv.charCodeAt(0), 0xfeff);
   assert.deepEqual([...new TextEncoder().encode(csv).slice(0, 3)], [0xef, 0xbb, 0xbf]);
   const lines = csv.slice(1).split('\r\n');
-  assert.equal(lines[1], `1,"'=SUM(1,2)",A,2026-10-20,Open`);
-  assert.equal(lines[2], "1,'+1,A,2026-10-20,Open");
-  assert.equal(lines[3], "1,'-1,A,2026-10-20,Open");
-  assert.equal(lines[4], "1,'@x,A,2026-10-20,Open");
-  assert.equal(lines[5], "1,'\tx,A,2026-10-20,Open");
-  assert.equal(lines[6], '1,Check damper,A,2026-10-20,Open');
-  assert.equal(lines[7], '1,تعليق,A,2026-10-20,Open');
+  assert.equal(lines[1], `1,,"'=SUM(1,2)",A,2026-10-20,Open,`);
+  assert.equal(lines[2], "1,,'+1,A,2026-10-20,Open,");
+  assert.equal(lines[3], "1,,'-1,A,2026-10-20,Open,");
+  assert.equal(lines[4], "1,,'@x,A,2026-10-20,Open,");
+  assert.equal(lines[5], "1,,'\tx,A,2026-10-20,Open,");
+  assert.equal(lines[6], '1,,Check damper,A,2026-10-20,Open,');
+  assert.equal(lines[7], '1,,تعليق,A,2026-10-20,Open,');
 });
 
 test('csvCell: a cell starting with a carriage return is guarded and quoted; the symbol count shares the helper', () => {

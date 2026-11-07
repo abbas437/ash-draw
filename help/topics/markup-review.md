@@ -3,7 +3,7 @@ id: markup-review
 title: Markups and the Comment Review Sheet
 section: Review
 order: 20
-keywords: markup, MKC, MKR, MKT, review, comment, CRS, comment review sheet, status, code, renumber, reviewer
+keywords: markup, MKC, MKR, MKT, MKIMPORT, import, round, follow-up, Rev, review, comment, CRS, comment review sheet, status, code, renumber, reviewer
 ---
 
 # Markups and the Comment Review Sheet
@@ -29,13 +29,46 @@ The panel ([show me](#showme:el:mk-panel)) lists every markup with its number, c
 - **Code** per row: A, B or C.
 - **×** deletes a markup.
 - **Author…** sets the reviewer name.
-- **CSV** exports the list (No, Comment, Author, Date, Status).
+- **CSV** exports the list (No, Rev., Comment, Author, Date, Status, Follow-ups). Status is the latest round's, and Follow-ups holds one `Rev.xx: text` line per follow-up in the same cell.
 - **Start no.…** sets the number of the next new markup (used once; later ones continue from the highest).
 - **Renumber…** renumbers all markups in their present order from a number you choose (one undo step).
 
+## Review rounds and follow-ups
+
+When a contractor resubmits a drawing, review it again in a new round and answer each earlier comment under the original.
+
+- **Round:** field in the panel sets the round (for example Rev.01). It is remembered per drawing, and every new markup gets the current round.
+- **Follow-up…** opens the follow-up dialog; double-click a row to open it too. Enter the round, the comment, the code and the status. There is one follow-up per round: if the markup already has one for that round, the dialog edits it.
+- **Code A closes the item.** For leftover minor points, add a new markup instead of leaving the item at B.
+- On the sheet, each follow-up appears under the original comment as a blue `Rev.xx:` line. The status and code of the markup are the latest round's.
+
+## Import markups from the previous revision
+
+Bring the markups of the previous revision into the new one so you can check each in turn.
+
+1. Click **Import…** in the Markups panel, or type **MKIMPORT**.
+2. Pick the previous revision's DXF or DWG.
+3. Choose **Bring all** or **only open** (code B or C, not closed).
+4. The drawings are aligned automatically as in [Compare two drawings](#topic:compare-drawings), and the alignment quality is shown as a percentage. If it cannot be aligned, the markups are placed at the same coordinates, or you pick the points yourself.
+
+Markups already in the drawing are skipped as duplicates. If a number is already taken, the clash is reported and the markup is not renumbered. One undo removes everything the import added.
+
 ## Export to CRS
 
-**Export to CRS (xlsx)…** ([show me](#showme:el:mk-crs)) saves `<drawing>-CRS.xlsx` beside the drawing. It has one row per markup, for model space and every layout, with the Comment Review Sheet columns No., Sheet / Layout, Comment, Reviewer, Date, Status and Code. The Status cell is coloured by the code (A green, B orange, C red), and Status and Code have drop-down lists.
+**Export to CRS (xlsx)…** ([show me](#showme:el:mk-crs)) saves `<drawing>-CRS.xlsx` beside the drawing. It has one row per markup, for model space and every layout, with the Comment Review Sheet columns:
+
+| Column | Content |
+|---|---|
+| No. | The markup number |
+| Rev. | The round the markup was made in |
+| Sheet / Layout | Model or the layout name |
+| Comment | The original comment, then the follow-ups as blue `Rev.xx:` lines |
+| Reviewer | The author |
+| Date | The date |
+| Status | The latest round's status, coloured by its code: A green, B orange, C red |
+| Code | The latest round's code |
+
+Status and Code have drop-down lists.
 
 > **Tip:** Make the comment match the code. If a point is resolved, close it (Code A) rather than leaving it at B.
 
