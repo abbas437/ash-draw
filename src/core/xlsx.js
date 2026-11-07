@@ -5,7 +5,8 @@
 // The first row of each sheet is bold (the header); a sheet's boldRows: [indices] overrides which rows. Strings are inline (t="inlineStr": no sharedStrings part); the
 // zip is stored (no compression) with CRC-32s. Every cell is Calibri 11. A cell may be { v, style: { bold, wrap, vAlign ('top' |
 // 'center' | 'bottom'), fill ('RRGGBB' solid fill) } } instead of a bare value, and a sheet's validations: [{ sqref: 'F6:F9',
-// list: ['Open', 'Closed'] }] adds in-cell drop-down lists.
+// list: ['Open', 'Closed'] }] adds in-cell drop-down lists. A value may be rich text { runs: [{ text, color ('RRGGBB'), bold,
+// italic }] }: one inline string of runs, each Calibri 11 (bold: false writes an explicit not-bold).
 
 const enc = new TextEncoder();
 /** XML-escaped text, characters XML 1.0 forbids removed */
@@ -57,14 +58,23 @@ function stylesXml(xfs) {
     + '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
 }
 
+const isRich = (v) => v != null && typeof v === 'object' && Array.isArray(v.runs);
+/** the <r> runs of a rich-text value */
+const runsXml = (runs) => runs.map((r) => {
+  const b = r.bold === true ? '<b/>' : r.bold === false ? '<b val="0"/>' : '', i = r.italic === true ? '<i/>' : r.italic === false ? '<i val="0"/>' : '';
+  const color = r.color ? `<color rgb="FF${String(r.color).replace(/^#/, '').toUpperCase()}"/>` : '';
+  return `<r><rPr><rFont val="Calibri"/>${b}${i}${color}<sz val="11"/></rPr><t xml:space="preserve">${esc(r.text)}</t></r>`;
+}).join('');
+
 function sheetXml({ rows = [], colWidths = null, boldRows = [0], validations = [] }, styles) {
   const bold = new Set(boldRows);
   const cols = colWidths?.length ? `<cols>${colWidths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${Number(w) || 10}" customWidth="1"/>`).join('')}</cols>` : '';
   const body = rows.map((r, ri) => `<row r="${ri + 1}">${r.map((cell, ci) => {
-    const styled = cell != null && typeof cell === 'object';
+    const styled = cell != null && typeof cell === 'object' && !isRich(cell);
     const v = styled ? cell.v : cell, xf = styles.id({ ...(bold.has(ri) ? { bold: true } : {}), ...(styled ? cell.style : {}) });
     const ref = `${colName(ci)}${ri + 1}`, s = xf ? ` s="${xf}"` : '';
-    if (v == null || v === '') return xf ? `<c r="${ref}"${s}/>` : '';
+    if (v == null || v === '' || (isRich(v) && !v.runs.some((r) => String(r.text ?? '') !== ''))) return xf ? `<c r="${ref}"${s}/>` : '';
+    if (isRich(v)) return `<c r="${ref}"${s} t="inlineStr"><is>${runsXml(v.runs)}</is></c>`;
     if (typeof v === 'number' && Number.isFinite(v)) return `<c r="${ref}"${s}><v>${v}</v></c>`;
     return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${esc(v)}</t></is></c>`;
   }).join('')}</row>`).join('');

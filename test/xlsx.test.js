@@ -81,3 +81,28 @@ test('sheet names: tab and line breaks removed; the 31-character cut never split
   const [n] = names(['x'.repeat(30) + '\u{1F600}\u{1F600}']);
   assert.equal([...n].length, 31); assert.ok(!/[\ud800-\udbff]$/.test(n) && n.endsWith('\u{1F600}'));
 });
+
+test('xlsxBytes: rich-text cells are inline strings of Calibri 11 runs (colour, bold, italic), escaped, newlines kept; plain cells unchanged', () => {
+  const rich = { runs: [{ text: 'Base <a> & "b"' }, { text: '\nRev.01: fixed', color: '0070C0', bold: false }, { text: ' B', bold: true, italic: true }] };
+  const sheet = new TextDecoder().decode(unzip(xlsxBytes([{ name: 'S', rows: [['Head'], [rich, { v: rich, style: { wrap: true } }, 'plain'], [{ runs: [] }]] }]))['xl/worksheets/sheet1.xml'].data);
+  const runs = '<is><r><rPr><rFont val="Calibri"/><sz val="11"/></rPr><t xml:space="preserve">Base &lt;a&gt; &amp; &quot;b&quot;</t></r>'
+    + '<r><rPr><rFont val="Calibri"/><b val="0"/><color rgb="FF0070C0"/><sz val="11"/></rPr><t xml:space="preserve">\nRev.01: fixed</t></r>'
+    + '<r><rPr><rFont val="Calibri"/><b/><i/><sz val="11"/></rPr><t xml:space="preserve"> B</t></r></is>';
+  assert.ok(sheet.includes(`<c r="A2" t="inlineStr">${runs}</c>`), sheet);
+  assert.match(sheet, new RegExp(`<c r="B2" s="\\d+" t="inlineStr">${runs.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}</c>`));
+  assert.ok(sheet.includes('<c r="C2" t="inlineStr"><is><t xml:space="preserve">plain</t></is></c>'));
+  assert.ok(!sheet.includes('r="A3"'), 'no runs = empty cell');
+});
+
+const hasOpenpyxl = (() => { try { execFileSync('python3', ['-I', '-c', 'import openpyxl'], { stdio: 'ignore' }); return true; } catch { return false; } })();
+test('xlsxBytes: openpyxl reads rich text as CellRichText with the run colours and weights', { skip: !hasOpenpyxl && 'openpyxl not available' }, async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ash-xlsx-'));
+  try {
+    const file = path.join(dir, 'rich.xlsx');
+    await fs.writeFile(file, xlsxBytes([{ name: 'S', rows: [['H'], [{ runs: [{ text: 'Base' }, { text: '\nRev.01: ok', color: '0070C0', bold: false }] }]] }]));
+    const py = 'import sys, json, openpyxl\nfrom openpyxl.cell.rich_text import CellRichText\nv = openpyxl.load_workbook(sys.argv[1], rich_text=True).active["A2"].value\n'
+      + 'print(json.dumps([isinstance(v, CellRichText), str(v), [[p.text, p.font.color.rgb if p.font.color is not None else None, p.font.b] for p in v]]))';
+    const got = JSON.parse(execFileSync('python3', ['-I', '-c', py, file], { encoding: 'utf8' }).trim());
+    assert.deepEqual(got, [true, 'Base\nRev.01: ok', [['Base', null, false], ['\nRev.01: ok', 'FF0070C0', false]]]);
+  } finally { await fs.rm(dir, { recursive: true, force: true }); }
+});
