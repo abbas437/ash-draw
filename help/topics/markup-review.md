@@ -37,7 +37,7 @@ The panel ([show me](#showme:el:mk-panel)) lists every markup with its number, c
 
 When a contractor resubmits a drawing, review it again in a new round and answer each earlier comment under the original.
 
-- **Round:** field in the panel shows the review round (for example Rev.01). Every new markup and follow-up gets this round. The round is remembered for the drawing once you use it, so reopening the drawing keeps it; type a new label when the next resubmission arrives. Importing markups from the previous revision moves it on to the next round for you.
+- **Round:** field in the panel shows the review round (for example Rev.01). Every new markup and follow-up gets this round. The round is remembered for the drawing once you use it, so reopening the drawing keeps it; type a new label when the next resubmission arrives. If you have not used a round in this drawing yet, importing markups from the previous revision moves it on to the next round for you. Saving the drawing under another name takes its round along.
 - **Follow-up…** opens the follow-up dialog; double-click a row to open it too. Enter the comment, the code and the status; the round is the one in the panel's **Round** field. There is one follow-up per round: if the markup already has one for that round, the dialog edits it. Removing a follow-up takes effect when you click **Save**; **Cancel** leaves everything as it was.
 - **Code A closes the item.** For leftover minor points, add a new markup instead of leaving the item at B.
 - On the sheet, each follow-up appears under the original comment as a blue `Rev.xx:` line. The status and code of the markup are the latest round's.

@@ -160,8 +160,18 @@ export class MarkupPanel {
   }
   /** the round stored or kept for `tab` ('' = none: the default applies) */
   tabRound(tab) { return tab ? recallRound(this.rounds, unitKey(tab.file)) || this.tabRounds.get(tab) || '' : ''; }
-  /** app.afterSave: `tab` was saved under a new file; `label` (tabRound before the save) is stored for its new key */
-  fileSaved(tab, label) { if (label) this.useRound(tab, label); }
+  /** app.afterSave: `tab` was saved (perhaps under a new file); `label` (tabRound before the save) is the drawing's round
+   *  and replaces any round stored for the file it now has (Save As over an older file must not bring that file's round
+   *  back). Nothing is stored when the drawing had no round yet. */
+  async fileSaved(tab, label) {
+    const l = roundLabel(label);
+    if (!tab || !l) return;
+    this.tabRounds.set(tab, l);
+    const key = unitKey(tab.file);
+    if (!key || recallRound(this.rounds, key) === l) return;
+    this.rounds = rememberRound(this.rounds, key, l);
+    await this.saveRounds();
+  }
   /** the settings key of the drawing shown (unit-memory.js unitKey; null before a drawing is shown) */
   fileKey() { return this.app.active ? unitKey(this.app.file) : null; }
   /** Follow-up…: the original comment, its follow-ups (edit / remove), and a form for this round's follow-up (edited when it

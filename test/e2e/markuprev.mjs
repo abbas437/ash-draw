@@ -245,6 +245,32 @@ print('xlsx ok')`;
   await markupAt(40, 'Day 2 comment');
   assert.deepEqual(await page.locator('#markups .mk-rev').allTextContents(), ['Rev.00', 'Rev.00'], 'a new markup gets Rev.00');
 
+  step = 'round: Save As over a file that has an older stored round keeps the drawing\'s own round';
+  // /rev/Old.dxf was reviewed at Rev.00 (its round is stored); Plan.dxf moves on to Rev.01 and is saved over Old.dxf
+  await page.evaluate(async () => {
+    const M = await import('../src/core/model.js');
+    const d = M.newDocument(); d.units = 4;
+    window.app.installDoc(d, { path: '/rev/Old.dxf', name: 'Old.dxf', format: 'dxf' });
+    const vp = window.app.vp; vp.view = { ...vp.view, cx: 0, cy: 0, zoom: 4 }; vp.render();
+  });
+  await markupAt(0, 'Old file comment'); // uses Rev.00: stored for /rev/Old.dxf
+  await page.evaluate(() => window.app.save());
+  await page.evaluate(async () => {
+    await window.app.closeTab();
+    await window.app.loadFile({ path: '/rev/Plan.dxf', name: 'Plan.dxf', bytes: window.__w['/rev/Plan.dxf'] });
+  });
+  await page.locator('#mk-round').fill('Rev.01');
+  await page.locator('#mk-round').dispatchEvent('change');
+  await page.evaluate(() => document.activeElement?.blur()); // the panel only refreshes the field when it has no focus
+  await page.evaluate(async () => {
+    window.api.saveFile = async ({ bytes }) => { window.__w['/rev/Old.dxf'] = bytes; return { path: '/rev/Old.dxf', backup: null }; };
+    await window.app.saveAs('dxf');
+  });
+  assert.equal(await page.evaluate(() => window.app.file.path), '/rev/Old.dxf', 'saved as /rev/Old.dxf');
+  await page.evaluate(() => window.app.markupPanel.render());
+  assert.equal(await page.evaluate(() => window.app.markupPanel.round()), 'Rev.01', 'the drawing keeps Rev.01, not Old.dxf\'s stored Rev.00');
+  assert.equal(await page.locator('#mk-round').inputValue(), 'Rev.01', 'the Round field shows Rev.01');
+
   assert.deepEqual(problems, []);
   console.log('markuprev e2e: OK');
 } catch (err) {
