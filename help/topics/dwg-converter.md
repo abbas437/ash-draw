@@ -31,7 +31,7 @@ ASH Draw Studio reads DXF directly. A DWG file is converted first, by one of two
 The ODA File Converter is normally detected automatically in `C:\Program Files\ODA`. If you installed it elsewhere:
 
 1. Open **Edit ▸ Preferences…**.
-2. Click **Browse…** beside the ODA field and select `ODAFileConverter.exe`, or type the full path. Leave the field empty to detect it automatically.
+2. Click **Browse…** beside the ODA field and select `ODAFileConverter.exe` on a local drive. The field cannot be typed in: only a file chosen with **Browse…** is used, and network (UNC) paths are refused. Click **Clear** to empty the field and detect ODA automatically again.
 3. Click **Save**.
 
 The line under the field reports which converter is in use and whether ODA was found. If ODA is missing, click **Get ODA File Converter** to open the download page.

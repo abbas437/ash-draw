@@ -18,7 +18,7 @@ Choose **Edit ▸ Preferences…** to open the dialog, change what you need, the
 | Allow saving DWG (experimental) | Turns on the built-in DWG writer. Layouts may not display correctly in AutoCAD |
 | Autosave unsaved drawings | Off, or every 5, 10, 20 or 30 minutes (10 by default) |
 | DWG converter | Automatic, ODA File Converter or Built-in (LibreDWG) |
-| ODA File Converter path | Full path of `ODAFileConverter.exe`; leave empty to detect it. **Browse…** picks the file |
+| ODA File Converter path | Read-only: **Browse…** picks `ODAFileConverter.exe` on a local drive (it cannot be typed); **Clear** empties it so ODA is detected automatically |
 | Status line | Shows the converter in use and whether ODA was found |
 | Get ODA File Converter | Opens the download page; shown only when ODA is not found |
 | Keep converted DWG drawings | Cache limit: Off, 1, 2, 5 or 10 GB |

@@ -9,7 +9,7 @@ This summarises **Help ▸ What this program can and cannot do**. Read it before
 
 ## Supported
 - Paper-space layouts, their objects and viewports are read and saved back. Viewport clip boundaries (polygon, circle and other closed shapes) are drawn and kept.
-- Objects: lines, polylines, circles, arcs, ellipses, splines, xlines and rays, text, multiline text, points, solids, 3D faces, hatches, blocks and attributes, dimensions (as drawn), leaders, multileaders, multilines, images, wipeouts and external references.
+- Objects: lines, polylines, circles, arcs, ellipses, splines, xlines and rays, text, multiline text, points, solids, 3D faces, hatches, blocks and attributes, dimensions, leaders, multileaders, multilines, images, wipeouts and external references.
 
 ## Partly supported
 - **Proxy objects** (ACAD_PROXY_ENTITY, for example Civil 3D objects) are drawn from their saved graphics and cannot be edited; Save as DXF keeps them. Other custom objects (for example AECC_ ones) are drawn the same way but are not written when you save.

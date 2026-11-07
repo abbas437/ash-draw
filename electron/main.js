@@ -11,7 +11,7 @@ import { converterPath, createDwgBridge, DWG_OUT_VERSIONS } from './dwgBridge.js
 import { cacheLimitBytes, createDwgCache, openCached } from './dwgCache.js';
 import { createHandoffStore } from './handoff.js';
 import { createClipboardBridge } from './clipboard.js';
-import { createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isSafeOdaPath, ODA_DOWNLOAD_URL, ODA_DWG_VERSIONS, resolveOdaPathChange } from './odaConverter.js';
+import { checkRendererSettingKey, createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isSafeOdaPath, ODA_DOWNLOAD_URL, ODA_DWG_VERSIONS, odaPathProblem, resolveOdaPathChange } from './odaConverter.js';
 import { lockData, onSecondInstance } from './instance.js';
 import { saveDialogDefault, openDialogDir } from './savePath.js';
 import { createSymbolLibrary } from './symbols.js';
@@ -369,12 +369,12 @@ function registerIpc() {
   });
   handle('shell:showItem', (p) => { shell.showItemInFolder(grantedPath(p)); return true; });
   handle('app:settingsGet', async (k) => {
-    if (typeof k !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(k)) throw new TypeError('invalid settings key');
+    checkRendererSettingKey(k); // the converter keys (dwg.converter, dwg.odaPath) are main's: dwg:setConfig / dwg:browseOda
     settings ??= await loadJson('settings.json');
     return Object.hasOwn(settings, k) ? settings[k] : undefined;
   });
   handle('app:settingsSet', async (k, v) => {
-    if (typeof k !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(k)) throw new TypeError('invalid settings key');
+    checkRendererSettingKey(k); // the converter keys (dwg.converter, dwg.odaPath) are main's: dwg:setConfig / dwg:browseOda
     const json = JSON.stringify(v ?? null);
     if (json.length > 64 * 1024) throw new RangeError('settings value too large');
     settings ??= await loadJson('settings.json');
@@ -425,7 +425,8 @@ function registerIpc() {
   handle('dwg:browseOda', async () => {
     const r = await dialog.showOpenDialog(win, { title: 'Locate ODAFileConverter.exe', filters: [{ name: 'ODA File Converter', extensions: process.platform === 'win32' ? ['exe'] : ['*'] }], properties: ['openFile'] });
     if (r.canceled || !r.filePaths[0]) return null;
-    if (!isSafeOdaPath(r.filePaths[0])) throw new TypeError('choose ODAFileConverter.exe on a local drive (network and device paths are not allowed)');
+    const problem = odaPathProblem(r.filePaths[0]);
+    if (problem) throw new TypeError(problem);
     browsedOda = r.filePaths[0]; // main remembers it; the renderer can only hand it back to dwg:setConfig
     return browsedOda;
   });
