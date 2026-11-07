@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Runs the REAL Electron app (needs the electron binary and a display, e.g. xvfb-run) against a sample DWG.
+// e2e-requires: ASH_E2E_DWG
 // env: ASH_LIBREDWG_DIR (folder with dwg2dxf/dxf2dwg), ASH_E2E_DWG (path to a .dwg), ELECTRON_BIN (optional)
 import { promises as fs } from 'node:fs';
 import path from 'node:path';

@@ -89,7 +89,7 @@ try {
     const v = vp.doc.entities.find((e) => e.type === 'VIEWPORT' && e.vpId === 2), p = vp.toScreen({ x: v.c.x - v.width / 2, y: v.c.y });
     const d = vp.canvas.getContext('2d').getImageData(Math.round(p.x) - 2, Math.round(p.y), 5, 1).data;
     let red = false, black = false;
-    for (let i = 0; i < d.length; i += 4) { if (d[i] > 180 && d[i + 1] < 90 && d[i + 2] < 90) red = true; if (d[i] < 90 && d[i + 1] < 90 && d[i + 2] < 90) black = true; }
+    for (let i = 0; i < d.length; i += 4) { if (d[i] > 180 && d[i] - d[i + 1] > 90 && d[i] - d[i + 2] > 90) red = true; /* red, also anti-aliased across two pixels (255,128,128) */ if (d[i] < 90 && d[i + 1] < 90 && d[i + 2] < 90) black = true; }
     return { red, black };
   });
   assert.deepEqual(await frame(), { red: true, black: false }, 'frame in the layer colour');
