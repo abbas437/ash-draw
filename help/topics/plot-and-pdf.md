@@ -44,7 +44,7 @@ On a layout tab the dialog is titled with the layout name. It offers Plot area (
 
 - A layer set to **Not plotted** in the Layers panel is shown but left out of every plot ([Layers](#topic:layers)).
 - If the plot is larger than the paper at the chosen scale, a warning says the edges are cut off.
-- A 1 : N plot of a drawing with no units asks once what one drawing unit is (millimetre, metre, inch or foot). The answer is not saved in the file.
+- A 1 : N plot of a drawing with no units asks once what one drawing unit is (millimetre, metre, inch or foot). The answer is not saved in the file, but the program remembers it for that file (by its full path; in the browser build by file name and size) for the last 200 drawings, and preselects it the next time with "(remembered)" in the prompt. Choose another unit to change it.
 - Latin, Greek, Cyrillic and Arabic text is drawn with bundled fonts. Chinese, Japanese and Korean text cannot be drawn in this version ([Limitations](#topic:limitations)).
 
 > **Tip:** Use [layouts and viewports](#topic:layouts-viewports) to set the scale visually, then plot the layout.

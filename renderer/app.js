@@ -387,6 +387,7 @@ class App {
   async loadFile(f) {
     const open = findTabByPath(this.tabs, f.path);
     if (open) { this.switchTo(open); return; } // already open: show its tab
+    const fileSize = f.bytes?.byteLength; // before the bytes are handed to the worker
     const ac = new AbortController();
     const pt = progressToast('Reading…', () => ac.abort());
     this.vp.setBusy(true); // the system wait cursor over the canvas until the drawing is shown (no hidden pointer)
@@ -418,7 +419,7 @@ class App {
       if (notLoaded.length) notes.push(`Not loaded because they are outside the drawing's folder and loading them was not allowed (shown as not found): ${notLoaded.join(', ')}.`);
       const pp = progressToast('Preparing drawing…', () => ac.abort());
       const prepared = await prepareView(doc, { signal: ac.signal, onProgress: (x) => pp.set(x) });
-      this.installDoc(doc, { path: f.path ?? null, name: f.name, format }, { replaceBlank: true, prepared, firstView: true });
+      this.installDoc(doc, { path: f.path ?? null, name: f.name, format, size: fileSize }, { replaceBlank: true, prepared, firstView: true });
       openSavedSpace(this); // saved on a layout ($TILEMODE 0): open on that layout tab, as AutoCAD does
       this.active.conversion = conversion ?? null; // the status-bar conversion item and Help > Converter log
       this.active.incomplete = incomplete && { ...incomplete, path: f.path ?? null }; // saveTab: not saved over this path
