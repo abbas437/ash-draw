@@ -91,7 +91,7 @@ export function markupXData(data) {
   const cur = last ? { ...data, status: last.status, code: last.code } : data;
   for (const k of ['uid', 'no', 'role', 'kind', 'author', 'date', 'status', 'code']) if (cur[k] != null && cur[k] !== '') tags.push([1000, `${k}=${cur[k]}`]);
   const c = String(data.comment ?? '');
-  for (let i = 0; i < Math.max(c.length, 1); i += PIECE) tags.push([1000, `comment=${c.slice(i, i + PIECE)}`]);
+  for (const p of xPieces('comment=', c)) tags.push([1000, p]); // raw (joined as is on read), pieces within 255 DXF bytes
   if (data.rev) tags.push([1000, `rev=${escX(data.rev)}`]);
   if (fus.length) {
     const os = data.origStatus ?? data.status, oc = data.origCode ?? data.code;
@@ -331,7 +331,8 @@ export function setMarkupsVisible(s, on) {
 
 /** the markup list as CSV for Excel (src/core/csv.js: quoting, BOM, formula guard) */
 export function markupsCsv(list) {
-  return csvText(['No', 'Comment', 'Author', 'Date', 'Status'], list.map((m) => [m.no, m.comment, m.author, m.date, m.status]));
+  const fu = (m) => (m.followUps ?? []).map((f) => `${f.rev ? `${f.rev}: ` : ''}${f.text}`).join('\n');
+  return csvText(['No', 'Rev.', 'Comment', 'Author', 'Date', 'Status', 'Follow-ups'], list.map((m) => [m.no, m.rev ?? '', m.comment, m.author, m.date, m.status, fu(m)]));
 }
 
 /** CRS (comment review sheet) fill colour of the Status cell for a review code: A green, B orange, C red, none no fill */

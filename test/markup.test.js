@@ -63,7 +63,7 @@ test('status In progress round-trips (XDATA, DXF, CSV); closing with no code set
   assert.deepEqual([listMarkups(s.doc)[0].status, listMarkups(s.doc)[0].code], ['In progress', ''], 'In progress does not set a code');
   const back = listMarkups(parseDxf(writeDxf(s.doc)));
   assert.equal(back[0].status, 'In progress');
-  assert.match(markupsCsv(listMarkups(s.doc)), /,In progress\r\n/);
+  assert.match(markupsCsv(listMarkups(s.doc)), /,In progress,\r\n/);
   // closing with an empty code -> A, one undo step covering every part
   const before = s.undoStack?.length;
   setMarkupStatus(s, b.uid, 'Closed');
@@ -84,7 +84,7 @@ test('delete, status, hide and CSV', () => {
   const [a, b] = listMarkups(s.doc);
   assert.equal(setMarkupStatus(s, b.uid, 'Closed'), 3);
   assert.equal(markupData(s.doc.entities.find((e) => e.id === b.ids[0])).status, 'Closed');
-  assert.equal(markupsCsv(listMarkups(s.doc)), '\uFEFFNo,Comment,Author,Date,Status\r\n1,"a, b",Ahmad,2026-10-08,Open\r\n2,Check damper access,Ahmad,2026-10-08,Closed\r\n');
+  assert.equal(markupsCsv(listMarkups(s.doc)), '\uFEFFNo,Rev.,Comment,Author,Date,Status,Follow-ups\r\n1,,"a, b",Ahmad,2026-10-08,Open,\r\n2,,Check damper access,Ahmad,2026-10-08,Closed,\r\n');
   assert.equal(deleteMarkup(s, a.uid), 3);
   assert.deepEqual(listMarkups(s.doc).map((m) => m.no), [2]);
   setMarkupsVisible(s, false);
@@ -334,6 +334,37 @@ test('ezdxf: a drawing with follow-ups (Arabic, long text) audits clean; ezdxf r
   assert.equal(u(xd.filter((v) => v.startsWith('fu1.text=')).map((v) => v.slice(9)).join('')), LONG.trim());
   assert.ok(xd.every((v) => v.length <= 255), 'every XDATA string within 255 bytes');
   assert.ok(xd.includes('fu2.text=Addressed | ok = yes%0Athanks') && xd.includes('status=Closed') && xd.includes('ocode=B'));
+});
+
+test('long Arabic / mixed comments: pieces stay within 255 DXF bytes, round-trip exactly, ezdxf audit clean', { skip: !ezdxfAvailable() && 'ezdxf not installed' }, (t) => {
+  const arabic = 'تعليق على مجرى الهواء '.repeat(20).slice(0, 300);
+  const mixed = Array.from({ length: 700 }, (_, i) => (i % 3 === 0 ? 'ع' : i % 3 === 1 ? 'a' : ' ')).join('');
+  const s = new Session(newDocument());
+  addMarkup(s, 'circle', { c: { x: 0, y: 0 }, r: 2 }, { ...meta, comment: arabic });
+  addMarkup(s, 'rect', { p1: { x: 5, y: 5 }, p2: { x: 8, y: 9 } }, { ...meta, comment: mixed });
+  const dxf = writeDxf(s.doc);
+  const lines = dxf.split(/\r?\n/);
+  let n = 0;
+  for (let i = 0; i < lines.length - 1; i++) if (lines[i].trim() === '1000' && lines[i + 1].includes('=')) { n++; assert.ok(Buffer.byteLength(lines[i + 1]) <= 255, `XDATA line of ${Buffer.byteLength(lines[i + 1])} bytes`); }
+  assert.ok(n > 6);
+  const back = listMarkups(parseDxf(dxf));
+  assert.equal(back[0].comment, arabic);
+  assert.equal(back[1].comment, mixed);
+  const dir = mkdtempSync(path.join(tmpdir(), 'ashmarkup-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'markup-ar.dxf');
+  writeFileSync(file, dxf);
+  const audit = validateWithEzdxf(file);
+  assert.equal(audit.audit_errors, 0, JSON.stringify(audit.audit_messages));
+});
+
+test('markupsCsv: Rev. column after the number, Follow-ups column with Rev.xx lines, latest status', () => {
+  const s = new Session(newDocument());
+  addMarkup(s, 'circle', { c: { x: 0, y: 0 }, r: 2 }, { ...meta, comment: 'Damper access', code: 'B', rev: 'Rev.00' });
+  const { uid } = listMarkups(s.doc)[0];
+  addFollowUp(s, uid, { rev: 'Rev.01', text: 'Still not shown', code: 'B', author: 'AA', date: '2026-11-01' });
+  addFollowUp(s, uid, { rev: 'Rev.02', text: '=ok', code: 'A', author: 'AA', date: '2026-11-07' });
+  assert.equal(markupsCsv(listMarkups(s.doc)), '\uFEFFNo,Rev.,Comment,Author,Date,Status,Follow-ups\r\n1,Rev.00,Damper access,Ahmad,2026-10-08,Closed,"Rev.01: Still not shown\nRev.02: =ok"\r\n');
 });
 
 test('Export to CRS with follow-ups: rich-text comment, blue plain Rev.xx lines, Rev. column, latest code fill, review round, drop-downs', { skip: !hasOpenpyxl && 'python3 openpyxl not available' }, (t) => {
