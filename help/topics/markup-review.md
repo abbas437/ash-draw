@@ -49,7 +49,7 @@ Bring the markups of the previous revision into the new one so you can check eac
 1. Click **Import…** in the Markups panel, or type **MKIMPORT**.
 2. Pick the previous revision's DXF or DWG.
 3. Choose **Bring all** or **only open** (code B or C, not closed).
-4. The drawings are aligned automatically as in [Compare two drawings](#topic:compare-drawings), and the alignment quality is shown as a percentage. If it cannot be aligned, the markups are placed at the same coordinates, or you pick the points yourself.
+4. The drawings are aligned automatically as in [Compare two drawings](#topic:compare-drawings), and the alignment quality is shown as a percentage. Choose **Aligned to the content** (offered when the alignment worked) or **Place at same coordinates**. If the new revision could not be aligned, the markups go at the same coordinates; move them afterwards if needed.
 
 Markups already in the drawing are skipped as duplicates. If a number is already taken, the clash is reported and the markup is not renumbered. One undo removes everything the import added.
 
