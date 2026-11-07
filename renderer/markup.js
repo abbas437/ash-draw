@@ -4,11 +4,13 @@
 // tools.js owns the Tool base class and passes it to createMarkupTools (a factory, so this module does not import tools.js).
 import {
   addMarkup, listMarkups, setMarkupStatus, setMarkupCode, deleteMarkup, setMarkupsVisible, renumberMarkups, markupsCsv, markupsCrsSheet,
-  MARKUP_LAYER, MARKUP_CODES, MARKUP_STATUSES,
+  addFollowUp, editFollowUp, removeFollowUp, latestRevLabel, MARKUP_LAYER, MARKUP_CODES, MARKUP_STATUSES,
 } from '../src/core/markup.js';
+import { ROUND_KEY, defaultRound, cleanRounds, recallRound, rememberRound } from './markup-round.js';
+import { unitKey } from './unit-memory.js';
 import { xlsxBytes } from '../src/core/xlsx.js';
 import { dist } from '../src/core/geom.js';
-import { el, toast, promptDialog } from './ui.js';
+import { el, toast, promptDialog, modal } from './ui.js';
 import { savePathIn } from './files.js';
 
 export const DEFAULT_AUTHOR = 'ASH user';
@@ -45,7 +47,7 @@ export function createMarkupTools(h, { Tool }) {
         const r = await this.h.askText({ title: 'Markup comment', value: '', height });
         const comment = r?.text.replace(/\r/g, '').trim();
         if (!comment) { if (r) this.h.toast('A markup needs a short comment; nothing was added.'); return; }
-        addMarkup(this.h.session, kind, geo, { comment: comment.split('\n').join(' '), author: authorOf(this.h), height: r.height, no: this.h.markupStartNo ?? undefined });
+        addMarkup(this.h.session, kind, geo, { comment: comment.split('\n').join(' '), author: authorOf(this.h), rev: this.h.markupPanel?.round() || undefined, height: r.height, no: this.h.markupStartNo ?? undefined });
         if (this.h.markupStartNo != null) { this.h.markupStartNo = null; this.h.markupPanel?.render(); } // a start number applies to one markup
       } finally { this.a = null; this.busy = false; this.h.refreshPrompt(); this.vp.requestRender(); }
     }
@@ -116,11 +118,80 @@ export class MarkupPanel {
     document.getElementById('mk-start').onclick = () => this.startNumber();
     document.getElementById('mk-renum').onclick = () => this.renumber();
     document.getElementById('mk-crs').onclick = () => this.exportCrs();
+    this.roundIn = document.getElementById('mk-round');
+    this.roundIn.addEventListener('change', () => this.setRound(this.roundIn.value));
+    this.rounds = []; this.tabRounds = new WeakMap(); this.tabDefaults = new WeakMap();
+    window.api.settingsGet?.(ROUND_KEY).then((v) => { this.rounds = cleanRounds(v); this.render(); }).catch(() => {});
     app.markupAuthor = DEFAULT_AUTHOR;
     app.markupStartNo = null;
     window.api.settingsGet?.('markup.author').then((a) => { if (typeof a === 'string' && a.trim()) app.markupAuthor = a.trim(); this.render(); }).catch(() => {});
     app.vp.on('change', () => this.render());
     this.render();
+  }
+  /** the current review round: the one set for this drawing, else defaultRound of the markups it had when first shown
+   *  (Rev.00 with none; pinned per tab, so adding markups does not move it) */
+  round() {
+    const set = this.setRoundOf();
+    if (set) return set;
+    const tab = this.app.active;
+    if (!tab) return 'Rev.00';
+    if (!this.tabDefaults.has(tab)) this.tabDefaults.set(tab, defaultRound(this.app.doc ? listMarkups(this.app.doc) : []));
+    return this.tabDefaults.get(tab);
+  }
+  /** set the round of this drawing (an empty one goes back to the default), remembered as setting 'markup.round' */
+  async setRound(label) {
+    const key = this.fileKey(), l = String(label ?? '').trim();
+    this.rounds = rememberRound(this.rounds, key, l);
+    if (l) this.tabRounds.set(this.app.active, l); else this.tabRounds.delete(this.app.active); // also for a drawing with no key (this session)
+    await window.api.settingsSet?.(ROUND_KEY, this.rounds)?.catch?.(() => {});
+    this.render();
+  }
+  /** the settings key of the drawing shown (unit-memory.js unitKey; null before a drawing is shown) */
+  fileKey() { return this.app.active ? unitKey(this.app.file) : null; }
+  /** the round the reviewer set for this drawing ('' = none) */
+  setRoundOf() { return recallRound(this.rounds, this.fileKey()) || (this.app.active && this.tabRounds.get(this.app.active)) || ''; }
+  /** Follow-up…: the original comment, its follow-ups (edit / remove), and a form for this round's follow-up (edited when it exists) */
+  async followUp(uid) {
+    const s = this.app.session, round = this.round();
+    const find = () => listMarkups(this.app.doc).find((k) => k.uid === uid);
+    let m = find();
+    if (!m) return;
+    const text = el('textarea', { id: 'mk-fu-text', rows: 4, style: 'width:100%' });
+    const code = el('select', { id: 'mk-fu-code' }, ['', ...MARKUP_CODES].map((c) => el('option', { value: c, text: c || '–' })));
+    const status = el('select', { id: 'mk-fu-status' }, MARKUP_STATUSES.map((v) => el('option', { value: v, text: v })));
+    code.addEventListener('change', () => { if (code.value === 'A') status.value = 'Closed'; });
+    const formHead = el('div', { class: 'mk-fu-head' });
+    let index = -1; // the follow-up the form edits (-1 = a new one)
+    const load = (i) => {
+      index = i;
+      const f = m.followUps[i];
+      text.value = f?.text ?? ''; code.value = f?.code ?? ''; status.value = f?.status ?? 'Open';
+      formHead.textContent = f ? `Edit follow-up ${f.rev || `#${i + 1}`}` : `New follow-up (${round})`;
+    };
+    const list = el('div', { class: 'mk-fu-list' });
+    const fill = () => {
+      list.replaceChildren(...(m.followUps.length ? m.followUps.map((f, i) => el('div', { class: 'mk-fu-item' },
+        el('span', { class: 'mk-fu-line', text: `${f.rev ? `${f.rev}: ` : ''}${f.text}` }),
+        el('span', { class: 'mk-meta', text: ` ${f.code || '–'} · ${f.status} · ${f.author} · ${f.date}` }),
+        el('button', { type: 'button', class: 'mk-fu-edit', onclick: () => load(i) }, 'Edit'),
+        el('button', { type: 'button', class: 'mk-fu-del', onclick: () => { removeFollowUp(s, uid, i); m = find() ?? m; fill(); load(m.followUps.findIndex((g) => g.rev === round)); } }, 'Remove')))
+        : [el('p', { class: 'mk-meta', text: 'No follow-ups yet.' })]));
+    };
+    fill();
+    load(m.followUps.findIndex((f) => f.rev === round));
+    const r = await modal(`Follow-up on markup ${m.no}`, el('div', { class: 'mk-fu' },
+      el('p', { class: 'mk-fu-orig' }, el('b', { text: `${m.no}${m.rev ? ` (${m.rev})` : ''}: ` }), m.comment),
+      list, formHead, text,
+      el('label', {}, 'Code ', code, ' Status ', status),
+      el('p', { class: 'mk-meta', text: 'Code A closes the item; for leftover minor points add a new markup.' })),
+    [{ label: 'Save', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
+    if (r !== 'ok') return;
+    const t = text.value.replace(/\r/g, '').trim();
+    if (!t) { toast('A follow-up needs a short text; nothing was saved.'); return; }
+    const fu = { text: t, code: code.value, status: status.value, author: authorOf(this.app), date: new Date().toISOString().slice(0, 10) };
+    try {
+      if (index >= 0) editFollowUp(s, uid, index, fu); else addFollowUp(s, uid, { ...fu, rev: round });
+    } catch (err) { if (err instanceof RangeError) toast(err.message); else throw err; }
   }
   async editAuthor() {
     const a = (await promptDialog('Reviewer name or initials (shown on every markup)', this.app.markupAuthor))?.trim();
@@ -168,18 +239,21 @@ export class MarkupPanel {
     document.getElementById('mk-author').title = `Reviewer: ${this.app.markupAuthor} (click to change)`;
     const start = this.app.markupStartNo;
     document.getElementById('mk-start').textContent = start != null ? `Start no. ${start}…` : 'Start no.…';
+    if (document.activeElement !== this.roundIn) this.roundIn.value = this.round();
     if (!doc) { this.list.replaceChildren(); return; }
     const f = this.filter.value, s = this.app.session;
     const rows = listMarkups(doc).filter((m) => f === 'all' || (m.status ?? 'Open') === f);
     this.list.replaceChildren(...rows.map((m) => {
       const status = m.status ?? 'Open';
-      const row = el('div', { class: `mk-row${status === 'Closed' ? ' closed' : ''}`, title: 'Click to zoom to this markup', onclick: () => this.show(m) },
+      const rev = latestRevLabel([m.rev, ...(m.followUps ?? []).map((f) => f.rev)]);
+      const row = el('div', { class: `mk-row${status === 'Closed' ? ' closed' : ''}`, title: 'Click to zoom to this markup; double-click for a follow-up', onclick: () => this.show(m), ondblclick: () => this.followUp(m.uid) },
         el('span', { class: 'mk-no', text: String(m.no) }),
-        el('span', { class: 'mk-text' }, el('span', { class: 'mk-comment', text: m.comment }), el('span', { class: 'mk-meta', text: `${m.author ?? ''} · ${m.date ?? ''}` })),
+        el('span', { class: 'mk-text' }, el('span', { class: 'mk-comment', text: m.comment }), el('span', { class: 'mk-meta', text: `${m.author ?? ''} · ${m.date ?? ''}` }), rev ? el('span', { class: 'mk-rev', text: rev }) : null),
         el('select', { class: 'mk-status', title: 'Status (closing a markup without a code sets code A)', onclick: (e) => e.stopPropagation(), onchange: (e) => setMarkupStatus(s, m.uid, e.target.value) },
           MARKUP_STATUSES.map((v) => el('option', { value: v, text: v, selected: status === v }))),
         el('select', { class: 'mk-code', title: 'Review code (A / B / C)', onclick: (e) => e.stopPropagation(), onchange: (e) => setMarkupCode(s, m.uid, e.target.value) },
           ['', ...MARKUP_CODES].map((c) => el('option', { value: c, text: c || '–', selected: (m.code ?? '') === c }))),
+        el('button', { class: 'mk-fu-btn', title: 'Add or edit the follow-up of this review round', onclick: (e) => { e.stopPropagation(); this.followUp(m.uid); } }, 'Follow-up…'),
         el('button', { class: 'mk-del', title: 'Delete this markup', onclick: (e) => { e.stopPropagation(); deleteMarkup(s, m.uid); } }, '×'));
       return row;
     }));

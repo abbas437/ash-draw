@@ -208,6 +208,10 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline:2px so
 .mk-row.closed .mk-comment { text-decoration:line-through; opacity:.7; }
 .mk-row button { padding:0 6px; }
 #mk-filter { max-width:6em; }
+.mk-rev { font-size:10px; color:#0070c0; margin-left:4px; }
+.mk-fu-list { margin:4px 0 8px; } .mk-fu-line { color:#0070c0; }
+.mk-fu-item { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+.mk-fu-head { font-weight:bold; margin:6px 0 2px; }
 .mk-bar { display:flex; flex-wrap:wrap; gap:4px; padding:2px 0 4px; }
 .mk-code, .mk-status { padding:0; }
 #mk-panel .phead { flex-wrap:wrap; row-gap:4px; } /* narrow panel: CSV wraps rather than being cut off */
