@@ -45,3 +45,5 @@ The side panel ([show me](#showme:el:compare-panel)) lists the counts and the ch
 > **Tip:** The result is an ordinary drawing in its own tab. See [Layers](#topic:layers) and [Tabs and sessions](#topic:tabs-and-sessions).
 
 > **Note:** While a compare is running, the tabs of A and B cannot be closed, and a second compare cannot start. Wait for it to finish or cancel it.
+
+> **Note:** Compare covers model space only; paper-space layouts are not compared.

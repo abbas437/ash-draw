@@ -39,6 +39,7 @@ Built with Electron by ASH Technical & Project Management Services (ASH PMCS).
 - **Command history**: the last 3 lines show above the prompt bar (inputs with their prompts, ID / LIST results, errors; last 500 lines per window); F2 or View > Command history opens a scrollable panel with Copy; Up/Down in the empty command line recall earlier inputs.
 - **Layers and properties** panels, including layer on/off and lock, colour, linetype and lineweight; measure tool.
 - **Select and clean up**: QSELECT (Quick Select by object type, property, operator and value), SELECTSIMILAR (same type and layer), PURGE (unused blocks, layers, linetypes, text and dimension styles, with nested items and zero-length geometry; one undo step).
+- **Dimension commands**: DIMLINEAR (DLI), DIMALIGNED (DAL), DIMANGULAR (DAN), DIMARC (DAR), DIMRADIUS (DRA), DIMDIAMETER (DDI), DIMJOGGED (DJO), DIMORDINATE (DOR), DIMCONTINUE (DCO), DIMBASELINE (DBA), DIMCENTER (DCE), MLEADER (MLD) and DIMSTYLE (D); see Help ▸ Dimension a drawing.
 - **Arc length dimension**: DIMARC (DAR) dimensions an arc or a polyline arc segment (`⌒` before the length; one undo step); ARC_DIMENSION entities are read, drawn, moved and saved.
 - **Jogged radius dimension**: DIMJOGGED (DJO) dimensions a large arc or circle from an override centre with a jogged leader (one undo step); LARGE_RADIAL_DIMENSION entities are read, drawn, moved and saved.
 - **Save and convert**: DXF (R2000, lossless for everything the program supports), DWG (experimental, verified after saving),
@@ -184,7 +185,7 @@ Please read these before relying on the program for important work.
 - **Objects not shown or not saved**: 3D solids, bodies and regions are not shown; proxy and other custom objects are drawn from
   their saved graphics but cannot be edited (Save as DXF keeps proxy objects). Skipped objects are reported when a file opens and
   before a save. Help ▸ "What this program can and cannot do" in the app has the full list.
-- **Dimensions** are displayed from their stored drawing and can be moved, copied and exploded, but not edited as dimensions.
+- **Dimensions** (linear, aligned, angular, arc length, radius, diameter, jogged, ordinate) can be created, moved, copied, exploded, restyled in the Dimension Style Manager, and edited: text override, grips on the definition points, and regeneration when the style changes. Dimensions from a file are editable the same way when their definition is recognised; otherwise they are displayed from the stored drawing and can only be moved, copied and exploded. DIMCONTINUE and DIMBASELINE chain new dimensions; there is no DIMEDIT/DIMTEDIT command, and exploded dimensions are no longer dimensions.
 - **DWG** is read through the built-in LibreDWG converter or, when installed, the free ODA File Converter. Saving as DWG needs
   the ODA File Converter (AutoCAD 2000–2018 formats); without it, DWG saving is experimental and off by default (Edit ▸
   Preferences), and text rotation and some hatches can be lost. DXF is the reliable format.
