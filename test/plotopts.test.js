@@ -5,7 +5,7 @@ import { newDocument, addEntity, makeLine } from '../src/core/model.js';
 import { aciToRgb } from '../src/core/aci.js';
 import { exportSvg, colorRgb } from '../src/core/exportSvg.js';
 import { exportPdf, plotLayout, pageFit } from '../src/core/exportPdf.js';
-import { plotSettingsFrom, plotSettingsToStore, PLOT_DEFAULTS, LAYOUT_PAPERS } from '../src/core/plotSettings.js';
+import { plotSettingsFrom, plotSettingsToStore, PLOT_DEFAULTS, LAYOUT_PAPERS, addStyleTable, styleTablesFrom, findStyleTableName, STYLE_TABLES_MAX_CHARS } from '../src/core/plotSettings.js';
 
 const MM = 72 / 25.4;
 // one line per colour: ACI 8 (grey), ACI 1 (red), true colour 200,200,200, true colour 200,10,10
@@ -71,4 +71,40 @@ test('plot settings: custom size and keepGreys round-trip; keepGreys defaults of
   assert.deepEqual([back.customW, back.customH, back.keepGreys, back.pageSize], [500, 300, true, 'Custom']);
   const bad = plotSettingsFrom({ customW: 5, customH: 6000 });
   assert.deepEqual([bad.customW, bad.customH], [PLOT_DEFAULTS.customW, PLOT_DEFAULTS.customH]);
+});
+
+test('plot settings: styleTable is remembered as a .ctb name or none; anything else falls back to none', () => {
+  assert.equal(PLOT_DEFAULTS.styleTable, '');
+  assert.equal(plotSettingsFrom({}).styleTable, '');
+  assert.equal(plotSettingsFrom({ styleTable: 'XYZ-Pens.ctb' }).styleTable, 'XYZ-Pens.ctb');
+  assert.equal(plotSettingsFrom(JSON.parse(JSON.stringify(plotSettingsToStore(plotSettingsFrom({ styleTable: 'monochrome.ctb' }))))).styleTable, 'monochrome.ctb');
+  for (const bad of ['x.stb', 'C:\\pens\\a.ctb', 'a/b.ctb', ' a.ctb', 'a.ctb\n', 7, null, 'x'.repeat(300) + '.ctb']) assert.equal(plotSettingsFrom({ styleTable: bad }).styleTable, '', String(bad));
+});
+
+test('stored plot style tables: add, replace by name ignoring case, at most 5, oldest dropped, size cap', () => {
+  const e = (name, n = 8) => ({ name, data: 'A'.repeat(n) });
+  let r = addStyleTable([], e('a.ctb'));
+  assert.deepEqual([r.list.map((x) => x.name), r.dropped, r.stored], [['a.ctb'], [], true]);
+  r = addStyleTable(r.list, e('b.ctb'));
+  r = addStyleTable(r.list, { name: 'A.CTB', data: 'BBBB' });
+  assert.deepEqual(r.list, [e('b.ctb'), { name: 'A.CTB', data: 'BBBB' }], 'the same name is replaced and moves to the end');
+  let list = [];
+  for (const n of ['1', '2', '3', '4', '5', '6', '7']) list = addStyleTable(list, e(`${n}.ctb`)).list;
+  assert.deepEqual(list.map((x) => x.name), ['3.ctb', '4.ctb', '5.ctb', '6.ctb', '7.ctb'], 'at most 5, the oldest dropped');
+  const big = 25000;
+  r = addStyleTable(addStyleTable(addStyleTable([], e('x.ctb', big)).list, e('y.ctb', big)).list, e('z.ctb', big));
+  assert.deepEqual([r.list.map((x) => x.name), r.dropped], [['y.ctb', 'z.ctb'], ['x.ctb']]);
+  assert.ok(JSON.stringify(r.list).length <= STYLE_TABLES_MAX_CHARS);
+  const huge = addStyleTable(r.list, e('h.ctb', STYLE_TABLES_MAX_CHARS));
+  assert.deepEqual([huge.stored, huge.list, huge.dropped], [false, r.list, []], 'a table alone over the cap is not stored; the list is kept');
+});
+
+test('stored plot style tables: a hand-edited value is cleaned; names are found ignoring case', () => {
+  const ok = { name: 'p.ctb', data: 'QUJD' };
+  assert.deepEqual(styleTablesFrom([ok, { name: 'q.stb', data: 'QUJD' }, { name: 'r.ctb', data: 'not base64!' }, null, { name: 's.ctb' }, 5]), [ok]);
+  assert.deepEqual(styleTablesFrom('x'), []);
+  assert.equal(styleTablesFrom(Array.from({ length: 9 }, (_, i) => ({ name: `${i}.ctb`, data: 'QUJD' }))).length, 5);
+  assert.equal(findStyleTableName(['acad.ctb', 'XYZ-Pens.ctb'], 'xyz-pens.CTB'), 'XYZ-Pens.ctb');
+  assert.equal(findStyleTableName(['acad.ctb'], 'other.ctb'), null);
+  assert.equal(findStyleTableName(['acad.ctb'], ''), null);
 });

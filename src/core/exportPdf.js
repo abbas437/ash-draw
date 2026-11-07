@@ -130,7 +130,8 @@ function checkAbort(opts) {
 
 /**
  * exportPdfPages(sheets, opts) -> Promise<{bytes, warnings}>: one PDF, one page per sheet in order (PUBLISH).
- * sheets: [{doc, layout (null = model space), label, region (model sheet: area to plot, default opts.region, else the extents)}]; opts as exportPdf, applied to every sheet (a layout sheet uses
+ * sheets: [{doc, layout (null = model space), label, region (model sheet: area to plot, default opts.region, else the extents),
+ *   plotStyle (this sheet's plot style table, null = none; absent: opts.plotStyle)}]; opts as exportPdf, applied to every sheet (a layout sheet uses
  * paper / fit, a model sheet pageSize / orientation / scale). Viewport scenes are built once per drawing and layer set.
  */
 export async function exportPdfPages(sheets, opts = {}) {
@@ -140,7 +141,7 @@ export async function exportPdfPages(sheets, opts = {}) {
     const { doc, layout = null, label = '' } = sheet;
     if (doc !== cur) { cur = doc; modelScene = memoModelScene(doc); }
     const i = sheets.indexOf(sheet), onProgress = opts.onProgress && ((f) => opts.onProgress((i + f) / sheets.length));
-    const w = await addPdfPage(pdf, doc, { ...opts, onProgress, layout, modelScene: opts.modelScene ?? modelScene, scene: layout ? opts.scene : opts.scene ?? modelScene([]), region: layout ? null : sheet.region ?? opts.region });
+    const w = await addPdfPage(pdf, doc, { ...opts, onProgress, layout, modelScene: opts.modelScene ?? modelScene, scene: layout ? opts.scene : opts.scene ?? modelScene([]), region: layout ? null : sheet.region ?? opts.region, ...('plotStyle' in sheet ? { plotStyle: sheet.plotStyle } : {}) });
     warnings.push(...w.map((m) => (label ? `${label}: ${m}` : m)));
   }
   const bytes = await pdf.save();

@@ -21,7 +21,7 @@ export const LAYOUT_PAPERS = ['layout', ...PAGE_SIZES];
 
 export const PLOT_DEFAULTS = Object.freeze({
   pageSize: 'A3', orientation: 'auto', monochrome: false, keepGreys: false, lineweights: true, transparency: true, what: 'extents', fit: true, n: 100, centre: true,
-  layoutPaper: 'layout', layoutFit: true, customW: 420, customH: 297, publishModel: false, publishArea: 'extents',
+  layoutPaper: 'layout', layoutFit: true, customW: 420, customH: 297, publishModel: false, publishArea: 'extents', styleTable: '',
 });
 const CHOICES = { pageSize: ['fit', ...PAGE_SIZES], orientation: ['auto', 'landscape', 'portrait'], what: ['extents', 'view', 'window'], publishArea: ['extents', 'view'], layoutPaper: LAYOUT_PAPERS };
 
@@ -35,6 +35,7 @@ export function plotSettingsFrom(v) {
     if (CHOICES[key] && !CHOICES[key].includes(x)) continue;
     if ((key === 'customW' || key === 'customH') && !validCustomMm(x)) continue;
     if (key === 'n' && !(Number.isFinite(x) && x > 0)) continue;
+    if (key === 'styleTable' && x !== '' && !validStyleTableName(x)) continue;
     s[key] = x;
   }
   if (s.what === 'window') s.what = 'extents';
@@ -50,3 +51,36 @@ export function layoutPlotStart(plot, s) {
 }
 
 export const plotSettingsToStore = (s) => Object.fromEntries(Object.keys(PLOT_DEFAULTS).map((k) => [k, s[k]]));
+
+// ---- plot style tables loaded from .ctb files (setting 'plot.styleTables') ----------------------------------------------
+// The original file bytes (base64) are kept, not the parsed table (255 pens of a dozen fields each are many times larger
+// than a compressed .ctb). The list is oldest first: [{ name, data }].
+export const STYLE_TABLES_KEY = 'plot.styleTables';
+export const STYLE_TABLES_MAX = 5;
+export const STYLE_TABLES_MAX_CHARS = 60000; // the desktop settings store refuses a value over 64 KB (as JSON)
+
+/** a table name as remembered / listed: a file name (no folder) of 1..255 characters ending in .ctb */
+export const validStyleTableName = (n) => typeof n === 'string' && n.length <= 255 && /^[^\\/\u0000-\u001f]+\.ctb$/i.test(n) && n.trim() === n;
+const sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
+/** the name in `names` that is `name` ignoring case, or null */
+export const findStyleTableName = (names, name) => (typeof name === 'string' && name ? names.find((n) => sameName(n, name)) ?? null : null);
+const storedSize = (list) => JSON.stringify(list).length;
+const validEntry = (e) => e && validStyleTableName(e.name) && typeof e.data === 'string' && e.data.length > 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(e.data);
+
+/** add `entry` ({ name, data }) to the stored list: a table of the same name (any case) is replaced, then the oldest are
+ *  dropped until at most STYLE_TABLES_MAX remain and the list is within STYLE_TABLES_MAX_CHARS. A table that alone is
+ *  over the size limit is not stored (stored: false; the list is unchanged). -> { list, dropped (names), stored } */
+export function addStyleTable(list, entry, { max = STYLE_TABLES_MAX, maxChars = STYLE_TABLES_MAX_CHARS } = {}) {
+  if (storedSize([entry]) > maxChars) return { list: [...list], dropped: [], stored: false };
+  const out = [...list.filter((e) => !sameName(e.name, entry.name)), { name: entry.name, data: entry.data }], dropped = [];
+  while (out.length > max || storedSize(out) > maxChars) dropped.push(out.shift().name);
+  return { list: out, dropped, stored: true };
+}
+
+/** a stored value -> the list (entries checked; a hand-edited settings file can hold anything), within the same caps */
+export function styleTablesFrom(v) {
+  if (!Array.isArray(v)) return [];
+  let list = [];
+  for (const e of v) if (validEntry(e)) list = addStyleTable(list, { name: e.name, data: e.data }).list;
+  return list;
+}

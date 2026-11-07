@@ -9,7 +9,7 @@ import { readDxf } from '../src/core/dxfRead.js';
 import { newDocument, addEntity, addLayer, addLinetype, addBlock, makeLine, makeInsert, makeMText } from '../src/core/model.js';
 import { newLayout } from '../src/core/layouts.js';
 import { exportSvg } from '../src/core/exportSvg.js';
-import { exportPdf } from '../src/core/exportPdf.js';
+import { exportPdf, exportPdfPages } from '../src/core/exportPdf.js';
 import { BUILTIN_TABLES, parsePlotStyleTable, writePlotStyleTable } from '../src/core/plotStyle.js';
 
 /** acad.ctb (all "use object") with the given pens changed: { aci: {color, lineweight, ...} } */
@@ -118,4 +118,17 @@ test('without plotStyle the SVG and PDF bytes are those of the code before it (g
   }
   const L = readDxf(fixture('layouts_r2000.dxf'));
   same('layouts_r2000.pdf', await fixedDate(async () => (await exportPdf(L, { layout: L.layouts[0], monochrome: true })).bytes));
+});
+
+test('PDF publish: a sheet\'s own plotStyle wins over the option; a sheet without one uses the option', async () => {
+  const doc = docWith(line(1, { color: 1 }));
+  const blue = table({ 1: { color: [0, 0, 255] } }), green = table({ 1: { color: [0, 255, 0] } });
+  const out = await exportPdfPages([{ doc, label: 'a', plotStyle: blue }, { doc, label: 'b' }, { doc, label: 'c', plotStyle: null }], { plotStyle: green });
+  const pdf = await PDFDocument.load(out.bytes);
+  const rg = [];
+  for (const pg of pdf.getPages()) {
+    const c = pg.node.Contents(), streams = c instanceof PDFArray ? c.asArray().map((r) => pdf.context.lookup(r)) : [c];
+    rg.push(streams.map((st) => new TextDecoder().decode(decodePDFRawStream(st).decode())).join('\n').match(/(\S+ \S+ \S+) RG\n/)[1]);
+  }
+  assert.deepEqual(rg, ['0 0 1', '0 1 0', '1 0 0']);
 });

@@ -8,6 +8,7 @@ import { Tool, TOOL_ALIASES } from './tools.js';
 import { el, modal, message, toast } from './ui.js';
 import { initVpFreeze } from './vpfreeze-ui.js';
 import { addLayout, copyLayout, renameLayout, deleteLayout, moveLayout, setPageSetup, findLayout, layoutsOf, layoutNameError } from '../src/core/layoutmgmt.js';
+import { loadedStyleTables, styleTableField } from './plotstyle-ui.js';
 
 /** the drawing seen through one layout: entities are the layout's, everything else is the drawing's */
 export function spaceDoc(doc, layout) {
@@ -141,8 +142,10 @@ async function pageSetupDialog(app, lo) {
   const n = el('input', { type: 'number', name: 'scale', min: '0.000001', step: 'any', value: String(+((p.scaleDen || 1) / (p.scaleNum || 1)).toPrecision(6)), style: 'width:7em' });
   const area = el('select', { name: 'area' }, [el('option', { value: '5', text: 'Layout' }), el('option', { value: '1', text: 'Extents' }), el('option', { value: '4', text: 'Window (as stored)' })]);
   area.value = [1, 4].includes(p.plotType) ? String(p.plotType) : '5';
+  await loadedStyleTables(app);
+  const st = styleTableField(app, p.styleSheet ?? '', { keepUnknown: true }); // a name not available here is kept as it is
   const r = await modal(`Page setup — ${lo.name}`, [el('label', {}, 'Paper size '), paper, el('label', {}, 'Orientation '), ori,
-    el('label', {}, fit, ' Fit to paper'), el('label', {}, 'Plot scale (paper : layout)  1 : ', n), el('label', {}, 'Plot area '), area],
+    el('label', {}, fit, ' Fit to paper'), el('label', {}, 'Plot scale (paper : layout)  1 : ', n), el('label', {}, 'Plot area '), area, ...st.rows],
   [{ label: 'OK', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
   if (r !== 'ok') return;
   const k = Number(n.value), dims = paper.value ? PAPERS[paper.value] : [Math.max(p.paperW, p.paperH), Math.min(p.paperW, p.paperH)];
@@ -150,7 +153,7 @@ async function pageSetupDialog(app, lo) {
   setPageSetup(app.active.session, lo.name, {
     ...(paper.value ? { paperName: paper.value, paperW: dims[0], paperH: dims[1] } : {}),
     rotation: ori.value === '1' ? (dims[0] >= dims[1] ? 1 : 0) : (dims[0] >= dims[1] ? 0 : 1),
-    stdScale: fit.checked ? 0 : 16, ...(fit.checked ? {} : { scaleNum: 1, scaleDen: k }), plotType: Number(area.value),
+    stdScale: fit.checked ? 0 : 16, ...(fit.checked ? {} : { scaleNum: 1, scaleDen: k }), plotType: Number(area.value), styleSheet: st.value(),
   });
 }
 
