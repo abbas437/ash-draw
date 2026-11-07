@@ -5,7 +5,8 @@
 // Also holds the scene helpers shared with exportPdf.js (path walking, colours, lineweights, dashes,
 // hatch pattern lines, text layout).
 import { buildScene, infiniteItem } from './render.js';
-import { runColor, aciToRgb } from './aci.js';
+import { runColor, runAci, aciToRgb } from './aci.js';
+import { luma } from './plotStyle.js';
 import { layoutMText, approxMeasure } from './mtext.js';
 
 const TAU = Math.PI * 2;
@@ -70,8 +71,32 @@ const ACI_GREYS = [8, 9, 250, 251, 252, 253, 254].map((i) => aciToRgb(i).join(',
 export const isKeptGrey = (rgb) => ACI_GREYS.includes(rgb.join(',')) || (rgb[0] === rgb[1] && rgb[1] === rgb[2] && rgb[0] > 0 && rgb[0] < 255);
 const ACI_AMBER = aciToRgb(40).join(','), MONO_CHANGED = [96, 96, 96];
 
-/** item colour as [r,g,b] 0..255; `auto` colours contrast with the background (black on white / no background) */
-export function colorRgb(style, { monochrome = false, darkBackground = false, keepGreys = false, compare = false } = {}) {
+/**
+ * The pen of a colour-dependent plot style table (.ctb) an item plots with: table.styles[aci - 1] for a scene style with
+ * an ACI index (style.aci 1-255); null for a true colour (aci null: a CTB has no pens for true colours), a style without
+ * an index (UI items), no table, or a named table (.stb, not applied).
+ */
+export function penOf(style, plotStyle) {
+  if (!plotStyle || plotStyle.kind !== 'ctb') return null;
+  const aci = style?.aci;
+  return Number.isInteger(aci) && aci >= 1 && aci <= 255 ? plotStyle.styles[aci - 1] ?? null : null;
+}
+
+/** item colour as [r,g,b] 0..255; `auto` colours contrast with the background (black on white / no background).
+ *  plotStyle (a parsed .ctb, or null): the item's pen colour (null = the object's), greyscale (Rec. 601 luma), then
+ *  screening (towards white); monochrome / keepGreys are then ignored for every item (a true colour plots as itself). */
+export function colorRgb(style, colOpts = {}, plotStyle = null) {
+  if (plotStyle?.kind === 'ctb') {
+    const own = colorRgb(style, { darkBackground: colOpts.darkBackground });
+    const pen = penOf(style, plotStyle);
+    if (!pen) return own;
+    let rgb = pen.color ?? own;
+    if (pen.grayscale) { const g = luma(rgb); rgb = [g, g, g]; }
+    const sc = pen.screening ?? 100;
+    if (sc < 100) rgb = rgb.map((v) => Math.round(255 - (255 - v) * Math.max(0, sc) / 100));
+    return rgb;
+  }
+  const { monochrome = false, darkBackground = false, keepGreys = false, compare = false } = colOpts;
   const c = style && style.color;
   if (monochrome) {
     // keepGreys (the plot dialog's "Keep greys", or a compare drawing): the greys (see isKeptGrey) stay grey, all else is black.
@@ -85,7 +110,13 @@ export function colorRgb(style, { monochrome = false, darkBackground = false, ke
 }
 
 /** colour of an MTEXT run (null = the item's colour) as [r,g,b]; ACI 7 contrasts with the background */
-export function runRgb(c, style, colOpts = {}) {
+export function runRgb(c, style, colOpts = {}, plotStyle = null) {
+  if (plotStyle?.kind === 'ctb') {
+    // the run's own colour and ACI index (aci.js runColor / runAci) through the table
+    const rc = runColor(c, style), st = { color: rc ?? style?.color };
+    Object.defineProperty(st, 'aci', { value: runAci(c, style) });
+    return colorRgb(st, colOpts, plotStyle);
+  }
   const rc = colOpts.monochrome ? null : runColor(c, style);
   return colorRgb(rc ? { color: rc } : style, colOpts);
 }
@@ -93,15 +124,25 @@ export function runRgb(c, style, colOpts = {}) {
 /** MTEXT layout of a scene item (local frame: origin at item.p, y down, drawing units); a fixed it.lay (SHX runs) first */
 export const mtextItemLayout = (it, measure = approxMeasure) => it.lay ?? layoutMText(it.mt, { width: it.boxW, attach: it.attach, lineSpacing: it.lineSpacing, measure });
 
-/** plotted lineweight in mm; negative (default/ByLayer/ByBlock left over) = 0.25 mm */
-export function lineweightMm(style, lineweights = true) {
+/** plotted lineweight in mm; negative (default/ByLayer/ByBlock left over) = 0.25 mm. plotStyle (.ctb): a pen lineweight
+ *  is plotted as is, also with lineweights false (AutoCAD plots plot style lineweights); "use object" as without one */
+export function lineweightMm(style, lineweights = true, plotStyle = null) {
+  const pen = penOf(style, plotStyle);
+  if (pen && pen.lineweight != null) return pen.lineweight;
   const lw = style ? style.lw : -3;
   if (!lineweights || !(lw >= 0)) return DEFAULT_LW_MM;
   return lw;
 }
 
-/** linetype dash pattern in drawing units (dot = 0), even length; null = continuous */
-export function dashUnits(doc, style) {
+/** a .ctb pen linetype index -> the drawing linetype plotted for it (0 = solid); other indices keep the object's */
+const PEN_LINETYPES = ['CONTINUOUS', 'DASHED', 'DOT', 'DASHDOT'];
+
+/** linetype dash pattern in drawing units (dot = 0), even length; null = continuous. plotStyle (.ctb): pen linetype 0
+ *  plots solid, 1/2/3 the drawing's DASHED / DOT / DASHDOT when it has them; else (or "use object") the object's */
+export function dashUnits(doc, style, plotStyle = null) {
+  const pen = penOf(style, plotStyle), lt = pen && PEN_LINETYPES[pen.linetype];
+  if (lt === 'CONTINUOUS') return null;
+  if (lt && doc.linetypes?.get(lt)?.pattern?.length) return dashUnits(doc, { ...style, lt });
   const name = String(style?.lt ?? 'CONTINUOUS').toUpperCase();
   if (name === 'CONTINUOUS' || name === 'BYLAYER' || name === 'BYBLOCK') return null;
   const def = doc.linetypes && doc.linetypes.get(name);
@@ -262,7 +303,8 @@ const fontFamily = (font) => {
 /**
  * exportSvg(doc, opts) -> standalone SVG 1.1 document string.
  * opts: scene (prebuilt), background ('#ffffff' default | null = transparent), monochrome (false), keepGreys (monochrome keeps the greys: ACI 8, 9, 250-254 and r=g=b true colours),
- * lineweights (true), unitsPerMm (drawing units per plotted millimetre; when given, width/height are in mm),
+ * lineweights (true), plotStyle (a parsed colour-dependent table, plotStyle.js; null = none: pen colour / lineweight /
+ * linetype by each item's ACI index, see colorRgb / lineweightMm / dashUnits; monochrome and keepGreys are then ignored), unitsPerMm (drawing units per plotted millimetre; when given, width/height are in mm),
  * margin (fraction of the larger drawing dimension, 0.02), warnings (an array the export warnings are pushed to: objects
  * with non-finite coordinates are left out, dense hatches drawn as a tint; exportNotes).
  * Stroke width in SVG user units (= drawing units): max(lineweightMm, 0.18) * (unitsPerMm ?? 1);
@@ -276,8 +318,9 @@ export function exportSvg(doc, opts = {}) {
   const upm = opts.unitsPerMm > 0 ? opts.unitsPerMm : 1;
   const bb = scene.bbox;
   const colOpts = { monochrome, keepGreys, compare: !!doc.isCompare, darkBackground: background != null && luminance(background) < 0.5 };
-  const rgb = (style) => `rgb(${colorRgb(style, colOpts).map((v) => Math.round(v)).join(',')})`;
-  const strokeW = (style) => num(Math.max(lineweightMm(style, lineweights), MIN_LW_MM) * upm);
+  const ps = opts.plotStyle ?? null;
+  const rgb = (style) => `rgb(${colorRgb(style, colOpts, ps).map((v) => Math.round(v)).join(',')})`;
+  const strokeW = (style) => num(Math.max(lineweightMm(style, lineweights, ps), MIN_LW_MM) * upm);
 
   let vx = 0, vy = 0, vw = 1, vh = 1;
   if (bb) {
@@ -310,7 +353,7 @@ export function exportSvg(doc, opts = {}) {
     const col = rgb(it.style), oa = op(it.style);
     if (it.kind === 'path') {
       const sw = strokeW(it.style);
-      out.push(`<path d="${svgPathData(it.ops, stat)}" stroke="${col}" stroke-width="${sw}"${dashAttr(dashUnits(doc, it.style))}${oa}/>`);
+      out.push(`<path d="${svgPathData(it.ops, stat)}" stroke="${col}" stroke-width="${sw}"${dashAttr(dashUnits(doc, it.style, it.strokeText ? null : ps))}${oa}/>`);
       if (it.arrow) {
         const t = arrowTriangle(it.arrow, msize);
         out.push(`<path d="M${t.map((p) => `${num(p.x)} ${num(-p.y)}`).join('L')}Z" fill="${col}" stroke="none"${oa}/>`);
@@ -341,7 +384,7 @@ export function exportSvg(doc, opts = {}) {
       // rich MTEXT: one <text> per glyph run, decorations (underline / overline / strike / fraction bar) as <line>
       const lay = mtextItemLayout(it);
       const deg = num(-it.rot * 180 / Math.PI);
-      const rc = (c) => `rgb(${runRgb(c, it.style, colOpts).map((v) => Math.round(v)).join(',')})`;
+      const rc = (c) => `rgb(${runRgb(c, it.style, colOpts, ps).map((v) => Math.round(v)).join(',')})`;
       out.push(`<g transform="translate(${num(it.p.x)} ${num(-it.p.y)})${deg !== '0' ? ` rotate(${deg})` : ''}" stroke="none"${oa}>`);
       for (const g of lay.glyphs) {
         const tf = `translate(${num(g.x)} ${num(g.y)})${g.oblique ? ` skewX(${num(-g.oblique)})` : ''}${g.wf && g.wf !== 1 ? ` scale(${num(g.wf)} 1)` : ''}`;

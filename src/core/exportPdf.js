@@ -104,7 +104,10 @@ export const plotScale = (n, mmPerUnit = 1) => mmPerUnit / n;
  * margin (mm, 10), scale (null = fit to page | page mm per drawing unit), centre (true), region (area to plot in drawing
  * units, clipped; default the drawing extents), monochrome, lineweights, unicodeFonts (TTF/OTF bytes for text outside
  * WinAnsi, in fallback order: an array, or an async function returning one, called only when such text is plotted;
- * unicodeFont: a single font), scene (prebuilt). A layout sheet (opts.layout): paper 'layout' (its own paper, default) or a page size
+ * unicodeFont: a single font), scene (prebuilt), plotStyle (a parsed colour-dependent plot style table, plotStyle.js
+ * parsePlotStyleTable / BUILTIN_TABLES, or null: each item with an ACI index plots with its pen's colour, screening,
+ * greyscale, lineweight and linetype; true colours, raster pictures and the table's scale factor are not applied;
+ * monochrome / keepGreys are ignored while one is set; also in viewports). A layout sheet (opts.layout): paper 'layout' (its own paper, default) or a page size
  * name; area 'layout' (the sheet, default) | 'extents' | 'window' (the page setup's plot window), see layoutPlotRegion;
  * fit (true: the area scaled into the paper's margins, see pageFit; false: at layoutScale, centred); layoutScale
  * (paper mm per layout unit; null = paperMmPerUnit, the page setup's scale). The sheet on its own paper always plots 1:1.
@@ -313,8 +316,9 @@ async function addPdfPage(pdf, doc, opts) {
   const missedChars = new Set(); // the distinct characters behind `missing`, for the warning
 
   const keepGreys = !!opts.keepGreys, compare = !!doc.isCompare; // a comparison keeps its unchanged-grey in monochrome, so it still stands back from the changes
-  const colOf = (style) => colorRgb(style, { monochrome, keepGreys, compare }).map((v) => v / 255);
-  const lwPt = (style) => Math.max(lineweightMm(style, lineweights) * PT_PER_MM, MIN_LW_PT);
+  const ps = opts.plotStyle ?? null; // a .ctb: pens by ACI index (exportSvg.js colorRgb / lineweightMm / dashUnits)
+  const colOf = (style) => colorRgb(style, { monochrome, keepGreys, compare }, ps).map((v) => v / 255);
+  const lwPt = (style) => Math.max(lineweightMm(style, lineweights, ps) * PT_PER_MM, MIN_LW_PT);
   // objects left out for non-finite coordinates (a bad op skipped, the rest drawn) and hatches too dense to draw
   let bad = 0, tints = 0, itemBad = false;
   const pathOps = (pathData) => { if (walkOps(pathData, {
@@ -456,7 +460,7 @@ async function addPdfPage(pdf, doc, opts) {
       ops.push(concatTransformationMatrix(im.u.x * k * im.size.x, im.u.y * k * im.size.x, im.v.x * k * im.size.y, im.v.y * k * im.size.y, X(im.p.x), Y(im.p.y)));
       ops.push(PDFOperator.of(PDFOperatorNames.DrawObject, [page.node.newXObject('Img', ref)]), popGraphicsState());
     } else if (it.kind === 'path') {
-      ops.w('q\n'); strokeState(it.style, ltDashPt(dashUnits(doc, it.style)));
+      ops.w('q\n'); strokeState(it.style, ltDashPt(dashUnits(doc, it.style, it.strokeText ? null : ps)));
       pathOps(it.ops); ops.w('S\nQ\n');
       if (it.arrow) {
         const t = arrowTriangle(it.arrow, msize);
@@ -495,7 +499,7 @@ async function addPdfPage(pdf, doc, opts) {
       const lay = mtextItemLayout(it, runWidth);
       const glyphs = fonts.shape ? reorderPdfLines(lay.glyphs) : lay.glyphs;
       const c = Math.cos(it.rot), s = Math.sin(it.rot);
-      const rc = (col) => runRgb(col, it.style, { monochrome, keepGreys, compare }).map((v) => v / 255);
+      const rc = (col) => runRgb(col, it.style, { monochrome, keepGreys, compare }, ps).map((v) => v / 255);
       page.pushOperators(pushGraphicsState(), concatTransformationMatrix(c, s, -s, c, X(it.p.x), Y(it.p.y)));
       // layout is in drawing units, y down; the text frame is in page points, y up
       for (const g of glyphs) {

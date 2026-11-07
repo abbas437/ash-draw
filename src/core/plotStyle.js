@@ -1,7 +1,7 @@
 // ASH Draw Studio - plot style tables (.ctb colour-dependent, .stb named): read, write, built-in tables.
 //
 //   const table = parsePlotStyleTable(bytes);   // { kind: 'ctb'|'stb', description, scaleFactor, applyGlobalScale, lineweights, styles }
-//   exportSvg(doc, { plotStyle: table });       // see exportSvg.js penColor / penLineweight / penLinetype
+//   exportSvg(doc, { plotStyle: table });       // pens applied by exportSvg.js penOf / colorRgb / lineweightMm / dashUnits
 //
 // File format, as read and written by ezdxf's ezdxf.addons.acadctb (MIT, (c) Manfred Moitzi), whose rules this module
 // follows: a 48-byte ASCII header "PIAFILEVERSION_2.0,CTBVER1,compress\r\npmzlibcodec", three little-endian uint32
