@@ -10,6 +10,10 @@ keywords: new, release, beta, changes, updates, version
 
 The most recent user-visible additions, newest first. For what the program still cannot do, see [Limitations](#topic:limitations).
 
+## Version 0.2.3
+
+- **Plot style tables (CTB).** Plot, Print and Publish can use a contractor's `.ctb` pen table, or the built-in `acad.ctb`, `monochrome.ctb` and `grayscale.ctb`, for pen colours, screening and lineweights; a layout's own table is used when it is available. See [Print, plot to PDF and publish](#topic:plot-and-pdf).
+
 ## Version 0.2.2
 
 - **Review rounds, follow-ups and import of earlier markups.** Answer each comment of a resubmission with a follow-up shown as a blue `Rev.xx:` line, export the rounds to the CRS and CSV, and bring in the previous revision's markups with **Import…** or MKIMPORT. Long Arabic comments now save safely in DXF. See [Markup and review](#topic:markup-review).
