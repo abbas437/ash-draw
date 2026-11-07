@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Browser e2e of review rounds: Round field, new markups get the round, Follow-up… dialog (code A closes), Rev.xx tag,
-// and the CRS export with the blue Rev.01 line (checked with python openpyxl).
+// the CRS export with the blue Rev.01 line (checked with python openpyxl), and Import… of the Rev.00 markups onto a
+// Rev.01 that is turned 90° and moved (automatic alignment, one undo step, Only open, duplicates, no markups, a big file).
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -9,6 +10,36 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { writeDxf } from '../../src/core/dxfWrite.js';
+import { newDocument, makeLine, makeCircle, makeText } from '../../src/core/model.js';
+import { Session, addEntities } from '../../src/core/edit.js';
+import { transformEntity, compose, rotation, translation, apply } from '../../src/core/geom.js';
+import { addMarkup, listMarkups, setMarkupCode, setMarkupStatus } from '../../src/core/markup.js';
+
+// ---- import fixtures (built with the core): a duct plan; Rev.01 is the same content turned 90° and moved ----
+const DAMPER = { x: 40, y: 25 }, GRILLE = { x: 65, y: 55 }; // content circles: markup 1 circles the first, markup 2 boxes the second
+function planContent(n = 12) {
+  const out = [makeLine({ x: 0, y: 0 }, { x: 200, y: 0 }), makeLine({ x: 200, y: 0 }, { x: 200, y: 120 }), makeLine({ x: 200, y: 120 }, { x: 0, y: 120 }), makeLine({ x: 0, y: 120 }, { x: 0, y: 0 })];
+  for (let i = 0; i < n; i++) out.push(makeLine({ x: 10 + (i % 12) * 15, y: 10 + Math.floor(i / 12) * 0.37 }, { x: 10 + (i % 12) * 15 + 3 * (i % 12), y: 17 + (i % 12) * 4 + Math.floor(i / 12) * 0.37 }));
+  for (let i = 0; i < 6; i++) out.push(makeCircle({ x: 40 + i * 25, y: 25 + (i % 3) * 30 }, 2 + i));
+  for (let i = 0; i < 4; i++) out.push(makeText({ x: 20 + i * 40, y: 100 }, 3, `VCD-${i + 1}`));
+  return out;
+}
+const sessionOf = (ents) => { const d = newDocument(); d.units = 4; const s = new Session(d); addEntities(s, ents); return s; };
+const MOVE = compose(translation(500, -300), rotation(Math.PI / 2));
+const meta = { author: 'AR', date: '2026-11-07', rev: 'Rev.00' };
+const rev00 = sessionOf(planContent());
+addMarkup(rev00, 'circle', { c: DAMPER, r: 6 }, { ...meta, comment: 'Damper access' });
+addMarkup(rev00, 'rect', { p1: { x: 60, y: 50 }, p2: { x: 70, y: 60 } }, { ...meta, comment: 'Grille size' });
+{ const [m1, m2] = listMarkups(rev00.doc); setMarkupCode(rev00, m1.uid, 'B'); setMarkupCode(rev00, m2.uid, 'C'); }
+const REV00 = writeDxf(rev00.doc);
+addMarkup(rev00, 'text', { p: { x: 150, y: 110 } }, { ...meta, comment: 'Label font' }); // Rev.00 with a third, closed markup
+setMarkupStatus(rev00, listMarkups(rev00.doc)[2].uid, 'Closed');
+const REV00_CLOSED = writeDxf(rev00.doc);
+const REV01 = writeDxf(sessionOf(planContent().map((e) => transformEntity(e, MOVE))).doc);
+const big = sessionOf(planContent(3000)); // a few thousand entities: the alignment is sliced (progress shown)
+addMarkup(big, 'circle', { c: DAMPER, r: 6 }, { ...meta, comment: 'Big damper' });
+const BIG00 = writeDxf(big.doc), BIG01 = writeDxf(sessionOf(planContent(3000).map((e) => transformEntity(e, MOVE))).doc);
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CHROME = process.env.CHROME_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
@@ -96,6 +127,79 @@ assert str(get('Status').fill.fgColor.rgb).endswith('00B050'), get('Status').fil
 print('xlsx ok')`;
   assert.match(execFileSync('python3', ['-I', '-c', py, xlsx], { encoding: 'utf8' }), /xlsx ok/);
   await fs.rm(path.dirname(xlsx), { recursive: true });
+
+  // ---- Import… ----
+  const openText = (name, text) => page.evaluate(([n, t]) => window.app.loadFile({ path: null, name: n, bytes: new TextEncoder().encode(t) }), [name, text]);
+  const toastText = () => page.locator('#toast').textContent();
+  /** Import…, choose the file; returns once the import dialog is open (or the toast says why not) */
+  const importFile = async (name, text, { dialog = true } = {}) => {
+    const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('#mk-import')]);
+    await fc.setFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(text) });
+    if (dialog) await page.locator('#dlg[open] #mk-imp-align').waitFor({ timeout: 30000 });
+  };
+  /** each markup with the centre of its shape (circle centre; rectangle: mean of its corners) */
+  const centres = () => page.evaluate(async () => {
+    const { listMarkups, markupData } = await import('../src/core/markup.js');
+    const doc = window.app.doc;
+    return listMarkups(doc).map((m) => {
+      const e = doc.entities.find((x) => m.ids.includes(x.id) && markupData(x)?.role === 'shape');
+      const pts = e.type === 'CIRCLE' ? [e.c] : e.vertices ?? e.pts;
+      return { no: m.no, code: m.code, x: pts.reduce((a, p) => a + p.x, 0) / pts.length, y: pts.reduce((a, p) => a + p.y, 0) / pts.length };
+    });
+  });
+  /** centre of the content circle of radius r in the drawing shown */
+  const circleAt = (r) => page.evaluate((rr) => { const c = window.app.doc.entities.find((e) => e.type === 'CIRCLE' && e.layer !== 'ASH-MARKUP' && Math.abs(e.r - rr) < 1e-9); return c && { x: c.c.x, y: c.c.y }; }, r);
+  const near = (p, q, what) => assert.ok(Math.hypot(p.x - q.x, p.y - q.y) < 1e-6, `${what}: ${JSON.stringify(p)} vs ${JSON.stringify(q)}`);
+
+  step = 'import: Rev.01 is turned 90° and moved; aligned automatically, both markups land on the matching content';
+  await openText('Rev01.dxf', REV01);
+  assert.equal(await page.locator('#markups .mk-row').count(), 0, 'the panel lists the markups of the tab shown');
+  await importFile('Rev00.dxf', REV00);
+  assert.equal(await page.locator('#mk-imp-src').textContent(), 'Rev00.dxf: 2 markups found');
+  assert.match(await page.locator('#mk-imp-align').textContent(), /^Aligned automatically \(quality \d+ %\)$/);
+  await ok();
+  assert.match(await toastText(), /^Imported 2 markups; Undo removes them\.$/);
+  const got = await centres();
+  assert.deepEqual(got.map((m) => [m.no, m.code]), [[1, 'B'], [2, 'C']]);
+  near(got[0], await circleAt(2), 'markup 1 circles the damper');
+  near(got[1], await circleAt(3), 'markup 2 boxes the grille');
+  near(got[0], apply(MOVE, DAMPER), 'markup 1 where the damper moved to');
+  assert.equal(await page.locator('#mk-round').inputValue(), 'Rev.01', 'no round set for this drawing: the next after the imported Rev.00');
+  assert.equal(await page.evaluate(() => window.app.vp.selection.size) > 0, true, 'the imported markups are selected (zoomed to)');
+
+  step = 'import: Undo removes both in one step';
+  await page.evaluate(() => window.app.undo());
+  assert.equal(await page.locator('#markups .mk-row').count(), 0);
+
+  step = 'import: Only open brings the B and C markups, not the closed one';
+  await importFile('Rev00.dxf', REV00_CLOSED);
+  assert.equal(await page.locator('#mk-imp-src').textContent(), 'Rev00.dxf: 3 markups found');
+  await page.selectOption('#mk-imp-only', 'open');
+  await ok();
+  assert.match(await toastText(), /^Imported 2 markups; skipped 1 closed; Undo removes them\.$/);
+  assert.deepEqual((await centres()).map((m) => m.code), ['B', 'C']);
+
+  step = 'import: importing again skips the duplicates';
+  await importFile('Rev00.dxf', REV00);
+  await ok();
+  assert.match(await toastText(), /^Imported 0 markups; skipped 2 already here\.$/);
+  assert.equal(await page.locator('#markups .mk-row').count(), 2);
+
+  step = 'import: a source without markups says so';
+  await importFile('Rev01.dxf', REV01, { dialog: false });
+  await page.waitForFunction(() => /No markups in Rev01\.dxf/.test(document.getElementById('toast').textContent));
+  assert.equal(await page.locator('#dlg[open]').count(), 0);
+
+  step = 'import: a few-thousand-entity drawing aligns time-sliced (progress shown), then imports';
+  await openText('Big01.dxf', BIG01);
+  const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('#mk-import')]);
+  await fc.setFiles({ name: 'Big00.dxf', mimeType: 'application/dxf', buffer: Buffer.from(BIG00) });
+  await page.waitForFunction(() => /Aligning… \d+%/.test(document.getElementById('toast').textContent), null, { timeout: 30000 });
+  await page.locator('#dlg[open] #mk-imp-align').waitFor({ timeout: 60000 });
+  assert.match(await page.locator('#mk-imp-align').textContent(), /^Aligned automatically/);
+  await ok();
+  near((await centres())[0], apply(MOVE, DAMPER), 'big: the markup lands on the moved damper');
+
   assert.deepEqual(problems, []);
   console.log('markuprev e2e: OK');
 } catch (err) {
