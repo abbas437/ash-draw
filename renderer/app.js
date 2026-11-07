@@ -387,6 +387,7 @@ class App {
   async loadFile(f) {
     const open = findTabByPath(this.tabs, f.path);
     if (open) { this.switchTo(open); return; } // already open: show its tab
+    const fileSize = f.bytes?.byteLength; // before the bytes are handed to the worker
     const ac = new AbortController();
     const pt = progressToast('Reading…', () => ac.abort());
     this.vp.setBusy(true); // the system wait cursor over the canvas until the drawing is shown (no hidden pointer)
@@ -418,7 +419,7 @@ class App {
       if (notLoaded.length) notes.push(`Not loaded because they are outside the drawing's folder and loading them was not allowed (shown as not found): ${notLoaded.join(', ')}.`);
       const pp = progressToast('Preparing drawing…', () => ac.abort());
       const prepared = await prepareView(doc, { signal: ac.signal, onProgress: (x) => pp.set(x) });
-      this.installDoc(doc, { path: f.path ?? null, name: f.name, format }, { replaceBlank: true, prepared, firstView: true });
+      this.installDoc(doc, { path: f.path ?? null, name: f.name, format, size: fileSize }, { replaceBlank: true, prepared, firstView: true });
       openSavedSpace(this); // saved on a layout ($TILEMODE 0): open on that layout tab, as AutoCAD does
       this.active.conversion = conversion ?? null; // the status-bar conversion item and Help > Converter log
       this.active.incomplete = incomplete && { ...incomplete, path: f.path ?? null }; // saveTab: not saved over this path
@@ -689,8 +690,11 @@ class App {
     const av = await api.dwgAvailable().catch(() => null);
     const mode = el('select', { id: 'pref-dwg-mode' }, [['auto', 'Automatic (built-in LibreDWG; ODA when it cannot read the file)'], ['oda', 'ODA File Converter'], ['libredwg', 'Built-in (LibreDWG)']].map(([v, t]) => el('option', { value: v, text: t })));
     mode.value = cfg.mode;
-    const odaPath = el('input', { id: 'pref-oda-path', type: 'text', value: cfg.odaPath, placeholder: av?.oda?.source === 'auto' ? av.oda.path : 'Detected automatically in C:\\Program Files\\ODA', style: 'width:100%' });
-    const browse = el('button', { type: 'button', text: 'Browse…', onclick: async () => { const p = await api.dwgBrowseOda(); if (p) odaPath.value = p; } });
+    const odaPath = el('input', { id: 'pref-oda-path', type: 'text', readonly: 'readonly', value: cfg.odaPath, placeholder: av?.oda?.source === 'auto' ? av.oda.path : 'Detected automatically in C:\\Program Files\\ODA', style: 'width:100%' });
+    const browse = el('button', { type: 'button', text: 'Browse…', onclick: async () => {
+      try { const p = await api.dwgBrowseOda(); if (p) odaPath.value = p; } catch (err) { toast(`Not used: ${String(err.message || err).replace(/^Error invoking remote method '[^']*': (\w*Error: )?/, '')}.`, 6000); }
+    } });
+    const clearOda = el('button', { type: 'button', id: 'pref-oda-clear', text: 'Clear', onclick: () => { odaPath.value = ''; } });
     const status = av ? `In use: ${av.available ? av.version : `none (${av.reason})`}. ${odaStatusText(av)}` : '';
     const odaNote = odaMissing(av) ? el('p', { id: 'pref-oda-note' }, [ODA_OPTIONAL_NOTE, ' ',
       ...(api.openOdaDownload ? [el('button', { type: 'button', id: 'pref-oda-get', text: ODA_GET_LABEL, onclick: () => api.openOdaDownload().catch(() => {}) })] : [])]) : null;
@@ -708,7 +712,7 @@ class App {
     const cacheRow = ci ? el('p', {}, el('label', { text: 'Keep converted DWG drawings (reopening an unchanged DWG skips the conversion), up to ' }), cacheSel, cacheUse, cacheClear) : null;
     const r = await modal('Preferences', el('div', {}, zoomRow, dwgSaveRow, autosaveRow,
       el('label', { text: 'DWG converter ' }, mode),
-      el('p', {}, el('label', { text: 'ODA File Converter (ODAFileConverter.exe), leave empty to detect it: ' }), odaPath, browse),
+      el('p', {}, el('label', { text: 'ODA File Converter (ODAFileConverter.exe), choose it with Browse…, or leave empty to detect it: ' }), odaPath, browse, clearOda),
       el('p', { id: 'pref-dwg-status', text: status }), odaNote, cacheRow),
     [{ label: 'Save', value: 'save', primary: true }, { label: 'Cancel', value: null }]);
     if (r !== 'save') return;
@@ -721,9 +725,9 @@ class App {
   async limitations() {
     await message('What this program can and cannot do', 'Please read before relying on it for important work:', el('ul', {},
       ['Paper-space layouts, their objects and viewports are read and saved back; viewport clip boundaries (polygon, circle and other closed shapes) are drawn and kept.',
-        'Supported objects: lines, polylines, circles, arcs, ellipses, splines, xlines and rays, text, multiline text, points, solids, 3D faces, hatches, blocks and attributes, dimensions (as drawn), leaders, multileaders, multilines, images, wipeouts and external references.',
+        'Supported objects: lines, polylines, circles, arcs, ellipses, splines, xlines and rays, text, multiline text, points, solids, 3D faces, hatches, blocks and attributes, dimensions, leaders, multileaders, multilines, images, wipeouts and external references.',
         'Proxy objects (ACAD_PROXY_ENTITY, for example Civil 3D objects) are drawn from their saved graphics and cannot be edited; Save as DXF keeps them as they were. Other custom objects (for example AECC_ ones) are drawn the same way but are not written when you save. 3D solids (3DSOLID), BODY, REGION and custom objects without saved graphics are not shown and are not written when you save. OLE objects are drawn from their saved preview picture (a frame only when there is none it can show). Any other object type this program does not know is skipped too. Skipped objects are reported when you open the file, and you are told before saving what a save leaves out.',
-        'Dimensions are displayed from their stored drawing, but cannot be edited as dimensions; they can be moved, copied or exploded.',
+        'Dimensions can be edited (text override, grips, regeneration, dimension styles) when the program recognises their definition, which holds for dimensions drawn here and for most read from files; otherwise they are displayed as stored and can only be moved, copied or exploded. There is no DIMEDIT/DIMTEDIT command, and an exploded dimension is no longer a dimension.',
         'Saving as DXF is the reliable option. With the free ODA File Converter installed, DWG is saved in AutoCAD 2018 format (or an older version you choose), and Save writes a drawing opened from DWG back to its file in its own version, keeping the previous file as a .bak copy. Without it, saving as DWG is experimental and off by default (Edit > Preferences); layouts and viewports may appear empty in AutoCAD, and text rotation and some hatches can be lost.',
         'The ODA File Converter is optional and installed separately: it adds saving to DWG (2000 to 2018) and opening drawings the built-in converter cannot read. Everything else works without it.',
         'Fonts: text is drawn with a system font, so widths differ slightly from the original CAD fonts.',

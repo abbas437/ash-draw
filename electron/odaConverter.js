@@ -150,6 +150,60 @@ export function odaArgs(inDir, outDir, outType, version) {
 /** Only an executable named ODAFileConverter[.exe] is ever run (a settings value cannot name another program). */
 export const isOdaExeName = (p) => typeof p === 'string' && /^ODAFileConverter(\.exe)?$/i.test(path.basename(p));
 
+/** UNC (\\server\share, //server/share), the \\?\ and \\.\ device prefixes and the NT \??\ prefix (also /??/): never accepted as the converter path. */
+export const isUncOrDevicePath = (p) => typeof p === 'string' && (/^[\\/]{2}/.test(p) || /^[\\/]\?\?[\\/]/.test(p));
+
+/**
+ * Why `p` cannot be the converter path, or null when it can: absolute, a local drive/root path (not UNC or device), and
+ * named ODAFileConverter[.exe] by the path rules of `platform` (Windows paths on Windows; on Linux/macOS a backslash is
+ * part of the file name, so `/tmp/evil\ODAFileConverter` is named `evil\ODAFileConverter`).
+ */
+export function odaPathProblem(p, platform = process.platform) {
+  const P = platform === 'win32' ? path.win32 : path.posix;
+  if (typeof p !== 'string' || p === '' || p.includes('\0')) return 'the ODA path must be the full path of ODAFileConverter.exe';
+  if (isUncOrDevicePath(p)) return 'choose ODAFileConverter.exe on a local drive (network and device paths are not allowed)';
+  if (!P.isAbsolute(p)) return 'the ODA path must be the full path of ODAFileConverter.exe';
+  if (!/^ODAFileConverter(\.exe)?$/i.test(P.basename(p))) return `choose the program named ODAFileConverter${platform === 'win32' ? '.exe' : ''} (the file chosen is named "${P.basename(p).slice(0, 80)}")`;
+  return null;
+}
+
+/** A usable converter path (see odaPathProblem). */
+export const isSafeOdaPath = (p, platform = process.platform) => odaPathProblem(p, platform) === null;
+
+/**
+ * Settings that main owns for the converter: written only by dwg:setConfig / dwg:browseOda, never by app:settingsSet
+ * (a renderer could otherwise name any ODAFileConverter.exe to be run, without the Browse dialog).
+ */
+export const MAIN_OWNED_SETTING_KEYS = Object.freeze(['dwg.converter', 'dwg.odaPath']);
+
+/** Throws unless `k` is a settings key the renderer may read or write through app:settingsGet / app:settingsSet. */
+export function checkRendererSettingKey(k) {
+  if (typeof k !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(k)) throw new TypeError('invalid settings key');
+  if (k === '__proto__' || k === 'constructor' || k === 'prototype') throw new TypeError('invalid settings key');
+  if (MAIN_OWNED_SETTING_KEYS.includes(k)) throw new TypeError(`the setting ${k} is changed only in Edit > Preferences`);
+}
+
+/** settings.json as loaded (`parsed`) in a null-prototype object: no key can be inherited, so `settings['dwg.odaPath']`
+ *  is only ever the file's own value (a '__proto__' value from the renderer would otherwise replace the prototype). */
+export function settingsObject(parsed) {
+  const out = Object.create(null);
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) for (const k of Object.keys(parsed)) out[k] = parsed[k];
+  return out;
+}
+
+/**
+ * The converter path to store for a Preferences save. The renderer may only clear it (''), keep the path already saved,
+ * or hand back the path main itself got from the Browse dialog (`browsed`); any other string throws.
+ * @returns {string} the path to store ('' = detect automatically)
+ */
+export function resolveOdaPathChange({ requested, saved, browsed, platform = process.platform }) {
+  if (requested === '') return '';
+  if (typeof requested !== 'string' || (requested !== saved && requested !== browsed)) throw new TypeError('the ODA path can only be chosen with Browse…');
+  const problem = odaPathProblem(requested, platform);
+  if (problem) throw new TypeError(problem);
+  return requested;
+}
+
 /** "ODAFileConverter 25.12.0" -> [25, 12, 0]; no number -> [] */
 const versionOf = (dirName) => (/(\d+(?:\.\d+)*)/.exec(dirName)?.[1] ?? '').split('.').filter(Boolean).map(Number);
 function newer(a, b) {
@@ -253,14 +307,15 @@ export function createOdaBridge(exe, opts = {}) {
 
 /**
  * Engine choice and fallback. `getConfig()` -> {mode: 'auto'|'oda'|'libredwg', odaPath?: string} read at every call;
- * `detectOda()` -> auto-detected executable or null; `makeOda(exe)` -> ODA bridge.
+ * `detectOda()` -> auto-detected executable or null; `makeOda(exe)` -> ODA bridge; `isFile(path)` -> whether a configured
+ * converter path is an existing file (injectable for tests).
  * Automatic: built-in LibreDWG first, ODA (when installed) when LibreDWG fails or its output is implausible.
  */
-export function createDwgService({ libre, getConfig, detectOda, makeOda }) {
+export function createDwgService({ libre, getConfig, detectOda, makeOda, isFile = (f) => fs.stat(f).then((s) => s.isFile(), () => false) }) {
   async function oda() {
     const { odaPath } = getConfig();
     if (odaPath) {
-      if (isOdaExeName(odaPath) && path.isAbsolute(odaPath) && (await fs.stat(odaPath).then((s) => s.isFile(), () => false))) return { exe: odaPath, source: 'setting' };
+      if (isSafeOdaPath(odaPath) && (await isFile(odaPath))) return { exe: odaPath, source: 'setting' };
       return { exe: null, reason: `ODA File Converter not found at ${odaPath}` };
     }
     const exe = await detectOda();

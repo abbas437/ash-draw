@@ -2,10 +2,10 @@
 // Run: node --test "electron/**/*.test.mjs"
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { promises as fs } from 'node:fs';
+import { promises as fs, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createOdaBridge, createDwgService, emptyReferencedBlocks, findOdaConverter, implausibleConversion, odaArgs, odaVersion, ODA_DWG_VERSIONS, ODA_HINT, ODA_TIMEOUT_MS } from './odaConverter.js';
+import { checkRendererSettingKey, settingsObject, createOdaBridge, createDwgService, emptyReferencedBlocks, findOdaConverter, implausibleConversion, isSafeOdaPath, MAIN_OWNED_SETTING_KEYS, odaPathProblem, resolveOdaPathChange, odaArgs, odaVersion, ODA_DWG_VERSIONS, ODA_HINT, ODA_TIMEOUT_MS } from './odaConverter.js';
 import { DWG_SAVE_VERSIONS } from '../src/core/dwgpref.js';
 
 const skip = process.platform === 'win32' ? 'the stub converter is a shebang script' : false;
@@ -341,4 +341,84 @@ test('emptyReferencedBlocks: attached xrefs (flag 4, overlay 12) and xref-depend
     '0', 'INSERT', '2', 'SITE-PLAN', '0', 'INSERT', '2', 'GRID', '0', 'INSERT', '2', 'SITE-PLAN|DOOR', '0', 'INSERT', '2', 'tag',
     '0', 'ENDSEC', '0', 'EOF', ''].join('\n');
   assert.deepEqual(emptyReferencedBlocks(new TextEncoder().encode(dxf)), { count: 1, names: ['tag'] });
+});
+
+test('isSafeOdaPath: local absolute ODAFileConverter paths only; UNC and device paths refused', () => {
+  for (const ok of ['C:\\Program Files\\ODA\\ODAFileConverter 25.12.0\\ODAFileConverter.exe', 'C:/ODA/odafileconverter.EXE']) assert.equal(isSafeOdaPath(ok, 'win32'), true, ok);
+  assert.equal(isSafeOdaPath('/opt/oda/ODAFileConverter', 'linux'), true);
+  for (const bad of ['', '\\\\server\\share\\ODAFileConverter.exe', '//server/share/ODAFileConverter.exe', '\\\\?\\C:\\ODA\\ODAFileConverter.exe', '\\\\.\\C:\\ODA\\ODAFileConverter.exe',
+    '\\\\?\\UNC\\server\\share\\ODAFileConverter.exe', '\\??\\UNC\\srv\\sh\\ODAFileConverter.exe', '\\??\\C:\\ODA\\ODAFileConverter.exe', '/??/UNC/srv/sh/ODAFileConverter.exe',
+    'ODAFileConverter.exe', 'C:\\tools\\evil.exe', 'C:ODAFileConverter.exe', null, 42]) assert.equal(isSafeOdaPath(bad, 'win32'), false, String(bad));
+  // Linux/macOS: a backslash is part of the file name, not a separator
+  for (const bad of ['/tmp/evil\\ODAFileConverter', '/tmp/evil\\ODAFileConverter.exe', '/??/srv/ODAFileConverter', '//srv/sh/ODAFileConverter', 'C:\\ODA\\ODAFileConverter.exe'])
+    assert.equal(isSafeOdaPath(bad, 'linux'), false, bad);
+});
+
+test('odaPathProblem names the reason: network/device path, or the wrong file name', () => {
+  assert.match(odaPathProblem('\\\\srv\\sh\\ODAFileConverter.exe', 'win32'), /local drive/);
+  assert.match(odaPathProblem('C:\\Downloads\\setup.exe', 'win32'), /named ODAFileConverter\.exe \(the file chosen is named "setup\.exe"\)/);
+  assert.match(odaPathProblem('/tmp/evil\\ODAFileConverter', 'linux'), /named ODAFileConverter \(the file chosen is named "evil\\ODAFileConverter"\)/);
+  assert.equal(odaPathProblem('C:\\ODA\\ODAFileConverter.exe', 'win32'), null);
+});
+
+test('checkRendererSettingKey: the converter keys belong to main; other keys pass', () => {
+  assert.deepEqual([...MAIN_OWNED_SETTING_KEYS], ['dwg.converter', 'dwg.odaPath']);
+  for (const k of ['dwg.odaPath', 'dwg.converter']) assert.throws(() => checkRendererSettingKey(k), /Preferences/, k);
+  for (const k of ['', 'a b', 'x'.repeat(65), null, 3]) assert.throws(() => checkRendererSettingKey(k), /invalid settings key/, String(k));
+  for (const k of ['dwg.cacheMaxMB', 'dwg.allowSave', 'dwg.saveVersion', 'theme', 'draw.unitAnswers']) assert.doesNotThrow(() => checkRendererSettingKey(k), k);
+});
+
+test('main.js: app:settingsGet and app:settingsSet check the key with checkRendererSettingKey; the renderer never sets the converter keys', () => {
+  const src = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
+  for (const ch of ['app:settingsGet', 'app:settingsSet']) {
+    const body = src.slice(src.indexOf(`handle('${ch}'`), src.indexOf('});', src.indexOf(`handle('${ch}'`)));
+    assert.match(body, /^handle\('[^']+', async \(k(, v)?\) => \{\s*checkRendererSettingKey\(k\);/, `${ch} must check its key first`);
+  }
+  const rendererDir = new URL('../renderer/', import.meta.url);
+  for (const f of ['app.js', 'units-ask.js', 'plot.js', 'autosave.js']) {
+    const r = readFileSync(new URL(f, rendererDir), 'utf8');
+    assert.doesNotMatch(r, /settings(Set|Get)\?*\.?\(\s*['"`]dwg\.(odaPath|converter)['"`]/, f);
+  }
+});
+
+test('resolveOdaPathChange: the renderer can clear, keep the saved path or return the Browse result, nothing else', () => {
+  const saved = 'C:\\ODA\\ODAFileConverter.exe', browsed = 'D:\\ODA\\ODAFileConverter.exe', platform = 'win32';
+  assert.equal(resolveOdaPathChange({ requested: '', saved, browsed: null, platform }), '');
+  assert.equal(resolveOdaPathChange({ requested: saved, saved, browsed: null, platform }), saved);
+  assert.equal(resolveOdaPathChange({ requested: browsed, saved, browsed, platform }), browsed);
+  assert.throws(() => resolveOdaPathChange({ requested: 'E:\\typed\\ODAFileConverter.exe', saved, browsed, platform }), /Browse/);
+  assert.throws(() => resolveOdaPathChange({ requested: browsed, saved: '', browsed: null, platform }), /Browse/);
+  const unc = '\\\\server\\share\\ODAFileConverter.exe';
+  assert.throws(() => resolveOdaPathChange({ requested: unc, saved: unc, browsed: unc, platform }), /network/);
+  assert.throws(() => resolveOdaPathChange({ requested: undefined, saved, browsed, platform }), /Browse/);
+});
+
+test('the engine ignores a UNC / device converter path from saved settings, before looking for the file', async () => {
+  // the path "exists" (isFile is stubbed true), so only the UNC / device refusal can keep it from being run
+  const checked = [], made = [];
+  const service = (odaPath) => createDwgService({ libre: {}, getConfig: () => ({ mode: 'oda', odaPath }), detectOda: async () => null,
+    isFile: async (f) => { checked.push(f); return true; }, makeOda: (exe) => { made.push(exe); return { toDxf: async () => { throw new Error('must not run'); } }; } });
+  for (const bad of ['//server/share/ODAFileConverter.exe', '\\\\server\\share\\ODAFileConverter.exe', '/??/UNC/srv/sh/ODAFileConverter.exe', '//?/C:/ODA/ODAFileConverter.exe']) {
+    const st = await service(bad).available();
+    assert.equal(st.oda.available, false, bad);
+  }
+  assert.deepEqual(checked, [], 'refused before the file is looked for');
+  assert.deepEqual(made, []);
+  // control: a local path with the stub is used
+  const local = process.platform === 'win32' ? 'C:\\ODA\\ODAFileConverter.exe' : '/opt/oda/ODAFileConverter';
+  assert.equal((await service(local).available()).oda.available, true);
+  assert.deepEqual(made, [local]);
+});
+
+test('settings keys: __proto__ and friends are refused; loaded settings inherit nothing', () => {
+  for (const k of ['__proto__', 'constructor', 'prototype']) assert.throws(() => checkRendererSettingKey(k), /invalid settings key/, k);
+  // the attack: settings[k] = value with k '__proto__' would make dwg.odaPath an inherited value
+  const s = settingsObject({ 'startup.mode': 'ask' });
+  s['__proto__'] = { 'dwg.odaPath': 'C:\\Users\\Public\\Downloads\\ODAFileConverter.exe', 'dwg.converter': 'oda' };
+  assert.equal(s['dwg.odaPath'], undefined);
+  assert.equal(s['dwg.converter'], undefined);
+  assert.equal(Object.getPrototypeOf(settingsObject(JSON.parse('{"__proto__": {"dwg.odaPath": "x"}}'))), null);
+  assert.equal(settingsObject(JSON.parse('{"__proto__": {"dwg.odaPath": "x"}}'))['dwg.odaPath'], undefined);
+  assert.deepEqual({ ...settingsObject([1, 2]) }, {});
+  assert.equal(JSON.stringify(settingsObject({ a: 1 })), '{"a":1}');
 });

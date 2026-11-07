@@ -107,6 +107,22 @@ try {
   await page.waitForTimeout(500);
   assert.equal(downloaded, false);
 
+  step = 'confirming a remembered unit makes it the newest remembered answer';
+  await page.evaluate(() => window.api.settingsSet('draw.unitAnswers', [['n:kept.dxf:77', 6], ['n:other.dxf:5', 1]]));
+  await page.reload({ waitUntil: 'load' }); // units-ask.js loads the remembered answers once per page
+  await page.waitForFunction(() => window.app && window.app.vp && window.app.doc, null, { timeout: 10000 });
+  await page.evaluate(async () => {
+    const M = await import('/src/core/model.js');
+    const doc = M.newDocument();
+    M.addEntity(doc, M.makeLine({ x: 0, y: 0 }, { x: 10, y: 0 }));
+    window.app.installDoc(doc, { path: null, name: 'kept.dxf', size: 77, format: 'dxf' });
+  });
+  await typeCmd('DIST');
+  await page.waitForSelector('#dlg[open] #units-remembered', { timeout: 5000 });
+  await page.getByRole('button', { name: 'Metre', exact: true }).click();
+  await page.waitForFunction(async () => (await window.api.settingsGet('draw.unitAnswers'))?.at(-1)?.[0] === 'n:kept.dxf:77', null, { timeout: 5000 });
+  assert.deepEqual(await page.evaluate(() => window.api.settingsGet('draw.unitAnswers')), [['n:other.dxf:5', 1], ['n:kept.dxf:77', 6]]);
+
   assert.deepEqual(problems, []);
   console.log('unitless e2e: OK');
 } catch (err) {

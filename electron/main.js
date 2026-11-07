@@ -11,7 +11,7 @@ import { converterPath, createDwgBridge, DWG_OUT_VERSIONS } from './dwgBridge.js
 import { cacheLimitBytes, createDwgCache, openCached } from './dwgCache.js';
 import { createHandoffStore } from './handoff.js';
 import { createClipboardBridge } from './clipboard.js';
-import { createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isOdaExeName, ODA_DOWNLOAD_URL, ODA_DWG_VERSIONS } from './odaConverter.js';
+import { checkRendererSettingKey, settingsObject, createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isSafeOdaPath, ODA_DOWNLOAD_URL, ODA_DWG_VERSIONS, odaPathProblem, resolveOdaPathChange } from './odaConverter.js';
 import { lockData, onSecondInstance } from './instance.js';
 import { saveDialogDefault, openDialogDir } from './savePath.js';
 import { createSymbolLibrary } from './symbols.js';
@@ -369,15 +369,15 @@ function registerIpc() {
   });
   handle('shell:showItem', (p) => { shell.showItemInFolder(grantedPath(p)); return true; });
   handle('app:settingsGet', async (k) => {
-    if (typeof k !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(k)) throw new TypeError('invalid settings key');
-    settings ??= await loadJson('settings.json');
+    checkRendererSettingKey(k); // the converter keys (dwg.converter, dwg.odaPath) are main's: dwg:setConfig / dwg:browseOda
+    settings ??= settingsObject(await loadJson('settings.json'));
     return Object.hasOwn(settings, k) ? settings[k] : undefined;
   });
   handle('app:settingsSet', async (k, v) => {
-    if (typeof k !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(k)) throw new TypeError('invalid settings key');
+    checkRendererSettingKey(k); // the converter keys (dwg.converter, dwg.odaPath) are main's: dwg:setConfig / dwg:browseOda
     const json = JSON.stringify(v ?? null);
     if (json.length > 64 * 1024) throw new RangeError('settings value too large');
-    settings ??= await loadJson('settings.json');
+    settings ??= settingsObject(await loadJson('settings.json'));
     settings[k] = JSON.parse(json);
     await saveJson('settings.json', settings);
   });
@@ -394,7 +394,7 @@ function registerIpc() {
   });
   // { mode, offer: { count, auto } | null }
   handle('app:sessionInfo', async () => {
-    settings ??= await loadJson('settings.json');
+    settings ??= settingsObject(await loadJson('settings.json'));
     const count = savedSession.files.length;
     return { mode: startupModeOf(settings['startup.mode']), offer: sessionOffer && count ? { count, auto: sessionOffer.auto } : null };
   });
@@ -409,19 +409,26 @@ function registerIpc() {
   });
   handle('app:recentClear', () => { recent = []; writeJsonSync('recent.json', recent); return true; });
   // DWG converter preference: settings 'dwg.converter' (auto | oda | libredwg) and 'dwg.odaPath' (validated at use).
-  handle('dwg:config', async () => { settings ??= await loadJson('settings.json'); return { mode: settings['dwg.converter'] ?? 'auto', odaPath: settings['dwg.odaPath'] ?? '' }; });
+  // A UNC / device path in saved settings is ignored; a new path is accepted only from dwg:browseOda (see resolveOdaPathChange).
+  let browsedOda = null;
+  const savedOda = () => (isSafeOdaPath(settings?.['dwg.odaPath']) ? settings['dwg.odaPath'] : '');
+  handle('dwg:config', async () => { settings ??= settingsObject(await loadJson('settings.json')); return { mode: settings['dwg.converter'] ?? 'auto', odaPath: savedOda() }; });
   handle('dwg:setConfig', async (opts) => {
     const o = plainObject(opts);
     if (!DWG_MODES.includes(o.mode)) throw new RangeError(`mode must be one of ${DWG_MODES.join(', ')}`);
-    if (o.odaPath !== '' && (!isPathString(o.odaPath) || !path.isAbsolute(o.odaPath) || !isOdaExeName(o.odaPath))) throw new TypeError('the ODA path must be the full path of ODAFileConverter.exe');
-    settings ??= await loadJson('settings.json');
-    settings['dwg.converter'] = o.mode; settings['dwg.odaPath'] = o.odaPath;
+    settings ??= settingsObject(await loadJson('settings.json'));
+    const odaPath = resolveOdaPathChange({ requested: o.odaPath, saved: savedOda(), browsed: browsedOda });
+    settings['dwg.converter'] = o.mode; settings['dwg.odaPath'] = odaPath;
     await saveJson('settings.json', settings);
     return true;
   });
   handle('dwg:browseOda', async () => {
     const r = await dialog.showOpenDialog(win, { title: 'Locate ODAFileConverter.exe', filters: [{ name: 'ODA File Converter', extensions: process.platform === 'win32' ? ['exe'] : ['*'] }], properties: ['openFile'] });
-    return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
+    if (r.canceled || !r.filePaths[0]) return null;
+    const problem = odaPathProblem(r.filePaths[0]);
+    if (problem) throw new TypeError(problem);
+    browsedOda = r.filePaths[0]; // main remembers it; the renderer can only hand it back to dwg:setConfig
+    return browsedOda;
   });
   // Only this fixed https address is ever opened (allow-list of one); the renderer passes nothing.
   handle('shell:openOdaDownload', () => {
@@ -453,7 +460,7 @@ function registerIpc() {
   async function openDwg(src, signal) {
     if (typeof src === 'string') {
       const p = grantedPath(src);
-      settings ??= await loadJson('settings.json');
+      settings ??= settingsObject(await loadJson('settings.json'));
       const av = await dwg.available();
       const binStat = async (f) => { try { const st = await fs.stat(f); return [st.size, st.mtimeMs]; } catch { return null; } }; // the binary itself, not only its reported version
       const converter = JSON.stringify([av.mode, av.libredwg?.version ?? null, await binStat(converterPath(libredwgDir, process.platform, 'dwg2dxf')),
@@ -467,7 +474,7 @@ function registerIpc() {
     return { url: handOff(dxfBytes), size: dxfBytes.byteLength, dwgSize: bytes.byteLength, header, warnings, engine, converter, errorCount, log };
   }
   handle('dwg:cacheInfo', async () => {
-    settings ??= await loadJson('settings.json');
+    settings ??= settingsObject(await loadJson('settings.json'));
     return { ...(await dwgCache.info()), limitBytes: cacheLimitBytes(settings['dwg.cacheMaxMB']) };
   });
   handle('dwg:cacheClear', () => dwgCache.clear());
@@ -492,13 +499,13 @@ app.whenReady().then(async () => {
   const programFiles = [...new Set([process.env.ProgramW6432, process.env.ProgramFiles, 'C:\\Program Files'].filter(Boolean))];
   dwg = createDwgService({
     libre: createDwgBridge(libredwgDir, process.platform, { tmpRoot }),
-    getConfig: () => ({ mode: settings?.['dwg.converter'], odaPath: settings?.['dwg.odaPath'] || '' }),
+    getConfig: () => ({ mode: settings?.['dwg.converter'], odaPath: savedOda() }),
     detectOda: () => (process.platform === 'win32' ? findOdaConverter(programFiles) : Promise.resolve(null)),
     makeOda: (exe) => createOdaBridge(exe, { tmpRoot }),
   });
   registerIpc();
   // Files given at start-up take priority: the previous session is then only offered, never reopened automatically.
-  settings ??= await loadJson('settings.json');
+  settings ??= settingsObject(await loadJson('settings.json'));
   loadSessionAndRecent();
   const mode = startupModeOf(settings['startup.mode']);
   if (mode !== 'new' && savedSession.files.length) sessionOffer = { auto: mode === 'restore' && pendingFiles.length === 0 };
