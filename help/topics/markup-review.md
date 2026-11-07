@@ -25,8 +25,8 @@ After the shape, a **Markup comment** box asks for the text. A comment is requir
 The panel ([show me](#showme:el:mk-panel)) lists every markup with its number, comment, author and date. Click a row to zoom to it.
 
 - The **filter** (All / Open / In progress / Closed) shows markups by status.
-- **Status** per row: *Open*, *In progress* or *Closed*. Closing a markup that has no code sets **Code A**.
-- **Code** per row: A, B or C.
+- **Status** per row: *Open*, *In progress* or *Closed*. Closing a markup that has no code sets **Code A**; setting it back to Open or In progress clears Code A.
+- **Code** per row: A, B or C. Choosing **Code A** closes the markup, so the code and the status always agree.
 - **×** deletes a markup.
 - **Author…** sets the reviewer name.
 - **CSV** exports the list (No, Rev., Comment, Author, Date, Status, Follow-ups). Status is the latest round's, and Follow-ups holds one `Rev.xx: text` line per follow-up in the same cell.
@@ -37,8 +37,8 @@ The panel ([show me](#showme:el:mk-panel)) lists every markup with its number, c
 
 When a contractor resubmits a drawing, review it again in a new round and answer each earlier comment under the original.
 
-- **Round:** field in the panel sets the round (for example Rev.01). It is remembered per drawing, and every new markup gets the current round.
-- **Follow-up…** opens the follow-up dialog; double-click a row to open it too. Enter the round, the comment, the code and the status. There is one follow-up per round: if the markup already has one for that round, the dialog edits it.
+- **Round:** field in the panel shows the review round (for example Rev.01). Every new markup and follow-up gets this round. The round is remembered for the drawing once you use it, so reopening the drawing keeps it; type a new label when the next resubmission arrives. Importing markups from the previous revision moves it on to the next round for you.
+- **Follow-up…** opens the follow-up dialog; double-click a row to open it too. Enter the comment, the code and the status; the round is the one in the panel's **Round** field. There is one follow-up per round: if the markup already has one for that round, the dialog edits it. Removing a follow-up takes effect when you click **Save**; **Cancel** leaves everything as it was.
 - **Code A closes the item.** For leftover minor points, add a new markup instead of leaving the item at B.
 - On the sheet, each follow-up appears under the original comment as a blue `Rev.xx:` line. The status and code of the markup are the latest round's.
 
@@ -48,10 +48,10 @@ Bring the markups of the previous revision into the new one so you can check eac
 
 1. Click **Import…** in the Markups panel, or type **MKIMPORT**.
 2. Pick the previous revision's DXF or DWG.
-3. Choose **Bring all** or **only open** (code B or C, not closed).
+3. Choose **Bring all** or **only open** (not closed and not Code A; markups without a code are included).
 4. The drawings are aligned automatically as in [Compare two drawings](#topic:compare-drawings), and the alignment quality is shown as a percentage. Choose **Aligned to the content** (offered when the alignment worked) or **Place at same coordinates**. If the new revision could not be aligned, the markups go at the same coordinates; move them afterwards if needed.
 
-Markups already in the drawing are skipped as duplicates. If a number is already taken, the clash is reported and the markup is not renumbered. One undo removes everything the import added.
+Markups already in the drawing are skipped as duplicates. If a number is already taken, the clash is reported and the markup is not renumbered. One undo removes everything the import added. If you switch to another drawing while the import is aligning, it is cancelled ("Import cancelled: the drawing was switched") and nothing is added.
 
 ## Export to CRS
 
