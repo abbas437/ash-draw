@@ -27,7 +27,7 @@ export async function ensureUnits(tab) {
     [...ASSUMED_UNITS.map(([code, label], i) => ({ label, value: code, primary: kept ? code === kept : i === 0 })), { label: 'Cancel', value: null }]);
   if (!r) return null;
   tab.assumedUnits = r;
-  if (key && r !== kept) {
+  if (key) { // a confirmed remembered answer is saved too, so it becomes the newest entry
     answers = rememberUnit(answers, key, r);
     window.api?.settingsSet?.(UNIT_ANSWERS_KEY, answers)?.catch?.(() => {});
   }
