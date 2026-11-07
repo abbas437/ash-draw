@@ -1,6 +1,6 @@
 // ACAD_TABLE (equipment schedules, legends, title blocks): read as a reference to its graphics block (*Tn), so it
-// draws, selects and explodes like an INSERT, and written back as the table it was read as (dxfRead buildTable,
-// dxfWrite tableTags).
+// draws, selects and explodes like an INSERT, and saved as a plain block reference (INSERT) to that block renamed to
+// an ordinary anonymous *U block: never as an ACAD_TABLE, which an R2000 file cannot hold (dxfRead buildTable).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -8,14 +8,14 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseDxf } from '../src/core/dxfRead.js';
-import { writeDxf, unkeptObjects } from '../src/core/dxfWrite.js';
+import { writeDxf, unkeptObjects, TABLE_NOTE } from '../src/core/dxfWrite.js';
 import { bboxOf, docExtents, explode, transformEntity } from '../src/core/geom.js';
 import { ezdxfAvailable } from './helpers.js';
 
 const near = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-9, `${msg}: ${a} vs ${b}`);
 
 /** a one-cell table at (100, 50) on layer SCHED; its block *T1 holds the cell border (a LINE) and the cell text */
-function tableDrawing({ placement = [] } = {}) {
+function tableDrawing({ placement = [], tableCodes = [] } = {}) {
   return ['0', 'SECTION', '2', 'HEADER', '9', '$ACADVER', '1', 'AC1027', '0', 'ENDSEC',
     '0', 'SECTION', '2', 'BLOCKS',
     '0', 'BLOCK', '5', '40', '330', '41', '100', 'AcDbEntity', '8', '0', '100', 'AcDbBlockBegin', '2', '*T1', '70', '1',
@@ -27,7 +27,7 @@ function tableDrawing({ placement = [] } = {}) {
     '0', 'SECTION', '2', 'ENTITIES',
     '0', 'ACAD_TABLE', '5', '2A', '330', '1F', '100', 'AcDbEntity', '8', 'SCHED', '62', '3',
     '100', 'AcDbBlockReference', '2', '*T1', '10', '100.0', '20', '50.0', '30', '0.0', ...placement,
-    '100', 'AcDbTable', '280', '0', '342', '4F', '343', '41', '11', '1.0', '21', '0.0', '31', '0.0',
+    '100', 'AcDbTable', ...tableCodes, '280', '0', '342', '4F', '343', '41', '11', '1.0', '21', '0.0', '31', '0.0',
     '90', '22', '91', '1', '92', '1', '93', '0', '94', '0', '95', '0', '96', '0', '141', '10.0', '142', '40.0',
     '171', '1', '172', '0', '173', '0', '174', '0', '175', '1', '176', '1', '91', '262177', '178', '0', '145', '0.0',
     '92', '0', '301', 'CELL_VALUE', '93', '6', '90', '4', '1', 'PUMP P-101', '94', '0', '300', '', '302', 'PUMP P-101', '304', 'ACVALUE_END',
@@ -73,72 +73,89 @@ test('read: rotation from 50, else from the 11 direction; scale from 41 / 42', (
   near(r.rot, 90, 'from the direction vector');
 });
 
-test('write: an unmodified table is written back as the ACAD_TABLE it was, its tags as read', () => {
+test('read: cell margins and other AcDbTable codes are not taken as the scale or rotation', () => {
+  const [t] = tables(parseDxf(tableDrawing({ tableCodes: ['40', '0.06', '41', '0.06', '42', '0.5', '43', '0.5', '50', '12.0'] })));
+  near(t.sx, 1, 'sx'); near(t.sy, 1, 'sy'); near(t.rot, 0, 'rot');
+  near(bboxOf(t, parseDxf(tableDrawing())).maxx, 140, 'full size');
+});
+
+/** the BLOCK records of the written file: { name, flags, types } */
+function blocksOf(text) {
+  const l = text.split(/\r?\n/), out = [];
+  const from = l.findIndex((v, i) => v === 'BLOCKS' && l[i - 1].trim() === '2');
+  let cur = null;
+  for (let i = from + 1; i < l.length - 1; i += 2) {
+    const c = +l[i], v = l[i + 1];
+    if (c === 0 && v === 'ENDSEC') break;
+    if (c === 0) { if (v === 'BLOCK') out.push(cur = { name: null, flags: null, types: [] }); else if (v !== 'ENDBLK') cur.types.push(v); continue; }
+    if (cur && !cur.types.length && c === 2 && cur.name === null) cur.name = v;
+    if (cur && !cur.types.length && c === 70 && cur.flags === null) cur.flags = +v;
+  }
+  return out;
+}
+const tag = (tags, c) => tags.find(([k]) => k === c)?.[1];
+
+test('write: a table is saved as a plain INSERT of its block, renamed to an anonymous *U block; no ACAD_TABLE', () => {
   const doc = parseDxf(tableDrawing());
   const text = writeDxf(doc);
   assert.deepEqual(unkeptObjects(doc), {}); assert.deepEqual(doc.lastWriteReport.skipped, {});
-  assert.deepEqual(doc.lastWriteReport.notes, []);
-  const [tags] = records(text, 'ACAD_TABLE');
-  assert.ok(tags, 'an ACAD_TABLE is written');
-  assert.equal(records(text, 'INSERT').length, 0);
-  // 343 names *T1's block record in the new file; the style (342) and cell field (344) handles are null there
-  const blk = text.split('\r\n'), at = blk.findIndex((v, i) => v === '*T1' && blk[i - 1].trim() === '2' && blk[i - 2] === 'AcDbBlockTableRecord');
-  assert.ok(at > 0, '*T1 block record');
-  const recH = blk.slice(0, at).lastIndexOf('BLOCK_RECORD');
-  const hRec = blk[recH + 2];
-  const expect = own(records(tableDrawing(), 'ACAD_TABLE')[0]).map(([c, v]) => [c, c === 343 ? hRec : c === 342 ? '0' : v]);
-  assert.deepEqual(own(tags), expect);
-  assert.ok(/\r\nCLASS\r\n1\r\nACAD_TABLE\r\n2\r\nAcDbTable\r\n/.test(text), 'the ACAD_TABLE class is declared');
-  // and it reads back as the same table
-  const [again] = tables(parseDxf(text));
-  assert.equal(again.block, '*T1'); near(again.p.x, 100, 'x');
-  assert.deepEqual(parseDxf(text).blocks.get('*T1').entities.map((e) => e.type), ['LINE', 'TEXT'], 'the *T block is kept');
+  assert.deepEqual(doc.lastWriteReport.notes, [TABLE_NOTE]);
+  assert.equal(records(text, 'ACAD_TABLE').length, 0);
+  assert.ok(!/ACAD_TABLE|AcDbTable/.test(text), 'no table entity or class');
+  assert.ok(!/\r\n\*T1\r\n/.test(text), 'no *T block name');
+  const [ins] = records(text, 'INSERT');
+  assert.equal(tag(ins, 2), '*U1'); near(+tag(ins, 10), 100, 'x'); near(+tag(ins, 20), 50, 'y');
+  assert.equal(tag(ins, 8), 'SCHED'); assert.equal(+tag(ins, 62), 3);
+  assert.ok(!ins.some(([c]) => c === 342 || c === 343 || c === 344), 'no table references');
+  assert.deepEqual(blocksOf(text).find((b) => b.name === '*U1'), { name: '*U1', flags: 1, types: ['LINE', 'TEXT'] });
+  // read back: a plain block reference, drawn the same
+  const back = parseDxf(text);
+  const [e] = back.entities;
+  assert.equal(e.type, 'INSERT'); assert.equal(e.block, '*U1'); assert.equal(e.table, undefined);
+  const b = bboxOf(e, back); near(b.minx, 100, 'minx'); near(b.maxx, 140, 'maxx'); near(b.miny, 40, 'miny');
+
+  // the name is past the drawing's own *U blocks
+  doc.blocks.set('*U3', { name: '*U3', base: { x: 0, y: 0 }, entities: [] });
+  assert.equal(tag(records(writeDxf(doc), 'INSERT')[0], 2), '*U4');
 });
 
-test('write: a moved table changes only its position codes; a turned one its direction', () => {
+test('write: a moved, scaled and turned table, and a copy, write their placement on the INSERT', () => {
   const doc = parseDxf(tableDrawing());
-  const before = own(records(writeDxf(doc), 'ACAD_TABLE')[0]);
-  doc.entities = [transformEntity(doc.entities[0], [1, 0, 0, 1, 5, -7])];
-  const moved = own(records(writeDxf(doc), 'ACAD_TABLE')[0]);
-  assert.equal(moved.length, before.length);
-  const diff = moved.map((t, i) => [t, before[i]]).filter(([a, b]) => a[1] !== b[1]);
-  assert.deepEqual(diff.map(([a]) => a[0]), [10, 20]);
-  near(+diff[0][0][1], 105, 'x'); near(+diff[1][0][1], 43, 'y');
-  const [back] = tables(parseDxf(writeDxf(doc)));
-  near(back.p.x, 105, 're-read x'); near(back.p.y, 43, 're-read y');
-
-  const c = Math.SQRT1_2;
-  doc.entities = [transformEntity(doc.entities[0], [c, c, -c, c, 0, 0])]; // 45 degrees about the origin
-  const turned = parseDxf(writeDxf(doc));
-  const [r] = tables(turned);
-  near(r.rot, 45, 'rotation kept through the 11 direction');
-  const tags = own(records(writeDxf(doc), 'ACAD_TABLE')[0]);
-  assert.ok(!tags.some(([k]) => k === 50), 'no 50 added when the table has a direction');
-  near(+tags.find(([k]) => k === 11)[1], c, '11'); near(+tags.find(([k]) => k === 21)[1], c, '21');
+  const [t] = doc.entities;
+  const c = Math.SQRT1_2 * 2; // 45 degrees, scale 2
+  const turned = transformEntity(t, [c, c, -c, c, 5, -7]);
+  doc.entities = [turned, transformEntity(t, [1, 0, 0, 1, 0, -20])];
+  const text = writeDxf(doc);
+  assert.equal(records(text, 'ACAD_TABLE').length, 0);
+  const [a, b] = records(text, 'INSERT');
+  assert.equal(tag(a, 2), '*U1'); assert.equal(tag(b, 2), '*U1');
+  near(+tag(a, 10), turned.p.x, 'x'); near(+tag(a, 20), turned.p.y, 'y');
+  near(+tag(a, 41), 2, 'sx'); near(+tag(a, 42), 2, 'sy'); near(+tag(a, 50), 45, 'rot');
+  near(+tag(b, 10), 100, 'copy x'); near(+tag(b, 20), 30, 'copy y');
+  assert.deepEqual(doc.lastWriteReport.notes, [TABLE_NOTE], 'one note');
+  const [ra, rb] = parseDxf(text).entities;
+  near(ra.rot, 45, 're-read rot'); near(ra.sx, 2, 're-read sx'); near(rb.p.y, 30, 're-read copy y');
 });
 
-test('write: an exploded table is written as its block entities; a copy and a LibreDWG save as plain references', () => {
+test('write: an exploded table is written as its block entities; a DWG save (LibreDWG) as a plain reference too', () => {
   const doc = parseDxf(tableDrawing());
   const t = doc.entities[0];
   doc.entities = explode(t, doc);
   const text = writeDxf(doc);
   assert.equal(records(text, 'ACAD_TABLE').length, 0);
   assert.deepEqual([records(text, 'LINE').length, records(text, 'TEXT').length], [1, 1]);
-
-  doc.entities = [t, transformEntity(t, [1, 0, 0, 1, 0, -20])];
-  const two = writeDxf(doc);
-  assert.deepEqual([records(two, 'ACAD_TABLE').length, records(two, 'INSERT').length], [1, 1], 'two tables cannot share one block');
-  assert.equal(doc.lastWriteReport.notes.length, 1);
+  assert.deepEqual(doc.lastWriteReport.notes, []);
 
   doc.entities = [t];
-  assert.deepEqual(unkeptObjects(doc, { dimensionsAsGeometry: true }), {});
-  const dwg = writeDxf(doc, { dimensionsAsGeometry: true });
-  assert.deepEqual([records(dwg, 'ACAD_TABLE').length, records(dwg, 'INSERT').length], [0, 1], 'DWG through LibreDWG');
-  assert.match(doc.lastWriteReport.notes.join(' '), /Tables are saved as plain geometry/);
-  assert.equal(records(writeDxf(doc, { mleadersAsGeometry: true }), 'ACAD_TABLE').length, 1, 'DWG through ODA keeps the table');
+  for (const opts of [{ dimensionsAsGeometry: true }, { mleadersAsGeometry: true }]) {
+    assert.deepEqual(unkeptObjects(doc, opts), {});
+    const dwg = writeDxf(doc, opts);
+    assert.deepEqual([records(dwg, 'ACAD_TABLE').length, tag(records(dwg, 'INSERT')[0], 2)], [0, '*U1']);
+    assert.deepEqual(doc.lastWriteReport.notes, [TABLE_NOTE]);
+  }
 });
 
-test('ezdxf audits the written table cleanly and reads it as an ACAD_TABLE with its block', (t) => {
+test('ezdxf audits the written table cleanly and reads it as an INSERT of its block', (t) => {
   const py = ezdxfAvailable();
   if (!py) { t.skip('ezdxf not installed'); return; }
   const dir = mkdtempSync(path.join(tmpdir(), 'ash-table-'));
@@ -147,8 +164,9 @@ test('ezdxf audits the written table cleanly and reads it as an ACAD_TABLE with 
     writeFileSync(f, writeDxf(parseDxf(tableDrawing())));
     const r = spawnSync(py, ['-c', `import ezdxf,sys
 d=ezdxf.readfile(sys.argv[1]); a=d.audit()
-ts=[e for e in d.modelspace() if e.dxftype()=='ACAD_TABLE']
-print(len(a.errors), len(ts), ts[0].dxf.geometry if ts else '-', sorted(e.dxftype() for e in d.blocks.get('*T1')))`, f], { encoding: 'utf8' });
-    assert.equal(r.stdout.trim(), "0 1 *T1 ['LINE', 'TEXT']", r.stderr);
+es=[e.dxftype() for e in d.modelspace()]
+i=d.modelspace()[0]
+print(len(a.errors), es, i.dxf.name, tuple(round(v, 6) for v in i.dxf.insert)[:2], sorted(e.dxftype() for e in d.blocks.get(i.dxf.name)))`, f], { encoding: 'utf8' });
+    assert.equal(r.stdout.trim(), "0 ['INSERT'] *U1 (100.0, 50.0) ['LINE', 'TEXT']", r.stderr);
   } finally { rmSync(dir, { recursive: true }); }
 });

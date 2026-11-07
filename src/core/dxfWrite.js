@@ -82,6 +82,8 @@ class Out {
   }
 }
 
+/** the save note (lastWriteReport.notes) when a drawing with tables is written (DXF, and DWG through either converter) */
+export const TABLE_NOTE = 'Tables are saved as blocks: their look is kept, but they are no longer editable as tables (edit cell text in AutoCAD).';
 const WRITTEN = new Set(['LINE', 'XLINE', 'RAY', 'CIRCLE', 'ARC', 'ELLIPSE', 'LWPOLYLINE', 'SPLINE', 'TEXT', 'MTEXT', '3DFACE',
   'OLE2FRAME', 'POINT', 'SOLID', 'INSERT', 'DIMENSION', 'MLEADER', 'LEADER', 'HATCH', 'IMAGE', 'WIPEOUT', 'MLINE', 'PROXY', 'VIEWPORT']);
 /** why `e` cannot be written (the lastWriteReport.skipped key), or null when it is written. The one rule for both the
@@ -103,36 +105,6 @@ export function unwritable(e, doc, opts = {}) {
     case 'PROXY': return e.name === 'ACAD_PROXY_ENTITY' && e.raw?.length && !opts.dimensionsAsGeometry ? null : e.name;
     default: return null;
   }
-}
-
-/** an ACAD_TABLE's own tags as read (dxfRead buildTable: e.table.raw), the placement codes (10/20, 50 and the 11/21
- *  direction, 41/42) changed only when the table was moved, rotated or scaled since it was read (e.table.at), so an
- *  unmodified table is written exactly as read. 2 names its block, 343 the block's record in this file (`blockRecH`);
- *  every other handle reference (320..369, 1005: table style, cell blocks / fields) is written as a null handle, the
- *  objects they name not being written. -> [code, value][] */
-export function tableTags(e, blockRecH) {
-  const at = e.table.at ?? {};
-  const moved = (k, v) => !(Math.abs((at[k] ?? NaN) - (v ?? 0)) <= 1e-9 * Math.max(1, Math.abs(v ?? 0)));
-  const pos = moved('x', e.p.x) || moved('y', e.p.y), rot = moved('rot', e.rot || 0), scale = moved('sx', e.sx ?? 1) || moved('sy', e.sy ?? 1);
-  const r = (e.rot || 0) * DEG;
-  const set = { 2: e.block };
-  if (pos) Object.assign(set, { 10: e.p.x, 20: e.p.y });
-  if (rot) Object.assign(set, { 50: e.rot || 0, 11: Math.cos(r), 21: Math.sin(r) });
-  if (scale) Object.assign(set, { 41: e.sx ?? 1, 42: e.sy ?? 1 });
-  const seen = new Set(), out = [];
-  let after = -1; // where a missing 50 / 41 / 42 goes: after the insertion point
-  for (const [c, v] of e.table.raw) {
-    if (c < 1000 && c in set && !seen.has(c)) { seen.add(c); out.push([c, set[c]]); }
-    else if (c === 343) out.push([c, blockRecH]);
-    else if ((c >= 320 && c <= 369) || c === 1005) out.push([c, '0']);
-    else out.push([c, v]);
-    if (after < 0 && (c === 30 || (c === 20 && seen.has(10)))) after = out.length;
-  }
-  const add = [];
-  if (rot && !seen.has(50) && !seen.has(11)) add.push([50, e.rot || 0]);
-  if (scale && !seen.has(41)) add.push([41, e.sx ?? 1], [42, e.sy ?? 1], [43, 1]);
-  if (add.length) out.splice(after < 0 ? out.length : after, 0, ...add);
-  return out;
 }
 
 /** the objects of `doc` a save with `opts` leaves out: { key: count } (the keys of lastWriteReport.skipped), the
@@ -215,6 +187,12 @@ export function* writeDxfSteps(doc, opts = {}) {
   }
   const blockNames = [...allBlocks.keys()];
   const blockRec = new Map(blockNames.map((n) => [n, H()]));
+  // a table (ACAD_TABLE, dxfRead buildTable) is saved as a plain reference to its graphics block: AutoCAD has tables
+  // from 2005 only, and these carry the 2007+ layout this R2000 file cannot declare. *T names are a table's own, so
+  // those blocks are written as ordinary anonymous blocks (*U, flag 1), numbered past the drawing's own *U names.
+  let nextU = 1 + Math.max(0, ...blockNames.map((n) => /^\*U(\d+)$/i.exec(n)?.[1] ?? 0).map(Number));
+  const renamed = new Map(blockNames.filter((n) => /^\*T/i.test(n)).map((n) => [n, `*U${nextU++}`]));
+  const outName = (n) => renamed.get(n) ?? n;
   const allLists = [doc.entities, ...[...doc.blocks.values()].map((b) => b.entities)];
   const ltDefs = new Map(); // upper name -> def
   for (const lt of doc.linetypes.values()) if (!/^(CONTINUOUS|BYLAYER|BYBLOCK)$/.test(lt.name)) ltDefs.set(lt.name.toUpperCase(), lt);
@@ -301,7 +279,6 @@ export function* writeDxfSteps(doc, opts = {}) {
   const imageDefsOut = new Map(); // file path -> { h, def, reactors: [{ img: IMAGE handle, r: IMAGEDEF_REACTOR handle }] }
   const hImageDict = H(), hWipeoutVars = H();
   let hasWipeouts = false, hasArcDims = false, hasJoggedDims = false, reportedTable = false;
-  const tableBlocks = new Set(); // blocks written as an ACAD_TABLE's graphics
   function writeEntity(o, e, owner) {
     const why = unwritable(e, doc, opts);
     if (why) { report.skipped[why] = (report.skipped[why] ?? 0) + 1; return false; }
@@ -433,28 +410,12 @@ export function* writeDxfSteps(doc, opts = {}) {
         o.pt(10, p[0].x, p[0].y); o.pt(11, p[1].x, p[1].y); o.pt(12, p[2].x, p[2].y); o.pt(13, p4.x, p4.y); return true;
       }
       case 'INSERT': {
-        // a table (ACAD_TABLE, dxfRead buildTable) is written back as one, from its own tags; LibreDWG's dxf2dwg cannot
-        // take it (DWG: a plain reference to its block), nor can two tables share one block (a copy: a plain reference)
-        if (e.table?.raw?.length && !asGeometry) {
-          if (!tableBlocks.has(e.block)) {
-            tableBlocks.add(e.block);
-            head(o, e, 'ACAD_TABLE', owner);
-            for (const [c, v] of tableTags(e, blockRec.get(e.block))) {
-              if (c === 1001) xdApps.add(String(v).trim());
-              if ((c >= 1 && c <= 9) || (c >= 300 && c <= 309) || (c >= 1000 && c <= 1009)) o.s(c, v); else o.p(c, v);
-            }
-            return true;
-          }
-          const note = 'A copied table was saved as a plain block reference (its copy stays visible; only the original stays an editable table).';
-          if (!report.notes.includes(note)) report.notes.push(note);
-        } else if (e.table?.raw?.length && !reportedTable) {
-          reportedTable = true; report.notes.push('Tables are saved as plain geometry in DWG files (they stay visible but are no longer editable as tables).');
-        }
+        if (e.table && !reportedTable) { reportedTable = true; report.notes.push(TABLE_NOTE); }
         const atts = e.attribs?.length ? e.attribs : null;
         // XCLIP: extension dictionary -> ACAD_FILTER -> SPATIAL -> SPATIAL_FILTER, written with the OBJECTS
         const hX = e.clip?.pts?.length >= 2 ? H() : null;
         const hIns = head(o, e, 'INSERT', owner, hX); o.p(100, 'AcDbBlockReference');
-        if (hX) clipRefs.push({ hIns, hX, e }); if (atts) o.p(66, 1); o.s(2, e.block); o.pt(10, e.p.x, e.p.y);
+        if (hX) clipRefs.push({ hIns, hX, e }); if (atts) o.p(66, 1); o.s(2, outName(e.block)); o.pt(10, e.p.x, e.p.y);
         if (e.sx !== 1) o.p(41, e.sx); if (e.sy !== 1) o.p(42, e.sy); if (e.sx !== 1 || e.sy !== 1) o.p(43, 1);
         if (e.rot) o.p(50, e.rot);
         if ((e.cols || 1) > 1 || (e.rows || 1) > 1) { o.p(70, e.cols || 1); o.p(71, e.rows || 1); o.p(44, e.colSp || 0); o.p(45, e.rowSp || 0); }
@@ -478,7 +439,7 @@ export function* writeDxfSteps(doc, opts = {}) {
           for (const [c, v] of dimensionTags(e)) if (typeof v === 'string') o.s(c, v); else o.p(c, v);
           return true;
         }
-        head(o, { ...e }, 'INSERT', owner); o.p(100, 'AcDbBlockReference'); o.s(2, e.block); o.pt(10, 0, 0);
+        head(o, { ...e }, 'INSERT', owner); o.p(100, 'AcDbBlockReference'); o.s(2, outName(e.block)); o.pt(10, 0, 0);
         if (!reportedDim) { reportedDim = true; report.notes.push(asGeometry ? 'Dimensions are saved as plain geometry in DWG files (they stay visible but are no longer editable as dimensions).' : 'A dimension without full source data was saved as plain geometry.'); }
         return true;
       }
@@ -581,8 +542,8 @@ export function* writeDxfSteps(doc, opts = {}) {
   for (const [name, blk] of allBlocks) {
     const rec = blockRec.get(name);
     blocksOut.p(0, 'BLOCK'); blocksOut.p(5, H()); blocksOut.p(330, rec); blocksOut.p(100, 'AcDbEntity'); blocksOut.p(8, '0');
-    blocksOut.p(100, 'AcDbBlockBegin'); blocksOut.s(2, name); blocksOut.p(70, blk.xref ? (blk.xref.flags ?? (blk.xref.overlay ? 12 : 4)) | 4 : name.startsWith('*') ? 1 : 0);
-    blocksOut.pt(10, blk.base.x, blk.base.y); blocksOut.s(3, name); blocksOut.s(1, blk.xref ? blk.xref.path : '');
+    blocksOut.p(100, 'AcDbBlockBegin'); blocksOut.s(2, outName(name)); blocksOut.p(70, blk.xref ? (blk.xref.flags ?? (blk.xref.overlay ? 12 : 4)) | 4 : name.startsWith('*') ? 1 : 0);
+    blocksOut.pt(10, blk.base.x, blk.base.y); blocksOut.s(3, outName(name)); blocksOut.s(1, blk.xref ? blk.xref.path : '');
     if (!blk.xref) {
       for (const e of blk.entities) {
         if (writeEntity(blocksOut, e, rec)) report.entities++;
@@ -682,7 +643,6 @@ export function* writeDxfSteps(doc, opts = {}) {
     cls('WIPEOUT', 'AcDbWipeout', 'WipeOut', 127);
   }
   if (hasArcDims) cls('ARC_DIMENSION', 'AcDbArcDimension', 'ObjectDBX Classes', 1025);
-  if (tableBlocks.size) cls('ACAD_TABLE', 'AcDbTable', 'ObjectDBX Classes', 1025);
   if (hasJoggedDims) cls('LARGE_RADIAL_DIMENSION', 'AcDbRadialDimensionLarge', 'ObjectDBX Classes', 1025);
   out.p(0, 'ENDSEC');
 
@@ -784,7 +744,7 @@ export function* writeDxfSteps(doc, opts = {}) {
   out.p(0, 'BLOCK_RECORD'); out.p(5, hModelRec); out.p(330, tbl.BLOCK_RECORD); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, 'AcDbBlockTableRecord'); out.p(2, '*Model_Space'); out.p(340, hModelLayout);
   out.p(0, 'BLOCK_RECORD'); out.p(5, hPaperRec); out.p(330, tbl.BLOCK_RECORD); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, 'AcDbBlockTableRecord'); out.p(2, '*Paper_Space'); out.p(340, hPaperLayout);
   for (const pl of paperLayouts.filter((x) => x.rec !== hPaperRec)) { out.p(0, 'BLOCK_RECORD'); out.p(5, pl.rec); out.p(330, tbl.BLOCK_RECORD); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, 'AcDbBlockTableRecord'); out.s(2, pl.name); out.p(340, pl.layoutH); }
-  for (const n of blockNames) { out.p(0, 'BLOCK_RECORD'); out.p(5, blockRec.get(n)); out.p(330, tbl.BLOCK_RECORD); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, 'AcDbBlockTableRecord'); out.s(2, n); }
+  for (const n of blockNames) { out.p(0, 'BLOCK_RECORD'); out.p(5, blockRec.get(n)); out.p(330, tbl.BLOCK_RECORD); out.p(100, 'AcDbSymbolTableRecord'); out.p(100, 'AcDbBlockTableRecord'); out.s(2, outName(n)); }
   out.p(0, 'ENDTAB');
   out.p(0, 'ENDSEC');
 

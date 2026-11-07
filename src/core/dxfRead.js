@@ -542,17 +542,20 @@ function buildInsert(rec, o) {
 }
 
 // ACAD_TABLE: shown as a reference to its graphics block (*Tn, group 2), so it draws, selects, plots, compares,
-// snaps and explodes like an INSERT. Its own tags from AcDbBlockReference on (cells, style, XDATA) are kept in
-// e.table.raw and written back as read (dxfWrite); e.table.at is the placement as read, so a save patches the
-// position / rotation / scale codes only when the table was moved. No 50: the rotation comes from the 11 direction.
+// snaps and explodes like an INSERT (and is saved as one, dxfWrite). The placement is the AcDbBlockReference part's:
+// 10 the insertion point, 41/42 scale and 50 rotation only when they lie in that subclass (AutoCAD writes none there;
+// in AcDbTable 40/41 are cell margins), else scale 1 and the rotation of the 11 direction (AcDbTable). Its own tags from
+// AcDbBlockReference on (cells, style, XDATA) are kept in e.table.raw; nothing writes them.
 function buildTable(rec, o) {
   const all = rec.tags();
-  const ent = all.findIndex(([c, v]) => c === 100 && v.trim() === 'AcDbEntity');
-  const at = all.findIndex(([c], i) => c === 100 && i > ent);
+  const sub = (name, from = 0) => all.findIndex(([c, v], i) => i >= from && c === 100 && v.trim() === name);
+  const br = sub('AcDbBlockReference'), tb = br < 0 ? -1 : sub('AcDbTable', br);
+  const ref = br < 0 ? [] : all.slice(br + 1, tb < 0 ? all.length : tb);
+  const refNum = (c, d) => { const t = ref.find(([k]) => k === c); const x = t ? parseFloat(t[1]) : NaN; return Number.isFinite(x) ? x : d; };
   const dir = rec.has(11) ? pt(rec, 11) : null;
-  const rot = rec.has(50) ? rec.num(50) : dir && (dir.x || dir.y) ? Math.atan2(dir.y, dir.x) * 180 / Math.PI : 0;
-  const ins = makeInsert(rec.str(2), pt(rec, 10), { ...o, sx: rec.num(41, 1), sy: rec.num(42, 1), rot });
-  ins.table = { raw: ent >= 0 && at > 0 ? all.slice(at) : [] }; // .at: set by buildEntity (after the OCS)
+  const rot = refNum(50, null) ?? (dir && (dir.x || dir.y) ? Math.atan2(dir.y, dir.x) * 180 / Math.PI : 0);
+  const ins = makeInsert(rec.str(2), pt(rec, 10), { ...o, sx: refNum(41, 1), sy: refNum(42, 1), rot });
+  ins.table = { raw: br >= 0 ? all.slice(br) : [] };
   return ins;
 }
 
@@ -844,7 +847,6 @@ function buildEntity(rec, doc, extra) {
   if (xd) e.xdata = xd;
   // OCS entities (3D POLYLINEs, flag 8, are WCS); LINE, SPLINE, POINT, LEADER, MLEADER, IMAGE, MTEXT and ELLIPSE are WCS
   if (rec.type in OCS_ELEVATION && !(rec.type === 'POLYLINE' && (rec.int(70) & 8))) e = ocsToPlan(rec, e);
-  if (e.table) e.table.at = { x: e.p.x, y: e.p.y, sx: e.sx, sy: e.sy, rot: e.rot };
   return e;
 }
 
