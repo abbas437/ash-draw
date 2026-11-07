@@ -71,7 +71,7 @@ test('writePlotStyleTable round-trips through parsePlotStyleTable', () => {
 });
 
 test('a CTB written by ezdxf (third-party writer) parses', (t) => {
-  const py = spawnSync('python3', ['-c', 'import ezdxf.addons.acadctb'], { encoding: 'utf8' });
+  const py = spawnSync('python3', ['-P', '-c', 'import ezdxf.addons.acadctb'], { encoding: 'utf8' });
   if (py.error || py.status !== 0) { t.skip(`python3 with ezdxf is not available: ${py.error?.message ?? py.stderr.trim()}`); return; }
   const dir = mkdtempSync(path.join(tmpdir(), 'ctb-ezdxf-'));
   try {
@@ -84,7 +84,7 @@ test('a CTB written by ezdxf (third-party writer) parses', (t) => {
       's = ctb[5]', 's.color = (12, 34, 56)', 's.set_lineweight(0.77)',
       'ctb.save(sys.argv[1])',
     ].join('\n');
-    const run = spawnSync('python3', ['-I', '-c', script, file], { encoding: 'utf8' });
+    const run = spawnSync('python3', ['-P', '-c', script, file], { encoding: 'utf8' });
     assert.equal(run.status, 0, run.stderr);
     const tb = parsePlotStyleTable(new Uint8Array(readFileSync(file)));
     assert.equal(tb.kind, 'ctb');

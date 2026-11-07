@@ -1,1 +1,3 @@
 tools/libredwg-win/** text eol=lf
+# Golden outputs are compared byte for byte: never convert their line endings
+test/fixtures/plotstyle-golden/** -text
