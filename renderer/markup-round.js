@@ -5,7 +5,9 @@ import { nextRevLabel } from '../src/core/markup.js';
 
 export const ROUND_KEY = 'markup.round';
 export const ROUND_MAX = 200;
-const LABEL_MAX = 40;
+export const LABEL_MAX = 20; // as MARKUP_REV_MAX, the most characters of a rev label in the XDATA
+/** a label trimmed and cut to LABEL_MAX characters (code points) */
+export const roundLabel = (l) => [...String(l ?? '').trim()].slice(0, LABEL_MAX).join('');
 
 /** the round a drawing's markups suggest: nextRevLabel of every rev and follow-up rev they carry; none -> 'Rev.00' */
 export function defaultRound(markups) {
@@ -19,7 +21,7 @@ export function cleanRounds(v) {
   const seen = new Map();
   for (const p of v) {
     if (!Array.isArray(p) || typeof p[0] !== 'string' || !p[0] || typeof p[1] !== 'string' || !p[1].trim()) continue;
-    seen.delete(p[0]); seen.set(p[0], p[1].trim().slice(0, LABEL_MAX));
+    seen.delete(p[0]); seen.set(p[0], roundLabel(p[1]));
   }
   return [...seen].slice(-ROUND_MAX);
 }
@@ -30,6 +32,14 @@ export const recallRound = (list, key) => (key ? list.find((p) => p[0] === key)?
 /** a new list with key -> label as the newest entry; an empty label forgets the key; beyond 200 entries the oldest go */
 export function rememberRound(list, key, label) {
   if (!key) return list;
-  const rest = list.filter((p) => p[0] !== key), l = String(label ?? '').trim().slice(0, LABEL_MAX);
+  const rest = list.filter((p) => p[0] !== key), l = roundLabel(label);
   return (l ? [...rest, [key, l]] : rest).slice(-ROUND_MAX);
 }
+
+/** the round of a drawing: the one stored for its key, else the one kept for its tab (typed or used this session), else
+ *  `fallback` (the panel: defaultRound of the markups the tab had when first shown) */
+export const roundOf = (list, key, tabRound, fallback) => recallRound(list, key) || tabRound || fallback || 'Rev.00';
+
+/** a round label used in a drawing (a markup placed, a follow-up saved, an import): stored for its key the first time
+ *  only, so reopening the drawing keeps the round; returns the list (the same one when nothing changes) */
+export const useRound = (list, key, label) => (key && !recallRound(list, key) && roundLabel(label) ? rememberRound(list, key, label) : list);

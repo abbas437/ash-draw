@@ -42,6 +42,20 @@ function xPieces(prefix, escaped) {
 /** the most XDATA bytes one entity may carry (DXF / AutoCAD limit); counted as written to the DXF plus 3 bytes a string */
 export const MARKUP_XDATA_LIMIT = 16383;
 const xdataBytes = (tags) => tags.reduce((t, [, v]) => t + 3 + dxfLen(v), 3 + MARKUP_APP.length);
+/** the most characters of an author name and of a revision label kept in the XDATA (one line each, within 255 DXF bytes) */
+export const MARKUP_AUTHOR_MAX = 30;
+export const MARKUP_REV_MAX = 20;
+/** one XDATA line `prefix` + value cut to at most `max` characters and 255 DXF bytes; escaped: cut only between %XX tokens */
+function xLine(prefix, value, max, escaped = true) {
+  const room = 255 - dxfLen(prefix);
+  let out = '', n = 0, bytes = 0;
+  for (const tok of (escaped ? escX(value) : String(value)).match(escaped ? /%[0-9A-F]{2}|[^]/gu : /[^]/gu) ?? []) {
+    const b = dxfLen(tok);
+    if (n + 1 > max || bytes + b > room) break;
+    out += tok; n++; bytes += b;
+  }
+  return `${prefix}${out}`;
+}
 
 /** a follow-up with every field set: an unknown code is none, no status is Closed for code A and Open otherwise, Closed with no code is A */
 function normFollowUp(f = {}) {
@@ -89,29 +103,35 @@ export function markupXData(data) {
   const tags = [];
   const fus = (data.followUps ?? []).map(normFollowUp), last = fus.at(-1);
   const cur = last ? { ...data, status: last.status, code: last.code } : data;
-  for (const k of ['uid', 'no', 'role', 'kind', 'author', 'date', 'status', 'code']) if (cur[k] != null && cur[k] !== '') tags.push([1000, `${k}=${cur[k]}`]);
+  for (const k of ['uid', 'no', 'role', 'kind', 'author', 'date', 'status', 'code']) {
+    if (cur[k] == null || cur[k] === '') continue;
+    tags.push([1000, k === 'author' ? xLine('author=', cur[k], MARKUP_AUTHOR_MAX, false) : `${k}=${cur[k]}`]); // author: read raw
+  }
   const c = String(data.comment ?? '');
   for (const p of xPieces('comment=', c)) tags.push([1000, p]); // raw (joined as is on read), pieces within 255 DXF bytes
-  if (data.rev) tags.push([1000, `rev=${escX(data.rev)}`]);
+  if (data.rev) tags.push([1000, xLine('rev=', data.rev, MARKUP_REV_MAX)]);
   if (fus.length) {
     const os = data.origStatus ?? data.status, oc = data.origCode ?? data.code;
     if (os) tags.push([1000, `ostatus=${os}`]);
     if (oc) tags.push([1000, `ocode=${oc}`]);
     fus.forEach((f, i) => {
-      for (const k of ['rev', 'code', 'status', 'author', 'date']) if (f[k]) tags.push([1000, `fu${i + 1}.${k}=${escX(f[k])}`]);
+      for (const k of ['rev', 'code', 'status', 'author', 'date']) {
+        if (f[k]) tags.push([1000, xLine(`fu${i + 1}.${k}=`, f[k], k === 'rev' ? MARKUP_REV_MAX : k === 'author' ? MARKUP_AUTHOR_MAX : PIECE)]);
+      }
       for (const p of xPieces(`fu${i + 1}.text=`, escX(f.text))) tags.push([1000, p]);
     });
   }
   return { [MARKUP_APP]: tags };
 }
 
-/** MTEXT text of a follow-up line: \, { and } escaped, line breaks as \P */
+/** MTEXT text of a comment or follow-up line: \, { and } escaped, line breaks as \P */
 const escMText = (t) => String(t).replace(/[\\{}]/g, (ch) => `\\${ch}`).replace(/\r\n|\r|\n/g, '\\P');
-/** the comment text drawn for markup `meta`: "<no>: <comment>", then one blue (ACI 5) paragraph "Rev.xx: <text>" per follow-up */
+/** the comment text drawn for markup `meta`: "<no>: <comment>", then one blue (ACI 5) paragraph "Rev.xx: <text>" per follow-up
+ *  (all MTEXT-escaped; the text of a file written before the comment was escaped is redrawn only when the markup changes) */
 export function markupLabel(meta) {
-  const head = meta.comment ? `${meta.no}: ${meta.comment}` : String(meta.no);
+  const head = meta.comment ? `${meta.no}: ${escMText(meta.comment)}` : String(meta.no);
   const fus = (meta.followUps ?? []).map((f) => `\\P{\\C5;${escMText(f.rev ? `${f.rev}: ${f.text}` : f.text)}}`);
-  return head.replace(/\r?\n/g, '\\P') + fus.join('');
+  return head + fus.join('');
 }
 
 const nextNo = (doc) => doc.entities.reduce((m, e) => Math.max(m, markupData(e)?.no ?? 0), 0) + 1;
@@ -210,23 +230,30 @@ function rewriteMarkup(s, uid, label, change, { text = false } = {}) {
 /** a change of the follow-up list: `fn` gets a copy of the list and returns the new one */
 const withFollowUps = (fn) => (d) => ({ ...d, followUps: fn(d.followUps.map((f) => ({ ...f }))) });
 
+/** the code that goes with a new status: closing with no code gives A; reopening (Open / In progress) a code A clears it */
+export const codeForStatus = (status, code) => (status === 'Closed' ? code || 'A' : code === 'A' ? '' : code ?? '');
+/** the status that goes with a new code: code A (addressed) closes the item; another code keeps the status */
+export const statusForCode = (code, status) => (code === 'A' ? 'Closed' : status);
+
 /**
  * change the status (Open / In progress / Closed) of markup `uid` (of its latest follow-up when it has any): one undo step.
- * Closing with no review code gives code A (addressed = Code A); a code already chosen is never changed.
+ * The code follows codeForStatus: closing with no code gives A, Open or In progress clears a code A; B and C are kept.
  */
 export function setMarkupStatus(s, uid, status) {
   if (!MARKUP_STATUSES.includes(status)) return 0;
   return rewriteMarkup(s, uid, 'Markup status', (d) => {
-    if (d.followUps.length) return withFollowUps((l) => { Object.assign(l.at(-1), { status, code: status === 'Closed' && !l.at(-1).code ? 'A' : l.at(-1).code }); return l; })(d);
-    return { ...d, status, code: status === 'Closed' && !d.code ? 'A' : (d.code ?? '') };
+    if (d.followUps.length) return withFollowUps((l) => { Object.assign(l.at(-1), { status, code: codeForStatus(status, l.at(-1).code) }); return l; })(d);
+    return { ...d, status, code: codeForStatus(status, d.code) };
   });
 }
 
-/** change the review code (A / B / C, '' = none) of markup `uid` (of its latest follow-up when it has any): one undo step */
+/** change the review code (A / B / C, '' = none) of markup `uid` (of its latest follow-up when it has any): one undo step;
+ *  code A also sets the status Closed (statusForCode) */
 export function setMarkupCode(s, uid, code) {
   const c = MARKUP_CODES.includes(code) ? code : '';
   return rewriteMarkup(s, uid, 'Markup code', (d) => (d.followUps.length
-    ? withFollowUps((l) => { l.at(-1).code = c; return l; })(d) : { ...d, code: c }));
+    ? withFollowUps((l) => { Object.assign(l.at(-1), { code: c, status: statusForCode(c, l.at(-1).status) }); return l; })(d)
+    : { ...d, code: c, status: statusForCode(c, d.status ?? 'Open') }));
 }
 
 /**
@@ -252,6 +279,25 @@ export function editFollowUp(s, uid, index, changes = {}) {
       l[index] = f;
       return l;
     })(d);
+  }, { text: true });
+}
+
+/**
+ * the Follow-up dialog's Save as one undo step on markup `uid`: change follow-up `index` by `changes` (as editFollowUp),
+ * drop the follow-ups at the indices `remove` (counted before the change), then append `add` (as addFollowUp); with none left, the original status and code come back. Returns the parts changed.
+ */
+export function saveFollowUps(s, uid, { index = -1, changes = null, add = null, remove = [] } = {}) {
+  const gone = new Set(remove);
+  return rewriteMarkup(s, uid, 'Markup follow-up', (d) => {
+    const l = d.followUps.map((f) => ({ ...f }));
+    if (changes && l[index]) {
+      const f = { ...l[index], ...changes };
+      if (changes.code === 'A' && changes.status == null) delete f.status;
+      l[index] = f;
+    }
+    const kept = l.filter((_, i) => !gone.has(i));
+    if (add) kept.push({ ...add, rev: add.rev ?? nextRevLabel([d.rev, ...kept.map((f) => f.rev)]) });
+    return kept.length || !d.followUps.length ? { ...d, followUps: kept } : { ...d, followUps: kept, status: d.origStatus, code: d.origCode };
   }, { text: true });
 }
 

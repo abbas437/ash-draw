@@ -559,7 +559,9 @@ class App {
   /** a finished save of `tab` (captured when the save started): its new file, and the save point recorded at the start */
   afterSave(tab, path, format, { clean = true } = {}) {
     if (!this.tabs.includes(tab)) return; // closed while it was being saved
+    const round = this.markupPanel?.tabRound(tab); // the review round goes with the drawing to its new file
     tab.file = { path, name: path ? path.replace(/^.*[\\/]/, '') : `${baseName(tab.file.name)}.${format}`, format };
+    this.markupPanel?.fileSaved(tab, round);
     if (clean) { tab.session.markSaved(tab.saving?.step); tab.recoveredFrom = null; this.autosave.discard(tab); }
     this.updateTitle();
     this.help?.event('file:saved');

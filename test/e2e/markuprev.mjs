@@ -57,6 +57,8 @@ try {
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 850 }, acceptDownloads: true });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
+  // the browser api is frozen: leave it open, so Save can be given a desktop writeFile (the reopen-round step)
+  await page.addInitScript(() => { const f = Object.freeze; Object.freeze = (o) => (o && 'saveFile' in o && 'isElectron' in o ? o : f(o)); });
   await page.goto(`http://127.0.0.1:${server.address().port}/renderer/index.html`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.app && window.app.vp && window.app.doc, null, { timeout: 10000 });
   const clickWorld = async (x, y) => {
@@ -199,6 +201,49 @@ print('xlsx ok')`;
   assert.match(await page.locator('#mk-imp-align').textContent(), /^Aligned automatically/);
   await ok();
   near((await centres())[0], apply(MOVE, DAMPER), 'big: the markup lands on the moved damper');
+
+  step = 'import: switching tab during the alignment cancels it and imports nothing';
+  const counts = () => page.evaluate(async () => { const { listMarkups } = await import('../src/core/markup.js'); return window.app.tabs.map((t) => listMarkups(t.doc).length); });
+  await page.evaluate(() => { window.app.activateIndex(1); window.__held = false; window.__hold = new Promise((r) => { window.__release = r; }); window.app.importHold = () => { window.__held = true; return window.__hold; }; });
+  const before = await counts();
+  const [fc2] = await Promise.all([page.waitForEvent('filechooser'), page.click('#mk-import')]);
+  await fc2.setFiles({ name: 'Rev00.dxf', mimeType: 'application/dxf', buffer: Buffer.from(REV00_CLOSED) });
+  await page.waitForFunction(() => window.__held, null, { timeout: 30000 });
+  await page.evaluate(() => { window.app.activateIndex(0); window.__release(); });
+  await page.waitForFunction(() => /Import cancelled: the drawing was switched/.test(document.getElementById('toast').textContent), null, { timeout: 5000 });
+  assert.equal(await page.locator('#dlg[open]').count(), 0, 'no import dialog');
+  assert.deepEqual(await counts(), before, 'nothing imported into any tab');
+  await page.evaluate(() => { delete window.app.importHold; });
+
+  step = 'round: remembered per drawing once used; after save and reopen it is still Rev.00, so a new markup gets Rev.00';
+  await page.evaluate(async () => {
+    window.__w = {};
+    window.api.writeFile = async (p, b) => { window.__w[p] = b; return { path: p, backup: null }; };
+    const M = await import('../src/core/model.js');
+    const d = M.newDocument(); d.units = 4; // millimetres: Save asks nothing
+    window.app.installDoc(d, { path: '/rev/Plan.dxf', name: 'Plan.dxf', format: 'dxf' });
+    const vp = window.app.vp; vp.view = { ...vp.view, cx: 0, cy: 0, zoom: 4 }; vp.render();
+  });
+  const markupAt = async (x, c) => {
+    await page.click('#tools button[data-tool="mkc"]');
+    await clickWorld(x, 0); await clickWorld(x + 10, 0);
+    await page.locator('#dlg[open] textarea').fill(c); await ok();
+    await page.keyboard.press('Escape');
+  };
+  assert.equal(await page.locator('#mk-round').inputValue(), 'Rev.00');
+  await markupAt(0, 'Day 1 comment');
+  assert.deepEqual(await page.locator('#markups .mk-rev').allTextContents(), ['Rev.00']);
+  await page.evaluate(() => window.app.save());
+  assert.deepEqual(await page.evaluate(() => Object.keys(window.__w)), ['/rev/Plan.dxf'], 'saved over its path');
+  await page.evaluate(async () => {
+    await window.app.closeTab();
+    await window.app.loadFile({ path: '/rev/Plan.dxf', name: 'Plan.dxf', bytes: window.__w['/rev/Plan.dxf'] });
+    const vp = window.app.vp; vp.view = { ...vp.view, cx: 0, cy: 0, zoom: 4 }; vp.render();
+  });
+  assert.equal(await page.locator('#markups .mk-row').count(), 1, 'the saved drawing is reopened');
+  assert.equal(await page.locator('#mk-round').inputValue(), 'Rev.00', 'the round used on day 1 is kept (not the next one)');
+  await markupAt(40, 'Day 2 comment');
+  assert.deepEqual(await page.locator('#markups .mk-rev').allTextContents(), ['Rev.00', 'Rev.00'], 'a new markup gets Rev.00');
 
   assert.deepEqual(problems, []);
   console.log('markuprev e2e: OK');

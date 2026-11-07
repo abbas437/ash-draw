@@ -11,7 +11,7 @@ import { Session } from '../src/core/edit.js';
 import {
   addMarkup, listMarkups, setMarkupStatus, deleteMarkup, markupData, markupsCsv, setMarkupsVisible, MARKUP_LAYER,
   setMarkupCode, renumberMarkups, markupsCrsSheet, markupXData, MARKUP_STATUSES,
-  addFollowUp, editFollowUp, removeFollowUp, setMarkupRev, nextRevLabel, MARKUP_XDATA_LIMIT,
+  addFollowUp, editFollowUp, removeFollowUp, setMarkupRev, nextRevLabel, MARKUP_XDATA_LIMIT, saveFollowUps, markupLabel,
 } from '../src/core/markup.js';
 import { xlsxBytes } from '../src/core/xlsx.js';
 import { ezdxfAvailable, validateWithEzdxf } from './helpers.js';
@@ -182,7 +182,7 @@ test('Export to CRS: 8 columns (Rev. after No.), header block, Calibri 11, wrapp
   assert.deepEqual(got.head, ['Drawing', 'HVAC-01.dxf', 'Export date', '2026-10-20']);
   assert.deepEqual(got.rows, [
     ['No.', 'Rev.', 'Sheet / Layout', 'Comment', 'Reviewer', 'Date', 'Status', 'Code'],
-    [1, null, 'Model', 'Damper access <600> & "east"', 'Ahmad', '2026-10-08', 'Open', 'A'],
+    [1, null, 'Model', 'Damper access <600> & "east"', 'Ahmad', '2026-10-08', 'Closed', 'A'], // code A closes the item
     [2, null, 'Model', 'Duct size to suit', 'Ahmad', '2026-10-08', 'Closed', 'B'],
     [3, null, 'Model', 'No code yet', 'Ahmad', '2026-10-08', 'Open', null],
   ]);
@@ -414,4 +414,75 @@ test('Export to CRS with follow-ups: rich-text comment, blue plain Rev.xx lines,
   const sheet = (list) => markupsCrsSheet([{ name: 'Model', markups: list }], { date: 'd' }).rows.at(-1);
   const plainRow = sheet(listMarkups(s.doc).slice(2));
   assert.deepEqual(plainRow[3], { v: 'Untouched', style: { vAlign: 'top', wrap: true } });
+});
+
+// ---- review fixes ----
+test('code and status agree: code A closes, reopening clears code A (with and without follow-ups); B and C are kept', () => {
+  const s = new Session(newDocument());
+  addMarkup(s, 'text', { p: { x: 0, y: 0 } }, { ...meta, comment: 'one' });
+  addMarkup(s, 'text', { p: { x: 9, y: 0 } }, { ...meta, comment: 'two' });
+  const [a, b] = listMarkups(s.doc);
+  const get = (uid) => { const m = listMarkups(s.doc).find((k) => k.uid === uid); return [m.code, m.status]; };
+  setMarkupCode(s, a.uid, 'A');
+  assert.deepEqual(get(a.uid), ['A', 'Closed'], 'code A sets Closed');
+  setMarkupStatus(s, a.uid, 'In progress');
+  assert.deepEqual(get(a.uid), ['', 'In progress'], 'In progress clears code A');
+  setMarkupCode(s, a.uid, 'B'); setMarkupStatus(s, a.uid, 'Open');
+  assert.deepEqual(get(a.uid), ['B', 'Open'], 'B is kept when reopened');
+  setMarkupStatus(s, a.uid, 'Closed');
+  assert.deepEqual(get(a.uid), ['B', 'Closed'], 'a chosen code is kept on closing');
+  addFollowUp(s, b.uid, { rev: 'Rev.01', text: 'Addressed', code: 'B', status: 'Open', author: 'AR', date: '2026-11-07' });
+  setMarkupCode(s, b.uid, 'A');
+  assert.deepEqual(get(b.uid), ['A', 'Closed'], 'on the latest follow-up');
+  setMarkupStatus(s, b.uid, 'Open');
+  assert.deepEqual(get(b.uid), ['', 'Open']);
+  assert.deepEqual(listMarkups(s.doc).find((k) => k.uid === b.uid).followUps.map((f) => [f.code, f.status]), [['', 'Open']]);
+});
+
+test('the comment line of the MTEXT is escaped (backslash, braces, newline as \\P); renumber keeps it', () => {
+  assert.equal(markupLabel({ no: 3, comment: 'C:\\Pipes\\Unit {x}\nnext' }), '3: C:\\\\Pipes\\\\Unit \\{x\\}\\Pnext');
+  const s = new Session(newDocument());
+  addMarkup(s, 'text', { p: { x: 0, y: 0 } }, { ...meta, comment: 'C:\\Pipes\\Unit }', no: 4 });
+  const text = () => s.doc.entities.find((e) => e.type === 'MTEXT').text;
+  assert.equal(text(), '4: C:\\\\Pipes\\\\Unit \\}');
+  renumberMarkups(s, 1);
+  assert.equal(text(), '1: C:\\\\Pipes\\\\Unit \\}');
+  addFollowUp(s, listMarkups(s.doc)[0].uid, { rev: 'Rev.01', text: 'ok', author: 'AR', date: '2026-11-07' });
+  renumberMarkups(s, 7);
+  assert.equal(text(), '7: C:\\\\Pipes\\\\Unit \\}\\P{\\C5;Rev.01: ok}');
+  assert.equal(listMarkups(s.doc)[0].comment, 'C:\\Pipes\\Unit }', 'the stored comment is the raw text');
+});
+
+test('XDATA: a long Arabic author and rev labels are cut so every written line is at most 255 bytes', () => {
+  const s = new Session(newDocument());
+  const author = 'م'.repeat(40), rev = 'Rev.' + 'ر'.repeat(40);
+  addMarkup(s, 'circle', { c: { x: 0, y: 0 }, r: 2 }, { author, date: '2026-11-07', rev, comment: 'تعليق '.repeat(60) });
+  const { uid } = listMarkups(s.doc)[0];
+  for (let i = 0; i < 12; i++) addFollowUp(s, uid, { rev: `${rev}%${i}`, text: `متابعة ${i}`, author, date: '2026-11-07' });
+  const lines = writeDxf(s.doc).split(/\r?\n/).filter((l) => /^(uid|no|role|kind|author|date|status|code|comment|rev|ostatus|ocode|fu\d+\.\w+)=/.test(l));
+  assert.ok(lines.some((l) => l.startsWith('fu12.author=')));
+  const over = lines.filter((l) => Buffer.byteLength(l, 'utf8') > 255);
+  assert.deepEqual(over, []);
+  const m = listMarkups(parseDxf(writeDxf(s.doc)))[0];
+  assert.equal(m.author, 'م'.repeat(30), 'author cut to 30 characters');
+  assert.equal(m.rev, rev.slice(0, 20), 'rev cut to 20 characters');
+  assert.equal(m.followUps[11].author, 'م'.repeat(30));
+  assert.equal(m.followUps[11].rev, `${rev}%11`.slice(0, 20));
+  assert.equal(m.followUps.length, 12);
+});
+
+test('saveFollowUps: edit, removals and a new follow-up in one undo step; all removed brings the original state back', () => {
+  const s = new Session(newDocument());
+  addMarkup(s, 'text', { p: { x: 0, y: 0 } }, { ...meta, comment: 'one', code: 'C' });
+  const { uid } = listMarkups(s.doc)[0];
+  addFollowUp(s, uid, { rev: 'Rev.01', text: 'a', code: 'B', author: 'AR', date: '2026-11-01' });
+  addFollowUp(s, uid, { rev: 'Rev.02', text: 'b', code: 'B', author: 'AR', date: '2026-11-02' });
+  saveFollowUps(s, uid, { index: 1, changes: { text: 'b2', date: '2026-11-07' }, remove: [0], add: { rev: 'Rev.03', text: 'c', code: 'A', author: 'ZZ', date: '2026-11-07' } });
+  const fus = () => listMarkups(s.doc)[0].followUps.map((f) => [f.rev, f.text, f.author, f.date, f.code]);
+  assert.deepEqual(fus(), [['Rev.02', 'b2', 'AR', '2026-11-07', 'B'], ['Rev.03', 'c', 'ZZ', '2026-11-07', 'A']]);
+  assert.equal(listMarkups(s.doc)[0].status, 'Closed');
+  s.undo();
+  assert.deepEqual(fus().map((f) => f[1]), ['a', 'b'], 'one undo step');
+  saveFollowUps(s, uid, { remove: [0, 1] });
+  assert.deepEqual([listMarkups(s.doc)[0].followUps.length, listMarkups(s.doc)[0].code, listMarkups(s.doc)[0].status], [0, 'C', 'Open']);
 });

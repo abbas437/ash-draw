@@ -4,11 +4,11 @@
 // tools.js owns the Tool base class and passes it to createMarkupTools (a factory, so this module does not import tools.js).
 import {
   addMarkup, listMarkups, setMarkupStatus, setMarkupCode, deleteMarkup, setMarkupsVisible, renumberMarkups, markupsCsv, markupsCrsSheet,
-  addFollowUp, editFollowUp, removeFollowUp, latestRevLabel, nextRevLabel, MARKUP_LAYER, MARKUP_CODES, MARKUP_STATUSES,
+  saveFollowUps, statusForCode, codeForStatus, latestRevLabel, nextRevLabel, MARKUP_LAYER, MARKUP_CODES, MARKUP_STATUSES,
 } from '../src/core/markup.js';
 import { alignForImportSteps, importMarkups } from '../src/core/markupImport.js';
 import { runSliced } from '../src/core/slice.js';
-import { ROUND_KEY, defaultRound, cleanRounds, recallRound, rememberRound } from './markup-round.js';
+import { ROUND_KEY, defaultRound, cleanRounds, recallRound, rememberRound, roundOf, useRound, roundLabel } from './markup-round.js';
 import { unitKey } from './unit-memory.js';
 import { xlsxBytes } from '../src/core/xlsx.js';
 import { dist } from '../src/core/geom.js';
@@ -49,7 +49,9 @@ export function createMarkupTools(h, { Tool }) {
         const r = await this.h.askText({ title: 'Markup comment', value: '', height });
         const comment = r?.text.replace(/\r/g, '').trim();
         if (!comment) { if (r) this.h.toast('A markup needs a short comment; nothing was added.'); return; }
-        addMarkup(this.h.session, kind, geo, { comment: comment.split('\n').join(' '), author: authorOf(this.h), rev: this.h.markupPanel?.round() || undefined, height: r.height, no: this.h.markupStartNo ?? undefined });
+        const rev = this.h.markupPanel?.round() || undefined;
+        addMarkup(this.h.session, kind, geo, { comment: comment.split('\n').join(' '), author: authorOf(this.h), rev, height: r.height, no: this.h.markupStartNo ?? undefined });
+        if (rev) await this.h.markupPanel.useRound(this.h.active, rev); // the round is remembered for the drawing once used
         if (this.h.markupStartNo != null) { this.h.markupStartNo = null; this.h.markupPanel?.render(); } // a start number applies to one markup
       } finally { this.a = null; this.busy = false; this.h.refreshPrompt(); this.vp.requestRender(); }
     }
@@ -132,53 +134,68 @@ export class MarkupPanel {
     app.vp.on('change', () => this.render());
     this.render();
   }
-  /** the current review round: the one set for this drawing, else defaultRound of the markups it had when first shown
-   *  (Rev.00 with none; pinned per tab, so adding markups does not move it) */
+  /** the current review round (roundOf): the one stored for this drawing (typed, or first used: a markup placed, a follow-up
+   *  saved, an import), else the one kept for this tab, else defaultRound of the markups it had when first shown (Rev.00
+   *  with none; pinned per tab, so adding markups does not move it) */
   round() {
-    const set = this.setRoundOf();
-    if (set) return set;
     const tab = this.app.active;
     if (!tab) return 'Rev.00';
     if (!this.tabDefaults.has(tab)) this.tabDefaults.set(tab, defaultRound(this.app.doc ? listMarkups(this.app.doc) : []));
-    return this.tabDefaults.get(tab);
+    return roundOf(this.rounds, this.fileKey(), this.tabRounds.get(tab), this.tabDefaults.get(tab));
   }
   /** set the round of this drawing (an empty one goes back to the default), remembered as setting 'markup.round' */
   async setRound(label) {
-    const key = this.fileKey(), l = String(label ?? '').trim();
+    const key = this.fileKey(), l = roundLabel(label);
     this.rounds = rememberRound(this.rounds, key, l);
     if (l) this.tabRounds.set(this.app.active, l); else this.tabRounds.delete(this.app.active); // also for a drawing with no key (this session)
-    await window.api.settingsSet?.(ROUND_KEY, this.rounds)?.catch?.(() => {});
-    this.render();
+    await this.saveRounds();
   }
+  async saveRounds() { await window.api.settingsSet?.(ROUND_KEY, this.rounds)?.catch?.(() => {}); this.render(); }
+  /** round `label` was used in `tab`: kept for the tab and, the first time for its drawing, stored for its key (useRound) */
+  async useRound(tab, label) {
+    if (!tab || !roundLabel(label)) return;
+    if (!this.tabRounds.has(tab)) this.tabRounds.set(tab, roundLabel(label));
+    const next = useRound(this.rounds, unitKey(tab.file), label);
+    if (next !== this.rounds) { this.rounds = next; await this.saveRounds(); }
+  }
+  /** the round stored or kept for `tab` ('' = none: the default applies) */
+  tabRound(tab) { return tab ? recallRound(this.rounds, unitKey(tab.file)) || this.tabRounds.get(tab) || '' : ''; }
+  /** app.afterSave: `tab` was saved under a new file; `label` (tabRound before the save) is stored for its new key */
+  fileSaved(tab, label) { if (label) this.useRound(tab, label); }
   /** the settings key of the drawing shown (unit-memory.js unitKey; null before a drawing is shown) */
   fileKey() { return this.app.active ? unitKey(this.app.file) : null; }
-  /** the round the reviewer set for this drawing ('' = none) */
-  setRoundOf() { return recallRound(this.rounds, this.fileKey()) || (this.app.active && this.tabRounds.get(this.app.active)) || ''; }
-  /** Follow-up…: the original comment, its follow-ups (edit / remove), and a form for this round's follow-up (edited when it exists) */
+  /** Follow-up…: the original comment, its follow-ups (edit / remove), and a form for this round's follow-up (edited when it
+   *  exists). Remove is queued and Save applies it with the form as one undo step, so Cancel changes nothing. Editing keeps
+   *  the follow-up's author; its date becomes today only when the text, code or status changes. */
   async followUp(uid) {
-    const s = this.app.session, round = this.round();
-    const find = () => listMarkups(this.app.doc).find((k) => k.uid === uid);
-    let m = find();
+    const app = this.app, s = app.session, tab = app.active, round = this.round();
+    const m = listMarkups(app.doc).find((k) => k.uid === uid);
     if (!m) return;
-    const text = el('textarea', { id: 'mk-fu-text', rows: 4, style: 'width:100%' });
+    const text = el('textarea', { id: 'mk-fu-text', rows: 4, style: 'width:100%', 'aria-labelledby': 'mk-fu-head' });
     const code = el('select', { id: 'mk-fu-code' }, ['', ...MARKUP_CODES].map((c) => el('option', { value: c, text: c || '–' })));
     const status = el('select', { id: 'mk-fu-status' }, MARKUP_STATUSES.map((v) => el('option', { value: v, text: v })));
-    code.addEventListener('change', () => { if (code.value === 'A') status.value = 'Closed'; });
-    const formHead = el('div', { class: 'mk-fu-head' });
+    // the same rule as the panel's row selects (src/core/markup.js statusForCode / codeForStatus)
+    code.addEventListener('change', () => { status.value = statusForCode(code.value, status.value); });
+    status.addEventListener('change', () => { code.value = codeForStatus(status.value, code.value); });
+    const formHead = el('div', { class: 'mk-fu-head', id: 'mk-fu-head' });
+    const removed = new Set(); // follow-ups Remove marked (indices of m.followUps), applied on Save
     let index = -1; // the follow-up the form edits (-1 = a new one)
+    const head = () => { const f = m.followUps[index]; formHead.textContent = f ? `Edit follow-up ${f.rev || `#${index + 1}`}` : `New follow-up (${round})`; };
     const load = (i) => {
       index = i;
       const f = m.followUps[i];
       text.value = f?.text ?? ''; code.value = f?.code ?? ''; status.value = f?.status ?? 'Open';
-      formHead.textContent = f ? `Edit follow-up ${f.rev || `#${i + 1}`}` : `New follow-up (${round})`;
+      head();
     };
     const list = el('div', { class: 'mk-fu-list' });
     const fill = () => {
-      list.replaceChildren(...(m.followUps.length ? m.followUps.map((f, i) => el('div', { class: 'mk-fu-item' },
+      const shown = m.followUps.map((f, i) => [f, i]).filter(([, i]) => !removed.has(i));
+      list.replaceChildren(...(shown.length ? shown.map(([f, i]) => el('div', { class: 'mk-fu-item' },
         el('span', { class: 'mk-fu-line', text: `${f.rev ? `${f.rev}: ` : ''}${f.text}` }),
         el('span', { class: 'mk-meta', text: ` ${f.code || '–'} · ${f.status} · ${f.author} · ${f.date}` }),
         el('button', { type: 'button', class: 'mk-fu-edit', onclick: () => load(i) }, 'Edit'),
-        el('button', { type: 'button', class: 'mk-fu-del', onclick: () => { removeFollowUp(s, uid, i); m = find() ?? m; fill(); load(m.followUps.findIndex((g) => g.rev === round)); } }, 'Remove')))
+        // the form keeps what was typed; removing the follow-up it edits makes it a new one
+        el('button', { type: 'button', class: 'mk-fu-del', onclick: () => { removed.add(i); if (index === i) { index = -1; head(); } fill(); } }, 'Remove')))
         : [el('p', { class: 'mk-meta', text: 'No follow-ups yet.' })]));
     };
     fill();
@@ -186,22 +203,37 @@ export class MarkupPanel {
     const r = await modal(`Follow-up on markup ${m.no}`, el('div', { class: 'mk-fu' },
       el('p', { class: 'mk-fu-orig' }, el('b', { text: `${m.no}${m.rev ? ` (${m.rev})` : ''}: ` }), m.comment),
       list, formHead, text,
-      el('label', {}, 'Code ', code, ' Status ', status),
+      el('div', {}, el('label', {}, 'Code ', code), ' ', el('label', {}, 'Status ', status)),
       el('p', { class: 'mk-meta', text: 'Code A closes the item; for leftover minor points add a new markup.' })),
     [{ label: 'Save', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
     if (r !== 'ok') return;
+    if (app.active !== tab || app.session !== s) { toast('Follow-up not saved: the drawing was switched.'); return; }
     const t = text.value.replace(/\r/g, '').trim();
-    if (!t) { toast('A follow-up needs a short text; nothing was saved.'); return; }
-    const fu = { text: t, code: code.value, status: status.value, author: authorOf(this.app), date: new Date().toISOString().slice(0, 10) };
+    if (!t && !removed.size) { toast('A follow-up needs a short text; nothing was saved.'); return; }
+    const date = new Date().toISOString().slice(0, 10), op = { remove: [...removed] };
+    if (t && index >= 0) {
+      const f = m.followUps[index], fu = { text: t, code: code.value, status: status.value };
+      if (fu.text !== f.text || fu.code !== f.code || fu.status !== f.status) Object.assign(op, { index, changes: { ...fu, date } });
+    } else if (t) op.add = { text: t, code: code.value, status: status.value, author: authorOf(app), date, rev: round };
+    if (!op.changes && !op.add && !op.remove.length) return;
     try {
-      if (index >= 0) editFollowUp(s, uid, index, fu); else addFollowUp(s, uid, { ...fu, rev: round });
+      saveFollowUps(s, uid, op);
+      if (op.add || m.followUps[index]?.rev === round) await this.useRound(tab, round);
     } catch (err) { if (err instanceof RangeError) toast(err.message); else throw err; }
   }
   /** Import… (MKIMPORT): the markups of the previous revision's file (read without a tab), aligned onto this drawing's
-   *  content automatically (time-sliced, with Cancel) or placed at the same coordinates; one undo step */
+   *  content automatically (time-sliced, with Cancel) or placed at the same coordinates; one undo step. Into the tab shown
+   *  when it started: switching tab (or closing it) before the import is applied cancels it. app.importHold (tests): a
+   *  function returning a promise awaited once the alignment is done, so a test can switch tab mid-way. */
   async importFromFile() {
     const app = this.app;
     if (!app.doc) return;
+    const tab = app.active, session = app.session;
+    const switched = () => {
+      if (app.active === tab && app.session === session && app.tabs.includes(tab)) return false;
+      toast('Import cancelled: the drawing was switched', 4000);
+      return true;
+    };
     if (this.importing) { toast('An import is already running.'); return; }
     let f;
     try { [f] = await window.api.openFiles({ filters: OPEN_FILTERS, multiple: false }); } catch (err) { toast(`Could not open: ${err.message}`); return; }
@@ -212,6 +244,7 @@ export class MarkupPanel {
       try { ({ doc: src } = await loadPicked(window.api, f)); } catch (err) { await message('Cannot open this file', err.message || String(err)); return; }
       const all = [listMarkups(src), ...(src.layouts ?? []).map((l) => listMarkups({ ...src, entities: l.entities ?? [] }))].flat();
       if (!all.length) { toast(`No markups in ${f.name}`); return; }
+      if (switched()) return;
       const target = app.doc.modelDoc ?? app.doc;
       const ac = new AbortController();
       const pt = progressToast('Aligning…', () => ac.abort());
@@ -219,12 +252,14 @@ export class MarkupPanel {
       try {
         await new Promise((res) => requestAnimationFrame(() => setTimeout(res, 0))); // let the toast paint
         a = await runSliced(alignForImportSteps(src, target), { signal: ac.signal, onProgress: (v) => pt.set(v), cancelMessage: 'Import was cancelled.' });
+        await app.importHold?.();
         toast('', 1);
       } catch (err) {
         if (err.code === 'CANCELLED') toast('Import cancelled.', 2500); else toast(`Alignment failed: ${err?.message || err}`, 8000);
         return;
       }
-      const only = el('select', { id: 'mk-imp-only' }, el('option', { value: 'all', text: 'All' }), el('option', { value: 'open', text: 'Only open (codes B, C and not closed)' }));
+      if (switched()) return;
+      const only = el('select', { id: 'mk-imp-only' }, el('option', { value: 'all', text: 'All' }), el('option', { value: 'open', text: 'Only open (not closed and not code A)' }));
       const auto = a.method === 'auto';
       const place = el('select', { id: 'mk-imp-place' }, ...(auto ? [el('option', { value: 'auto', text: 'Aligned to the content' })] : []), el('option', { value: 'same', text: 'Place at same coordinates' }));
       const r = await modal('Import markups', el('div', { class: 'mk-imp' },
@@ -233,10 +268,10 @@ export class MarkupPanel {
         el('p', { id: 'mk-imp-align', text: auto ? `Aligned automatically (quality ${a.quality} %)` : `Could not align automatically (${a.quality} %)` }),
         el('label', {}, 'Placement ', place)),
       [{ label: 'Import', value: 'ok', primary: true }, { label: 'Cancel', value: null }]);
-      if (r !== 'ok') return;
+      if (r !== 'ok' || switched()) return;
       const spaceUids = (d) => [listMarkups(d), ...(d.layouts ?? []).map((l) => listMarkups({ ...d, entities: l.entities ?? [] }))].flat().map((m) => m.uid);
       const before = new Set(spaceUids(target));
-      const res = importMarkups(app.session, src, { transform: place.value === 'auto' ? a.transform : undefined, only: only.value });
+      const res = importMarkups(session, src, { transform: place.value === 'auto' ? a.transform : undefined, only: only.value });
       const skipped = [res.skippedClosed && `${res.skippedClosed} closed`, res.skippedDuplicate && `${res.skippedDuplicate} already here`, res.skippedNoLayout && `${res.skippedNoLayout} on a layout this drawing lacks`].filter(Boolean);
       const parts = [`Imported ${res.imported} markup${res.imported === 1 ? '' : 's'}`];
       if (skipped.length) parts.push(`skipped ${skipped.join(', ')}`);
@@ -249,7 +284,8 @@ export class MarkupPanel {
       const ids = new Set(got.map((m) => m.uid));
       const here = listMarkups(app.doc).filter((m) => ids.has(m.uid));
       if (here.length) this.showAll(here);
-      if (!this.setRoundOf()) await this.setRound(nextRevLabel(got.flatMap((m) => [m.rev, ...(m.followUps ?? []).map((u) => u.rev)])));
+      // an import is a use of the round; into a drawing with no round of its own yet, the next after the imported ones
+      await this.useRound(tab, this.tabRound(tab) || nextRevLabel(got.flatMap((m) => [m.rev, ...(m.followUps ?? []).map((u) => u.rev)])));
     } finally { this.importing = false; }
   }
   /** zoom to (and select) several markups */
