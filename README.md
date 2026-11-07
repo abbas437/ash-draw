@@ -21,7 +21,7 @@ Built with Electron by ASH Technical & Project Management Services (ASH PMCS).
 - **Open** DXF (ASCII, R12 to R2018) and DWG drawings; drag-and-drop, File > Open, or "Open with" from Explorer.
 - **View**: wheel zoom, middle-mouse or Space + drag to pan, zoom to fit, light theme by default with an optional dark theme (View > Dark theme, remembered), the drawing background follows the theme and can be switched on its own, optional lineweights.
   Layers, colours (ACI and true colour), linetypes, blocks and block arrays, hatches (solid and common patterns), text and
-  multiline text, splines, ellipses, dimensions (as drawn) and leaders are displayed.
+  multiline text, splines, ellipses, dimensions and leaders are displayed.
 - **Draw**: line, polyline, rectangle, circle, arc (3 points), ellipse, point, text, hatch (click inside a closed shape).
 - **More draw commands**: POLYGON (inscribed, circumscribed or by edge), SPLINE (through fit points, open or closed) and DONUT (filled ring).
 - **Construction lines**: XLINE (XL; through a point, Hor, Ver, Ang, Bisect, Offset) and RAY; each command run is one undo step.
