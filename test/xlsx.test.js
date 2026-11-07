@@ -57,7 +57,7 @@ test('xlsxBytes: python zipfile reads it (CRC test) and every part is well-forme
     const file = path.join(dir, 'count.xlsx');
     await fs.writeFile(file, xlsxBytes([SHEET, { name: 'Symbol count', rows: [['Second']] }]));
     const py = 'import sys, zipfile, xml.dom.minidom as m\nz = zipfile.ZipFile(sys.argv[1])\nassert z.testzip() is None\nfor n in z.namelist(): m.parseString(z.read(n))\nd = m.parseString(z.read("xl/worksheets/sheet1.xml"))\nprint("|".join(t.firstChild.data if t.firstChild else "" for t in d.getElementsByTagName("t")))\nprint("|".join(v.firstChild.data for v in d.getElementsByTagName("v")))\nprint("|".join(s.getAttribute("name") for s in m.parseString(z.read("xl/workbook.xml")).getElementsByTagName("sheet")))';
-    const out = execFileSync('python3', ['-I', '-c', py, file], { encoding: 'utf8' }).trim().split(/\r?\n/);
+    const out = execFileSync('python3', ['-P', '-c', py, file], { encoding: 'utf8' }).trim().split(/\r?\n/);
     assert.deepEqual(out, ['Symbol|Count|Layers|Grille <600> & "x"|A; B|Badchar', '3|1.5', 'Symbol count|Symbol count_2']);
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 });
@@ -94,7 +94,7 @@ test('xlsxBytes: rich-text cells are inline strings of Calibri 11 runs (colour, 
   assert.ok(!sheet.includes('r="A3"'), 'no runs = empty cell');
 });
 
-const hasOpenpyxl = (() => { try { execFileSync('python3', ['-I', '-c', 'import openpyxl'], { stdio: 'ignore' }); return true; } catch { return false; } })();
+const hasOpenpyxl = (() => { try { execFileSync('python3', ['-P', '-c', 'import openpyxl'], { stdio: 'ignore' }); return true; } catch { return false; } })();
 test('xlsxBytes: openpyxl reads rich text as CellRichText with the run colours and weights', { skip: !hasOpenpyxl && 'openpyxl not available' }, async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ash-xlsx-'));
   try {
@@ -102,7 +102,7 @@ test('xlsxBytes: openpyxl reads rich text as CellRichText with the run colours a
     await fs.writeFile(file, xlsxBytes([{ name: 'S', rows: [['H'], [{ runs: [{ text: 'Base' }, { text: '\nRev.01: ok', color: '0070C0', bold: false }] }]] }]));
     const py = 'import sys, json, openpyxl\nfrom openpyxl.cell.rich_text import CellRichText\nv = openpyxl.load_workbook(sys.argv[1], rich_text=True).active["A2"].value\n'
       + 'print(json.dumps([isinstance(v, CellRichText), str(v), [[p.text, p.font.color.rgb if p.font.color is not None else None, p.font.b] for p in v]]))';
-    const got = JSON.parse(execFileSync('python3', ['-I', '-c', py, file], { encoding: 'utf8' }).trim());
+    const got = JSON.parse(execFileSync('python3', ['-P', '-c', py, file], { encoding: 'utf8' }).trim());
     assert.deepEqual(got, [true, 'Base\nRev.01: ok', [['Base', null, false], ['\nRev.01: ok', 'FF0070C0', false]]]);
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 });

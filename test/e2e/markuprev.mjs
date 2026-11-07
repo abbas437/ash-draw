@@ -127,7 +127,7 @@ assert blue and blue[0].text.lstrip('\\n').startswith('Rev.01:'), cm
 assert get('Code').value == 'A' and get('Status').value == 'Closed', (get('Code').value, get('Status').value)
 assert str(get('Status').fill.fgColor.rgb).endswith('00B050'), get('Status').fill.fgColor.rgb
 print('xlsx ok')`;
-  assert.match(execFileSync('python3', ['-I', '-c', py, xlsx], { encoding: 'utf8' }), /xlsx ok/);
+  assert.match(execFileSync('python3', ['-P', '-c', py, xlsx], { encoding: 'utf8' }), /xlsx ok/);
   await fs.rm(path.dirname(xlsx), { recursive: true });
 
   // ---- Import… ----

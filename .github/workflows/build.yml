@@ -202,7 +202,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: pip install ezdxf
+      - run: pip install ezdxf openpyxl  # the CRS tests check xlsx files with openpyxl
       - run: npm ci && npm run vendor && npm test
 
   e2e:
