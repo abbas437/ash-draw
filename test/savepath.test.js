@@ -4,6 +4,7 @@ import { savePathIn } from '../renderer/files.js';
 import { saveDxf, saveDwg, savedToast } from '../renderer/files.js';
 import { readFileSync } from 'node:fs';
 import { saveDialogDefault } from '../electron/savePath.js';
+import { TABLE_NOTE } from '../src/core/dxfWrite.js';
 
 test('savePathIn: the open file folder + the suggested name; no path = just the name', () => {
   assert.equal(savePathIn('C:\\Proj\\Plans\\site.dwg', 'site.pdf'), 'C:\\Proj\\Plans\\site.pdf');
@@ -42,13 +43,17 @@ test('a .bak that could not be replaced: main\'s warning reaches the "Saved" toa
   // without a warning: as before
   assert.deepEqual(savedToast('Saved', { report: null, backup: null, warning: null }), ['Saved', 1500]);
   assert.deepEqual(savedToast('Saved', { report: { skipped: { IMAGE: 2, OLE2FRAME: 1 } } }), ['Saved. Not written: 2 IMAGE, 1 OLE2FRAME', 6000]);
+  // how things were written (lastWriteReport.notes): shown, each once, at most three
+  assert.deepEqual(savedToast('Saved', { report: { skipped: {}, notes: [TABLE_NOTE, TABLE_NOTE] } }), [`Saved. ${TABLE_NOTE.replace(/\.$/, '')}`, 8000]);
+  assert.deepEqual(savedToast('Saved', { report: { skipped: { IMAGE: 1 }, notes: ['A.', 'B.', 'C.', 'D.', 'E.'] } }), ['Saved. Not written: 1 IMAGE. A. B. C (and 2 more)', 8000]);
+  assert.deepEqual(savedToast('Saved', { report: { skipped: {}, notes: [] } }), ['Saved', 1500]);
   assert.deepEqual(savedToast('Saved as AutoCAD 2018', { backup: 'C:\\Jobs\\Plan A.bak' }, { backupNote: true }), ['Saved as AutoCAD 2018 (previous file kept as Plan A.bak)', 3000]);
   assert.deepEqual(savedToast('Saved as AutoCAD 2018', { backup: null }, { backupNote: true }), ['Saved as AutoCAD 2018', 3000]);
   // app.js shows the toast from savedToast after a DXF save and after an ODA DWG save, with the save's warning
   const app = readFileSync(new URL('../renderer/app.js', import.meta.url), 'utf8');
   assert.match(app, /writeReport\(r\) \{ toast\(\.\.\.savedToast\('Saved', r\)\); \}/);
   assert.equal(app.match(/this\.writeReport\(r\)/g)?.length, 2, 'both DXF saves pass the whole result');
-  assert.match(app, /toast\(\.\.\.savedToast\(`Saved as \$\{label\}`, \{ backup: r\.backup, warning: r\.warning \}, \{ backupNote: true \}\)\)/);
+  assert.match(app, /toast\(\.\.\.savedToast\(`Saved as \$\{label\}`, \{ report: r\.report, backup: r\.backup, warning: r\.warning \}, \{ backupNote: true \}\)\)/);
 });
 
 const dirs = (...d) => (p) => d.includes(p);

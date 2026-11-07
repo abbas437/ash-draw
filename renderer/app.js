@@ -585,7 +585,7 @@ class App {
       tab.dwgVersion = version;
       this.afterSave(tab, r.path, 'dwg', { clean: !!r.verification.ok });
       const label = DWG_SAVE_VERSIONS.find((v) => v.id === version)?.label ?? 'DWG';
-      if (r.verification.ok) toast(...savedToast(`Saved as ${label}`, { backup: r.backup, warning: r.warning }, { backupNote: true }));
+      if (r.verification.ok) toast(...savedToast(`Saved as ${label}`, { report: r.report, backup: r.backup, warning: r.warning }, { backupNote: true }));
       else await message('DWG saved — please check', verificationMessage(r.verification, { oda: true }));
       return true;
     } catch (err) { await message('Save failed', err.message || String(err)); return false; }
