@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Browser end-to-end test: Plot to PDF of a large generated drawing shows the progress toast (percentage + Cancel) once the
 // export outlasts app.plotProgressDelayMs (lowered here from 1 s); Cancel leaves no download, no warnings box, no error box.
+// The cancelled plot is held mid-way (app.plotHold) from the moment the toast is up until Cancel has been clicked, so the
+// click never races the export: on a slow runner the drawing pass could end before Playwright's click was actionable.
 // Harness as incomplete.mjs.
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
@@ -33,6 +35,8 @@ try {
   page.on('console', (m) => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });
   page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
   page.on('requestfailed', (r) => problems.push(`requestfailed: ${r.url()}`));
+  // E2E_CPU_THROTTLE=4: slow the page's CPU n-fold (CDP), to approximate a slow CI runner; off by default
+  if (Number(process.env.E2E_CPU_THROTTLE) > 1) await (await page.context().newCDPSession(page)).send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.E2E_CPU_THROTTLE) });
   await page.goto(`${base}/renderer/index.html`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.app && window.app.vp && window.app.doc, null, { timeout: 10000 });
 
@@ -57,13 +61,19 @@ try {
   };
 
   step = 'Cancel while plotting: progress toast with %, then no download, no box';
+  // the export waits at its first progress step with the toast up, until the test releases it after the click
+  await page.evaluate(() => {
+    const held = new Promise((r) => { window.__releasePlot = r; });
+    window.app.plotHold = (f) => { if (document.querySelector('#toast.busy .toast-cancel')) { window.__plotHeldAt = f; return held; } };
+  });
   await startPlot();
   const toast = page.locator('#toast.busy');
-  await toast.waitFor({ timeout: 10000 });
+  await page.waitForFunction(() => window.__plotHeldAt !== undefined, null, { timeout: 60000 });
+  assert.ok(await page.evaluate(() => window.__plotHeldAt < 1), 'held while the drawing is still being plotted');
   assert.match(await toast.innerText(), /Plotting… \d+%/);
   await toast.locator('.toast-cancel').click();
-  await page.waitForFunction(() => /Plot cancelled\./.test(document.getElementById('toast').textContent), null, { timeout: 10000 });
-  await page.waitForTimeout(1500);
+  await page.evaluate(() => { window.app.plotHold = null; window.__releasePlot(); });
+  await page.waitForFunction(() => /Plot cancelled\./.test(document.getElementById('toast').textContent), null, { timeout: 60000 });
   assert.equal(downloads, 0, 'no file is delivered');
   assert.equal(await page.locator('dialog[open]').count(), 0, 'no warnings or error box');
   assert.equal(await page.locator('#toast.busy').count(), 0, 'the progress toast is gone');
@@ -72,6 +82,8 @@ try {
   const dl = page.waitForEvent('download', { timeout: 120000 });
   await startPlot();
   await dl;
+  // download events arrive in order: one from the cancelled plot would have come before this one (no fixed wait needed)
+  assert.equal(downloads, 1, 'only the plot that was not cancelled delivered a file');
   assert.equal(await page.locator('#toast.busy').count(), 0, 'the progress toast closes when the export ends');
   assert.equal(await page.locator('dialog[open]').count(), 0);
 

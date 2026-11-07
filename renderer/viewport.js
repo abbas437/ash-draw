@@ -69,6 +69,7 @@ export class Viewport {
     this._gesture = null;              // 'pan' | 'zoom' while the cached bitmap stands in for the scene
     this._settleT = 0;
     this._frame = null;                // last scene frame: { key, view, exact } with its bitmap in this._buf
+    this.progressiveSliceMs = PROGRESSIVE_SLICE_MS; // time slice of a progressive frame (tests: 0 = one drawSceneSteps step per slice)
     this._buf = document.createElement('canvas');
     this._buf2 = document.createElement('canvas');
     this._prog = null;                 // progressive full frame in the making: { key, view, gen, buf } (see _sceneFrame)
@@ -271,7 +272,7 @@ export class Viewport {
     const slice = () => {
       const t = performance.now();
       let r;
-      while (!(r = job.gen.next()).done && performance.now() - t < PROGRESSIVE_SLICE_MS);
+      while (!(r = job.gen.next()).done && performance.now() - t < this.progressiveSliceMs);
       return r.done;
     };
     if (slice()) { this._finishProgressive(job); return; }

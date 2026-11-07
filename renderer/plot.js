@@ -12,9 +12,11 @@ import { bitmapRgba } from './images.js';
 import { viewsIn, findView, restorable, viewBox } from '../src/core/views.js';
 
 /** run an export under a progress toast with Cancel (shown after ~1 s; app.plotProgressDelayMs overrides, for tests);
- *  null (and a quiet toast) when cancelled, else the export's result */
+ *  null (and a quiet toast) when cancelled, else the export's result. app.plotHold (tests): (fraction) -> a promise the
+ *  export waits on at that progress step, or nothing, so a test can act while the plot is mid-way. */
 async function withPlotProgress(app, text, cancelledText, run) {
-  const r = await withExportProgress(run, {
+  const hold = (p) => (app.plotHold ? { ...p, onProgress: (f) => { p.onProgress(f); return app.plotHold?.(f); } } : p);
+  const r = await withExportProgress((p) => run(hold(p)), {
     delayMs: app.plotProgressDelayMs ?? 1000,
     show: (onCancel) => { const pt = progressToast(text, onCancel); return { set: (f) => pt.set(f), close: () => toast('', 1) }; },
   });

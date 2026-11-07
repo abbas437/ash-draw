@@ -417,7 +417,7 @@ async function addPdfPage(pdf, doc, opts) {
   let parts = 1, lastYield = performance.now();
   const step = async (part, f) => {
     checkAbort(opts);
-    opts.onProgress?.((part + f) / parts);
+    await opts.onProgress?.((part + f) / parts); // an onProgress returning a promise holds the export until it settles
     if ((opts.signal || opts.onProgress) && performance.now() - lastYield > 50) { await new Promise((r) => setTimeout(r, 0)); lastYield = performance.now(); }
   };
   const drawItems = async (scn, box, cull = null, part = 0) => {

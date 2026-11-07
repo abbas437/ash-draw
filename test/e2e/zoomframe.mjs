@@ -2,7 +2,10 @@
 // Browser end-to-end test: a wheel zoom on a large drawing never shows a blank canvas.
 // (Review #6, large DXF: the canvas went blank for 1-2 s after a wheel zoom while the new view was drawn progressively.)
 //  1. 200,000 lines (drawn progressively, viewport.js PROGRESSIVE_ITEMS) and a red square drawn last. A burst of wheel
-//     steps about a cursor point; every animation frame until the new view is finished is sampled: each canvas tile
+//     steps about a cursor point; every frame rendered until the new view is finished is sampled (in vp.render; while
+//     the new view is drawn progressively it is drawn one drawSceneSteps step per slice, vp.progressiveSliceMs = 0, and
+//     each slice is rendered as soon as it requests a frame, so the number of progressive frames sampled does not
+//     depend on how fast the machine draws against the display's frame rate): each canvas tile
 //     that has drawing in the finished frame has drawing in every intermediate frame, and the red square is where the
 //     current view shows it (the last frame scaled about the cursor, accumulated over the burst).
 //  2. The finished frame equals a redraw of the same view from scratch.
@@ -31,6 +34,8 @@ try {
   const page = await (await browser.newContext({ viewport: { width: 1200, height: 800 } })).newPage();
   page.on('console', (m) => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });
   page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
+  // E2E_CPU_THROTTLE=4: slow the page's CPU n-fold (CDP), to approximate a slow CI runner; off by default
+  if (Number(process.env.E2E_CPU_THROTTLE) > 1) await (await page.context().newCDPSession(page)).send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.E2E_CPU_THROTTLE) });
   await page.goto(`${base}/renderer/index.html`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.app && window.app.vp && window.app.doc, null, { timeout: 10000 });
 
@@ -58,8 +63,13 @@ try {
     const T = 8; // T x T tiles
     // the view the canvas shows: vp.view moves at the wheel event, the canvas at the next render
     let shown = { ...vp.view };
-    const render = vp.render;
-    vp.render = function (...a) { shown = { ...this.view }; return render.apply(this, a); };
+    const render = vp.render, requestRender = vp.requestRender, sliceMs = vp.progressiveSliceMs;
+    const frames = [];
+    let wheels = 0;
+    vp.render = function (...a) { shown = { ...this.view }; const out = render.apply(this, a); if (wheels) frames.push(sample()); return out; };
+    // a progressive slice asks for a frame: render it now, so every intermediate state of the new view is sampled
+    vp.requestRender = function () { return this.drawing ? this.render() : requestRender.apply(this); };
+    vp.progressiveSliceMs = 0;
     const sample = () => {
       const { width: W, height: H } = cv, px = ctx.getImageData(0, 0, W, H).data, tiles = new Array(T * T).fill(0);
       for (let y = 0; y < H; y += 2) for (let x = 0; x < W; x += 2) {
@@ -72,19 +82,16 @@ try {
       return { tiles, red: red >= 10, drawing: vp.drawing, gesture: vp._gesture, zoom: shown.zoom };
     };
     const r = cv.getBoundingClientRect(), at = vp.toScreen({ x: 200, y: 160 }), cx = r.left + at.x, cy = r.top + at.y; // near the red square, clear of it (the crosshair is drawn at the cursor)
-    const frames = [];
-    let wheels = 0;
     const wheel = () => {
       cv.dispatchEvent(new WheelEvent('wheel', { deltaY: -40, deltaMode: 0, clientX: cx, clientY: cy, bubbles: true, cancelable: true }));
       if (++wheels < 4) setTimeout(wheel, 40);
     };
     const t0 = performance.now();
     const tick = () => {
-      const s = sample(), f = vp._frame;
+      const f = vp._frame;
       const finished = wheels === 4 && !vp.drawing && !vp._gesture && f?.exact && f.view.zoom === vp.view.zoom && f.view.cx === vp.view.cx && f.view.cy === vp.view.cy;
       // the finished frame: rendered now (the job may have finished after the last render)
-      if (finished || performance.now() - t0 > 30000) { if (wheels) frames.push(s); vp.render(); const last = sample(); vp.render = render; done({ frames, last, finished, zoom0: z0, zoom: vp.view.zoom }); return; }
-      if (wheels) frames.push(s);
+      if (finished || performance.now() - t0 > 60000) { Object.assign(vp, { render, requestRender, progressiveSliceMs: sliceMs }); vp.render(); const last = sample(); done({ frames, last, finished, zoom0: z0, zoom: vp.view.zoom }); return; }
       requestAnimationFrame(tick);
     };
     const z0 = vp.view.zoom;
