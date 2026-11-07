@@ -105,6 +105,36 @@ export function unwritable(e, doc, opts = {}) {
   }
 }
 
+/** an ACAD_TABLE's own tags as read (dxfRead buildTable: e.table.raw), the placement codes (10/20, 50 and the 11/21
+ *  direction, 41/42) changed only when the table was moved, rotated or scaled since it was read (e.table.at), so an
+ *  unmodified table is written exactly as read. 2 names its block, 343 the block's record in this file (`blockRecH`);
+ *  every other handle reference (320..369, 1005: table style, cell blocks / fields) is written as a null handle, the
+ *  objects they name not being written. -> [code, value][] */
+export function tableTags(e, blockRecH) {
+  const at = e.table.at ?? {};
+  const moved = (k, v) => !(Math.abs((at[k] ?? NaN) - (v ?? 0)) <= 1e-9 * Math.max(1, Math.abs(v ?? 0)));
+  const pos = moved('x', e.p.x) || moved('y', e.p.y), rot = moved('rot', e.rot || 0), scale = moved('sx', e.sx ?? 1) || moved('sy', e.sy ?? 1);
+  const r = (e.rot || 0) * DEG;
+  const set = { 2: e.block };
+  if (pos) Object.assign(set, { 10: e.p.x, 20: e.p.y });
+  if (rot) Object.assign(set, { 50: e.rot || 0, 11: Math.cos(r), 21: Math.sin(r) });
+  if (scale) Object.assign(set, { 41: e.sx ?? 1, 42: e.sy ?? 1 });
+  const seen = new Set(), out = [];
+  let after = -1; // where a missing 50 / 41 / 42 goes: after the insertion point
+  for (const [c, v] of e.table.raw) {
+    if (c < 1000 && c in set && !seen.has(c)) { seen.add(c); out.push([c, set[c]]); }
+    else if (c === 343) out.push([c, blockRecH]);
+    else if ((c >= 320 && c <= 369) || c === 1005) out.push([c, '0']);
+    else out.push([c, v]);
+    if (after < 0 && (c === 30 || (c === 20 && seen.has(10)))) after = out.length;
+  }
+  const add = [];
+  if (rot && !seen.has(50) && !seen.has(11)) add.push([50, e.rot || 0]);
+  if (scale && !seen.has(41)) add.push([41, e.sx ?? 1], [42, e.sy ?? 1], [43, 1]);
+  if (add.length) out.splice(after < 0 ? out.length : after, 0, ...add);
+  return out;
+}
+
 /** the objects of `doc` a save with `opts` leaves out: { key: count } (the keys of lastWriteReport.skipped), the
  *  objects not read from the file included ("TYPE (not read)") */
 export function unkeptObjects(doc, opts = {}) {
@@ -270,7 +300,8 @@ export function* writeDxfSteps(doc, opts = {}) {
   const xdApps = new Set();
   const imageDefsOut = new Map(); // file path -> { h, def, reactors: [{ img: IMAGE handle, r: IMAGEDEF_REACTOR handle }] }
   const hImageDict = H(), hWipeoutVars = H();
-  let hasWipeouts = false, hasArcDims = false, hasJoggedDims = false;
+  let hasWipeouts = false, hasArcDims = false, hasJoggedDims = false, reportedTable = false;
+  const tableBlocks = new Set(); // blocks written as an ACAD_TABLE's graphics
   function writeEntity(o, e, owner) {
     const why = unwritable(e, doc, opts);
     if (why) { report.skipped[why] = (report.skipped[why] ?? 0) + 1; return false; }
@@ -402,6 +433,23 @@ export function* writeDxfSteps(doc, opts = {}) {
         o.pt(10, p[0].x, p[0].y); o.pt(11, p[1].x, p[1].y); o.pt(12, p[2].x, p[2].y); o.pt(13, p4.x, p4.y); return true;
       }
       case 'INSERT': {
+        // a table (ACAD_TABLE, dxfRead buildTable) is written back as one, from its own tags; LibreDWG's dxf2dwg cannot
+        // take it (DWG: a plain reference to its block), nor can two tables share one block (a copy: a plain reference)
+        if (e.table?.raw?.length && !asGeometry) {
+          if (!tableBlocks.has(e.block)) {
+            tableBlocks.add(e.block);
+            head(o, e, 'ACAD_TABLE', owner);
+            for (const [c, v] of tableTags(e, blockRec.get(e.block))) {
+              if (c === 1001) xdApps.add(String(v).trim());
+              if ((c >= 1 && c <= 9) || (c >= 300 && c <= 309) || (c >= 1000 && c <= 1009)) o.s(c, v); else o.p(c, v);
+            }
+            return true;
+          }
+          const note = 'A copied table was saved as a plain block reference (its copy stays visible; only the original stays an editable table).';
+          if (!report.notes.includes(note)) report.notes.push(note);
+        } else if (e.table?.raw?.length && !reportedTable) {
+          reportedTable = true; report.notes.push('Tables are saved as plain geometry in DWG files (they stay visible but are no longer editable as tables).');
+        }
         const atts = e.attribs?.length ? e.attribs : null;
         // XCLIP: extension dictionary -> ACAD_FILTER -> SPATIAL -> SPATIAL_FILTER, written with the OBJECTS
         const hX = e.clip?.pts?.length >= 2 ? H() : null;
@@ -634,6 +682,7 @@ export function* writeDxfSteps(doc, opts = {}) {
     cls('WIPEOUT', 'AcDbWipeout', 'WipeOut', 127);
   }
   if (hasArcDims) cls('ARC_DIMENSION', 'AcDbArcDimension', 'ObjectDBX Classes', 1025);
+  if (tableBlocks.size) cls('ACAD_TABLE', 'AcDbTable', 'ObjectDBX Classes', 1025);
   if (hasJoggedDims) cls('LARGE_RADIAL_DIMENSION', 'AcDbRadialDimensionLarge', 'ObjectDBX Classes', 1025);
   out.p(0, 'ENDSEC');
 

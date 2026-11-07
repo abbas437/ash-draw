@@ -359,7 +359,7 @@ function ocsMatrix(rec, elev) {
   return o && [o.ax[0], o.ax[1], o.ay[0], o.ay[1], o.n[0] * elev, o.n[1] * elev];
 }
 const OCS_ELEVATION = {
-  LWPOLYLINE: 38, POLYLINE: 30, CIRCLE: 30, ARC: 30, TEXT: 30, ATTRIB: 30, ATTDEF: 30, INSERT: 30, SOLID: 30, TRACE: 30, HATCH: 30, DIMENSION: 31, ARC_DIMENSION: 31, LARGE_RADIAL_DIMENSION: 31,
+  LWPOLYLINE: 38, POLYLINE: 30, CIRCLE: 30, ARC: 30, TEXT: 30, ATTRIB: 30, ATTDEF: 30, INSERT: 30, ACAD_TABLE: 30, SOLID: 30, TRACE: 30, HATCH: 30, DIMENSION: 31, ARC_DIMENSION: 31, LARGE_RADIAL_DIMENSION: 31,
 };
 const HALIGN_MIRROR = { 0: 2, 2: 0 };
 /** TEXT seen through a mirroring map m (det < 0) is drawn backwards in AutoCAD. Glyphs are not mirrored here: the
@@ -538,6 +538,21 @@ function buildInsert(rec, o) {
     const clip = sf?.type === 'SPATIAL_FILTER' ? clipFromSpatialFilter(sf.tags()) : null;
     if (clip) ins.clip = clip;
   }
+  return ins;
+}
+
+// ACAD_TABLE: shown as a reference to its graphics block (*Tn, group 2), so it draws, selects, plots, compares,
+// snaps and explodes like an INSERT. Its own tags from AcDbBlockReference on (cells, style, XDATA) are kept in
+// e.table.raw and written back as read (dxfWrite); e.table.at is the placement as read, so a save patches the
+// position / rotation / scale codes only when the table was moved. No 50: the rotation comes from the 11 direction.
+function buildTable(rec, o) {
+  const all = rec.tags();
+  const ent = all.findIndex(([c, v]) => c === 100 && v.trim() === 'AcDbEntity');
+  const at = all.findIndex(([c], i) => c === 100 && i > ent);
+  const dir = rec.has(11) ? pt(rec, 11) : null;
+  const rot = rec.has(50) ? rec.num(50) : dir && (dir.x || dir.y) ? Math.atan2(dir.y, dir.x) * 180 / Math.PI : 0;
+  const ins = makeInsert(rec.str(2), pt(rec, 10), { ...o, sx: rec.num(41, 1), sy: rec.num(42, 1), rot });
+  ins.table = { raw: ent >= 0 && at > 0 ? all.slice(at) : [] }; // .at: set by buildEntity (after the OCS)
   return ins;
 }
 
@@ -797,6 +812,7 @@ function buildEntity(rec, doc, extra) {
       break;
     }
     case 'INSERT': e = buildInsert(rec, o); break;
+    case 'ACAD_TABLE': e = buildTable(rec, o); break;
     case 'HATCH': e = buildHatch(rec, o, doc); break;
     case 'DIMENSION': case 'ARC_DIMENSION': case 'LARGE_RADIAL_DIMENSION': e = buildDimension(rec, o); break; // def.kind 'arc' / 'jogged'
     case 'LEADER': e = buildLeader(rec, o); break;
@@ -828,6 +844,7 @@ function buildEntity(rec, doc, extra) {
   if (xd) e.xdata = xd;
   // OCS entities (3D POLYLINEs, flag 8, are WCS); LINE, SPLINE, POINT, LEADER, MLEADER, IMAGE, MTEXT and ELLIPSE are WCS
   if (rec.type in OCS_ELEVATION && !(rec.type === 'POLYLINE' && (rec.int(70) & 8))) e = ocsToPlan(rec, e);
+  if (e.table) e.table.at = { x: e.p.x, y: e.p.y, sx: e.sx, sy: e.sy, rot: e.rot };
   return e;
 }
 

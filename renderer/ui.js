@@ -263,7 +263,7 @@ function describe(e, doc) {
       let len = 0; for (let i = 1; i < pl.length; i++) len += dist(pl[i - 1], pl[i]);
       return [['Vertices', String(e.vertices.length)], ['Closed', e.closed ? 'yes' : 'no'], ['Length', fmt(len)]];
     }
-    case 'INSERT': return [['Block', e.block], ['Position', `${fmt(e.p.x)}, ${fmt(e.p.y)}`], ['Scale', `${fmt(e.sx)} × ${fmt(e.sy)}`], ['Rotation', `${fmt(e.rot)}°`]];
+    case 'INSERT': return [...(e.table ? [['Table', 'read-only (edit cell text in AutoCAD)']] : []), ['Block', e.block], ['Position', `${fmt(e.p.x)}, ${fmt(e.p.y)}`], ['Scale', `${fmt(e.sx)} × ${fmt(e.sy)}`], ['Rotation', `${fmt(e.rot)}°`]];
     case 'TEXT': case 'MTEXT': return [['Position', `${fmt(e.p.x)}, ${fmt(e.p.y)}`]];
     case 'HATCH': return [['Pattern', e.pattern], ['Loops', String(e.loops.length)]];
     default: return [];
@@ -297,7 +297,7 @@ export function renderProperties(app) {
   const lts = [['BYLAYER', 'ByLayer'], ...[...doc.linetypes.keys()].map((n) => [n, n])];
 
   const kids = [
-    el('div', { class: 'phead', text: ents.length ? `${ents.length} selected${ents.length === 1 ? ` — ${ents[0].type}` : ''}` : 'Defaults for new objects' }),
+    el('div', { class: 'phead', text: ents.length ? `${ents.length} selected${ents.length === 1 ? ` — ${ents[0].table ? 'Table' : ents[0].type}` : ''}` : 'Defaults for new objects' }),
     el('label', {}, 'Layer', mixed(layerVal, (v) => select(layerNames.map((n) => [n, n]), v, (x) => x !== '__mixed__' && apply({ layer: x })))),
     el('label', {}, 'Colour', mixed(common('color', 256) === null ? null : colorKey(common('color', 256)), (v) => select(ACI_CHOICES, v, (x) => x !== '__mixed__' && apply({ color: Number(x) })))),
     el('label', {}, 'Linetype', mixed(common('linetype', 'BYLAYER') === null ? null : String(common('linetype', 'BYLAYER')).toUpperCase(), (v) => select(lts, v, (x) => x !== '__mixed__' && apply({ linetype: x })))),

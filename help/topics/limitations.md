@@ -13,6 +13,7 @@ This summarises **Help ▸ What this program can and cannot do**. Read it before
 
 ## Partly supported
 - **Proxy objects** (ACAD_PROXY_ENTITY, for example Civil 3D objects) are drawn from their saved graphics and cannot be edited; Save as DXF keeps them. Other custom objects (for example AECC_ ones) are drawn the same way but are not written when you save.
+- **Tables** (ACAD_TABLE) are shown, plotted and compared like a block of their drawn lines and text, and Save as DXF keeps them as editable AutoCAD tables. Their content is read-only here: edit cell text in AutoCAD. Exploding one turns it into plain lines and text; a DWG saved through LibreDWG keeps a table as plain geometry.
 - **OLE objects** are drawn from their saved preview picture (a frame when there is none it can show).
 - **Dimensions** are displayed as stored; they cannot be edited as dimensions, but can be moved, copied or exploded.
 - **Fonts:** text uses a system font, so widths differ slightly from the original CAD fonts.

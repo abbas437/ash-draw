@@ -184,6 +184,8 @@ Please read these before relying on the program for important work.
 - **Objects not shown or not saved**: 3D solids, bodies and regions are not shown; proxy and other custom objects are drawn from
   their saved graphics but cannot be edited (Save as DXF keeps proxy objects). Skipped objects are reported when a file opens and
   before a save. Help ▸ "What this program can and cannot do" in the app has the full list.
+- **Tables** (ACAD_TABLE) are shown and kept: Save as DXF writes them back as editable AutoCAD tables. Their content is
+  read-only here (edit cell text in AutoCAD).
 - **Dimensions** are displayed from their stored drawing and can be moved, copied and exploded, but not edited as dimensions.
 - **DWG** is read through the built-in LibreDWG converter or, when installed, the free ODA File Converter. Saving as DWG needs
   the ODA File Converter (AutoCAD 2000–2018 formats); without it, DWG saving is experimental and off by default (Edit ▸
