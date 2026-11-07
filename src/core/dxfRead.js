@@ -550,7 +550,7 @@ function buildTable(rec, o) {
   const all = rec.tags();
   const sub = (name, from = 0) => all.findIndex(([c, v], i) => i >= from && c === 100 && v.trim() === name);
   const br = sub('AcDbBlockReference'), tb = br < 0 ? -1 : sub('AcDbTable', br);
-  const ref = br < 0 ? [] : all.slice(br + 1, tb < 0 ? all.length : tb);
+  const ref = tb < 0 ? [] : all.slice(br + 1, tb); // no AcDbTable marker: the codes after AcDbBlockReference are not known to be its own
   const refNum = (c, d) => { const t = ref.find(([k]) => k === c); const x = t ? parseFloat(t[1]) : NaN; return Number.isFinite(x) ? x : d; };
   const dir = rec.has(11) ? pt(rec, 11) : null;
   const rot = refNum(50, null) ?? (dir && (dir.x || dir.y) ? Math.atan2(dir.y, dir.x) * 180 / Math.PI : 0);

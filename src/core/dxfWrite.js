@@ -141,7 +141,7 @@ export function* writeDxfSteps(doc, opts = {}) {
   let n = 0; // entities written, for the yields
   let reportedDim = false, reportedMleader = false;
   const nonBmp0 = nonBmpWritten;
-  const report ={ version: 'AC1015', entities: 0, blocks: 0, skipped: {}, notes: [] };
+  const report ={ version: 'AC1015', entities: 0, blocks: 0, skipped: {}, notes: [], renamedBlocks: {} };
   let nextHandle = 0x30;
   // MLINESTYLE objects keep their handles (MLINE 340 names them); fixed low handles are never reused for them
   const FIXED_H = new Set(['1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'C', 'D', '10', '12', '13', '17', '1A', '1B', '1E', '22']);
@@ -193,12 +193,14 @@ export function* writeDxfSteps(doc, opts = {}) {
   let nextU = 1 + Math.max(0, ...blockNames.map((n) => /^\*U(\d+)$/i.exec(n)?.[1] ?? 0).map(Number));
   const renamed = new Map(blockNames.filter((n) => /^\*T/i.test(n)).map((n) => [n, `*U${nextU++}`]));
   const outName = (n) => renamed.get(n) ?? n;
+  report.renamedBlocks = Object.fromEntries(renamed); // source name -> name in the file (the DWG read-back check, verify.js)
   const allLists = [doc.entities, ...[...doc.blocks.values()].map((b) => b.entities)];
   const ltDefs = new Map(); // upper name -> def
   for (const lt of doc.linetypes.values()) if (!/^(CONTINUOUS|BYLAYER|BYBLOCK)$/.test(lt.name)) ltDefs.set(lt.name.toUpperCase(), lt);
   const styleDefs = new Map();
   for (const st of doc.textStyles.values()) styleDefs.set(st.name.toUpperCase(), st);
   if (!styleDefs.has('STANDARD')) styleDefs.set('STANDARD', { name: 'STANDARD', font: 'Arial', height: 0, widthFactor: 1, oblique: 0 });
+  const undefinedLt = new Set(); // linetypes used but not defined: one note at the end
   const ltKnown = (n) => {
     const u = String(n).toUpperCase();
     return u === 'CONTINUOUS' || u === 'BYLAYER' || u === 'BYBLOCK' || ltDefs.has(u);
@@ -219,7 +221,7 @@ export function* writeDxfSteps(doc, opts = {}) {
     o.s(8, e.layer || '0');
     if (e.linetype && e.linetype !== 'BYLAYER') {
       if (ltKnown(e.linetype)) o.s(6, ltDefs.get(String(e.linetype).toUpperCase())?.name ?? e.linetype);
-      else report.notes.push(`Linetype "${e.linetype}" is not defined; written as BYLAYER.`);
+      else undefinedLt.add(e.linetype);
     }
     const col = decodeColor(e.color); // only ACI 0..256 or 420 true colour are written (raw CmColor values decoded)
     if (typeof col === 'number') { if (col !== 256) o.p(62, col); }
@@ -856,8 +858,15 @@ export function* writeDxfSteps(doc, opts = {}) {
   if (text.includes('__DIMTXSTY:')) text = text.replace(/__DIMTXSTY:(.*?)__/g, (_, u) => styleHandle.get(u) ?? styleHandle.get('STANDARD'));
 
   for (const [t, n] of Object.entries(doc.skipped)) report.skipped[`${t} (not read)`] = n;
+  if (undefinedLt.size) {
+    const l = [...undefinedLt];
+    report.notes.push(`Linetypes not defined, written as BYLAYER: ${l.slice(0, 5).join(', ')}${l.length > 5 ? ` and ${l.length - 5} more` : ''}`);
+  }
   const nonBmp = nonBmpWritten - nonBmp0;
   if (nonBmp) report.notes.push(`${nonBmp} character${nonBmp === 1 ? '' : 's'} outside the Basic Multilingual Plane ${nonBmp === 1 ? 'was' : 'were'} saved as ?`);
+  // the notes that change what the file is (tables, dimensions, multileaders) first: the Saved toast shows only the first few
+  const major = (n) => n === TABLE_NOTE || /^(Dimensions are saved|A dimension without|Multileaders are saved)/.test(n);
+  report.notes = [...report.notes.filter(major), ...report.notes.filter((n) => !major(n))];
   doc.lastWriteReport = report;
   void ccwSweep;
   return text;

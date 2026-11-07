@@ -192,6 +192,8 @@ export async function loadDrawing(api, name, bytes, { onProgress = null, signal 
   if (back.length) notes.push(`Shown from ${back.length === 1 ? 'its' : 'their'} saved graphics, read-only (they can be erased but not moved or edited, and are saved back as read): ${byName(back)}.`);
   if (lost.length) notes.push(`Shown from ${lost.length === 1 ? 'its' : 'their'} saved graphics, read-only (they can be erased but not moved or edited, and are left out when the drawing is saved): ${byName(lost)}.`);
   if (kept.length) sk.push(...Object.entries(kept.reduce((a, x) => ({ ...a, [x.name]: (a[x.name] ?? 0) + 1 }), {})).map(([k, v]) => [`${k} (not drawn; left out when saving)`, v]));
+  const noBlock = [doc.entities, ...[...doc.blocks.values()].map((b) => b.entities)].reduce((n, l) => n + l.filter((x) => x.table && !doc.blocks.has(x.block)).length, 0);
+  if (noBlock) notes.push(`${noBlock} table${noBlock === 1 ? '' : 's'} without ${noBlock === 1 ? 'its' : 'their'} graphics block (nothing to show; left out when the drawing is saved).`);
   if (sk.length) notes.push(`Not displayed (unsupported object types): ${sk.map(([k, v]) => `${v} ${k}`).join(', ')}.`);
   const conversion = conv && { converter: conv.converter, errorCount: conv.errorCount, log: conv.log, objects: objectsRead(doc), skipped: { ...(doc.skipped || {}) }, dwgHeader: conv.dwgHeader };
   return { doc, format, notes, warnings, conversion };
@@ -276,7 +278,7 @@ export async function saveDwg(api, doc, { name, fromPath = null, version = 'r200
   try {
     const res = await api.dwgToDxf(dwgBytes);
     const converter = res.converter === 'ODA' || res.engine === 'oda' ? 'ODA' : 'LibreDWG';
-    verification = { ...compareDocuments(doc, readDxf(res.dxfBytes)), converter };
+    verification = { ...compareDocuments(doc, readDxf(res.dxfBytes), undefined, doc.lastWriteReport?.renamedBlocks), converter };
   } catch (err) { verification = { ok: false, error: String(err.message || err), converter: null }; }
   if (!verification.ok && confirmDifferences && !(await confirmDifferences(verification))) return null;
   const res = path ? await api.writeFile(path, dwgBytes) : await api.saveFile({ defaultPath: savePathIn(fromPath, `${baseName(name)}.dwg`), filters: [{ name: 'AutoCAD DWG', extensions: ['dwg'] }], bytes: dwgBytes });

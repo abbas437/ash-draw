@@ -21,9 +21,11 @@ const turn = (v) => ((v % 360) + 360) % 360;
 const angle = (k, v, d) => (k === 'rot' && typeof v === 'number' ? turn(round(turn(v), d)) : v);
 const sig = (e, d) => JSON.stringify(round((PICK[e.type] ?? []).map((k) => angle(k, e[k], d)), d));
 
-export function compareDocuments(a, b, digits = 5) {
-  const group = (doc) => { const g = {}; for (const e of doc.entities) { for (const x of e.type === 'MLEADER' ? mleaderParts(e) : [e]) (g[x.type] ??= []).push(x); } return g; };
-  const ga = group(a), gb = group(b);
+// renamed: the block names the writer changed ({ '*T1': '*U3' }, doc.lastWriteReport.renamedBlocks); `a`'s INSERTs are compared under them
+export function compareDocuments(a, b, digits = 5, renamed = {}) {
+  const rn = (x) => (x.type === 'INSERT' && Object.hasOwn(renamed, x.block) ? { ...x, block: renamed[x.block] } : x);
+  const group = (doc, map = (x) => x) => { const g = {}; for (const e of doc.entities) { for (const x of e.type === 'MLEADER' ? mleaderParts(e) : [e]) (g[x.type] ??= []).push(map(x)); } return g; };
+  const ga = group(a, rn), gb = group(b);
   const counts = {}, mismatched = {};
   let total = 0, countsOk = true;
   for (const t of new Set([...Object.keys(ga), ...Object.keys(gb)])) {

@@ -11,6 +11,8 @@ import { parseDxf } from '../src/core/dxfRead.js';
 import { writeDxf, unkeptObjects, TABLE_NOTE } from '../src/core/dxfWrite.js';
 import { bboxOf, docExtents, explode, transformEntity } from '../src/core/geom.js';
 import { ezdxfAvailable } from './helpers.js';
+import { compareDocuments } from '../src/core/verify.js';
+import { saveDwg, saveWriterOpts, savedToast, loadDrawing } from '../renderer/files.js';
 
 const near = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-9, `${msg}: ${a} vs ${b}`);
 
@@ -169,4 +171,62 @@ i=d.modelspace()[0]
 print(len(a.errors), es, i.dxf.name, tuple(round(v, 6) for v in i.dxf.insert)[:2], sorted(e.dxftype() for e in d.blocks.get(i.dxf.name)))`, f], { encoding: 'utf8' });
     assert.equal(r.stdout.trim(), "0 ['INSERT'] *U1 (100.0, 50.0) ['LINE', 'TEXT']", r.stderr);
   } finally { rmSync(dir, { recursive: true }); }
+});
+
+// ---- DWG read-back check, save notes, reader and open note (review fixes) ----
+const nestedTable = () => {
+  const doc = parseDxf(tableDrawing());
+  const [t] = doc.entities;
+  doc.blocks.set('OUTER', { name: 'OUTER', base: { x: 0, y: 0 }, entities: [t] });
+  doc.entities = [{ type: 'INSERT', block: 'OUTER', p: { x: 5, y: 5 }, sx: 1, sy: 1, rot: 0, layer: '0' }];
+  return doc;
+};
+for (const [label, mk] of [['top level', () => parseDxf(tableDrawing())], ['nested in a block', nestedTable]]) {
+  for (const version of ['r2000', 'acad2018']) {
+    test(`DWG read-back check passes for a table (${label}, ${version} route)`, async () => {
+      const doc = mk();
+      const opts = saveWriterOpts('dwg', version);
+      const text = writeDxf(doc, opts);
+      if (label === 'top level') {
+        assert.equal(compareDocuments(doc, parseDxf(text)).ok, false, 'without the rename map the *T1 / *U1 names differ');
+        assert.deepEqual(doc.lastWriteReport.renamedBlocks, { '*T1': '*U1' });
+        assert.equal(compareDocuments(doc, parseDxf(text), 5, doc.lastWriteReport.renamedBlocks).ok, true);
+      }
+      // the real save path: the converters are replaced by an identity round trip of the DXF
+      const api = { isElectron: true, dwgAvailable: async () => ({ available: true }), saveFile: async () => ({ path: 'p' }),
+        dxfToDwg: async (b) => ({ dwgBytes: b }), dwgToDxf: async (b) => ({ dxfBytes: b, converter: 'ODA' }) };
+      const r = await saveDwg(api, doc, { name: 'a.dxf', version });
+      assert.equal(r.verification.ok, true, JSON.stringify(r.verification));
+    });
+  }
+}
+
+test('save notes: four undefined linetypes give one note, and the table note still reaches the toast (<= 300 characters)', () => {
+  const doc = parseDxf(tableDrawing());
+  for (const n of ['LTA', 'LTB', 'LTC', 'LTD']) doc.entities.push({ type: 'LINE', layer: '0', linetype: n, p1: { x: 0, y: 0 }, p2: { x: 1, y: 1 } });
+  writeDxf(doc);
+  const notes = doc.lastWriteReport.notes;
+  assert.equal(notes.filter((n) => /^Linetypes not defined/.test(n)).length, 1);
+  assert.equal(notes[0], TABLE_NOTE);
+  assert.ok(notes.includes('Linetypes not defined, written as BYLAYER: LTA, LTB, LTC, LTD'));
+  const [text] = savedToast('Saved', { report: doc.lastWriteReport });
+  assert.ok(text.includes(TABLE_NOTE.replace(/\.$/, '')) && text.length <= 300, `${text.length}: ${text}`);
+  for (const n of ['E', 'F', 'G']) doc.entities.push({ type: 'LINE', layer: '0', linetype: n, p1: { x: 0, y: 0 }, p2: { x: 1, y: 1 } });
+  writeDxf(doc);
+  assert.ok(doc.lastWriteReport.notes.includes('Linetypes not defined, written as BYLAYER: LTA, LTB, LTC, LTD, E and 2 more'));
+});
+
+test('read: a table record with AcDbBlockReference but no AcDbTable marker takes no scale or rotation from the codes after it', () => {
+  const text = tableDrawing().replace('\n100\nAcDbTable\n', '\n').replace(/\n11\n1\.0\n21\n0\.0\n31\n0\.0\n/, '\n');
+  assert.ok(!text.includes('AcDbTable'));
+  const [t] = tables(parseDxf(text.replace('\n280\n0\n', '\n41\n0.06\n42\n0.06\n50\n12\n280\n0\n')));
+  near(t.sx, 1, 'sx'); near(t.sy, 1, 'sy'); near(t.rot, 0, 'rot');
+});
+
+test('open: a table whose *T block is missing is reported in the open notes', async () => {
+  const text = tableDrawing().replace('2\n*T1\n70', '2\n*X1\n70').replace('3\n*T1', '3\n*X1');
+  const { notes } = await loadDrawing({ isElectron: false }, 'a.dxf', new TextEncoder().encode(text), { path: null });
+  assert.ok(notes.some((n) => /1 table without its graphics block/.test(n)), notes.join(' | '));
+  const ok = await loadDrawing({ isElectron: false }, 'a.dxf', new TextEncoder().encode(tableDrawing()), { path: null });
+  assert.ok(!ok.notes.some((n) => /table/.test(n)));
 });
