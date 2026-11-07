@@ -11,7 +11,7 @@
 import { blockContentView } from './blocks.js';
 import { imageCorners, imageClipWorld, wipeoutRing } from './image.js';
 import { olePreviewOf } from './ole.js';
-import { resolveColor, runColor } from './aci.js';
+import { resolveColor, runColor, aciOf, runAci } from './aci.js';
 import { parseMText, layoutMText } from './mtext.js';
 import { reorderLines, reorderRules } from './bidiText.js';
 import {
@@ -48,6 +48,14 @@ function linetypeOf(e, layer, inherit) {
   let lt = e.linetype && e.linetype !== 'BYLAYER' ? e.linetype : (layer ? layer.linetype : 'CONTINUOUS');
   if (String(lt).toUpperCase() === 'BYBLOCK') lt = inherit ? inherit.lt : 'CONTINUOUS';
   return lt;
+}
+
+/** style.aci (and style.byLayerAci, MTEXT): the plotted ACI index (aci.js aciOf), for plot style tables. Not
+ *  enumerable, so scene digests and style keys are as before; a copy of a style must carry it with withAci. */
+function withAci(st, aci, byLayerAci = st.byLayerAci) {
+  Object.defineProperty(st, 'aci', { value: aci, writable: true, configurable: true });
+  if (byLayerAci !== undefined) Object.defineProperty(st, 'byLayerAci', { value: byLayerAci, writable: true, configurable: true });
+  return st;
 }
 
 /** the family a text style is drawn in (a TrueType style's display family, else its font name) */
@@ -140,8 +148,9 @@ class Builder {
     const lt = linetypeOf(e, layer, inherit);
     const lts = (e.ltscale ?? 1) * this.globalLt;
     const st = { color, lw, lt, lts, layerName, alpha: opacityOf(e, layer, inherit) };
+    const insertAci = inherit ? inherit.aci ?? null : 7;
     if (e.type === 'MTEXT') st.byLayer = resolveColor({ color: 256 }, layer, insertColor); // \C256 runs
-    return st;
+    return withAci(st, aciOf(e, layer, insertAci), e.type === 'MTEXT' ? aciOf({ color: 256 }, layer, insertAci) : undefined);
   }
 
   emitInsert(e, m, inherit, rootId, depth, layerName, layer) { drain(this.insertSteps(e, m, inherit, rootId, depth, layerName, layer)); }
@@ -420,7 +429,7 @@ class Builder {
           return;
         }
         this.push(mkItem('path'), rootId);
-        const cross = { ...style, alpha: (style.alpha ?? 1) * 0.4 };
+        const cross = withAci({ ...style, alpha: (style.alpha ?? 1) * 0.4 }, style.aci, style.byLayerAci);
         const cOps = [OP_M, q[0].x, q[0].y, OP_L, q[2].x, q[2].y, OP_M, q[1].x, q[1].y, OP_L, q[3].x, q[3].y];
         this.push({ kind: 'path', ops: cOps, style: cross, bbox }, rootId);
         const W = Math.hypot(q[1].x - q[0].x, q[1].y - q[0].y), H = Math.hypot(q[3].x - q[0].x, q[3].y - q[0].y);
@@ -507,7 +516,7 @@ class Builder {
     // the item box also holds the text box that pick and zoom extents use (textMetrics.textFrame)
     bbox = unionBox(bbox, estBox);
     // text strokes ignore the entity linetype (as in AutoCAD); start of the baseline and length for the LOD bar
-    const st = style.lt === 'CONTINUOUS' ? style : { ...style, lt: 'CONTINUOUS', _ks: undefined, _key: undefined };
+    const st = style.lt === 'CONTINUOUS' ? style : withAci({ ...style, lt: 'CONTINUOUS', _ks: undefined, _key: undefined }, style.aci, style.byLayerAci);
     const bar = xf ? { p: apply(xf, p0), rot: Math.atan2(xf[1] * c + xf[3] * sn, xf[0] * c + xf[2] * sn) } : { p: p0, rot };
     this.push({ kind: 'path', ops, style: st, bbox, strokeText: { p: bar.p, h, rot: bar.rot, w: W } }, rootId);
   }
@@ -566,8 +575,8 @@ class Builder {
       else rules.push(r);
     }
     // text strokes ignore the entity linetype (as in AutoCAD); a run colour overrides the entity colour
-    const base = style.lt === 'CONTINUOUS' ? style : { ...style, lt: 'CONTINUOUS', _ks: undefined, _key: undefined };
-    const styleOf = (col) => { const rc = runColor(col, style); return !rc ? base : { ...base, _ks: undefined, _key: undefined, _css: undefined, color: rc }; };
+    const base = style.lt === 'CONTINUOUS' ? style : withAci({ ...style, lt: 'CONTINUOUS', _ks: undefined, _key: undefined }, style.aci, style.byLayerAci);
+    const styleOf = (col) => { const rc = runColor(col, style); return !rc ? base : withAci({ ...base, _ks: undefined, _key: undefined, _css: undefined, color: rc }, runAci(col, style), style.byLayerAci); };
     for (const g of groups.values()) {
       if (!g.ops.length) continue;
       const l = g.line;

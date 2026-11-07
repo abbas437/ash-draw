@@ -114,3 +114,21 @@ test('bad input throws a clear error', () => {
   bad(fileOf('plot_style{\n 0{\n  name="x\n'), /ends inside/);
   bad('not bytes', /expected file bytes/);
 });
+
+test('scene styles carry the plotted ACI index (style.aci): BYLAYER, BYBLOCK in an INSERT, ACI 7, true colour', async () => {
+  const { newDocument, addLayer, addBlock, addEntity, makeLine, makeInsert } = await import('../src/core/model.js');
+  const { buildScene } = await import('../src/core/render.js');
+  const doc = newDocument();
+  addLayer(doc, { name: 'G', color: 3 });
+  addBlock(doc, 'B', { x: 0, y: 0 }, [makeLine({ x: 0, y: 0 }, { x: 1, y: 0 }, { color: 0, layer: '0' })]);
+  addEntity(doc, makeLine({ x: 0, y: 1 }, { x: 1, y: 1 }, { color: 256, layer: 'G' }));
+  addEntity(doc, makeInsert('B', { x: 0, y: 2 }, { color: 5 }));
+  addEntity(doc, makeLine({ x: 0, y: 3 }, { x: 1, y: 3 }, { color: 7 }));
+  addEntity(doc, makeLine({ x: 0, y: 4 }, { x: 1, y: 4 }, { color: { r: 10, g: 20, b: 30 } }));
+  addEntity(doc, makeInsert('B', { x: 0, y: 5 }, { color: { r: 1, g: 2, b: 3 } }));
+  const items = buildScene(doc).items.filter((it) => it.kind === 'path');
+  const at = (y) => items.find((it) => Math.abs(it.bbox.miny - y) < 1e-9).style;
+  assert.deepEqual([1, 2, 3, 4, 5].map((y) => at(y).aci), [3, 5, 7, null, null]);
+  assert.deepEqual(at(2).color.rgb, [0, 0, 255], 'resolveColor result unchanged');
+  assert.ok(!JSON.stringify(at(1)).includes('aci'), 'not enumerable: scene digests unchanged');
+});

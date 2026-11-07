@@ -101,6 +101,29 @@ export function resolveColor(entity, layer, insertColor = null) {
 }
 
 /**
+ * The ACI index (1-255) an entity plots with, resolved like resolveColor (BYLAYER, BYBLOCK = insertAci), or null for a
+ * true colour. insertAci: the enclosing INSERT's index (null = true colour); at top level BYBLOCK is 7, as is anything
+ * resolveColor makes `auto`. Plot style tables (.ctb) pick their pen by this index.
+ */
+export function aciOf(entity, layer, insertAci = 7) {
+  let c = decodeColor(entity.color);
+  if (c && typeof c === 'object') return null;
+  if (c === 256 || c === undefined || c === null) c = layer ? decodeColor(layer.color) : 7;
+  if (c === 0) return insertAci;
+  if (c && typeof c === 'object') return null;
+  c = Math.abs(c ?? 7);
+  return c >= 1 && c <= 255 ? c : 7;
+}
+
+/** the ACI index of an MTEXT run colour (see runColor): null = true colour; no code / \C0 = the item's own (style.aci) */
+export function runAci(c, style) {
+  if (!c || c.aci === 0) return style?.aci ?? null;
+  if (c.rgb) return null;
+  if (c.aci === 256) return style?.byLayerAci ?? style?.aci ?? null;
+  return aciOf({ color: c.aci }, null);
+}
+
+/**
  * Colour of an MTEXT run (\C / \c) as { rgb, auto }; null = the MTEXT's own colour (no code, or \C0 ByBlock).
  * \C256 (ByLayer) is the MTEXT's layer colour: style.byLayer, set by the scene for MTEXT items.
  */
