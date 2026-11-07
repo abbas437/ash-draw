@@ -11,7 +11,7 @@ import { converterPath, createDwgBridge, DWG_OUT_VERSIONS } from './dwgBridge.js
 import { cacheLimitBytes, createDwgCache, openCached } from './dwgCache.js';
 import { createHandoffStore } from './handoff.js';
 import { createClipboardBridge } from './clipboard.js';
-import { createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isOdaExeName, ODA_DOWNLOAD_URL, ODA_DWG_VERSIONS } from './odaConverter.js';
+import { createDwgService, createOdaBridge, DWG_MODES, findOdaConverter, isSafeOdaPath, ODA_DOWNLOAD_URL, ODA_DWG_VERSIONS, resolveOdaPathChange } from './odaConverter.js';
 import { lockData, onSecondInstance } from './instance.js';
 import { saveDialogDefault, openDialogDir } from './savePath.js';
 import { createSymbolLibrary } from './symbols.js';
@@ -409,19 +409,25 @@ function registerIpc() {
   });
   handle('app:recentClear', () => { recent = []; writeJsonSync('recent.json', recent); return true; });
   // DWG converter preference: settings 'dwg.converter' (auto | oda | libredwg) and 'dwg.odaPath' (validated at use).
-  handle('dwg:config', async () => { settings ??= await loadJson('settings.json'); return { mode: settings['dwg.converter'] ?? 'auto', odaPath: settings['dwg.odaPath'] ?? '' }; });
+  // A UNC / device path in saved settings is ignored; a new path is accepted only from dwg:browseOda (see resolveOdaPathChange).
+  let browsedOda = null;
+  const savedOda = () => (isSafeOdaPath(settings?.['dwg.odaPath']) ? settings['dwg.odaPath'] : '');
+  handle('dwg:config', async () => { settings ??= await loadJson('settings.json'); return { mode: settings['dwg.converter'] ?? 'auto', odaPath: savedOda() }; });
   handle('dwg:setConfig', async (opts) => {
     const o = plainObject(opts);
     if (!DWG_MODES.includes(o.mode)) throw new RangeError(`mode must be one of ${DWG_MODES.join(', ')}`);
-    if (o.odaPath !== '' && (!isPathString(o.odaPath) || !path.isAbsolute(o.odaPath) || !isOdaExeName(o.odaPath))) throw new TypeError('the ODA path must be the full path of ODAFileConverter.exe');
     settings ??= await loadJson('settings.json');
-    settings['dwg.converter'] = o.mode; settings['dwg.odaPath'] = o.odaPath;
+    const odaPath = resolveOdaPathChange({ requested: o.odaPath, saved: savedOda(), browsed: browsedOda });
+    settings['dwg.converter'] = o.mode; settings['dwg.odaPath'] = odaPath;
     await saveJson('settings.json', settings);
     return true;
   });
   handle('dwg:browseOda', async () => {
     const r = await dialog.showOpenDialog(win, { title: 'Locate ODAFileConverter.exe', filters: [{ name: 'ODA File Converter', extensions: process.platform === 'win32' ? ['exe'] : ['*'] }], properties: ['openFile'] });
-    return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
+    if (r.canceled || !r.filePaths[0]) return null;
+    if (!isSafeOdaPath(r.filePaths[0])) throw new TypeError('choose ODAFileConverter.exe on a local drive (network and device paths are not allowed)');
+    browsedOda = r.filePaths[0]; // main remembers it; the renderer can only hand it back to dwg:setConfig
+    return browsedOda;
   });
   // Only this fixed https address is ever opened (allow-list of one); the renderer passes nothing.
   handle('shell:openOdaDownload', () => {
@@ -492,7 +498,7 @@ app.whenReady().then(async () => {
   const programFiles = [...new Set([process.env.ProgramW6432, process.env.ProgramFiles, 'C:\\Program Files'].filter(Boolean))];
   dwg = createDwgService({
     libre: createDwgBridge(libredwgDir, process.platform, { tmpRoot }),
-    getConfig: () => ({ mode: settings?.['dwg.converter'], odaPath: settings?.['dwg.odaPath'] || '' }),
+    getConfig: () => ({ mode: settings?.['dwg.converter'], odaPath: savedOda() }),
     detectOda: () => (process.platform === 'win32' ? findOdaConverter(programFiles) : Promise.resolve(null)),
     makeOda: (exe) => createOdaBridge(exe, { tmpRoot }),
   });

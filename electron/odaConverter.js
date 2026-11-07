@@ -150,6 +150,24 @@ export function odaArgs(inDir, outDir, outType, version) {
 /** Only an executable named ODAFileConverter[.exe] is ever run (a settings value cannot name another program). */
 export const isOdaExeName = (p) => typeof p === 'string' && /^ODAFileConverter(\.exe)?$/i.test(path.basename(p));
 
+/** UNC (\\server\share, //server/share) and the \\?\ and \\.\ device prefixes: never accepted as the converter path. */
+export const isUncOrDevicePath = (p) => typeof p === 'string' && /^[\\/]{2}/.test(p);
+
+/** A usable converter path: absolute, a local drive/root path (not UNC or device), and named ODAFileConverter[.exe]. */
+export const isSafeOdaPath = (p) => typeof p === 'string' && p !== '' && !p.includes('\0') && !isUncOrDevicePath(p) && (path.isAbsolute(p) || path.win32.isAbsolute(p)) && isOdaExeName(path.win32.basename(p));
+
+/**
+ * The converter path to store for a Preferences save. The renderer may only clear it (''), keep the path already saved,
+ * or hand back the path main itself got from the Browse dialog (`browsed`); any other string throws.
+ * @returns {string} the path to store ('' = detect automatically)
+ */
+export function resolveOdaPathChange({ requested, saved, browsed }) {
+  if (requested === '') return '';
+  if (typeof requested !== 'string' || (requested !== saved && requested !== browsed)) throw new TypeError('the ODA path can only be chosen with Browse…');
+  if (!isSafeOdaPath(requested)) throw new TypeError('the ODA path must be the local full path of ODAFileConverter.exe (network and device paths are not allowed)');
+  return requested;
+}
+
 /** "ODAFileConverter 25.12.0" -> [25, 12, 0]; no number -> [] */
 const versionOf = (dirName) => (/(\d+(?:\.\d+)*)/.exec(dirName)?.[1] ?? '').split('.').filter(Boolean).map(Number);
 function newer(a, b) {
@@ -260,7 +278,7 @@ export function createDwgService({ libre, getConfig, detectOda, makeOda }) {
   async function oda() {
     const { odaPath } = getConfig();
     if (odaPath) {
-      if (isOdaExeName(odaPath) && path.isAbsolute(odaPath) && (await fs.stat(odaPath).then((s) => s.isFile(), () => false))) return { exe: odaPath, source: 'setting' };
+      if (isSafeOdaPath(odaPath) && (await fs.stat(odaPath).then((s) => s.isFile(), () => false))) return { exe: odaPath, source: 'setting' };
       return { exe: null, reason: `ODA File Converter not found at ${odaPath}` };
     }
     const exe = await detectOda();

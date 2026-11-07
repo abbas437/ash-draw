@@ -689,8 +689,9 @@ class App {
     const av = await api.dwgAvailable().catch(() => null);
     const mode = el('select', { id: 'pref-dwg-mode' }, [['auto', 'Automatic (built-in LibreDWG; ODA when it cannot read the file)'], ['oda', 'ODA File Converter'], ['libredwg', 'Built-in (LibreDWG)']].map(([v, t]) => el('option', { value: v, text: t })));
     mode.value = cfg.mode;
-    const odaPath = el('input', { id: 'pref-oda-path', type: 'text', value: cfg.odaPath, placeholder: av?.oda?.source === 'auto' ? av.oda.path : 'Detected automatically in C:\\Program Files\\ODA', style: 'width:100%' });
+    const odaPath = el('input', { id: 'pref-oda-path', type: 'text', readonly: 'readonly', value: cfg.odaPath, placeholder: av?.oda?.source === 'auto' ? av.oda.path : 'Detected automatically in C:\\Program Files\\ODA', style: 'width:100%' });
     const browse = el('button', { type: 'button', text: 'Browse…', onclick: async () => { const p = await api.dwgBrowseOda(); if (p) odaPath.value = p; } });
+    const clearOda = el('button', { type: 'button', id: 'pref-oda-clear', text: 'Clear', onclick: () => { odaPath.value = ''; } });
     const status = av ? `In use: ${av.available ? av.version : `none (${av.reason})`}. ${odaStatusText(av)}` : '';
     const odaNote = odaMissing(av) ? el('p', { id: 'pref-oda-note' }, [ODA_OPTIONAL_NOTE, ' ',
       ...(api.openOdaDownload ? [el('button', { type: 'button', id: 'pref-oda-get', text: ODA_GET_LABEL, onclick: () => api.openOdaDownload().catch(() => {}) })] : [])]) : null;
@@ -708,7 +709,7 @@ class App {
     const cacheRow = ci ? el('p', {}, el('label', { text: 'Keep converted DWG drawings (reopening an unchanged DWG skips the conversion), up to ' }), cacheSel, cacheUse, cacheClear) : null;
     const r = await modal('Preferences', el('div', {}, zoomRow, dwgSaveRow, autosaveRow,
       el('label', { text: 'DWG converter ' }, mode),
-      el('p', {}, el('label', { text: 'ODA File Converter (ODAFileConverter.exe), leave empty to detect it: ' }), odaPath, browse),
+      el('p', {}, el('label', { text: 'ODA File Converter (ODAFileConverter.exe), choose it with Browse…, or leave empty to detect it: ' }), odaPath, browse, clearOda),
       el('p', { id: 'pref-dwg-status', text: status }), odaNote, cacheRow),
     [{ label: 'Save', value: 'save', primary: true }, { label: 'Cancel', value: null }]);
     if (r !== 'save') return;

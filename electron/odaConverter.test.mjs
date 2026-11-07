@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createOdaBridge, createDwgService, emptyReferencedBlocks, findOdaConverter, implausibleConversion, odaArgs, odaVersion, ODA_DWG_VERSIONS, ODA_HINT, ODA_TIMEOUT_MS } from './odaConverter.js';
+import { createOdaBridge, createDwgService, emptyReferencedBlocks, findOdaConverter, implausibleConversion, isSafeOdaPath, resolveOdaPathChange, odaArgs, odaVersion, ODA_DWG_VERSIONS, ODA_HINT, ODA_TIMEOUT_MS } from './odaConverter.js';
 import { DWG_SAVE_VERSIONS } from '../src/core/dwgpref.js';
 
 const skip = process.platform === 'win32' ? 'the stub converter is a shebang script' : false;
@@ -341,4 +341,29 @@ test('emptyReferencedBlocks: attached xrefs (flag 4, overlay 12) and xref-depend
     '0', 'INSERT', '2', 'SITE-PLAN', '0', 'INSERT', '2', 'GRID', '0', 'INSERT', '2', 'SITE-PLAN|DOOR', '0', 'INSERT', '2', 'tag',
     '0', 'ENDSEC', '0', 'EOF', ''].join('\n');
   assert.deepEqual(emptyReferencedBlocks(new TextEncoder().encode(dxf)), { count: 1, names: ['tag'] });
+});
+
+test('isSafeOdaPath: local absolute ODAFileConverter paths only; UNC and device paths refused', () => {
+  for (const ok of ['C:\\Program Files\\ODA\\ODAFileConverter 25.12.0\\ODAFileConverter.exe', '/opt/oda/ODAFileConverter']) assert.equal(isSafeOdaPath(ok), true, ok);
+  for (const bad of ['', '\\\\server\\share\\ODAFileConverter.exe', '//server/share/ODAFileConverter.exe', '\\\\?\\C:\\ODA\\ODAFileConverter.exe', '\\\\.\\C:\\ODA\\ODAFileConverter.exe',
+    '\\\\?\\UNC\\server\\share\\ODAFileConverter.exe', 'ODAFileConverter.exe', 'C:\\tools\\evil.exe', null, 42]) assert.equal(isSafeOdaPath(bad), false, String(bad));
+});
+
+test('resolveOdaPathChange: the renderer can clear, keep the saved path or return the Browse result, nothing else', () => {
+  const saved = 'C:\\ODA\\ODAFileConverter.exe', browsed = 'D:\\ODA\\ODAFileConverter.exe';
+  assert.equal(resolveOdaPathChange({ requested: '', saved, browsed: null }), '');
+  assert.equal(resolveOdaPathChange({ requested: saved, saved, browsed: null }), saved);
+  assert.equal(resolveOdaPathChange({ requested: browsed, saved, browsed }), browsed);
+  assert.throws(() => resolveOdaPathChange({ requested: 'E:\\typed\\ODAFileConverter.exe', saved, browsed }), /Browse/);
+  assert.throws(() => resolveOdaPathChange({ requested: browsed, saved: '', browsed: null }), /Browse/);
+  const unc = '\\\\server\\share\\ODAFileConverter.exe';
+  assert.throws(() => resolveOdaPathChange({ requested: unc, saved: unc, browsed: unc }), /network/);
+  assert.throws(() => resolveOdaPathChange({ requested: undefined, saved, browsed }), /Browse/);
+});
+
+test('the engine ignores a UNC converter path from saved settings', async () => {
+  const unc = '\\\\server\\share\\ODAFileConverter.exe';
+  const svc = createDwgService({ libre: {}, getConfig: () => ({ mode: 'oda', odaPath: unc }), detectOda: async () => null, makeOda: () => { throw new Error('must not run'); } });
+  const st = await svc.available();
+  assert.equal(st.oda?.available ?? false, false);
 });
