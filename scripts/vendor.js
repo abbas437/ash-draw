@@ -3,6 +3,7 @@
 //   pdf-lib.esm.js     <- pdf-lib/dist/pdf-lib.esm.min.js (self-contained ESM)
 //   fontkit.esm.js     <- @pdf-lib/fontkit/dist/fontkit.umd.min.js (UMD, pako bundled) wrapped as ESM
 //   bidi.esm.js        <- bidi-js/dist/bidi.min.mjs (self-contained ESM; Unicode bidi algorithm for the PDF export)
+//   pako-inflate.esm.js <- pako/dist/pako_inflate.min.js (UMD) wrapped as ESM (bounded inflate of .ctb files)
 // The fontkit .es.js build is NOT used because it imports the bare specifier "pako".
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -46,6 +47,11 @@ async function main() {
   const bdCode = await fs.readFile(path.join(NM, 'bidi-js/dist/bidi.min.mjs'), 'utf8');
   if (/\bimport\s*[{*\w]|\brequire\(/.test(bdCode)) throw new Error('bidi-js ESM bundle has imports');
   await fs.writeFile(path.join(OUT, 'bidi.esm.js'), `// bidi-js ${bd.version} (${bd.license}) - see THIRD-PARTY-NOTICES.md\n${stripMap(bdCode)}`);
+
+  const pk = await pkg('pako');
+  const pkCode = await fs.readFile(path.join(NM, 'pako/dist/pako_inflate.min.js'), 'utf8');
+  await fs.writeFile(path.join(OUT, 'pako-inflate.esm.js'), wrapUmd(pkCode,
+    `// pako ${pk.version} inflate (${pk.license}) - see THIRD-PARTY-NOTICES.md`, 'module.exports'));
 
   const files = await fs.readdir(OUT);
   console.log(`vendor: ${files.sort().join(', ')} -> ${path.relative(ROOT, OUT)}`);

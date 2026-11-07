@@ -49,8 +49,10 @@ export async function loadCtbFile(app) {
   const r = addStyleTable(stored, { name, data });
   const keep = new Set(r.list.map((e) => e.name));
   app.styleTables = [...app.styleTables.filter((e) => keep.has(e.name) && e.name.toLowerCase() !== name.toLowerCase()), { name, data, table }];
-  if (r.stored) await window.api?.settingsSet?.(STYLE_TABLES_KEY, r.list)?.catch?.(() => {});
+  let saved = r.stored;
+  if (saved) { try { await window.api.settingsSet(STYLE_TABLES_KEY, r.list); } catch { saved = false; } }
   const note = !r.stored ? `${name} is too large to be remembered (${Math.round(data.length / 1024)} KB); it can be used until the program is closed.`
+    : !saved ? `${name} could not be remembered (the settings could not be saved); it can be used until the program is closed.`
     : r.dropped.length ? `To keep the remembered tables within the limit (5 tables, 60 KB), ${r.dropped.join(', ')} ${r.dropped.length === 1 ? 'was' : 'were'} removed from the list.` : '';
   return { name, note };
 }

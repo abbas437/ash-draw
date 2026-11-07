@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { PDFDocument, PDFArray, decodePDFRawStream } from 'pdf-lib';
 import { newDocument, addEntity, makeLine } from '../src/core/model.js';
 import { aciToRgb } from '../src/core/aci.js';
 import { exportSvg, colorRgb } from '../src/core/exportSvg.js';
 import { exportPdf, plotLayout, pageFit } from '../src/core/exportPdf.js';
-import { plotSettingsFrom, plotSettingsToStore, PLOT_DEFAULTS, LAYOUT_PAPERS, addStyleTable, styleTablesFrom, findStyleTableName, STYLE_TABLES_MAX_CHARS } from '../src/core/plotSettings.js';
+import { plotSettingsFrom, plotSettingsToStore, PLOT_DEFAULTS, LAYOUT_PAPERS, addStyleTable, styleTablesFrom, findStyleTableName, STYLE_TABLES_MAX_CHARS, sheetPlotStyle } from '../src/core/plotSettings.js';
 
 const MM = 72 / 25.4;
 // one line per colour: ACI 8 (grey), ACI 1 (red), true colour 200,200,200, true colour 200,10,10
@@ -107,4 +108,14 @@ test('stored plot style tables: a hand-edited value is cleaned; names are found 
   assert.equal(findStyleTableName(['acad.ctb', 'XYZ-Pens.ctb'], 'xyz-pens.CTB'), 'XYZ-Pens.ctb');
   assert.equal(findStyleTableName(['acad.ctb'], 'other.ctb'), null);
   assert.equal(findStyleTableName(['acad.ctb'], ''), null);
+});
+
+test('sheetPlotStyle: a comparison drawing plots without a table (Plot, layout Plot and every Publish sheet use it)', () => {
+  const t = { kind: 'ctb' }, cmp = Object.assign(newDocument(), { isCompare: true });
+  assert.equal(sheetPlotStyle(newDocument(), t), t);
+  assert.equal(sheetPlotStyle(newDocument(), undefined), null);
+  assert.equal(sheetPlotStyle(cmp, t), null);
+  const src = readFileSync(new URL('../renderer/plot.js', import.meta.url), 'utf8');
+  assert.equal((src.match(/plotStyle: sheetPlotStyle\((app\.fileDoc|x\.doc), /g) ?? []).length, 3, 'the three export calls go through sheetPlotStyle');
+  assert.doesNotMatch(src, /plotStyle: (?!sheetPlotStyle\()/, 'no export call passes a table directly');
 });

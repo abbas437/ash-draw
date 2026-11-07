@@ -9,6 +9,18 @@ import path from 'node:path';
 import { parsePlotStyleTable, writePlotStyleTable, BUILTIN_TABLES, STANDARD_LINEWEIGHTS } from '../src/core/plotStyle.js';
 
 const HEADER = 'PIAFILEVERSION_2.0,CTBVER1,compress\r\npmzlibcodec';
+/** a zlib bomb: one fixed-Huffman deflate block of a literal 'x' and `n` copies of length 258 / distance 1 (13 bits each) */
+function bombZ(n) {
+  const bytes = []; let acc = 0, nb = 0;
+  const put = (v, len) => { acc |= v << nb; nb += len; while (nb >= 8) { bytes.push(acc & 255); acc >>>= 8; nb -= 8; } };
+  const code = (c, len) => { let r = 0; for (let i = 0; i < len; i++) r |= ((c >>> i) & 1) << (len - 1 - i); put(r, len); }; // Huffman codes go MSB first
+  put(1, 1); put(1, 2); // BFINAL, BTYPE 01 (fixed Huffman)
+  code(0x30 + 0x78, 8); // literal 'x'
+  for (let i = 0; i < n; i++) { code(0b11000101, 8); code(0, 5); } // length code 285 (258), distance code 0 (1)
+  code(0, 7); // end of block
+  if (nb) bytes.push(acc & 255);
+  return Buffer.from([0x78, 0x01, ...bytes, 0, 0, 0, 0]);
+}
 /** real-format file bytes of `text`: header, adler32 / sizes (uint32 LE), zlib (node's deflate, not our writer) */
 function fileOf(text, { z = deflateSync(Buffer.from(`${text}\0`, 'latin1')) } = {}) {
   const out = Buffer.alloc(60 + z.length);
@@ -113,6 +125,37 @@ test('bad input throws a clear error', () => {
   bad(fileOf('description="no styles\naci_table_available=TRUE\n'), /no plot_style/);
   bad(fileOf('plot_style{\n 0{\n  name="x\n'), /ends inside/);
   bad('not bytes', /expected file bytes/);
+});
+
+test('a zlib bomb (one deflate block expanding to 155 MB) is refused as too large without inflating it', () => {
+  const file = fileOf('', { z: bombZ(600000) });
+  assert.ok(file.length < (1 << 20), 'within the 1 MB file limit');
+  const before = process.memoryUsage().arrayBuffers, t0 = performance.now();
+  assert.throws(() => parsePlotStyleTable(file), /too large \(over 1 MB decompressed\)/);
+  const ms = performance.now() - t0, grew = process.memoryUsage().arrayBuffers - before;
+  assert.ok(grew < 50e6, `arrayBuffers grew ${(grew / 1e6).toFixed(1)} MB`);
+  assert.ok(ms < 400, `${ms.toFixed(0)} ms`);
+});
+
+test('deeply nested sections are refused with a clear error, not a stack overflow', () => {
+  const nest = (n) => `${'a{\n'.repeat(n)}${'}\n'.repeat(n)}`;
+  assert.throws(() => parsePlotStyleTable(fileOf(nest(20000))), /not a plot style table \(nested too deeply/);
+  assert.throws(() => parsePlotStyleTable(fileOf(nest(17))), /nested too deeply/);
+  assert.throws(() => parsePlotStyleTable(fileOf(nest(16))), /no plot_style/, '16 levels are read');
+  assert.equal(parsePlotStyleTable(fileOf(REAL)).styles.length, 255, 'real files (3 levels) still parse');
+});
+
+test('pen lineweights are clamped to 0..10 mm and screening to 0..100; 0 stays "use object"', () => {
+  const text = REAL.replace(' 27=0.0076200000000 (+7.Z+"8V?S_LC )', ' 27=1e300').replace('lineweight=0\n', 'lineweight=27\n')
+    .replace('lineweight=10\n', 'lineweight=28\n').replace('custom_lineweight_table{', 'custom_lineweight_table{\n 28=-5').replace('screen=50', 'screen=99999');
+  const t = parsePlotStyleTable(fileOf(text));
+  assert.equal(t.lineweights[27], 10);
+  assert.equal(t.lineweights[28], 0);
+  assert.equal(t.styles[1].lineweight, 10, 'a huge custom lineweight plots at 10 mm');
+  assert.equal(t.styles[0].lineweight, null, 'a negative one is "use object"');
+  assert.equal(t.styles[1].screening, 100);
+  assert.equal(t.styles[2].lineweight, 10);
+  assert.equal(parsePlotStyleTable(fileOf(REAL.replace('screen=50', 'screen=-7'))).styles[1].screening, 0);
 });
 
 test('scene styles carry the plotted ACI index (style.aci): BYLAYER, BYBLOCK in an INSERT, ACI 7, true colour', async () => {

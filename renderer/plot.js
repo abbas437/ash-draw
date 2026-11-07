@@ -3,7 +3,7 @@
 import { plotScale, pageFit, placeOnPage, exportPdfPages } from '../src/core/exportPdf.js';
 import { screenToWorld } from '../src/core/render.js';
 import { layoutPage, layoutPlotRegion, layoutPlotWindow, layoutMmPerUnit } from '../src/core/layouts.js';
-import { plotSettingsFrom, plotSettingsToStore, LAYOUT_PAPERS, PAGE_SIZES, PAPER_LABELS as SIZE_LABELS, validCustomMm, layoutPlotStart } from '../src/core/plotSettings.js';
+import { plotSettingsFrom, plotSettingsToStore, LAYOUT_PAPERS, PAGE_SIZES, PAPER_LABELS as SIZE_LABELS, validCustomMm, layoutPlotStart, sheetPlotStyle } from '../src/core/plotSettings.js';
 import { el, message, modal, toast, progressToast } from './ui.js';
 import { exportPdfBytes, unicodeFonts, plotPdfName, deliverWithWarnings, withExportProgress } from './files.js';
 import { mmPerUnit } from '../src/core/model.js';
@@ -173,7 +173,7 @@ export async function plotDialog(app, mode) {
   try {
     const out = await withPlotProgress(app, mode === 'pdf' ? 'Plotting…' : 'Preparing print…', mode === 'pdf' ? 'Plot cancelled.' : 'Print cancelled.', (p) => exportPdfBytes(app.fileDoc, app.scene(), {
       pageSize: s.pageSize, custom: { w: s.customW, h: s.customH }, orientation: s.orientation, monochrome: monoNow, keepGreys: s.keepGreys, lineweights: s.lineweights, transparency: s.transparency,
-      region, centre: s.centre, scale: s.fit ? null : plotScale(s.n, mmPerUnit(units)), mmPerUnit: mmPerUnit(units), plotStyle: tableNow, ...p,
+      region, centre: s.centre, scale: s.fit ? null : plotScale(s.n, mmPerUnit(units)), mmPerUnit: mmPerUnit(units), plotStyle: sheetPlotStyle(app.fileDoc, tableNow), ...p,
     }));
     if (!out) return;
     await deliverWithWarnings(() => deliverPlot(app, mode, out.bytes), out.warnings, mode === 'pdf' ? 'PDF exported with warnings' : 'Printed with warnings', message);
@@ -236,7 +236,7 @@ async function plotLayoutDialog(app, mode) {
   if (!cmp && st.changed()) s.styleTable = st.value();
   remember(s);
   try {
-    const out = await withPlotProgress(app, mode === 'pdf' ? 'Plotting…' : 'Preparing print…', mode === 'pdf' ? 'Plot cancelled.' : 'Print cancelled.', (p) => exportPdfBytes(app.fileDoc, null, { layout, modelScene: app.vp.modelScene, paper: paperSel.value, custom: { w: s.customW, h: s.customH }, area: area.value, fit: fitNow, layoutScale, monochrome: monoNow, keepGreys: s.keepGreys, lineweights: s.lineweights, transparency: s.transparency, plotStyle: tableNow, ...p }));
+    const out = await withPlotProgress(app, mode === 'pdf' ? 'Plotting…' : 'Preparing print…', mode === 'pdf' ? 'Plot cancelled.' : 'Print cancelled.', (p) => exportPdfBytes(app.fileDoc, null, { layout, modelScene: app.vp.modelScene, paper: paperSel.value, custom: { w: s.customW, h: s.customH }, area: area.value, fit: fitNow, layoutScale, monochrome: monoNow, keepGreys: s.keepGreys, lineweights: s.lineweights, transparency: s.transparency, plotStyle: sheetPlotStyle(app.fileDoc, tableNow), ...p }));
     if (!out) return;
     await deliverWithWarnings(() => deliverPlot(app, mode, out.bytes, plotPdfName(app.file.name, layout.name)), out.warnings, mode === 'pdf' ? 'PDF exported with warnings' : 'Printed with warnings', message);
   } catch (err) { await message(mode === 'pdf' ? 'Export failed' : 'Print failed', err.message || String(err)); }
@@ -280,7 +280,7 @@ export async function publishDialog(app) {
     if (!sheets.length) { await message('Nothing to publish', 'Tick at least one sheet.'); continue; }
     try {
       toast(`Publishing ${sheets.length} sheet${sheets.length > 1 ? 's' : ''}…`, 60000);
-      const out = await withPlotProgress(app, 'Publishing…', 'Publish cancelled.', (p) => exportPdfPages(sheets.map((x) => ({ doc: x.doc, layout: x.layout, label: x.label, region: !x.layout && s.publishArea === 'view' ? tabViewRect(app, x.tab) : null, plotStyle: (x.layout && styleTableFor(app, x.layout.plot?.styleSheet)) || tableNow })), {
+      const out = await withPlotProgress(app, 'Publishing…', 'Publish cancelled.', (p) => exportPdfPages(sheets.map((x) => ({ doc: x.doc, layout: x.layout, label: x.label, region: !x.layout && s.publishArea === 'view' ? tabViewRect(app, x.tab) : null, plotStyle: sheetPlotStyle(x.doc, (x.layout && styleTableFor(app, x.layout.plot?.styleSheet)) || tableNow) })), {
         paper: s.layoutPaper, custom: { w: s.customW, h: s.customH }, keepGreys: s.keepGreys, fit: s.layoutFit, pageSize: s.layoutPaper === 'layout' ? 'A3' : s.layoutPaper, orientation: 'auto', margin: 10, scale: null, centre: true,
         monochrome: monoNow, lineweights: s.lineweights, transparency: s.transparency, unicodeFonts, imageRgba: bitmapRgba, ...p,
       }));

@@ -13,9 +13,11 @@
 // custom_lineweight_table, whose 0.0 means "use object lineweight". ezdxf on 64-bit Linux/macOS writes the three
 // sizes as native 8-byte longs (struct "LLL"), so a 24-byte size block is accepted too when its compressed size fits.
 //
-// Inflate: the FlateDecode stream decoder bundled in pdf-lib (decodePDFRawStream; synchronous, also in the renderer
-// through the importmap). The writer emits zlib "stored" deflate blocks, which every zlib reader accepts.
-import { PDFName, decodePDFRawStream } from 'pdf-lib';
+// Inflate: pako's streaming Inflate (synchronous; node_modules in Node, renderer/vendor/pako-inflate.esm.js through the
+// importmap in the renderer). Its output arrives in chunks of INFLATE_CHUNK bytes, also inside one deflate block, and
+// inflating stops at the first chunk past MAX_PLOT_STYLE_BYTES, so a small file that expands to gigabytes (a "zlib
+// bomb") costs about 1 MB. The writer emits zlib "stored" deflate blocks, which every zlib reader accepts.
+import pako from 'pako';
 
 const MAGIC = 'PIAFILEVERSION_2.0,';
 const HEADER = 'PIAFILEVERSION_2.0,CTBVER1,compress\r\npmzlibcodec';
@@ -24,6 +26,9 @@ export const MAX_PLOT_STYLE_BYTES = 1 << 20; // input file and decompressed text
 export const OBJECT_LINETYPE = 31;
 const OBJECT_COLOR = -1, OBJECT_COLOR2 = -1006632961;
 const DITHER = 1, GRAYSCALE = 2;
+const INFLATE_CHUNK = 64 * 1024;
+const MAX_DEPTH = 16; // { } sections nest 3 deep in real files
+const MAX_LINEWEIGHT_MM = 10;
 /** AutoCAD's standard lineweight list (mm), as ezdxf's DEFAULT_LINE_WEIGHTS; index 0 (0.0) = use object */
 export const STANDARD_LINEWEIGHTS = Object.freeze([0, 0.05, 0.09, 0.10, 0.13, 0.15, 0.18, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.53,
   0.60, 0.65, 0.70, 0.80, 0.90, 1.00, 1.06, 1.20, 1.40, 1.58, 2.00, 2.11]);
@@ -40,12 +45,21 @@ function adler32(bytes) {
   return ((b << 16) | a) >>> 0;
 }
 
+const TOO_LARGE = 'the table is too large (over 1 MB decompressed)';
 function inflate(z) {
-  const dict = { lookup: (k) => (k === PDFName.of('Filter') ? PDFName.of('FlateDecode') : undefined) };
-  let out;
-  try { out = decodePDFRawStream({ dict, contents: z }).getBytes(MAX_PLOT_STYLE_BYTES + 1); }
-  catch (err) { fail(`the compressed data is damaged (${err.message})`); }
-  if (out.length > MAX_PLOT_STYLE_BYTES) fail('the table is too large (over 1 MB decompressed)');
+  const parts = [];
+  let total = 0, tooLarge = false;
+  const inf = new pako.Inflate({ chunkSize: INFLATE_CHUNK });
+  inf.onData = (chunk) => {
+    total += chunk.length;
+    if (total > MAX_PLOT_STYLE_BYTES) { tooLarge = true; throw new Error(TOO_LARGE); } // stops pako mid-block
+    parts.push(chunk);
+  };
+  inf.onEnd = (status) => { inf.err = status; inf.msg = status ? inf.strm.msg : ''; };
+  try { inf.push(z, true); } catch (err) { if (tooLarge) fail(TOO_LARGE); fail(`the compressed data is damaged (${err.message})`); }
+  if (inf.err) fail(`the compressed data is damaged (${inf.msg || `zlib error ${inf.err}`})`);
+  const out = new Uint8Array(total);
+  for (let i = 0, o = 0; i < parts.length; o += parts[i].length, i++) out.set(parts[i], o);
   // the zlib trailer: adler32 of the decompressed data, big endian (catches truncated or damaged data)
   const t = z.length - 4;
   if (t < 2 || ((z[t] << 24) | (z[t + 1] << 16) | (z[t + 2] << 8) | z[t + 3]) >>> 0 !== adler32(out)) fail('the compressed data is truncated or damaged (checksum mismatch)');
@@ -78,28 +92,31 @@ function parseText(text) {
     if (v.startsWith('"')) return v.slice(1);
     return v.endsWith(')') ? v.split(' ')[0] : v; // "0.00762 (+7.Z+...)" appendix
   };
-  const value = () => {
+  const value = (depth) => {
     const l = lines[i];
-    if (l.endsWith('{')) { i++; return section(); }
+    if (l.endsWith('{')) {
+      if (depth >= MAX_DEPTH) fail(`not a plot style table (nested too deeply, line ${i + 1})`);
+      i++; return section(depth + 1);
+    }
     if (!l.includes('=')) fail(`unexpected line ${i + 1}: "${l.slice(0, 40)}"`);
     i++;
     return clean(l.slice(l.indexOf('=') + 1));
   };
-  const section = () => {
+  const section = (depth) => {
     const out = {};
     for (;;) {
       if (i >= lines.length) fail('the table text ends inside a { } section');
       if (!lines[i].trim()) { i++; continue; }
       if (lines[i].trim().endsWith('}')) { i++; return out; }
       const n = nameOf(lines[i]);
-      out[n] = value();
+      out[n] = value(depth);
     }
   };
   const top = {};
   while (i < lines.length) {
     if (!lines[i].trim()) { i++; continue; }
     const n = nameOf(lines[i]);
-    top[n] = value();
+    top[n] = value(0);
   }
   return top;
 }
@@ -144,7 +161,7 @@ export function parsePlotStyleTable(bytes) {
   const kind = String(top.aci_table_available ?? '').toUpperCase() === 'TRUE' ? 'ctb' : 'stb';
   const lwt = top.custom_lineweight_table;
   const lineweights = lwt && typeof lwt === 'object' ? [] : [...STANDARD_LINEWEIGHTS];
-  if (lwt && typeof lwt === 'object') for (const [k, v] of Object.entries(lwt)) { const ix = int(k, -1), mm = Number(v); if (ix >= 0 && ix < 4096 && Number.isFinite(mm)) lineweights[ix] = mm; }
+  if (lwt && typeof lwt === 'object') for (const [k, v] of Object.entries(lwt)) { const ix = int(k, -1), mm = Number(v); if (ix >= 0 && ix < 4096 && Number.isFinite(mm)) lineweights[ix] = Math.max(0, Math.min(MAX_LINEWEIGHT_MM, mm)); }
   for (let k = 0; k < lineweights.length; k++) if (lineweights[k] === undefined) lineweights[k] = 0;
   const entries = Object.entries(top.plot_style).filter(([k, v]) => v && typeof v === 'object' && int(k, -1) >= 0).sort((a, b) => int(a[0]) - int(b[0]));
   let styles;

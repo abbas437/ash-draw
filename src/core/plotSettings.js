@@ -55,6 +55,10 @@ export const plotSettingsToStore = (s) => Object.fromEntries(Object.keys(PLOT_DE
 // ---- plot style tables loaded from .ctb files (setting 'plot.styleTables') ----------------------------------------------
 // The original file bytes (base64) are kept, not the parsed table (255 pens of a dozen fields each are many times larger
 // than a compressed .ctb). The list is oldest first: [{ name, data }].
+/** the plot style table a sheet of `doc` plots with: none for a comparison drawing (its ACI 1/3/8/40/252 colours and set
+ *  lineweights are the comparison), else `table` (null: none) */
+export const sheetPlotStyle = (doc, table) => (doc?.isCompare ? null : table ?? null);
+
 export const STYLE_TABLES_KEY = 'plot.styleTables';
 export const STYLE_TABLES_MAX = 5;
 export const STYLE_TABLES_MAX_CHARS = 60000; // the desktop settings store refuses a value over 64 KB (as JSON)

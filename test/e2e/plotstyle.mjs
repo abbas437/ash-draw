@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Browser end-to-end test of plot style tables (.ctb) in Plot to PDF and PAGESETUP: Load .ctb…, the PDF pens, the choice
-// remembered, a layout's own table preselected, None, Monochrome disabled while a table is chosen. Harness as plotprogress.mjs.
+// remembered (or not: a failed save), a layout's own table preselected, None, Monochrome disabled while a table is chosen. Harness as plotprogress.mjs.
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -154,6 +154,17 @@ try {
     assert.equal(await sel.inputValue(), '', 'the choice is unchanged');
     assert.equal(await dlg.locator('button.primary').isVisible(), true, 'the Plot dialog stays open');
   }
+
+  await dlg.locator('button', { hasText: 'Cancel' }).click();
+  step = 'a table whose setting cannot be saved: the dialog says it could not be remembered, and it is used';
+  // window.api is frozen by the shim: this page's settingsSet is made to fail as it is created
+  await page.addInitScript(() => { const freeze = Object.freeze; Object.freeze = (o) => freeze(o && typeof o.settingsSet === 'function' ? Object.assign(o, { settingsSet: () => Promise.reject(new Error('disk full')) }) : o); });
+  await ready();
+  await openPlot();
+  const [ch2] = await Promise.all([page.waitForEvent('filechooser'), sel.selectOption({ label: 'Load .ctb…' })]);
+  await ch2.setFiles({ name: 'Second.ctb', mimeType: 'application/octet-stream', buffer: CTB });
+  await page.waitForFunction(() => /Second\.ctb could not be remembered/.test(document.querySelector('#dlg .plot-style-msg')?.textContent ?? ''), null, { timeout: 5000 });
+  assert.equal(await sel.inputValue(), 'Second.ctb');
 
   await dlg.locator('button', { hasText: 'Cancel' }).click();
   assert.deepEqual(problems, []);
