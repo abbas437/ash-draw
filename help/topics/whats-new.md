@@ -10,9 +10,19 @@ keywords: new, release, beta, changes, updates, version
 
 The most recent user-visible additions, newest first. For what the program still cannot do, see [Limitations](#topic:limitations).
 
-## Beta 57
+## Version 0.2.2
 
 - **Review rounds, follow-ups and import of earlier markups.** Answer each comment of a resubmission with a follow-up shown as a blue `Rev.xx:` line, export the rounds to the CRS and CSV, and bring in the previous revision's markups with **Import…** or MKIMPORT. Long Arabic comments now save safely in DXF. See [Markup and review](#topic:markup-review).
+
+## Version 0.2.1
+
+- **AutoCAD tables** (equipment schedules, legends, title blocks) are now shown, plotted and compared. A save writes each table as a block: its look is kept, but it is no longer editable as a table. See [Limitations](#topic:limitations).
+- **The Saved message lists how things were written**, for example tables saved as blocks or dimensions saved as geometry in a DWG.
+- **The unit you choose for a drawing without units is remembered** for that file and preselected next time.
+- **The ODA File Converter is chosen only with Browse** in Preferences; network (UNC) paths are refused.
+
+## Beta 57
+
 - **Rotate and mirror viewports as AutoCAD does.** Turning a viewport off-axis makes it a clipped viewport, and the view turns with the frame. A viewport and its boundary now move together. See [Layouts and viewports](#topic:layouts-viewports).
 - **Coordinate entry accepts x,y,z.** Typing three values, or relative values with a third part, is accepted and the height is ignored.
 - **Markups have an "In progress" status.** Closing a markup that has no review code sets it to Code A. See [Markup and review](#topic:markup-review).
