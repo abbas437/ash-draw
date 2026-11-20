@@ -1,7 +1,7 @@
 // ASH Draw Studio - external references: loading on open and the External References panel (XREF / XR).
 import { listXrefs, loadXref, unloadXref } from '../src/core/xref.js';
 import { loadDrawing, loadPicked, OPEN_FILTERS } from './files.js';
-import { loadOneXref, loadXrefs, refusalTracker, relativePath, xrefStatusLabel } from './xrefs.js';
+import { loadOneXref, loadXrefs, refusalTracker, relativePath, xrefReads, xrefStatusLabel } from './xrefs.js';
 import { loadDrawingImages } from './images.js';
 import { el, modal, toast } from './ui.js';
 
@@ -25,11 +25,12 @@ async function allowOutside(api, hostPath, paths) {
 
 /** Resolve and load every xref and raster image of a drawing being opened (before its scene is built). Files outside
  *  the drawing's folder are asked about once (a nested xref found only after loading may add one more question);
- *  resolves { missingImages, heldImages, missingXrefs, heldXrefs } (paths as written; held: outside the folder and not
- *  allowed by the user). */
+ *  resolves { missingImages, heldImages, missingXrefs, heldXrefs } (paths as written, nested xrefs included and joined to
+ *  the host's folder; held: outside the folder and not allowed by the user). */
 export async function loadDrawingRefs(api, doc, hostPath) {
   const t = refusalTracker();
-  const xread = t.wrap(reader(api, hostPath));
+  const reads = xrefReads();
+  const xread = reads.wrap(t.wrap(reader(api, hostPath)));
   const iapi = { imageRead: t.wrap((h, p) => api.imageRead(h, p)) };
   const hasXrefs = () => [...doc.blocks.values()].some((b) => b.xref && !b.xrefDep);
   if (hasXrefs()) await loadXrefs(doc, xread, parser(api), opts(hostPath));
@@ -43,11 +44,11 @@ export async function loadDrawingRefs(api, doc, hostPath) {
     for (const b of [...doc.blocks.values()]) if (b.xref && !b.xrefDep && b.xref.status === 'notfound') await loadOneXref(doc, b.name, xread, parser(api), opts(hostPath));
     missingImages = await loadDrawingImages(iapi, doc, hostPath, { retry: true });
   }
-  // the top-level xrefs and the images left unloaded: not found, or outside the folder and not allowed (held)
-  const top = [...doc.blocks.values()].filter((b) => b.xref && !b.xrefDep && b.xref.status === 'notfound').map((b) => b.xref.path);
+  // the xrefs (top-level and nested) and the images left unloaded: not found, or outside the folder and not allowed (held)
+  const x = reads.unloaded(t.held);
   return {
     missingImages: missingImages.filter((p) => !t.held(p)), heldImages: missingImages.filter((p) => t.held(p)),
-    missingXrefs: top.filter((p) => !t.held(p)), heldXrefs: top.filter((p) => t.held(p)),
+    missingXrefs: x.missing, heldXrefs: x.held,
   };
 }
 

@@ -6,7 +6,8 @@
 // asks once, and refs:decide hands the answer back here. Only paths main itself reported for that host can be
 // approved; a "Don't load" holds for the host for the rest of the session.
 // A candidate outside the folder that does not exist is not offered at all: it is checked with `isFile` (a stat, never a
-// read) unless it is a UNC or device path, which stays untouched and is offered as before.
+// read) unless it is a UNC or device path, which stays untouched and is offered as before. After "Don't load" for a host
+// nothing outside is looked at: its candidates are answered as refused (declined), as before.
 import { xrefCandidates } from '../src/core/xref.js';
 import { isUncOrDevicePath } from './odaConverter.js';
 
@@ -38,7 +39,7 @@ export function createRefAccess({ pathLib, isFile, isGranted = () => false }) {
         if (!accept(pathLib.extname(p).toLowerCase())) continue;
         const k = key(p);
         if (!inside(host, p) && !isGranted(p) && !s.approved.has(k)) {
-          if (isUncOrDevicePath(refPath) || isUncOrDevicePath(p) || (await isFile(p))) refused.push(p);
+          if (s.declined || isUncOrDevicePath(refPath) || isUncOrDevicePath(p) || (await isFile(p))) refused.push(p);
           continue;
         }
         if (await isFile(p)) return { path: p };

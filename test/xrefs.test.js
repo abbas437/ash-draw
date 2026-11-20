@@ -76,3 +76,19 @@ test('refNotes: missing xrefs named by file name, held ones said to be outside t
     ['Raster images not found (shown as a red frame with the file name): ./img/logo.png.', '1 raster image not loaded (outside the drawing folder): a.jpg.']);
   assert.deepEqual(refNotes({}), []);
 });
+
+test('xrefReads: nested xrefs that were not found or not loaded (outside the folder) are reported, once each, in reading order', async () => {
+  const { xrefReads } = await import('../renderer/xrefs.js');
+  const files = { '/w/host.dxf': { A: './a.dxf', GONE: 'gone.dxf' }, '/w/a.dxf': { B: '../out/b.dxf', C: 'c.dxf', A2: 'a2.dxf' }, '/w/a2.dxf': { B: '../out/b.dxf' } };
+  const inner = fsRead(files);
+  const read = async (ref) => (ref.includes('out') ? { refused: ['/out/b.dxf'], declined: true } : inner(ref));
+  const t = refusalTracker(), reads = xrefReads();
+  const host = fileDoc(files['/w/host.dxf']);
+  await loadXrefs(host, reads.wrap(t.wrap(read)), (b) => fileDoc(files[b]), { chain: ['/w/host.dxf'], depth: 3, host: '/w/host.dxf' });
+  const x = reads.unloaded(t.held);
+  assert.deepEqual(x, { missing: ['c.dxf', 'gone.dxf'], held: ['../out/b.dxf'] }, JSON.stringify(x));
+  assert.deepEqual(refNotes({ xrefs: x.missing, heldXrefs: x.held }), [
+    '2 external references not found (shown as their paths in red): c.dxf, gone.dxf.',
+    '1 external reference not loaded (outside the drawing folder): b.dxf.',
+  ]);
+});

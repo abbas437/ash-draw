@@ -83,6 +83,21 @@ export function refusalTracker() {
   };
 }
 
+/** Records the last answer for each xref path read, top-level and nested alike (`wrap(read)`; the path is the read's
+ *  last argument, as written, nested ones joined to the top host's folder). `unloaded(held)` -> { missing, held }: the
+ *  paths whose last read found nothing, once each in reading order, split by `held(path)` (outside the drawing folder
+ *  and not allowed: refusalTracker.held). */
+export function xrefReads() {
+  const found = new Map();
+  return {
+    wrap: (read) => async (...args) => { const r = await read(...args); found.set(args.at(-1), !!r); return r; },
+    unloaded(held = () => false) {
+      const miss = [...found].filter(([, ok]) => !ok).map(([p]) => p);
+      return { missing: miss.filter((p) => !held(p)), held: miss.filter((p) => held(p)) };
+    },
+  };
+}
+
 const MAX_NAMED = 5;
 const fileName = (p) => String(p).split(/[\\/]/).pop() || String(p);
 const named = (list) => list.slice(0, MAX_NAMED).join(', ') + (list.length > MAX_NAMED ? ` …and ${list.length - MAX_NAMED} more` : '');

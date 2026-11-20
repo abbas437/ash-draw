@@ -101,3 +101,12 @@ test('refAccess: an outside file that does not exist is not found, never offered
   assert.equal((await refs.find(host, '\\\\?\\C:\\dev\\y.dwg', dwgOrDxf)).refused.length, 1, 'a device path is offered, not checked');
   assert.ok(!touched.some((p) => /server|\?|dev/i.test(p)), touched.join(' | '));
 });
+
+test('refAccess: after "Don\'t load" for a host, outside candidates are not looked at; they are answered as declined', async () => {
+  const touched = [];
+  const refs = createRefAccess({ pathLib: path.win32, isFile: async (p) => { touched.push(p); return false; } });
+  const host = 'D:\\Pkg\\Sheets\\host.dwg';
+  assert.equal(refs.decide(host, false, []), true);
+  assert.deepEqual(await refs.find(host, 'D:\\Model\\far.dwg', dwgOrDxf), { refused: ['D:\\Model\\far.dwg'], declined: true });
+  assert.ok(touched.length && touched.every((p) => refs.inside(host, p)), `no existence check outside the folder: ${touched.join(' | ')}`);
+});
