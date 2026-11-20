@@ -109,6 +109,9 @@ const storePath = (n) => path.join(app.getPath('userData'), n);
 async function loadJson(n) { try { return JSON.parse(await fs.readFile(storePath(n), 'utf8')); } catch { return {}; } }
 async function saveJson(n, obj) { await fs.mkdir(app.getPath('userData'), { recursive: true }); await atomicWrite(storePath(n), JSON.stringify(obj, null, 2)); }
 let settings = null;
+// The saved ODA converter path (setting 'dwg.odaPath'); a UNC / device path is ignored. Module scope: the IPC
+// handlers and the DWG service (created in app.whenReady) both read it.
+const savedOda = () => (isSafeOdaPath(settings?.['dwg.odaPath']) ? settings['dwg.odaPath'] : '');
 // converted-drawing cache: <userData>/dwg-cache, limit from the setting 'dwg.cacheMaxMB' (default 2 GB, 0 = off)
 const dwgCache = createDwgCache({ dir: () => path.join(app.getPath('userData'), 'dwg-cache'), limitBytes: () => cacheLimitBytes(settings?.['dwg.cacheMaxMB']) });
 const autosave = createAutosaveStore({ dir: () => path.join(app.getPath('userData'), 'autosave'), appVersion: app.getVersion() });
@@ -411,7 +414,6 @@ function registerIpc() {
   // DWG converter preference: settings 'dwg.converter' (auto | oda | libredwg) and 'dwg.odaPath' (validated at use).
   // A UNC / device path in saved settings is ignored; a new path is accepted only from dwg:browseOda (see resolveOdaPathChange).
   let browsedOda = null;
-  const savedOda = () => (isSafeOdaPath(settings?.['dwg.odaPath']) ? settings['dwg.odaPath'] : '');
   handle('dwg:config', async () => { settings ??= settingsObject(await loadJson('settings.json')); return { mode: settings['dwg.converter'] ?? 'auto', odaPath: savedOda() }; });
   handle('dwg:setConfig', async (opts) => {
     const o = plainObject(opts);

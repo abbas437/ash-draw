@@ -70,6 +70,10 @@ try {
   expect('restored active tab', active, active === 'a.dxf');
   expect('panel gone', '', !(await win.locator('.session-offer').count()));
 
+  step = 'run 2: the DWG converter check answers (it threw a ReferenceError in 0.2.1-0.2.3, so no DWG opened)';
+  const avail = await win.evaluate(() => window.api.dwgAvailable().then((v) => ({ ok: true, v }), (e) => ({ ok: false, e: String(e?.message ?? e) })));
+  expect('dwgAvailable resolves', JSON.stringify(avail), avail.ok);
+
   step = 'run 2: sessionUpdate with a never-granted path is ignored';
   await win.waitForTimeout(500);
   const r = await win.evaluate(([a, b, never]) => window.api.sessionUpdate({ files: [a, never, b], active: never }), [a, b, never]);
