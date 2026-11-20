@@ -10,6 +10,10 @@ keywords: new, release, beta, changes, updates, version
 
 The most recent user-visible additions, newest first. For what the program still cannot do, see [Limitations](#topic:limitations).
 
+## Version 0.2.4
+
+- **DWG drawings open again.** Versions 0.2.1 to 0.2.3 could not open any DWG file: they stopped with "Cannot open this file" and an error about `savedOda`. DXF files were not affected.
+
 ## Version 0.2.3
 
 - **Plot style tables (CTB).** Plot, Print and Publish can use a contractor's `.ctb` pen table, or the built-in `acad.ctb`, `monochrome.ctb` and `grayscale.ctb`, for pen colours, screening and lineweights; a layout's own table is used when it is available. See [Print, plot to PDF and publish](#topic:plot-and-pdf).
