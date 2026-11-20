@@ -1,5 +1,6 @@
 // ASH Draw Studio - reuse rule for the viewport's cached scene bitmap (renderer/viewport.js).
 // Pure: decides how the next frame is produced from the last full frame, its content key and the active gesture.
+import { screenToWorld, worldToScreen } from './render.js';
 
 /** what the scene picture depends on besides the view; any difference forces a full render */
 export function frameKey({ scene, dark, lineweights, transparency, selection, dpr, pxWidth, pxHeight }) {
@@ -28,14 +29,18 @@ export function sameKey(a, b, skip) {
 export function framePlan(frame, key, view, gesture) {
   if (!frame || !sameKey(frame.key, key)) return { mode: 'full' };
   const f = frame.view;
-  if (view.width !== f.width || view.height !== f.height) return { mode: 'full' };
+  if (view.width !== f.width || view.height !== f.height || (view.rot || 0) !== (f.rot || 0)) return { mode: 'full' }; // another twist: re-render
   if (view.zoom === f.zoom && view.cx === f.cx && view.cy === f.cy) return frame.exact || gesture ? { mode: 'blit' } : { mode: 'full', under: placeFrame(f, view) };
   if (!gesture) return { mode: 'full', under: placeFrame(f, view) };
   const z = view.zoom, dpr = key.dpr || 1;
   if (z === f.zoom) {
-    const dx = Math.round((f.cx - view.cx) * z * dpr), dy = Math.round((view.cy - f.cy) * z * dpr);
+    // a turned view (rot): the frame's centre seen in `view` gives the screen shift, and the shifted frame's centre is
+    // the screen point that shift brings to the middle
+    const o = f.rot ? worldToScreen(view, { x: f.cx, y: f.cy }) : null;
+    const dx = Math.round((o ? o.x - view.width / 2 : (f.cx - view.cx) * z) * dpr), dy = Math.round((o ? o.y - view.height / 2 : (view.cy - f.cy) * z) * dpr);
     if (Math.abs(dx) >= key.pxWidth || Math.abs(dy) >= key.pxHeight) return { mode: 'full' };
     if (!dx && !dy) return { mode: 'blit' };
+    if (f.rot) { const c = screenToWorld(f, f.width / 2 - dx / dpr, f.height / 2 - dy / dpr); return { mode: 'shift', dx, dy, view: { ...f, cx: c.x, cy: c.y } }; }
     return { mode: 'shift', dx, dy, view: { ...f, cx: f.cx - dx / dpr / z, cy: f.cy + dy / dpr / z } };
   }
   return { mode: 'scale', ...placeFrame(f, view) };
@@ -44,6 +49,7 @@ export function framePlan(frame, key, view, gesture) {
 /** where a bitmap drawn for view `f` goes in `view` (same width and height): scaled by s, top-left at (ox, oy) CSS pixels */
 export function placeFrame(f, view) {
   const z = view.zoom, s = z / f.zoom, W = view.width, H = view.height;
+  if (f.rot) { const o = worldToScreen(view, { x: f.cx, y: f.cy }); return { s, ox: o.x - (W / 2) * s, oy: o.y - (H / 2) * s }; } // same twist (framePlan)
   return { s, ox: W / 2 - (W / 2) * s + (f.cx - view.cx) * z, oy: H / 2 - (H / 2) * s - (f.cy - view.cy) * z };
 }
 

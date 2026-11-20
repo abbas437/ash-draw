@@ -1,5 +1,6 @@
 // ASH Draw Studio - drawing grid (AutoCAD GRID / F7): adaptive spacing, the grid points or lines over the visible
 // area, and drawing them behind the scene (renderer/viewport.js). Display only: plots and exports never draw it.
+import { turnedFrame, turnedView } from './render.js';
 
 /** settings defaults: model space in drawing units, layouts in paper millimetres */
 export const GRID_DEFAULTS = { on: false, spacing: 10, major: 5, style: 'lines', paperSpacing: 10, snap: false };
@@ -59,12 +60,14 @@ export function gridColours(dark) {
 }
 
 /** draw the grid of `view` (CSS-pixel transform already set on ctx); returns the number of dots or lines drawn */
-export function drawGrid(ctx, view, grid, dark) {
+export function drawGrid(ctx, shown, grid, dark) {
+  const view = turnedView(shown); // a twisted model view: the world-aligned grid is drawn turned with the drawing
   const L = gridLayout(view, grid);
   if (!L) return 0;
   const col = gridColours(dark), W = view.width, H = view.height, z = view.zoom;
   const sx = (x) => Math.round((x - view.cx) * z + W / 2) + 0.5, sy = (y) => Math.round(H / 2 - (y - view.cy) * z) + 0.5;
   ctx.save();
+  turnedFrame(ctx, shown);
   ctx.lineWidth = 1; ctx.setLineDash?.([]);
   if (grid.style === 'dots') {
     for (const major of [false, true]) {

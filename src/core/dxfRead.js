@@ -900,7 +900,8 @@ function readSortents(tags) {
 }
 
 const HEX = /^[0-9A-F]+$/;
-/** VPORT record `*Active` -> the saved model view { cx, cy, height, aspect } (WCS centre, as readViewport), or undefined
+/** VPORT record `*Active` -> the saved model view { cx, cy, height, aspect, twist } (WCS centre, as readViewport; twist
+ *  in radians, group 51, as a VIEWPORT's: it turns the model counter-clockwise on screen), or undefined
  *  for a degenerate height or a 3D view direction */
 function readActiveView(rec) {
   const height = rec.num(40), aspect = rec.num(41, 1);
@@ -910,7 +911,7 @@ function readActiveView(rec) {
   const ct = Math.cos(tw), st = Math.sin(tw);
   const cx = tx + ct * dx + st * dy, cy = ty - st * dx + ct * dy;
   if (![cx, cy, aspect].every(Number.isFinite) || !(aspect > 0)) return undefined;
-  return { cx, cy, height, aspect };
+  return { cx, cy, height, aspect, twist: Number.isFinite(tw) ? tw : 0 };
 }
 
 /** BLOCK_RECORD xdata AcDbBlockRepBTag (1070 version, 1005 handle of the dynamic block's BLOCK_RECORD): the

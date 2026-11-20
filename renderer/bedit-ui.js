@@ -34,7 +34,7 @@ export function openBlockEditor(app, name) {
   if (prevSpace !== 'Model') setSpace(app, 'Model'); // the editor shows block space, like model space
   const vp = app.vp;
   const edit = openBlockEdit(tab.doc, name, tab.session);
-  tab.bedit = { edit, prevSpace, view: { cx: vp.view.cx, cy: vp.view.cy, zoom: vp.view.zoom } };
+  tab.bedit = { edit, prevSpace, view: { cx: vp.view.cx, cy: vp.view.cy, zoom: vp.view.zoom, rot: vp.view.rot || 0 } };
   vp.setSession(edit.session, { fit: true });
   app.refreshPanels(); app.refreshStatus();
   return true;

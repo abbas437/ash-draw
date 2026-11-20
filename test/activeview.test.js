@@ -11,7 +11,7 @@ const view = (o) => ['12', o.x ?? 0, '22', o.y ?? 0, '16', o.d?.[0] ?? 0, '26', 
 const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} vs ${b}`);
 
 test('plain view', () => {
-  assert.deepEqual(readDxf(dxf(view({ x: 100, y: 50, h: 20, a: 2 }))).activeView, { cx: 100, cy: 50, height: 20, aspect: 2 });
+  assert.deepEqual(readDxf(dxf(view({ x: 100, y: 50, h: 20, a: 2 }))).activeView, { cx: 100, cy: 50, height: 20, aspect: 2, twist: 0 });
 });
 test('target and twist (same rule as VIEWPORT): target (1000,0), twist 90, DCS centre (0,10) -> (1010,0)', () => {
   const v = readDxf(dxf(view({ tx: 1000, ty: 0, tw: 90, x: 0, y: 10 }))).activeView;

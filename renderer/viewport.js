@@ -89,8 +89,9 @@ export class Viewport {
   emit(name, ...a) { for (const f of this.listeners.get(name) ?? []) f(...a); }
 
   // ---- document ------------------------------------------------------------------------------
-  /** show a document. A file tab coming back to the front passes its saved view, selection, scene and index. */
-  setSession(session, { fit = true, view = null, selection = [], scene = null, index = null, lastPoint = null, initialView = null } = {}) {
+  /** show a document. A file tab coming back to the front passes its saved view, selection, scene and index.
+   *  rot: the view twist (radians) a fitted model view opens with (a saved view brings its own); paper space has none */
+  setSession(session, { fit = true, view = null, selection = [], scene = null, index = null, lastPoint = null, initialView = null, rot = 0 } = {}) {
     if (this.session && this.session !== session) this.session.onChange = null;
     this.session = session;
     this.doc = session.doc;
@@ -99,6 +100,7 @@ export class Viewport {
     this.selection = new Set(selection);
     this.lastPoint = lastPoint;
     session.onChange = (info) => this._changed(info);
+    this.view = { ...this.view, rot: this.layout || this.mspace ? 0 : (view ? view.rot || 0 : rot) };
     if (view) { this.view = { ...this.view, cx: view.cx, cy: view.cy, zoom: view.zoom }; this.requestRender(); this.emit('view'); }
     else if (fit && initialView && !this.layout && !this.mspace && this.scene?.bbox && savedViewUsable(initialView, this.scene.bbox)) this.zoomBox(initialView, 0);
     else if (fit) this.zoomExtents(); else this.requestRender();
@@ -143,12 +145,20 @@ export class Viewport {
   zoomExtents() {
     if (this.mspace) { this.mspace.zoomExtents(); return; } // inside a viewport (layouts-ui.js)
     const b = this.layout ? paperRects(this.layout).sheet : this.scene?.bbox;
-    this.view = fitView(b, this.view.width, this.view.height, 0.04);
+    this.view = fitView(b, this.view.width, this.view.height, 0.04, this.modelRot);
     this.requestRender();
     this.emit('view');
   }
+  /** the model view's twist (radians; 0 on a layout): Zoom Extents and zoom to a box keep it */
+  get modelRot() { return this.layout ? 0 : this.view.rot || 0; }
+  /** turn the model view to `rot` (radians) about the screen centre: View > Plan view / Saved view orientation */
+  setRot(rot) {
+    if (this.layout || this.mspace || (this.view.rot || 0) === rot) return;
+    this.view = { ...this.view, rot };
+    this.requestRender(); this.emit('view');
+  }
   zoomBox(b, margin = 0.04) {
-    this.view = fitView(b, this.view.width, this.view.height, margin);
+    this.view = fitView(b, this.view.width, this.view.height, margin, this.modelRot);
     this.requestRender(); this.emit('view');
   }
   /** zoom about a screen point, within zoomLimits of the model extents (paper space: of the sheet; inside a viewport
@@ -161,7 +171,8 @@ export class Viewport {
     this.requestRender(); this.emit('view');
   }
   panPixels(dx, dy) {
-    this.view = { ...this.view, cx: this.view.cx - dx / this.view.zoom, cy: this.view.cy + dy / this.view.zoom };
+    const v = this.view, c = v.rot ? screenToWorld(v, v.width / 2 - dx, v.height / 2 - dy) : null; // a twisted view pans along the screen
+    this.view = c ? { ...v, cx: c.x, cy: c.y } : { ...v, cx: v.cx - dx / v.zoom, cy: v.cy + dy / v.zoom };
     this.requestRender(); this.emit('view');
   }
   toWorld(sx, sy) { return screenToWorld(this.view, sx, sy); }
@@ -302,7 +313,7 @@ export class Viewport {
     const plan = framePlan(this._frame, key, view, this._gesture);
     let buf = this._buf;
     const p = this._prog;
-    if (p && !(plan.mode === 'full' && sameKey(p.key, key) && p.view.cx === view.cx && p.view.cy === view.cy && p.view.zoom === view.zoom && p.view.width === view.width && p.view.height === view.height)) this._stopProgressive();
+    if (p && !(plan.mode === 'full' && sameKey(p.key, key) && p.view.cx === view.cx && p.view.cy === view.cy && p.view.zoom === view.zoom && (p.view.rot || 0) === (view.rot || 0) && p.view.width === view.width && p.view.height === view.height)) this._stopProgressive();
     if (plan.mode === 'full' && (this._prog || this.scene.items.length >= PROGRESSIVE_ITEMS)) {
       // drawn transparent, so the stand-in below shows through until the frame is finished
       if (!this._prog) this._startProgressive(key, view, { ...opts, noClear: true });
@@ -327,7 +338,8 @@ export class Viewport {
       c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, nb.width, nb.height);
       c.drawImage(buf, plan.dx, plan.dy);
       for (const [x, y, w, h] of exposedStrips(plan.dx, plan.dy, nb.width, nb.height)) {
-        const sv = { cx: f.cx + ((x + w / 2) / d - f.width / 2) / f.zoom, cy: f.cy - ((y + h / 2) / d - f.height / 2) / f.zoom, zoom: f.zoom, width: w / d, height: h / d };
+        const sc = screenToWorld(f, (x + w / 2) / d, (y + h / 2) / d); // the strip's centre (turned with a twisted view)
+        const sv = { cx: sc.x, cy: sc.y, zoom: f.zoom, width: w / d, height: h / d, ...(f.rot && { rot: f.rot }) };
         c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.beginPath(); c.rect(x, y, w, h); c.clip();
         drawScene(c, this.scene, sv, { ...opts, baseTransform: new DOMMatrix([d, 0, 0, d, x, y]) });
         c.restore();

@@ -847,16 +847,17 @@ const DRAW_TICK = 1024, STROKE_CHUNK = 16384;
 /** drawScene as a step generator (src/core/slice.js): yields every DRAW_TICK items. Run in time slices it draws a
  *  frame progressively into an offscreen canvas nothing else draws on meanwhile (renderer/viewport.js); the canvas
  *  state between yields belongs to the generator. */
-export function* drawSceneSteps(ctx, scene, view, opts = {}) {
+export function* drawSceneSteps(ctx, scene, shown, opts = {}) {
   let work = 0;
-  const { width: W, height: H, zoom: z } = view;
   const bg = opts.background ?? '#1b1f23';
   const dark = luminance(bg) < 0.5;
   const doc = scene.doc;
   const dpr = opts.dpr ?? 1;
   if (opts.baseTransform) ctx.setTransform(opts.baseTransform); // drawLayout: viewport placement (clip, twist)
   else ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // view.width/height are CSS pixels
-  if (!opts.noClear) { ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H); }
+  if (!opts.noClear) { ctx.fillStyle = bg; ctx.fillRect(0, 0, shown.width, shown.height); }
+  const view = turnedFrame(ctx, shown); // a model view with a twist: drawn upright in a turned square
+  const { width: W, height: H, zoom: z } = view;
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   const sx = (x) => (x - view.cx) * z + W / 2;
   const sy = (y) => H / 2 - (y - view.cy) * z;
@@ -1439,14 +1440,40 @@ function drawPatternHatch(ctx, it, view, color, tracePath, sx, sy, fallbackAlpha
 
 // ---------------------------------------------------------------------------------------------
 // view helpers
-export function fitView(bbox, width, height, margin = 0.05) {
-  if (!bbox) return { cx: 0, cy: 0, zoom: 1, width, height };
-  const w = Math.max(bbox.maxx - bbox.minx, 1e-9), h = Math.max(bbox.maxy - bbox.miny, 1e-9);
+export function fitView(bbox, width, height, margin = 0.05, rot = 0) {
+  if (!bbox) return rot ? { cx: 0, cy: 0, zoom: 1, width, height, rot } : { cx: 0, cy: 0, zoom: 1, width, height };
+  let w = Math.max(bbox.maxx - bbox.minx, 1e-9), h = Math.max(bbox.maxy - bbox.miny, 1e-9);
+  if (rot) { const c = Math.abs(Math.cos(rot)), s = Math.abs(Math.sin(rot)); [w, h] = [c * w + s * h, s * w + c * h]; } // the box's extents on the turned screen
   const zoom = Math.min(width / w, height / h) * (1 - margin * 2);
-  return { cx: (bbox.minx + bbox.maxx) / 2, cy: (bbox.miny + bbox.maxy) / 2, zoom, width, height };
+  const v = { cx: (bbox.minx + bbox.maxx) / 2, cy: (bbox.miny + bbox.maxy) / 2, zoom, width, height };
+  return rot ? { ...v, rot } : v;
 }
-export const screenToWorld = (view, sx, sy) => ({ x: view.cx + (sx - view.width / 2) / view.zoom, y: view.cy - (sy - view.height / 2) / view.zoom });
-export const worldToScreen = (view, p) => ({ x: (p.x - view.cx) * view.zoom + view.width / 2, y: view.height / 2 - (p.y - view.cy) * view.zoom });
+/** view `rot` (radians, model space only): the saved view twist, the same quantity as a VIEWPORT's twist - it turns
+ *  the model counter-clockwise on screen (rot 90 degrees: world +x points screen-up) */
+export const screenToWorld = (view, sx, sy) => {
+  if (!view.rot) return { x: view.cx + (sx - view.width / 2) / view.zoom, y: view.cy - (sy - view.height / 2) / view.zoom };
+  const dx = (sx - view.width / 2) / view.zoom, dy = (view.height / 2 - sy) / view.zoom, c = Math.cos(view.rot), s = Math.sin(view.rot);
+  return { x: view.cx + c * dx + s * dy, y: view.cy - s * dx + c * dy };
+};
+export const worldToScreen = (view, p) => {
+  if (!view.rot) return { x: (p.x - view.cx) * view.zoom + view.width / 2, y: view.height / 2 - (p.y - view.cy) * view.zoom };
+  const dx = p.x - view.cx, dy = p.y - view.cy, c = Math.cos(view.rot), s = Math.sin(view.rot);
+  return { x: (c * dx - s * dy) * view.zoom + view.width / 2, y: view.height / 2 - (s * dx + c * dy) * view.zoom };
+};
+/** a turned view drawn as an upright D x D view (D the screen diagonal, so its culling box holds the turned screen):
+ *  sets ctx (whose current transform maps view pixels) to place that square, turned, centred on the screen, and
+ *  returns the square view; an unturned view is returned as it is */
+export function turnedFrame(ctx, view) {
+  const sq = turnedView(view);
+  if (sq !== view) { ctx.translate(view.width / 2, view.height / 2); ctx.rotate(-view.rot); ctx.translate(-sq.width / 2, -sq.height / 2); }
+  return sq;
+}
+/** the upright square view turnedFrame draws a turned view through (the view itself when unturned) */
+export function turnedView(view) {
+  if (!view.rot) return view;
+  const D = Math.ceil(Math.hypot(view.width, view.height)) + 2;
+  return { cx: view.cx, cy: view.cy, zoom: view.zoom, width: D, height: D };
+}
 /** zoom range (px per drawing unit) for a drawing with extents `bbox`: out to 1/1000 of the fitted zoom, in to
  *  1e-9 of the extents per pixel, and never so deep that a pixel is under 2^-36 of the largest coordinate (doubles
  *  then still place points to ~1e-5 px, so panning does not wobble) */
@@ -1493,6 +1520,7 @@ export const layoutViewports = (paperScene) => paperScene.doc.entities.filter((e
 /** Draw a layout: grey surround, white sheet with shadow, dashed printable area, viewports showing model space
  *  (scene per frozen-layer set from `modelScene(frozen)`), then the paper-space scene and its highlight. */
 export function drawLayout(ctx, paperScene, view, layout, paperRectsOf, modelScene, opts = {}) {
+  if (view.rot) view = { ...view, rot: 0 }; // paper space has no twist
   const { width: W, height: H, zoom: z } = view, dpr = opts.dpr ?? 1;
   const sx = (x) => (x - view.cx) * z + W / 2, sy = (y) => H / 2 - (y - view.cy) * z;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);

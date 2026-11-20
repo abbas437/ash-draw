@@ -54,13 +54,16 @@ import {
 } from './files.js';
 
 const api = window.api;
-/** the drawing's saved model view (VPORT *Active) as a world box, or null */
+/** the drawing's saved model view (VPORT *Active) as a world box (the bounding box of the view turned by its twist), or null */
 const savedViewBox = (doc) => {
   const v = doc.activeView;
   if (!v) return null;
-  const hw = v.height * v.aspect / 2, hh = v.height / 2;
+  const w = v.height * v.aspect / 2, h = v.height / 2, c = Math.abs(Math.cos(v.twist || 0)), s = Math.abs(Math.sin(v.twist || 0));
+  const hw = c * w + s * h, hh = s * w + c * h;
   return { minx: v.cx - hw, maxx: v.cx + hw, miny: v.cy - hh, maxy: v.cy + hh };
 };
+/** the drawing's saved model view twist (radians; the Model tab opens turned by it, as AutoCAD does) */
+const savedTwist = (doc) => doc?.activeView?.twist || 0;
 
 class App {
   constructor() {
@@ -320,14 +323,14 @@ class App {
     const cur = this.active;
     if (cur && cur !== tab) { exitMspace(this); clearMeasureResults(); }
     if (cur && cur !== tab && this.tabs.includes(cur)) {
-      cur.view = { cx: this.vp.view.cx, cy: this.vp.view.cy, zoom: this.vp.view.zoom };
+      cur.view = { cx: this.vp.view.cx, cy: this.vp.view.cy, zoom: this.vp.view.zoom, rot: this.vp.view.rot || 0 };
       cur.selection = [...this.vp.selection]; cur.lastPoint = this.vp.lastPoint;
       cur.scene = this.vp.scene; cur.index = this.vp.index;
     }
     if (cur !== tab && this.toolId) this.setTool(this.toolId === 'select' ? 'select' : this.toolId); // drop a half-done command
     this.active = tab;
     restoreSpace(this, tab);
-    this.vp.setSession(tab.bedit?.edit.session ?? tab.session, { fit: fit || !tab.view, view: fit ? null : tab.view, selection: tab.selection, scene: tab.scene, index: tab.index, lastPoint: tab.lastPoint, initialView: firstView ? savedViewBox(tab.session.doc) : null });
+    this.vp.setSession(tab.bedit?.edit.session ?? tab.session, { fit: fit || !tab.view, view: fit ? null : tab.view, selection: tab.selection, scene: tab.scene, index: tab.index, lastPoint: tab.lastPoint, initialView: firstView ? savedViewBox(tab.session.doc) : null, rot: tab.bedit ? 0 : savedTwist(tab.doc) });
     tab.scene = tab.index = null;
     renderSpaceBar(this);
     this.refreshPanels(); this.refreshStatus(); this.updateTitle(); this.refreshDimStyles();
@@ -756,7 +759,9 @@ class App {
       ['File', [['New', 'Ctrl+N', () => this.newDrawing()], ['Open…', 'Ctrl+O', () => this.open()], ['Recent files…', '', () => this.sessionStore.showRecent().catch((err) => message('Could not open the file', err.message || String(err)))], ['Close', 'Ctrl+W', () => this.closeTab()], '-', ['Compare…', 'COMPARE', () => this.compare()], '-', ['Save', 'Ctrl+S', () => this.save()], ['Save as DXF…', '', () => this.saveAs('dxf')], [() => (this.odaWrite ? 'Save as DWG…' : 'Save as DWG… (experimental)'), '', () => this.saveAs('dwg'), null, () => this.allowDwgSave || this.odaWrite], '-',
         ['Print…', 'Ctrl+P', () => this.print()], ['Plot to PDF…', '', () => this.exportPdf()], ['Publish to PDF…', 'PUBLISH', () => this.publish()], ['Export SVG…', '', () => this.exportSvg()], ['Export PNG image…', '', () => this.exportPng()]]],
       ['Edit', [['Undo', 'Ctrl+Z', () => this.undo()], ['Redo', 'Ctrl+Y', () => this.redo()], '-', ['Copy', 'Ctrl+C', () => this.copySel()], ['Copy with Base Point', 'Ctrl+Shift+C', () => this.copySel(true)], ['Paste', 'Ctrl+V', () => this.paste()], ['Paste as Block', 'Ctrl+Shift+V', () => this.paste('block')], ['Paste to Original Coordinates', 'PASTEORIG', () => this.paste('orig')], ['Delete', 'Del', () => this.deleteSelection()], '-', ['Select all', 'Ctrl+A', () => this.selectAll()], ['Quick Select…', 'QSELECT', () => qselectDialog(this)], ['Select Similar', 'SELECTSIMILAR', () => selectSimilarCommand(this)], ['Find and replace…', 'Ctrl+F', () => this.find.open()], '-', ['Preferences…', '', () => this.preferences()]]],
-      ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-', ...viewMenuItems(this), '-',
+      ['View', [['Zoom to fit', 'Z, E', () => vp.zoomExtents()], ['Zoom in', '', () => vp.zoomBy(1.4)], ['Zoom out', '', () => vp.zoomBy(1 / 1.4)], '-',
+        ['Plan view (no twist)', '', () => vp.setRot(0), null, () => !vp.layout && !vp.mspace],
+        ['Saved view orientation', '', () => vp.setRot(savedTwist(this.active?.doc)), null, () => !vp.layout && !vp.mspace && !this.active?.bedit && !!savedTwist(this.active?.doc)], '-', ...viewMenuItems(this), '-',
         { sub: 'Toolbars', items: this.toolbarMenuItems() },
         { sub: 'Panels', items: [
           ...[['Expanded', 'Ctrl+3'], ['Collapsed', ''], ['Hidden', '']].map(([m, key]) => [`Side panel: ${m}`, key, () => this.setSideMode(m.toLowerCase()), () => this.sideMode === m.toLowerCase()]), '-',

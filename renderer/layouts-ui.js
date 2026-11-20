@@ -30,7 +30,7 @@ export function setSpace(app, name) {
   const layout = name === 'Model' ? null : layoutOf(tab, name);
   if (name !== 'Model' && !layout) return;
   exitMspace(app);
-  sp.views[sp.cur] = { cx: vp.view.cx, cy: vp.view.cy, zoom: vp.view.zoom };
+  sp.views[sp.cur] = { cx: vp.view.cx, cy: vp.view.cy, zoom: vp.view.zoom, rot: vp.view.rot || 0 };
   if (app.toolId) app.setTool(app.toolId === 'select' ? 'select' : app.toolId); // drop a half-done command
   if (layout && sp.docs[name]?.layout !== layout) sp.docs[name] = spaceDoc(tab.doc, layout); // a name can move to another layout (rename, delete)
   // leaving Model: keep its scene and index for the way back, and let the layout's viewports draw through that same
@@ -44,7 +44,7 @@ export function setSpace(app, name) {
   tab.session.doc = layout ? sp.docs[name] : tab.doc;
   sp.cur = name;
   vp.layout = layout;
-  vp.setSession(tab.session, { fit: !sp.views[name], view: sp.views[name] ?? null, scene: back?.scene ?? null, index: back?.index ?? null });
+  vp.setSession(tab.session, { fit: !sp.views[name], view: sp.views[name] ?? null, scene: back?.scene ?? null, index: back?.index ?? null, rot: layout ? 0 : tab.doc.activeView?.twist || 0 }); // Model opens turned by the saved view twist
   app.refreshPanels(); app.refreshStatus(); renderSpaceBar(app);
 }
 
