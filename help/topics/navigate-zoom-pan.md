@@ -31,6 +31,10 @@ keywords: zoom, pan, wheel, fit, extents, window, previous, regen, zoomfactor, s
 
 > **Tip:** `ZE` fits the drawing straight away, without a prompt.
 
+## A turned model view
+
+The Model tab opens turned the way the drawing was saved, as in AutoCAD: a plan drawn at an angle and saved with a twisted view shows up the same way round here. **View ▸ Plan view (no twist)** shows the model square to the world axes, and **View ▸ Saved view orientation** turns it back. Zooming, panning, window and crossing selection all work along the screen as you see it. The orientation is saved with the drawing.
+
 ## PAN
 
 Type `PAN` (`P`) and drag to move the view. Press <kbd>Esc</kbd> or <kbd>Enter</kbd> to return to Select.

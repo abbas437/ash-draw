@@ -10,6 +10,10 @@ keywords: new, release, beta, changes, updates, version
 
 The most recent user-visible additions, newest first. For what the program still cannot do, see [Limitations](#topic:limitations).
 
+## Version 0.2.7
+
+- **Model view follows the drawing's saved orientation.** A drawing saved in AutoCAD with a turned (twisted) model view opened square to the world axes, so plans drawn at an angle came out sideways. The Model tab now opens turned the way the drawing was saved. **View ▸ Plan view (no twist)** shows it square to the axes and **View ▸ Saved view orientation** turns it back. Window and crossing selection, zoom window, the drawing previews and named views follow the turned view, and the orientation is saved with the drawing.
+
 ## Version 0.2.6
 
 - **Indented text sits where AutoCAD puts it.** Multiline text with a first-line indent written in AutoCAD's short form (`\pi`) was drawn without the indent, so labels such as zone tags started outside their boxes. The indent is now applied.
