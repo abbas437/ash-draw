@@ -164,3 +164,22 @@ test('replace: attributes and paper-space text are replaced, block definitions n
   assert.equal(getEntity(doc, v2.id).attribs[0].text, 'KV-1014');
   assert.equal(pt.text, 'KV-1013 SEE DETAIL');
 });
+
+test('TEXT / ATTRIB values are single-line text: a path with backslashes is found and replaced as written; MTEXT unchanged', () => {
+  const raw = 'C:\\Proj\\Level 1\\PAVA.dwg';
+  assert.equal(displayText(raw, { mtext: false }), raw, 'backslashes are characters');
+  assert.equal(displayText('A\\U+00C9 %%c5 \\M+182A0 {b}', { mtext: false }), 'AÉ Ø5 あ {b}', '\\U+, \\M+ and %% codes are decoded');
+  const doc = newDocument();
+  const t = addEntity(doc, makeText({ x: 0, y: 0 }, 2.5, raw));
+  const m = addEntity(doc, makeMText({ x: 0, y: 10 }, 2.5, 'C:\\PProj\\\\PAVA'));
+  const hits = (q) => findInDocument(doc, q).map((h) => [h.id, h.text.slice(h.start, h.end)]);
+  assert.deepEqual(hits('PAVA'), [[t.id, 'PAVA'], [m.id, 'PAVA']]);
+  assert.deepEqual(hits('Proj'), [[t.id, 'Proj'], [m.id, 'Proj']]);
+  assert.equal(findInDocument(doc, 'Proj')[1].text, 'C:\nProj\\PAVA', 'MTEXT: \\P is a line break, \\\\ a backslash, as before');
+  assert.deepEqual(replaceInRaw(raw, 'Proj', 'Job'), { text: 'C:\\Job\\Level 1\\PAVA.dwg', count: 1 });
+  assert.equal(replaceInRaw('%%c5 \\U+00C9 C:\\Proj', 'Proj', 'Job').text, '%%c5 \\U+00C9 C:\\Job', 'codes are kept');
+  const s = new Session(doc);
+  assert.equal(replaceInDocument(s, 'Proj', 'Job'), 2);
+  assert.equal(getEntity(s.doc, t.id).text, 'C:\\Job\\Level 1\\PAVA.dwg');
+  assert.equal(getEntity(s.doc, m.id).text, 'C:\\PJob\\\\PAVA');
+});

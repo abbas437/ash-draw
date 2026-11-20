@@ -6,6 +6,7 @@ import { transparencyText, parseTransparency, percentFromAlpha } from '../src/co
 import { viewportFields } from './layouts-ui.js';
 import { editEntity, dimTextEdit } from './grips.js';
 import { iconSvg } from './icons.js';
+import { editableText, storedText } from '../src/core/mtext.js';
 import { layerLinetypeText, lineweightText, layerTransparencyText } from '../src/core/layercols.js';
 
 export function el(tag, attrs = {}, ...kids) {
@@ -309,8 +310,8 @@ export function renderProperties(app) {
   if (ents.length === 1) kids.push(...geometryFields(app, ents[0]));
   if (ents.length === 1 && (ents[0].type === 'TEXT' || ents[0].type === 'MTEXT')) {
     const e = ents[0];
-    const ta = el('textarea', { rows: 3 }); ta.value = e.text.replace(/\\P/g, '\n');
-    ta.onchange = () => { setText(session, e.id, { text: e.type === 'MTEXT' ? ta.value.replace(/\n/g, '\\P') : ta.value.replace(/\n/g, ' ') }); };
+    const ta = el('textarea', { rows: 3 }); ta.value = editableText(e.type, e.text);
+    ta.onchange = () => { setText(session, e.id, { text: storedText(e.type, ta.value) }); };
     kids.push(el('label', {}, 'Text', ta));
   }
   if (ents.length === 1 && ents[0].type === 'DIMENSION' && ents[0].def) { // text override ('<>' = measured value) and the read-only measurement

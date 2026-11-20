@@ -1,6 +1,6 @@
 // Find and replace in drawing text (pure helpers, no DOM).
-//   textTokens(raw)                              -> [{ rs, re, out }] raw pieces and the text each one displays
-//   displayText(raw)                             -> the displayed string (same result as dxfRead.plainText)
+//   textTokens(raw, { mtext })                   -> [{ rs, re, out }] raw pieces and the text each one displays
+//   displayText(raw, { mtext })                  -> the displayed string (MTEXT: as dxfRead.plainText; else mtext.textPlain)
 //   findInText(plain, query, opts)               -> [[start, end], ...] matches in a displayed string
 //   replaceInRaw(raw, query, repl, opts, o)      -> { text, count } raw text with matches replaced
 //   findInDocument(doc, query, opts)             -> [{ id, type, layer, text, start, end, index, editable, space, place, where, ... }]
@@ -8,7 +8,8 @@
 // opts: { matchCase = false, wholeWord = false }.
 //
 // Matching runs on the DISPLAYED text, so MTEXT formatting codes (\f…; \C…; {…} \P …) and %%c / \U+ codes
-// never get in the way of a match. Replacing writes back into the raw text: codes before and after the match
+// never get in the way of a match. A single-line TEXT / ATTRIB / ATTDEF (`mtext: false`) has no MTEXT codes: a backslash
+// or a brace is a character (C:\Proj\PAVA.dwg is found by "PAVA"); only \U+XXXX, \M+nXXXX and %% codes are decoded. Replacing writes back into the raw text: codes before and after the match
 // are kept untouched; codes INSIDE the match (formatting that covered only part of the matched words) are kept
 // too, but moved after the replacement, so they no longer format any of it. A match that covers only part of
 // a stacked fraction (\S1/2;) turns the rest of that fraction into plain text.
@@ -17,13 +18,15 @@
 // TEXT, MTEXT and attributes are replaceable; a dimension's text override is find-only, because the drawing shows
 // the dimension's own block, not the override; text inside a block definition is find-only (shared by every INSERT).
 import { blockContentView, ATT_INVISIBLE } from './blocks.js';
+import { mbcsChar } from './mtext.js';
 
 const SPECIAL = { c: 'Ø', d: '°', p: '±' };
 const STACK = /\\S([^;^#\\]*)[\^#/]([^;]*);/y;
 const CODE = /\\[fFHCcQWATpMLlOoKk][^;\\]*;/y;
 
-/** Split raw DXF text into tokens: each token is a raw slice [rs, re) and the text it displays ('' for codes). */
-export function textTokens(raw) {
+/** Split raw DXF text into tokens: each token is a raw slice [rs, re) and the text it displays ('' for codes).
+ *  `mtext: false`: single-line text (TEXT / ATTRIB / ATTDEF), tokenized as mtext.textPlain displays it. */
+export function textTokens(raw, { mtext = true } = {}) {
   const s = String(raw ?? '');
   const out = [];
   const tok = (rs, re, text) => out.push({ rs, re, out: text });
@@ -39,6 +42,12 @@ export function textTokens(raw) {
     if (c === '\\') {
       const n = s[i + 1];
       if (n === 'U' && /^\+[0-9A-Fa-f]{4}$/.test(s.slice(i + 2, i + 7))) { tok(i, i + 7, String.fromCharCode(parseInt(s.slice(i + 3, i + 7), 16))); i += 7; continue; }
+      if (!mtext) {
+        const m = /^\\M\+([1-5])([0-9A-Fa-f]{4})/.exec(s.slice(i, i + 8));
+        const ch = m ? mbcsChar(m[1], m[2]) : null;
+        if (ch) { tok(i, i + 8, ch); i += 8; continue; }
+        tok(i, i + 1, c); i += 1; continue;
+      }
       if (n === 'P') { tok(i, i + 2, '\n'); i += 2; continue; }
       if (n === '~') { tok(i, i + 2, '\u00A0'); i += 2; continue; }
       if (n === 'S') { STACK.lastIndex = i; const m = STACK.exec(s); if (m) { tok(i, i + m[0].length, `${m[1]}/${m[2]}`); i += m[0].length; continue; } }
@@ -48,13 +57,16 @@ export function textTokens(raw) {
       if (n === '\\' || n === '{' || n === '}') { tok(i, i + 2, n); i += 2; continue; }
       if (/[LlOoKk]/.test(n ?? '')) { tok(i, i + 2, ''); i += 2; continue; }
     }
-    if (c === '{' || c === '}') { tok(i, i + 1, ''); i += 1; continue; }
+    if (mtext && (c === '{' || c === '}')) { tok(i, i + 1, ''); i += 1; continue; }
     tok(i, i + 1, c); i += 1;
   }
   return out;
 }
 
-export const displayText = (raw) => textTokens(raw).map((t) => t.out).join('');
+export const displayText = (raw, opts) => textTokens(raw, opts).map((t) => t.out).join('');
+/** single-line text types: no MTEXT codes (an INSERT's attributes are TEXT or ATTRIB after reading, MTEXT when multiline) */
+const plainType = (type) => type === 'TEXT' || type === 'ATTRIB' || type === 'ATTDEF';
+const textOf = (raw, type) => displayText(raw, { mtext: !plainType(type) });
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -79,7 +91,7 @@ function encode(text, mtext) {
  */
 export function replaceInRaw(raw, query, replacement, opts = {}, { mtext = false, only = null } = {}) {
   const s = String(raw ?? '');
-  const toks = textTokens(s);
+  const toks = textTokens(s, { mtext });
   const owner = []; // displayed char index -> [token index, offset in token]
   toks.forEach((t, ti) => { for (let k = 0; k < t.out.length; k++) owner.push([ti, k]); });
   const plain = toks.map((t) => t.out).join('');
@@ -129,7 +141,7 @@ function blockHits(blocks, name, query, opts, memo, depth = 0) {
   const add = (v, where) => {
     const raw = rawOf(v);
     if (raw == null) return;
-    const text = displayText(raw), ms = findInText(text, query, opts);
+    const text = textOf(raw, v.type), ms = findInText(text, query, opts);
     if (ms.length) out.push({ type: v.type, text, ms, where });
   };
   if (blk && !blk.xref && depth < MAX_DEPTH) {
@@ -164,12 +176,12 @@ export function findInDocument(doc, query, opts = {}) {
       const raw = rawOf(e);
       const push = (text, extra) => (start, end, index) => out.push({ id: e.id, type: e.type, layer: e.layer ?? '0', text, start, end, index, space, place, where: '', ...extra });
       if (raw != null) {
-        const text = displayText(raw);
+        const text = textOf(raw, e.type);
         findInText(text, query, opts).forEach(([a, b], i) => push(text, { editable: EDITABLE.has(e.type) })(a, b, i));
       }
       if (e.type !== 'INSERT') continue;
       for (const [at, k] of shownAttribs(e)) {
-        const text = displayText(at.text ?? '');
+        const text = textOf(at.text ?? '', at.type ?? 'ATTRIB');
         findInText(text, query, opts).forEach(([a, b], i) => push(text, { type: 'ATTRIB', layer: at.layer ?? e.layer ?? '0', editable: true, attrib: k, where: `attribute ${at.attrib.tag} of block ${e.block}` })(a, b, i));
       }
       for (const h of blockHits(blocks, e.block, query, opts, memo)) {

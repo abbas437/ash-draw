@@ -4,6 +4,7 @@
 //     props = { font, bold, italic, u, o, k, color: null (the MTEXT's colour) | { aci } (256 = its layer's) | { rgb: [r,g,b] }, h, oblique, wf, track, valign }
 //   mtextPlain(raw)                   -> displayed string (paragraphs joined with '\n', stacks as a/b)
 //   textPlain(raw)                    -> displayed string of a single-line TEXT / ATTRIB / ATTDEF (no MTEXT codes)
+//   editableText(type, raw) / storedText(type, value) -> the Properties text box's value and the raw text it saves
 //   serializeMText(model, { height }) -> raw MTEXT codes for the model
 //   layoutMText(model, { width, attach, lineSpacing, measure }) -> { lines, glyphs, rules, width, height }
 //     a run whose props.stroke is set is an SHX stroke-font run (render.js): cap-height first baseline, glyphs / rules flagged stroke
@@ -97,7 +98,7 @@ export function mtextPlain(raw) {
 
 // \M+nXXXX: a double-byte character XXXX in the code page n (AutoCAD's DXF writers put these in TEXT)
 const MBCS = { 1: 'shift_jis', 2: 'big5', 3: 'euc-kr', 5: 'gbk' };
-function mbcsChar(n, hex) {
+export function mbcsChar(n, hex) {
   try {
     const v = parseInt(hex, 16);
     return new TextDecoder(MBCS[n], { fatal: true }).decode(new Uint8Array(v > 0xff ? [v >> 8, v & 0xff] : [v]));
@@ -123,14 +124,20 @@ export function textPlain(raw) {
     if (c === '\\') {
       const u = /^\\U\+([0-9A-Fa-f]{4})/.exec(s.slice(i, i + 7));
       if (u) { out += String.fromCharCode(parseInt(u[1], 16)); i += 7; continue; }
-      const m = /^\\M\+([1-5])([0-9A-Fa-f]{4})/.exec(s.slice(i, i + 9));
+      const m = /^\\M\+([1-5])([0-9A-Fa-f]{4})/.exec(s.slice(i, i + 8));
       const ch = m && MBCS[m[1]] ? mbcsChar(m[1], m[2]) : null;
-      if (ch) { out += ch; i += 9; continue; }
+      if (ch) { out += ch; i += 8; continue; }
     }
     out += c; i++;
   }
   return out;
 }
+
+/** The Properties text box: an MTEXT shows its paragraph breaks (\P) as line breaks and saves line breaks as \P.
+ *  A single-line TEXT / ATTRIB / ATTDEF shows its raw value as it is (a backslash is a character, C:\Proj\PAVA.dwg
+ *  stays intact); a line break typed into it is saved as a space, as such text has one line. */
+export const editableText = (type, raw) => (type === 'MTEXT' ? String(raw ?? '').replace(/\\P/g, '\n') : String(raw ?? ''));
+export const storedText = (type, value) => (type === 'MTEXT' ? String(value).replace(/\n/g, '\\P') : String(value).replace(/\r?\n/g, ' '));
 
 // ---------------------------------------------------------------------------------------------
 // serialiser: each run whose properties differ from the base is written as one {…} group.

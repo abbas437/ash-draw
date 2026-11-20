@@ -15,6 +15,7 @@ test('textPlain: backslashes kept, \\U+ / \\M+ decoded, %% codes as in MTEXT', (
   assert.equal(textPlain('..\\..\\Model\\PAVA\\Level 100 Model.dwg'), '..\\..\\Model\\PAVA\\Level 100 Model.dwg');
   assert.equal(textPlain('\\U+0627\\U+0628'), 'اب');
   assert.equal(textPlain('\\M+182A0'), 'あ', 'Shift-JIS 0x82A0');
+  assert.equal(textPlain('\\M+182A0X'), 'あX', 'the code is 8 characters: the next one is kept');
   assert.equal(textPlain('90%%d %%p0.5 %%c20 %%u%%oA%%u%%o %%065'), '90° ±0.5 Ø20 A A');
   assert.equal(textPlain('{x}\\P\\L'), '{x}\\P\\L');
   for (const s of ['90%%d', '%%p1', '%%c5', '%%uA%%u', '%%065', '%%%', 'plain']) assert.equal(textPlain(s), mtextPlain(s), s);
@@ -44,4 +45,16 @@ test('the placeholder of an unloaded xref shows its relative path as written', (
   addEntity(doc, makeInsert('L100', { x: 0, y: 0 }));
   const ph = textItems(doc).filter((it) => it.ui || it.lines);
   assert.deepEqual(ph[0].lines, [ref]);
+});
+
+test('Properties text box: MTEXT \\P <-> line breaks; TEXT / ATTRIB / ATTDEF shown and saved as written', async () => {
+  const { editableText, storedText } = await import('../src/core/mtext.js');
+  const path = 'C:\\Proj\\PAVA.dwg';
+  for (const type of ['TEXT', 'ATTRIB', 'ATTDEF']) {
+    assert.equal(editableText(type, path), path, type);
+    assert.equal(storedText(type, editableText(type, path)), path, `${type}: saved unchanged`);
+    assert.equal(storedText(type, 'a\nb'), 'a b', `${type}: one line`);
+  }
+  assert.equal(editableText('MTEXT', 'A\\PB'), 'A\nB');
+  assert.equal(storedText('MTEXT', 'A\nB'), 'A\\PB');
 });
