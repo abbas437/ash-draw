@@ -112,6 +112,20 @@ try {
     assert.deepEqual(await selected(), [longId], 'crossing over part of the long line');
     await page.keyboard.press('Escape');
   }
+  step = 'the MTEXT editor turns with the view, about the insertion point';
+  {
+    const st = await page.evaluate(async () => {
+      const { openMTextEditor } = await import('/renderer/mtext-editor.js');
+      const ed = openMTextEditor(window.app, null, { p: { x: 50, y: 0 }, height: 2.5, width: 0 });
+      const r = { transform: ed.box.style.transform, origin: ed.box.style.transformOrigin };
+      ed.close();
+      return r;
+    });
+    const turn = /^rotate\((-?[\d.]+)rad\) /.exec(st.transform);
+    assert.ok(turn, st.transform); near(+turn[1], -Math.PI / 2, 1e-3, 'editor turned as the canvas text (-rot)');
+    assert.match(st.origin, /^0(px)? 0(px)?$/, st.origin);
+    assert.equal(await page.locator('.mt-editor').count(), 0, 'editor closed');
+  }
 
   step = 'View > Plan view (no twist): rot 0 and the long line is horizontal on screen';
   await menu('View', 'Plan view (no twist)');

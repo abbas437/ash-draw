@@ -56,7 +56,8 @@ class MTextEditor {
     this.toolbar = this.buildToolbar();
     this.box = h('div', { className: 'mt-editor' }, this.toolbar, this.root);
     const rect = app.vp.canvas.getBoundingClientRect(), s = app.vp.toScreen(p);
-    Object.assign(this.box.style, { position: 'fixed', left: `${rect.left + s.x}px`, top: `${rect.top + s.y}px`, zIndex: 50 });
+    Object.assign(this.box.style, { position: 'fixed', left: `${rect.left + s.x}px`, top: `${rect.top + s.y}px`, zIndex: 50, transformOrigin: '0 0' });
+    this.turn = -(app.vp.view.rot || 0); // a twisted model view: turned about the insertion point as the canvas turns the text
     this.place();
 
     this.render(parseMText(this.original, { height: this.height }));
@@ -76,7 +77,7 @@ class MTextEditor {
   /** the box sits on the insertion point according to the attachment point */
   place() {
     const col = (this.attach - 1) % 3, row = Math.floor((this.attach - 1) / 3);
-    this.box.style.transform = `translate(${-50 * col}%, ${-50 * row}%)`;
+    this.box.style.transform = `${this.turn ? `rotate(${this.turn}rad) ` : ''}translate(${-50 * col}%, ${-50 * row}%)`;
   }
 
   buildToolbar() {
