@@ -146,3 +146,18 @@ test('XATTACH: unique block names, one undo step, addLayer keeps xrefDep', async
   unloadXref(host, 'ATT');
   assert.deepEqual([...host.layers.keys()], layers0, 'unload after redo still drops the xref layers');
 });
+
+// A bound xref (XREF Bind, as in the Al Bayt AUV sheets) keeps its old path in group 1 with flags 0 and holds the
+// content; LibreDWG writes real xrefs the same way but empty. Only the empty one is an xref.
+test('a block with an old xref path but with entities is a bound block, not an xref', () => {
+  const blk = (name, ents) => `0\nBLOCK\n8\n0\n2\n${name}\n70\n0\n10\n0\n20\n0\n30\n0\n3\n${name}\n1\n..\\..\\Model\\${name}.dwg\n${ents}0\nENDBLK\n8\n0\n`;
+  const line = '0\nLINE\n8\n0\n10\n0\n20\n0\n30\n0\n11\n10\n21\n5\n31\n0\n';
+  const ins = (name) => `0\nINSERT\n8\n0\n2\n${name}\n10\n0\n20\n0\n30\n0\n`;
+  const dxf = `0\nSECTION\n2\nBLOCKS\n${blk('BOUND', line + line)}${blk('REAL', '')}0\nENDSEC\n0\nSECTION\n2\nENTITIES\n${ins('BOUND')}${ins('REAL')}0\nENDSEC\n0\nEOF\n`;
+  const doc = readDxf(new TextEncoder().encode(dxf));
+  const bound = doc.blocks.get('BOUND'), real = doc.blocks.get('REAL');
+  assert.equal(bound.xref, undefined, 'bound block is not an xref');
+  assert.equal(bound.entities.length, 2, 'its content is kept');
+  assert.ok(real.xref, 'the empty one is still an xref');
+  assert.equal(real.xref.path, '..\\..\\Model\\REAL.dwg');
+});

@@ -1088,8 +1088,10 @@ function parseTokensInto(tk, onProgress) {
     const flush = () => {
       if (!cur) return;
       const isLayoutBlock = /^[*$](model_space|paper_space)/i.test(cur.name);
-      // xref: flag bit 4, or (LibreDWG writes the flags without bit 4) a drawing path in group 1
-      if ((cur.flags & 4) || (!(cur.flags & 16) && /\.(dwg|dxf)$/i.test(cur.path.trim()))) {
+      // xref: flag bit 4, or (LibreDWG writes the flags without bit 4) a drawing path in group 1 on an EMPTY block.
+      // A bound xref (XREF Bind) is an ordinary block that keeps its old path in group 1 and holds the content: it
+      // has entities, and those are the drawing (dropping them left the sheet blank while AutoCAD shows it).
+      if ((cur.flags & 4) || (!(cur.flags & 16) && !list.length && /\.(dwg|dxf)$/i.test(cur.path.trim()))) {
         addBlock(doc, cur.name, cur.base, []).xref = { path: cur.path.trim(), flags: cur.flags | 4, overlay: (cur.flags & 8) === 8, status: 'pending' };
       } else if (cur.flags & 16) { /* xref-dependent block: recreated when the xref is loaded */
       } else if (!isLayoutBlock) {

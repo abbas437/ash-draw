@@ -12,6 +12,7 @@ The most recent user-visible additions, newest first. For what the program still
 
 ## Version 0.2.5
 
+- **Bound references are drawn.** A reference that was bound into the drawing (XREF ▸ Bind) keeps its old file path, and Draw Studio took it for a missing external reference, so the sheet came out blank. Its content is now drawn, as in AutoCAD and TrueView.
 - **Missing references are reported.** When a drawing opens, the report lists the external references and images that were not found, by file name. Files that do not exist are no longer offered in **Files outside the drawing folder**; references you chose not to load are listed as not loaded.
 - **Text with backslashes shows correctly.** Single-line text such as a file path (`C:\Proj\Level 1\PAVA.dwg`), including the red path of a missing reference, is drawn as written instead of being broken over lines.
 
