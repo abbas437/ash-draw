@@ -5,7 +5,10 @@
 // the server) until the user has agreed for that host drawing: main reports such candidates as `refused`, the window
 // asks once, and refs:decide hands the answer back here. Only paths main itself reported for that host can be
 // approved; a "Don't load" holds for the host for the rest of the session.
+// A candidate outside the folder that does not exist is not offered at all: it is checked with `isFile` (a stat, never a
+// read) unless it is a UNC or device path, which stays untouched and is offered as before.
 import { xrefCandidates } from '../src/core/xref.js';
+import { isUncOrDevicePath } from './odaConverter.js';
 
 /** `pathLib`: node's path module (path.win32 / path.posix in tests); `isFile(p)`: async, the only fs access made here;
  *  `isGranted(p)`: a path the user opened or chose this session. */
@@ -27,14 +30,17 @@ export function createRefAccess({ pathLib, isFile, isGranted = () => false }) {
   return {
     inside,
     /** The first readable candidate of `refPath` whose extension `accept`s: { path } | { refused: [paths], declined }
-     *  (no allowed candidate exists, but outside ones were not looked at) | null (not found). */
+     *  (no allowed candidate exists, but outside ones exist or, UNC / device paths, were not looked at) | null (not found). */
     async find(host, refPath, accept) {
       const s = stateOf(host);
       const refused = [];
       for (const p of xrefCandidates(host, refPath, pathLib)) {
         if (!accept(pathLib.extname(p).toLowerCase())) continue;
         const k = key(p);
-        if (!inside(host, p) && !isGranted(p) && !s.approved.has(k)) { refused.push(p); continue; }
+        if (!inside(host, p) && !isGranted(p) && !s.approved.has(k)) {
+          if (isUncOrDevicePath(refPath) || isUncOrDevicePath(p) || (await isFile(p))) refused.push(p);
+          continue;
+        }
         if (await isFile(p)) return { path: p };
       }
       if (!refused.length) return null;

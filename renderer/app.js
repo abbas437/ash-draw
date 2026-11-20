@@ -26,6 +26,7 @@ import { ComparePanel, runCompare, compareUses } from './compare.js';
 import { viewCommands, viewMenuItems } from './views-ui.js';
 import { MarkupPanel, toggleMarkups, markupsShown } from './markup.js';
 import { loadDrawingRefs, xrefPanel } from './xref-panel.js';
+import { refNotes } from './xrefs.js';
 import { TOOL_BUTTONS, buildToolPanel, iconButton, quickCommand, canvasDarkFrom, labelsFrom, placementFrom, PLACEMENTS, collapsedFrom, applyCollapsed, toolTitle, moreButton, fitToolBand, initToolBand } from './tool-panel.js';
 import { iconSvg } from './icons.js';
 import { initToolModes, LAYOUTS, LAYOUT_LABELS, modeAllows } from './tool-rail.js';
@@ -414,9 +415,8 @@ class App {
       }
       toast(`Opening ${f.name} …`, 60000); // read: now the view is built
       // before the scene is built: it is built once, with the xrefs and images (files outside the folder: asked once)
-      const { missingImages: missing, notLoaded } = await loadDrawingRefs(api, doc, f.path ?? null);
-      if (missing.length) notes.push(`Raster images not found (shown as a red frame with the file name): ${missing.join(', ')}.`);
-      if (notLoaded.length) notes.push(`Not loaded because they are outside the drawing's folder and loading them was not allowed (shown as not found): ${notLoaded.join(', ')}.`);
+      const refs = await loadDrawingRefs(api, doc, f.path ?? null);
+      notes.push(...refNotes({ xrefs: refs.missingXrefs, heldXrefs: refs.heldXrefs, images: refs.missingImages, heldImages: refs.heldImages }));
       const pp = progressToast('Preparing drawing…', () => ac.abort());
       const prepared = await prepareView(doc, { signal: ac.signal, onProgress: (x) => pp.set(x) });
       this.installDoc(doc, { path: f.path ?? null, name: f.name, format, size: fileSize }, { replaceBlank: true, prepared, firstView: true });

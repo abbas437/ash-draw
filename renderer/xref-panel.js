@@ -25,7 +25,8 @@ async function allowOutside(api, hostPath, paths) {
 
 /** Resolve and load every xref and raster image of a drawing being opened (before its scene is built). Files outside
  *  the drawing's folder are asked about once (a nested xref found only after loading may add one more question);
- *  resolves { missingImages, notLoaded } (notLoaded: outside files the user did not allow). */
+ *  resolves { missingImages, heldImages, missingXrefs, heldXrefs } (paths as written; held: outside the folder and not
+ *  allowed by the user). */
 export async function loadDrawingRefs(api, doc, hostPath) {
   const t = refusalTracker();
   const xread = t.wrap(reader(api, hostPath));
@@ -33,17 +34,21 @@ export async function loadDrawingRefs(api, doc, hostPath) {
   const hasXrefs = () => [...doc.blocks.values()].some((b) => b.xref && !b.xrefDep);
   if (hasXrefs()) await loadXrefs(doc, xread, parser(api), opts(hostPath));
   let missingImages = await loadDrawingImages(iapi, doc, hostPath);
-  const asked = new Set(), allowed = new Set();
+  const asked = new Set();
   for (let round = 0; round < 3 && hostPath && !t.declined; round++) {
     const fresh = t.refused.filter((p) => !asked.has(p));
     if (!fresh.length) break;
     for (const p of fresh) asked.add(p);
     if (!(await allowOutside(api, hostPath, fresh))) break;
-    for (const p of fresh) allowed.add(p);
     for (const b of [...doc.blocks.values()]) if (b.xref && !b.xrefDep && b.xref.status === 'notfound') await loadOneXref(doc, b.name, xread, parser(api), opts(hostPath));
     missingImages = await loadDrawingImages(iapi, doc, hostPath, { retry: true });
   }
-  return { missingImages, notLoaded: t.refused.filter((p) => !allowed.has(p)) };
+  // the top-level xrefs and the images left unloaded: not found, or outside the folder and not allowed (held)
+  const top = [...doc.blocks.values()].filter((b) => b.xref && !b.xrefDep && b.xref.status === 'notfound').map((b) => b.xref.path);
+  return {
+    missingImages: missingImages.filter((p) => !t.held(p)), heldImages: missingImages.filter((p) => t.held(p)),
+    missingXrefs: top.filter((p) => !t.held(p)), heldXrefs: top.filter((p) => t.held(p)),
+  };
 }
 
 /** XATTACH step 1: choose a DXF/DWG and parse it. Resolves { file, path, xdoc } (path relative to the host when

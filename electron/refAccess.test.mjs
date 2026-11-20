@@ -36,12 +36,13 @@ test('refAccess: host folder and subfolders load without asking; other folders a
     const unc = await refs.find(host, UNC, dwgOrDxf);
     assert.equal(unc.refused.length, 1);
     assert.ok(viaUnc(unc.refused[0]), unc.refused[0]);
-    assert.ok(!touched.includes(far), 'an outside path is not looked at before the decision');
     assert.ok(!touched.some(viaUnc), 'a UNC path is never passed to fs before the decision');
 
     // a decision cannot approve a path main never reported, nor one reported for another host
-    assert.equal(refs.decide(host, true, ['/etc/passwd.dxf']), true);
-    assert.equal(await refs.find(host, '/etc/passwd.dxf', dwgOrDxf).then((r) => r.refused?.length), 1);
+    const never = path.join(other, 'never.dxf');
+    await fs.writeFile(never, '0\nEOF\n');
+    assert.equal(refs.decide(host, true, [never]), true);
+    assert.equal(await refs.find(host, never, dwgOrDxf).then((r) => r.refused?.length), 1);
     const other2 = path.join(other, 'b.dwg');
     assert.deepEqual(await refs.find(other2, 'far.dxf', dwgOrDxf), { path: far }, 'its own folder for that host');
 
@@ -69,4 +70,34 @@ test('refAccess: "Don\'t load" holds for the host for the session; granted paths
   assert.equal(refs.decide(host, true, ['\\\\server\\share\\n.dwg']), false, 'declined for the session');
   assert.deepEqual(await refs.find(host, '\\\\server\\share\\n.dwg', dwgOrDxf), { refused: ['\\\\server\\share\\n.dwg'], declined: true });
   assert.ok(!touched.some((p) => /server/i.test(p)));
+});
+
+test('refAccess: an outside file that does not exist is not found, never offered; UNC / device paths are still offered untouched', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ash-refs-'));
+  try {
+    const proj = path.join(root, 'pkg', 'a', 'b'), bg = path.join(root, 'Background');
+    await fs.mkdir(proj, { recursive: true });
+    await fs.mkdir(bg, { recursive: true });
+    await fs.writeFile(path.join(bg, 'there.dwg'), '0\nEOF\n');
+    const host = path.join(proj, 'host.dwg');
+    const touched = [];
+    const refs = createRefAccess({ pathLib: path, isFile: (p) => { touched.push(p); return fs.stat(p).then((s) => s.isFile(), () => false); } });
+    const missing = path.join(root, 'Model', 'PAVA', 'Level 102 Model.dwg');
+    assert.equal(await refs.find(host, '..\\..\\..\\Model\\PAVA\\Level 102 Model.dwg', dwgOrDxf), null, 'the folder does not exist');
+    assert.equal(await refs.find(host, missing, dwgOrDxf), null);
+    assert.ok(touched.includes(missing), 'checked for existence');
+    assert.deepEqual(await refs.find(host, '../../../Background/there.dwg', dwgOrDxf), { refused: [path.join(bg, 'there.dwg')], declined: false }, 'an outside file that exists is offered');
+    assert.equal(refs.decide(host, true, [missing]), true);
+    assert.equal(await refs.find(host, missing, dwgOrDxf), null, 'a missing file was never offered, so it was not approved either');
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+
+  // Windows rules with a stub file system where nothing exists
+  const touched = [];
+  const refs = createRefAccess({ pathLib: path.win32, isFile: async (p) => { touched.push(p); return false; } });
+  const host = 'D:\\Pkg\\Sheets\\a\\b\\host.dwg';
+  assert.equal(await refs.find(host, '..\\..\\..\\..\\Model\\PAVA\\Level 102 Model.dwg', dwgOrDxf), null);
+  assert.ok(touched.includes('D:\\Model\\PAVA\\Level 102 Model.dwg'));
+  assert.deepEqual(await refs.find(host, '\\\\server\\share\\x.dwg', dwgOrDxf), { refused: ['\\\\server\\share\\x.dwg'], declined: false });
+  assert.equal((await refs.find(host, '\\\\?\\C:\\dev\\y.dwg', dwgOrDxf)).refused.length, 1, 'a device path is offered, not checked');
+  assert.ok(!touched.some((p) => /server|\?|dev/i.test(p)), touched.join(' | '));
 });

@@ -63,21 +63,41 @@ export async function loadXrefs(doc, read, parse, opts = {}) {
 
 /** Main answers a reference outside the host drawing's folder with { refused: [paths], declined } until the user has
  *  agreed (reviewer #22). `wrap(read)` turns such an answer into "not found" (null) and collects the paths:
- *  `refused` (in order, once each), `declined` (the user already said "Don't load" for this host this session). */
+ *  `refused` (in order, once each), `declined` (the user already said "Don't load" for this host this session).
+ *  `held(ref)`: the last answer for the reference `ref` (the read's last argument, the path as written) was a refusal. */
 export function refusalTracker() {
-  const refused = new Set();
+  const refused = new Set(), heldRefs = new Set();
   let declined = false;
   return {
     wrap: (read) => async (...args) => {
       const r = await read(...args);
-      if (!r?.refused) return r;
+      if (!r?.refused) { heldRefs.delete(args.at(-1)); return r; }
       if (r.declined) declined = true;
       for (const p of r.refused) refused.add(p);
+      heldRefs.add(args.at(-1));
       return null;
     },
     get refused() { return [...refused]; },
     get declined() { return declined; },
+    held: (ref) => heldRefs.has(ref),
   };
+}
+
+const MAX_NAMED = 5;
+const fileName = (p) => String(p).split(/[\\/]/).pop() || String(p);
+const named = (list) => list.slice(0, MAX_NAMED).join(', ') + (list.length > MAX_NAMED ? ` …and ${list.length - MAX_NAMED} more` : '');
+const count = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
+
+/** The "Opened with limitations" lines about references: `xrefs` / `heldXrefs` (xref paths not found / not loaded
+ *  because they are outside the drawing folder and the user did not allow them), `images` / `heldImages` (the same for
+ *  raster images; a not-found image is named by its path as written, as before). */
+export function refNotes({ xrefs = [], heldXrefs = [], images = [], heldImages = [] }) {
+  const out = [];
+  if (xrefs.length) out.push(`${count(xrefs.length, 'external reference')} not found (shown as ${xrefs.length === 1 ? 'its path' : 'their paths'} in red): ${named(xrefs.map(fileName))}.`);
+  if (heldXrefs.length) out.push(`${count(heldXrefs.length, 'external reference')} not loaded (outside the drawing folder): ${named(heldXrefs.map(fileName))}.`);
+  if (images.length) out.push(`Raster images not found (shown as a red frame with the file name): ${named(images)}.`);
+  if (heldImages.length) out.push(`${count(heldImages.length, 'raster image')} not loaded (outside the drawing folder): ${named(heldImages.map(fileName))}.`);
+  return out;
 }
 
 /** status shown in the External References panel */
