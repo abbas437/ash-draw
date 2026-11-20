@@ -98,3 +98,13 @@ test('bulleted / numbered list toggle round trip, renumbering and indent layout'
   assert.equal(lay.lines[0].x, 0);
   assert.ok(lay.lines.length > 1 && lay.lines.slice(1).every((l) => Math.abs(l.x - 3) < 1e-9), 'continuation lines indented');
 });
+
+// AutoCAD also writes the short form \pi<first>; without the x (Al Bayt PAVA zone tags: `\pi8.05504;L100-SF-N`).
+// Ignoring it started every tag label 8 units early, outside its box.
+test('the short \\pi first-line indent is applied like \\pxi', () => {
+  const x0 = (t) => layoutMText(parseMText(t, H), { width: 36 }).lines[0].x;
+  assert.ok(Math.abs(x0('\\pi8.05504;L100-SF-N') - 8.05504) < 1e-9, 'short form');
+  assert.ok(Math.abs(x0('\\pxi8.05504;L100-SF-N') - 8.05504) < 1e-9, 'x form');
+  assert.ok(Math.abs(x0('\\pl2,i1.5;A') - 3.5) < 1e-9, 'options in any order: left 2 + first 1.5');
+  assert.equal(x0('\\pxqc;A') >= 0, true, 'alignment-only code still parses');
+});

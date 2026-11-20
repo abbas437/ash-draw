@@ -178,15 +178,20 @@ export function serializeMText(model, { height = 1 } = {}) {
 
 // ---------------------------------------------------------------------------------------------
 // layout. measure(text, props) -> advance width in drawing units at height props.h (before wf / tracking).
-const INDENT = /^\\pxi(-?[\d.]+)(?:,l(-?[\d.]+))?/;
-/** the paragraph's \pxi first-line / left indent from its raw code run ({ i: 0, l: 0 } when none) */
+/** the paragraph's first-line (i) / left (l) indent from its raw \p code run ({ i: 0, l: 0 } when none). AutoCAD
+ *  writes both `\pxi-3,l3,t3;` and the short `\pi8.05504;` (no x); the options come in any order. */
 function paraIndent(para) {
+  const out = { i: 0, l: 0 };
   for (const r of para.runs) {
     if (r.raw == null) break;
-    const m = INDENT.exec(r.raw);
-    if (m) return { i: num(m[1], 0), l: num(m[2], 0) };
+    const m = /^\\px?([^;]*)/.exec(r.raw);
+    if (!m) continue;
+    for (const opt of m[1].split(',')) {
+      const o = /^([il])(-?(?:\d+\.?\d*|\.\d+))$/.exec(opt.trim());
+      if (o) out[o[1]] = num(o[2], 0);
+    }
   }
-  return { i: 0, l: 0 };
+  return out;
 }
 export const approxMeasure = (t, p) => [...t].length * p.h * (p.bold ? 0.66 : 0.6);
 const STACK_H = 0.7;
@@ -195,7 +200,7 @@ export function layoutMText(model, { width = 0, attach = 1, lineSpacing = 1, mea
   const adv = (t, p) => measure(t, p) * p.wf * p.track;
   const lines = [];
   for (const para of model.paras) {
-    // paragraph indent \pxi<first>,l<left>: first line at left + first, the others at left (drawing units)
+    // paragraph indent \p[x]i<first>,l<left>: first line at left + first, the others at left (drawing units)
     const ind = paraIndent(para), first0 = lines.length;
     const indOf = () => (lines.length === first0 ? ind.l + ind.i : ind.l);
     const mk = () => ({ parts: [], w: 0, align: para.align, ind: indOf() });

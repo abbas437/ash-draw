@@ -10,6 +10,10 @@ keywords: new, release, beta, changes, updates, version
 
 The most recent user-visible additions, newest first. For what the program still cannot do, see [Limitations](#topic:limitations).
 
+## Version 0.2.6
+
+- **Indented text sits where AutoCAD puts it.** Multiline text with a first-line indent written in AutoCAD's short form (`\pi`) was drawn without the indent, so labels such as zone tags started outside their boxes. The indent is now applied.
+
 ## Version 0.2.5
 
 - **Bound references are drawn.** A reference that was bound into the drawing (XREF ▸ Bind) keeps its old file path, and Draw Studio took it for a missing external reference, so the sheet came out blank. Its content is now drawn, as in AutoCAD and TrueView.
