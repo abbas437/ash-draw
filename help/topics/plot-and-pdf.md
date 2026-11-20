@@ -31,6 +31,8 @@ All three produce vector output. **File ▸ Print…** (`PLOT`, `PRINT`, Ctrl+P)
 
 **Pick window…** asks for two corners on the drawing. Choose Window and no window is stored yet, and you are asked for one.
 
+Current view on a turned model view (a saved view twist) plots the area around it, unturned.
+
 ## Plot a layout
 
 On a layout tab the dialog is titled with the layout name. It offers Plot area (Layout, Extents, Window), Paper (the layout's own paper or a standard size), Fit to paper, Scale (paper : layout), the plot style table and the same colour options. The sheet on its own paper is always 1:1. A line under the fields shows the resulting scale.

@@ -16,7 +16,7 @@ import {
   offsetCommand, trimCommand, extendCommand,
 } from '../src/core/edit.js';
 import { withClipPartners } from '../src/core/layouts.js';
-import { screenAngle } from '../src/core/render.js';
+import { screenAngle, visibleWorldBox } from '../src/core/render.js';
 import { MeasureGeomTool } from './tools-measure.js';
 import { gripsOf, applyGrip, gripEdit, gripsStretch, matchPropsEdit, nextGripMode, GRIP_MODES, gripMatrix, gripModeEdit, MATCH_SETTINGS, defaultMatchSettings } from './grips.js';
 import { el, modal, popMenu } from './ui.js';
@@ -433,8 +433,7 @@ class TextTool extends Tool {
 export function findHatchBoundary(doc, p, vp = null) {
   let view = null;
   if (vp?.view?.width && vp.view.height) {
-    const a = vp.toWorld(0, 0), b = vp.toWorld(vp.view.width, vp.view.height);
-    view = { minx: Math.min(a.x, b.x), miny: Math.min(a.y, b.y), maxx: Math.max(a.x, b.x), maxy: Math.max(a.y, b.y) };
+    view = visibleWorldBox(vp.view);
   }
   return findBoundary(doc, p, { view });
 }

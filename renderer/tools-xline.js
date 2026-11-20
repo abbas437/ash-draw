@@ -2,6 +2,7 @@
 // not import tools.js back; the Bisect / Offset geometry lives in src/core/xline-tools.js.
 import { makeXline } from '../src/core/model.js';
 import { clipInfinite } from '../src/core/geom.js';
+import { visibleWorldBox } from '../src/core/render.js';
 import { bisectorDir, lineOf, offsetXline } from '../src/core/xline-tools.js';
 
 // strict: a typed coordinate such as "5,0" must not be read as the number 5
@@ -27,8 +28,7 @@ export function createXlineTools(h, { Tool }) {
     }
     inf(c, p, dir, ray = false) {
       if (!dir || !(Math.hypot(dir.x, dir.y) > 1e-12)) return;
-      const cv = this.vp.canvas, a = this.vp.toWorld(0, 0), b = this.vp.toWorld(cv.clientWidth, cv.clientHeight);
-      const seg = clipInfinite(p, dir, ray, { minx: Math.min(a.x, b.x), miny: Math.min(a.y, b.y), maxx: Math.max(a.x, b.x), maxy: Math.max(a.y, b.y) });
+      const cv = this.vp.canvas, seg = clipInfinite(p, dir, ray, visibleWorldBox({ ...this.vp.view, width: cv.clientWidth, height: cv.clientHeight }));
       if (seg) { c.strokeStyle = this.vp.inkColor; c.setLineDash([4, 3]); this.line(c, seg[0], seg[1]); }
     }
   }

@@ -1,7 +1,7 @@
 // ASH Draw Studio - Print / Plot to PDF: one dialog (paper, orientation, what to print, scale, centring) that builds a
 // vector PDF with exportPdf, then either prints it (api.print -> system print dialog) or saves it.
 import { plotScale, pageFit, placeOnPage, exportPdfPages } from '../src/core/exportPdf.js';
-import { screenToWorld } from '../src/core/render.js';
+import { visibleWorldBox } from '../src/core/render.js';
 import { layoutPage, layoutPlotRegion, layoutPlotWindow, layoutMmPerUnit } from '../src/core/layouts.js';
 import { plotSettingsFrom, plotSettingsToStore, LAYOUT_PAPERS, PAGE_SIZES, PAPER_LABELS as SIZE_LABELS, validCustomMm, layoutPlotStart, sheetPlotStyle } from '../src/core/plotSettings.js';
 import { el, message, modal, toast, progressToast } from './ui.js';
@@ -111,13 +111,13 @@ function pickWindow(app) {
   });
 }
 
-/** The drawing area currently shown in the viewport. */
-function viewRect(vp) { return rectOf(vp.toWorld(0, vp.view.height), vp.toWorld(vp.view.width, 0)); }
+/** The drawing area currently shown in the viewport (on a turned model view: the unturned box around it). */
+function viewRect(vp) { return visibleWorldBox(vp.view); }
 
 /** the model view a drawing tab shows: the live view of the active tab, the saved one of another (null: none known, plot the extents) */
 function tabViewRect(app, tab) {
   const v = tab === app.active ? (app.vp.layout ? null : app.vp.view) : tab.view && { ...tab.view, width: app.vp.view.width, height: app.vp.view.height };
-  return v ? rectOf(screenToWorld(v, 0, v.height), screenToWorld(v, v.width, 0)) : null;
+  return v ? visibleWorldBox(v) : null;
 }
 
 /** mode 'print' (Print button, system print dialog) or 'pdf' (Save button, Plot to PDF). Options persist per session. */

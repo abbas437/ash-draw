@@ -1463,19 +1463,28 @@ export const worldToScreen = (view, p) => {
 /** the canvas angle (radians, y down) of world direction `a` (radians, counter-clockwise) on `view`'s screen: a
  *  twisted model view turns every direction by its rot; arcs keep their sense (canvas anticlockwise = world CCW) */
 export const screenAngle = (view, a) => -(a + (view.rot || 0));
-/** a turned view drawn as an upright D x D view (D the screen diagonal, so its culling box holds the turned screen):
- *  sets ctx (whose current transform maps view pixels) to place that square, turned, centred on the screen, and
- *  returns the square view; an unturned view is returned as it is */
+/** a turned view drawn as an upright view whose culling box is the world-aligned bounding box of the turned screen:
+ *  sets ctx (whose current transform maps view pixels) to place that box, turned, centred on the screen, and
+ *  returns the upright view; an unturned view is returned as it is */
 export function turnedFrame(ctx, view) {
   const sq = turnedView(view);
   if (sq !== view) { ctx.translate(view.width / 2, view.height / 2); ctx.rotate(-view.rot); ctx.translate(-sq.width / 2, -sq.height / 2); }
   return sq;
 }
-/** the upright square view turnedFrame draws a turned view through (the view itself when unturned) */
+/** the upright view turnedFrame draws a turned view through (the view itself when unturned): the bounding box of
+ *  the turned screen, so a thin strip of a pan culls to about its own area, not to a square of its length */
 export function turnedView(view) {
   if (!view.rot) return view;
-  const D = Math.ceil(Math.hypot(view.width, view.height)) + 2;
-  return { cx: view.cx, cy: view.cy, zoom: view.zoom, width: D, height: D };
+  const c = Math.abs(Math.cos(view.rot)), s = Math.abs(Math.sin(view.rot));
+  const w = Math.ceil(view.width * c + view.height * s) + 2, h = Math.ceil(view.width * s + view.height * c) + 2;
+  return { cx: view.cx, cy: view.cy, zoom: view.zoom, width: w, height: h };
+}
+/** the world box { minx, miny, maxx, maxy } a view shows: the bounding box of all four screen corners (two opposite
+ *  corners are not enough on a twisted view; at 45 degrees on a square screen they share one world axis) */
+export function visibleWorldBox(view) {
+  const ps = [[0, 0], [view.width, 0], [0, view.height], [view.width, view.height]].map(([x, y]) => screenToWorld(view, x, y));
+  const xs = ps.map((p) => p.x), ys = ps.map((p) => p.y);
+  return { minx: Math.min(...xs), miny: Math.min(...ys), maxx: Math.max(...xs), maxy: Math.max(...ys) };
 }
 /** zoom range (px per drawing unit) for a drawing with extents `bbox`: out to 1/1000 of the fitted zoom, in to
  *  1e-9 of the extents per pixel, and never so deep that a pixel is under 2^-36 of the largest coordinate (doubles
