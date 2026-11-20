@@ -38,14 +38,14 @@ Enter `XCLIP` (`XC`), select the reference, and choose a rectangular, polygonal 
 
 ## Missing images and references
 
-An image whose file cannot be found is drawn as a **red frame with the file name** inside it. Put the file next to the drawing, then reopen the drawing. A reference that cannot be found shows **Not found** in the panel; use **Browse…** or **Reload**.
+An image whose file cannot be found is drawn as a **red frame with the file name** inside it. Put the file next to the drawing, then reopen the drawing. A drawing reference that cannot be found is drawn as **its path in red** at its insertion point, and shows **Not found** in the panel; use **Browse…** or **Reload**. The references and images that were not found are listed when the drawing opens.
 
 ## Files outside the drawing's folder
 
-Only files in the drawing's folder, or below it, are read automatically. If a drawing refers to anything else, a prompt titled **Files outside the drawing folder** lists the paths.
+Only files in the drawing's folder, or below it, are read automatically. If a drawing refers to anything else, a prompt titled **Files outside the drawing folder** lists the paths. Only files that exist are listed: a file that is not there is reported as not found instead.
 
 - **Load** reads them.
-- **Don't load** leaves them out; they appear as missing.
+- **Don't load** leaves them out; the open report lists them as not loaded (outside the drawing folder).
 
 > **Important:** Choose **Load** only for drawings you trust, because it lets the file read other places on your computer.
 

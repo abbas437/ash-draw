@@ -10,6 +10,11 @@ keywords: new, release, beta, changes, updates, version
 
 The most recent user-visible additions, newest first. For what the program still cannot do, see [Limitations](#topic:limitations).
 
+## Version 0.2.5
+
+- **Missing references are reported.** When a drawing opens, the report lists the external references and images that were not found, by file name. Files that do not exist are no longer offered in **Files outside the drawing folder**; references you chose not to load are listed as not loaded.
+- **Text with backslashes shows correctly.** Single-line text such as a file path (`C:\Proj\Level 1\PAVA.dwg`), including the red path of a missing reference, is drawn as written instead of being broken over lines.
+
 ## Version 0.2.4
 
 - **DWG drawings open again.** Versions 0.2.1 to 0.2.3 could not open any DWG file: they stopped with "Cannot open this file" and an error about `savedOda`. DXF files were not affected.
