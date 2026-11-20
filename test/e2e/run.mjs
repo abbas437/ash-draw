@@ -1397,6 +1397,12 @@ try {
 
   step = 'XREF panel: a host opened in the browser lists its xrefs as Not found (no folder access), in red';
   await pickFile('xref_host_r2000.dxf');
+  // 0.2.5: the open report lists the references that were not found (here: no folder access in the browser)
+  await page.waitForSelector('#dlg[open] h2');
+  assert.equal(await page.locator('#dlg h2').innerText(), 'Opened with limitations');
+  assert.match(await page.locator('#dlg').innerText(), /2 external references not found \(shown as their paths in red\): ref\.dxf, missing\.dxf\./);
+  await page.locator('#dlg button.primary').click();
+  await page.waitForSelector('#dlg[open]', { state: 'hidden' });
   await page.waitForFunction(() => window.app.file.name === 'xref_host_r2000.dxf');
   await typeCmd('xref');
   await page.waitForSelector('#dlg[open] .xref-table');
