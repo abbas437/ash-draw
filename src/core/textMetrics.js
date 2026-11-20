@@ -13,7 +13,7 @@
 // Aligned / Fit, where e.p is group 10 and e.p2 group 11 (the text runs from p to p2; 73 is ignored).
 import { isGdtFont, gdtText } from './gdt.js';
 import { shxSubstitute, strokeLayout, STROKE_DESCENT } from './shx.js';
-import { mtextPlain } from './mtext.js';
+import { mtextPlain, textPlain } from './mtext.js';
 
 let measureFn = null;
 const cache = new Map();
@@ -39,7 +39,8 @@ const CANVAS_M = { top: 0.8, mid: 0.35, desc: 0.2 };
 
 export function textFrame(e, doc = null) {
   const st = doc?.textStyles?.get(String(e.style || 'STANDARD').toUpperCase());
-  const lines = (isGdtFont(st?.fontFile || st?.font) ? gdtText(mtextPlain(e.text)) : mtextPlain(e.text)).split('\n');
+  const plain = e.type === 'MTEXT' ? mtextPlain(e.text) : textPlain(e.text); // TEXT / ATTRIB / ATTDEF: no MTEXT codes
+  const lines = (isGdtFont(st?.fontFile || st?.font) ? gdtText(plain) : plain).split('\n');
   const sl = !e.ui && lines.length === 1 && shxSubstitute(st?.fontFile || st?.font) ? strokeLayout(lines[0], 1) : null;
   const w1 = sl ? sl.width : Math.max(0, ...lines.map((l) => textAdvance(l, st?.family || st?.font || 'Arial', !!st?.bold, !!st?.italic)));
   const m = sl ? SHX_M : CANVAS_M;

@@ -3,6 +3,7 @@
 //     Run = { text, props } | { stack: { a, b, type }, props } | { raw }   (raw = unknown code kept verbatim)
 //     props = { font, bold, italic, u, o, k, color: null (the MTEXT's colour) | { aci } (256 = its layer's) | { rgb: [r,g,b] }, h, oblique, wf, track, valign }
 //   mtextPlain(raw)                   -> displayed string (paragraphs joined with '\n', stacks as a/b)
+//   textPlain(raw)                    -> displayed string of a single-line TEXT / ATTRIB / ATTDEF (no MTEXT codes)
 //   serializeMText(model, { height }) -> raw MTEXT codes for the model
 //   layoutMText(model, { width, attach, lineSpacing, measure }) -> { lines, glyphs, rules, width, height }
 //     a run whose props.stroke is set is an SHX stroke-font run (render.js): cap-height first baseline, glyphs / rules flagged stroke
@@ -92,6 +93,43 @@ export function parseMText(raw, { height = 1 } = {}) {
 const stackText = (st) => `${st.a}/${st.b}`;
 export function mtextPlain(raw) {
   return parseMText(raw).paras.map((p) => p.runs.map((r) => (r.stack ? stackText(r.stack) : r.text ?? '')).join('')).join('\n');
+}
+
+// \M+nXXXX: a double-byte character XXXX in the code page n (AutoCAD's DXF writers put these in TEXT)
+const MBCS = { 1: 'shift_jis', 2: 'big5', 3: 'euc-kr', 5: 'gbk' };
+function mbcsChar(n, hex) {
+  try {
+    const v = parseInt(hex, 16);
+    return new TextDecoder(MBCS[n], { fatal: true }).decode(new Uint8Array(v > 0xff ? [v >> 8, v & 0xff] : [v]));
+  } catch { return null; }
+}
+
+/** The displayed string of a single-line TEXT / ATTRIB / ATTDEF value. AutoCAD shows such text as written: a
+ *  backslash or a brace is a character (a file path such as C:\Proj\PAVA.dwg stays as it is), except the \U+XXXX and
+ *  \M+nXXXX character codes. %% codes as in MTEXT: %%c %%d %%p %%nnn give a character, %%u / %%o (underline /
+ *  overline toggles) show nothing. */
+export function textPlain(raw) {
+  const s = String(raw ?? '');
+  if (!s.includes('\\') && !s.includes('%%')) return s;
+  let out = '';
+  for (let i = 0; i < s.length;) {
+    const c = s[i];
+    if (c === '%' && s[i + 1] === '%') {
+      const k = (s[i + 2] ?? '').toLowerCase();
+      if (SPECIAL[k]) { out += SPECIAL[k]; i += 3; continue; }
+      if (k === 'u' || k === 'o') { i += 3; continue; }
+      if (/^\d{3}$/.test(s.slice(i + 2, i + 5))) { out += String.fromCharCode(Number(s.slice(i + 2, i + 5))); i += 5; continue; }
+    }
+    if (c === '\\') {
+      const u = /^\\U\+([0-9A-Fa-f]{4})/.exec(s.slice(i, i + 7));
+      if (u) { out += String.fromCharCode(parseInt(u[1], 16)); i += 7; continue; }
+      const m = /^\\M\+([1-5])([0-9A-Fa-f]{4})/.exec(s.slice(i, i + 9));
+      const ch = m && MBCS[m[1]] ? mbcsChar(m[1], m[2]) : null;
+      if (ch) { out += ch; i += 9; continue; }
+    }
+    out += c; i++;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------------------------

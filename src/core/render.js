@@ -12,7 +12,7 @@ import { blockContentView } from './blocks.js';
 import { imageCorners, imageClipWorld, wipeoutRing } from './image.js';
 import { olePreviewOf } from './ole.js';
 import { resolveColor, runColor, aciOf, runAci } from './aci.js';
-import { parseMText, layoutMText } from './mtext.js';
+import { parseMText, layoutMText, textPlain } from './mtext.js';
 import { reorderLines, reorderRules } from './bidiText.js';
 import {
   DEG, compose, translation, rotation, scaling, apply, isSimilarity, matScale, transformEntity, bulgeToArc,
@@ -455,7 +455,7 @@ class Builder {
         const rot = ((e.rot || 0) * DEG) + ang;
         const tst = this.doc.textStyles.get(String(e.style || 'STANDARD').toUpperCase());
         const gdt = isGdtFont(tst?.fontFile || tst?.font);
-        let raw = plainText(e.text);
+        let raw = e.type === 'MTEXT' ? plainText(e.text) : textPlain(e.text); // TEXT / ATTRIB / ATTDEF: no MTEXT codes
         if (!raw) return;
         if (gdt) raw = gdtText(raw);
         const lines = raw.split('\n');
