@@ -656,12 +656,18 @@ export function* writeDxfSteps(doc, opts = {}) {
   table('VPORT', 1);
   rec('VPORT', '*Active', 'AcDbViewportTableRecord', 'VPORT');
   {
+    // the extents, seen with the model view's twist (doc.viewTwist: the orientation the user left the Model tab in,
+    // else the one the drawing was opened with; radians, turning the model counter-clockwise on screen)
+    const tw = doc.viewTwist ?? doc.activeView?.twist ?? 0, ct = Math.cos(tw), st = Math.sin(tw);
     const cx = ext ? (ext.minx + ext.maxx) / 2 : 0, cy = ext ? (ext.miny + ext.maxy) / 2 : 0;
-    const w = ext ? ext.maxx - ext.minx : 100, h = ext ? ext.maxy - ext.miny : 100;
+    const w0 = ext ? ext.maxx - ext.minx : 100, h0 = ext ? ext.maxy - ext.miny : 100;
+    const w = Math.abs(ct) * w0 + Math.abs(st) * h0, h = Math.abs(st) * w0 + Math.abs(ct) * h0;
     const vh = Math.max(h, w / 1.34, 1e-6) * 1.1;
-    out.p(70, 0); out.pt(10, 0, 0, 0, false); out.pt(11, 1, 1, 0, false); out.pt(12, cx, cy, 0, false); out.pt(13, 0, 0, 0, false);
-    out.pt(14, 10, 10, 0, false); out.pt(15, 10, 10, 0, false); out.pt(16, 0, 0, 1); out.pt(17, cx, cy, 0);
-    out.p(42, 50); out.p(43, 0); out.p(44, 0); out.p(50, 0); out.p(51, 0);
+    // target 17 at the origin; 12 the view centre in the twisted frame (the inverse of dxfRead readActiveView's
+    // cx = tx + ct dx + st dy, cy = ty - st dx + ct dy)
+    out.p(70, 0); out.pt(10, 0, 0, 0, false); out.pt(11, 1, 1, 0, false); out.pt(12, ct * cx - st * cy, st * cx + ct * cy, 0, false); out.pt(13, 0, 0, 0, false);
+    out.pt(14, 10, 10, 0, false); out.pt(15, 10, 10, 0, false); out.pt(16, 0, 0, 1); out.pt(17, 0, 0, 0);
+    out.p(42, 50); out.p(43, 0); out.p(44, 0); out.p(50, 0); out.p(51, tw * 180 / Math.PI);
     out.p(71, 0); out.p(72, 100); out.p(73, 1); out.p(74, 3); out.p(75, 0); out.p(76, 0); out.p(77, 0); out.p(78, 0);
     // view height and aspect
     out.p(40, vh); out.p(41, 1.34);

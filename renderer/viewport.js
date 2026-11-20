@@ -1,8 +1,8 @@
 // ASH Draw Studio - canvas viewport: view state, pan/zoom, snapping, selection, overlays.
 // The active tool receives world-space events through vp.tool (see tools.js).
-import { buildScene, updateScene, drawScene, drawSceneSteps, drawLayout, layoutViewports, fitView, screenToWorld, worldToScreen, zoomAt, zoomLimits, PAPER_COLOUR, PAPER_SURROUND } from '../src/core/render.js';
+import { buildScene, updateScene, drawScene, drawSceneSteps, drawLayout, layoutViewports, fitView, screenToWorld, worldToScreen, screenAngle, zoomAt, zoomLimits, PAPER_COLOUR, PAPER_SURROUND } from '../src/core/render.js';
 import { wheelScale, ZOOMFACTOR_DEFAULT } from '../src/core/cmdline.js';
-import { SpatialIndex, findSnap, orthoPoint, polarPoint, pickEntity, selectInBox } from '../src/core/pick.js';
+import { SpatialIndex, findSnap, orthoPoint, polarPoint, pickEntity, selectInBox, selectInTurnedBox } from '../src/core/pick.js';
 import { bboxOf, growBox } from '../src/core/geom.js';
 import { snapGlyph, directionAt, OSNAP_LABEL } from '../src/core/osnap.js';
 import { extensionEnds, resolveTracking, trackAngles, toggleAcquired, pruneAcquired, trackLabel, ACQUIRE_KINDS } from '../src/core/otrack.js';
@@ -155,6 +155,16 @@ export class Viewport {
   setRot(rot) {
     if (this.layout || this.mspace || (this.view.rot || 0) === rot) return;
     this.view = { ...this.view, rot };
+    this.doc.viewTwist = rot; // the model view orientation is saved with the drawing (dxfWrite VPORT *Active)
+    this.requestRender(); this.emit('view');
+  }
+  /** ZOOM Window: fit the screen rectangle with opposite corners a, b (world points), keeping the view's twist */
+  zoomCorners(a, b, margin = 0.04) {
+    const rot = this.modelRot;
+    if (!rot) { this.zoomBox({ minx: Math.min(a.x, b.x), miny: Math.min(a.y, b.y), maxx: Math.max(a.x, b.x), maxy: Math.max(a.y, b.y) }, margin); return; }
+    const sa = this.toScreen(a), sb = this.toScreen(b), w = Math.abs(sb.x - sa.x) / this.view.zoom, h = Math.abs(sb.y - sa.y) / this.view.zoom;
+    const zoom = Math.min(this.view.width / Math.max(w, 1e-9), this.view.height / Math.max(h, 1e-9)) * (1 - margin * 2);
+    this.view = { ...this.view, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, zoom };
     this.requestRender(); this.emit('view');
   }
   zoomBox(b, margin = 0.04) {
@@ -188,9 +198,18 @@ export class Viewport {
   }
   selectedEntities() { return [...this.selection].map((id) => getEntity(this.doc, id)).filter(Boolean); }
   pick(p, opts = {}) { return pickEntity(this.index, p, PICK_PX / this.view.zoom, { skipLocked: true, ...opts }); }
+  /** window / crossing selection by the screen rectangle with opposite corners a, b (world points); a twisted model
+   *  view selects by that rectangle turned into the world */
   box(a, b, crossing) {
+    const rot = this.view.rot || 0;
+    if (rot) {
+      const c = Math.cos(rot), s = Math.sin(rot), T = (p) => ({ x: c * p.x - s * p.y, y: s * p.x + c * p.y }), ta = T(a), tb = T(b);
+      return selectInTurnedBox(this.index, { minx: ta.x, miny: ta.y, maxx: tb.x, maxy: tb.y }, rot, crossing, { skipLocked: true });
+    }
     return selectInBox(this.index, { minx: Math.min(a.x, b.x), miny: Math.min(a.y, b.y), maxx: Math.max(a.x, b.x), maxy: Math.max(a.y, b.y) }, crossing, { skipLocked: true });
   }
+  /** a drag from world point a to b is a crossing selection when it runs right to left on the screen */
+  crossingDrag(a, b) { return this.toScreen(b).x < this.toScreen(a).x; }
   selectionBox() {
     let b = null;
     for (const e of this.selectedEntities()) { const eb = bboxOf(e, this.doc); if (eb) { b = growBox(b, { x: eb.minx, y: eb.miny }); b = growBox(b, { x: eb.maxx, y: eb.maxy }); } }
@@ -480,7 +499,7 @@ export class Viewport {
     const rays = m.kind === 'trackint' ? m.lines.map((l) => l.from) : (m.kind === 'par' || m.track) && m.from ? [m.from] : [];
     c.save(); c.lineWidth = 1; c.setLineDash([3, 3]); c.beginPath();
     for (const f of rays) { const a = this.toScreen(f), dx = s.x - a.x, dy = s.y - a.y, l = Math.hypot(dx, dy) || 1; c.moveTo(a.x, a.y); c.lineTo(s.x + (dx / l) * 2000, s.y + (dy / l) * 2000); }
-    if (m.kind === 'ext' && m.path?.c) { const k = m.path, o = this.toScreen(k.c), ang = (q) => -Math.atan2(q.y - k.c.y, q.x - k.c.x); c.arc(o.x, o.y, k.r * this.view.zoom, ang(k.from), ang(m), k.ccw); }
+    if (m.kind === 'ext' && m.path?.c) { const k = m.path, o = this.toScreen(k.c), ang = (q) => screenAngle(this.view, Math.atan2(q.y - k.c.y, q.x - k.c.x)); c.arc(o.x, o.y, k.r * this.view.zoom, ang(k.from), ang(m), k.ccw); }
     c.stroke(); c.restore();
     glyphPath(c, snapGlyph(m.kind), s.x, s.y, r);
     c.stroke();

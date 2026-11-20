@@ -19,6 +19,7 @@ export function setCurrentView(app, name) {
   if (!r) { toast(`View "${name}" cannot be shown (a 3D view, or no such view).`); return false; }
   app.viewHistory?.breakGesture(app.viewKey());
   vp.view = { ...vp.view, ...r };
+  if (!vp.layout) app.doc.viewTwist = r.rot; // saved with the drawing (VPORT *Active)
   vp.requestRender(); vp.emit('view');
   return true;
 }

@@ -41,7 +41,7 @@ export function createViewTools(h, { Tool }) {
       if (this.mode !== 'object') { super.up(p, ev); return; }
       const a = this.selStart; this.selStart = null;
       const sel = new Set(this.vp.selection);
-      if (a && ev.dragged) for (const id of this.vp.box(a, ev.raw, ev.raw.x < a.x)) sel.add(id);
+      if (a && ev.dragged) for (const id of this.vp.box(a, ev.raw, this.vp.crossingDrag(a, ev.raw))) sel.add(id);
       else { const hit = this.vp.pick(ev.raw); if (hit) sel.add(hit.id); }
       this.vp.setSelection(sel);
     }
@@ -49,8 +49,9 @@ export function createViewTools(h, { Tool }) {
       if (this.mode === 'object') return;
       if (!this.a) { this.a = p; this.mode = 'window'; this.vp.lastPoint = p; return; }
       const a = this.a;
-      if (Math.abs(p.x - a.x) < 1e-12 || Math.abs(p.y - a.y) < 1e-12) { h.toast('ZOOM Window: the corners must differ in X and Y.'); return; }
-      this.done(() => this.vp.zoomBox({ minx: Math.min(a.x, p.x), miny: Math.min(a.y, p.y), maxx: Math.max(a.x, p.x), maxy: Math.max(a.y, p.y) }));
+      const sa = this.vp.toScreen(a), sp = this.vp.toScreen(p); // the corners of a rectangle on the screen (a twisted view keeps its twist)
+      if (Math.abs(sp.x - sa.x) < 1e-9 || Math.abs(sp.y - sa.y) < 1e-9) { h.toast('ZOOM Window: the corners must differ in X and Y.'); return; }
+      this.done(() => this.vp.zoomCorners(a, p));
     }
     key(e) {
       if (e.key === 'Enter') {
@@ -64,7 +65,8 @@ export function createViewTools(h, { Tool }) {
       if (!this.a) return;
       const q = this.vp.cursor;
       c.strokeStyle = this.vp.inkColor; c.setLineDash([4, 3]);
-      this.poly(c, [this.a, { x: q.x, y: this.a.y }, q, { x: this.a.x, y: q.y }], true);
+      const sa = this.vp.toScreen(this.a), sq = this.vp.toScreen(q); // the screen rectangle, in world points
+      this.poly(c, [this.a, this.vp.toWorld(sq.x, sa.y), q, this.vp.toWorld(sa.x, sq.y)], true);
       c.setLineDash([]);
     }
   }
@@ -91,7 +93,7 @@ export function createViewTools(h, { Tool }) {
     up(p, ev) {
       const a = this.selStart; this.selStart = null;
       const sel = new Set(this.vp.selection);
-      if (a && ev.dragged) for (const id of this.vp.box(a, ev.raw, ev.raw.x < a.x)) sel.add(id);
+      if (a && ev.dragged) for (const id of this.vp.box(a, ev.raw, this.vp.crossingDrag(a, ev.raw))) sel.add(id);
       else { const hit = this.vp.pick(ev.raw); if (hit) sel.add(hit.id); }
       this.vp.setSelection(sel);
     }

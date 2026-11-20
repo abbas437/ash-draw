@@ -7,6 +7,7 @@ import { findHatchBoundary } from './tools.js';
 import { angleFromWorld } from '../src/core/coords.js';
 import { el, toast } from './ui.js';
 import { unitsOf, ensureUnits } from './units-ask.js';
+import { screenAngle } from '../src/core/render.js';
 
 const f4 = (v) => (Math.abs(v) < 5e-5 ? 0 : v).toFixed(4).replace(/\.?0+$/, '');
 const FILL = 'rgba(42,140,200,0.2)';
@@ -91,7 +92,7 @@ function drawMarks(c, vp) {
     const s = S(m.arc.c);
     c.beginPath();
     if (m.arc.a0 == null) c.arc(s.x, s.y, m.arc.r * vp.view.zoom, 0, Math.PI * 2);
-    else c.arc(s.x, s.y, m.arc.r * vp.view.zoom, -m.arc.a0 * DEG, -m.arc.a1 * DEG, true);
+    else c.arc(s.x, s.y, m.arc.r * vp.view.zoom, screenAngle(vp.view, m.arc.a0 * DEG), screenAngle(vp.view, m.arc.a1 * DEG), true);
     strokeMark(c, vp, [6, 4]); cross(m.arc.c);
   }
   if (m.angle) { line([m.angle.a, m.angle.v, m.angle.b], [6, 4]); cross(m.angle.v); }

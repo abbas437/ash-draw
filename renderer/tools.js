@@ -16,6 +16,7 @@ import {
   offsetCommand, trimCommand, extendCommand,
 } from '../src/core/edit.js';
 import { withClipPartners } from '../src/core/layouts.js';
+import { screenAngle } from '../src/core/render.js';
 import { MeasureGeomTool } from './tools-measure.js';
 import { gripsOf, applyGrip, gripEdit, gripsStretch, matchPropsEdit, nextGripMode, GRIP_MODES, gripMatrix, gripModeEdit, MATCH_SETTINGS, defaultMatchSettings } from './grips.js';
 import { el, modal, popMenu } from './ui.js';
@@ -78,13 +79,13 @@ class Selector {
   constructor(vp, { clearOnEmpty = false } = {}) { this.vp = vp; this.start = null; this.clearOnEmpty = clearOnEmpty; }
   down(p, ev) { this.start = ev.raw; }
   move(p, ev) {
-    if (this.start && ev.dragging) this.vp.rubber = { a: this.start, b: ev.raw, crossing: ev.raw.x < this.start.x };
+    if (this.start && ev.dragging) this.vp.rubber = { a: this.start, b: ev.raw, crossing: this.vp.crossingDrag(this.start, ev.raw) };
   }
   up(p, ev) {
     const a = this.start; this.start = null; this.vp.rubber = null;
     if (!a) return false;
     const vp = this.vp, sel = new Set(vp.selection);
-    const ids = ev.dragged ? vp.box(a, ev.raw, ev.raw.x < a.x) : [vp.pick(ev.raw)?.id].filter((id) => id != null);
+    const ids = ev.dragged ? vp.box(a, ev.raw, vp.crossingDrag(a, ev.raw)) : [vp.pick(ev.raw)?.id].filter((id) => id != null);
     if (!ids.length) { if (!ev.dragged && !ev.shiftKey && this.clearOnEmpty) vp.setSelection([]); return true; }
     const all = vp.layout ? withClipPartners(vp.doc.entities, ids) : ids; // Shift removes a clipped viewport with its boundary
     for (const id of all) { if (ev.shiftKey) sel.delete(id); else sel.add(id); }
@@ -369,7 +370,7 @@ class ArcTool extends Tool {
       const a = arcFrom3(this.pts[0], this.pts[1], q);
       if (!a) { this.poly(c, [...this.pts, q]); return; }
       const s = this.vp.toScreen(a.c);
-      c.beginPath(); c.arc(s.x, s.y, a.r * this.vp.view.zoom, -a.a0 * DEG, -a.a1 * DEG, true); c.stroke();
+      c.beginPath(); c.arc(s.x, s.y, a.r * this.vp.view.zoom, screenAngle(this.vp.view, a.a0 * DEG), screenAngle(this.vp.view, a.a1 * DEG), true); c.stroke();
     }
   }
 }
@@ -398,7 +399,7 @@ export class EllipseTool extends Tool {
       if (L < 1e-12) return;
       const perp = Math.abs(((q.x - cc.x) * -major.y + (q.y - cc.y) * major.x) / L);
       const s = this.vp.toScreen(cc), z = this.vp.view.zoom;
-      c.beginPath(); c.ellipse(s.x, s.y, L * z, Math.max(perp * z, 0.5), -Math.atan2(major.y, major.x), 0, Math.PI * 2); c.stroke();
+      c.beginPath(); c.ellipse(s.x, s.y, L * z, Math.max(perp * z, 0.5), screenAngle(this.vp.view, Math.atan2(major.y, major.x)), 0, Math.PI * 2); c.stroke();
     }
   }
 }

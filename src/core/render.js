@@ -1460,6 +1460,9 @@ export const worldToScreen = (view, p) => {
   const dx = p.x - view.cx, dy = p.y - view.cy, c = Math.cos(view.rot), s = Math.sin(view.rot);
   return { x: (c * dx - s * dy) * view.zoom + view.width / 2, y: view.height / 2 - (s * dx + c * dy) * view.zoom };
 };
+/** the canvas angle (radians, y down) of world direction `a` (radians, counter-clockwise) on `view`'s screen: a
+ *  twisted model view turns every direction by its rot; arcs keep their sense (canvas anticlockwise = world CCW) */
+export const screenAngle = (view, a) => -(a + (view.rot || 0));
 /** a turned view drawn as an upright D x D view (D the screen diagonal, so its culling box holds the turned screen):
  *  sets ctx (whose current transform maps view pixels) to place that square, turned, centred on the screen, and
  *  returns the square view; an unturned view is returned as it is */

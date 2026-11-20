@@ -280,6 +280,30 @@ export function selectInBox(index, box, crossing, opts = {}) {
   return out;
 }
 
+/** Ids selected by a window / crossing box dragged on a model view twisted by `rot` (radians, as the view's rot):
+ *  `box` is in the turned frame (u = x cos - y sin, v = x sin + y cos: the screen axes, y up), so it is the true screen
+ *  rectangle. Window: all of an entity's geometry (text: its box corners) inside; crossing: any of it touches. */
+export function selectInTurnedBox(index, box, rot, crossing, opts = {}) {
+  if (!rot) return selectInBox(index, box, crossing, opts);
+  const b = normBox(box), doc = index.doc, c = Math.cos(rot), s = Math.sin(rot);
+  const T = (p) => ({ x: c * p.x - s * p.y, y: s * p.x + c * p.y });
+  let wb = null; // the world box round the turned box: the index query
+  for (const [u, v] of [[b.minx, b.miny], [b.maxx, b.miny], [b.minx, b.maxy], [b.maxx, b.maxy]]) wb = growBox(wb, { x: c * u + s * v, y: -s * u + c * v });
+  const inside = (q) => q.x >= b.minx && q.x <= b.maxx && q.y >= b.miny && q.y <= b.maxy;
+  const out = [];
+  for (const en of index._query(wb)) {
+    const e = en.e;
+    if (!boxesTouch(en.box, wb) || (opts.skipLocked && isLocked(doc, e))) continue;
+    if (isInfinite(e)) { if (crossing && clipInfinite(T(e.p), T(e.dir), e.type === 'RAY', b)) out.push(e.id); continue; }
+    const k = en.box, corners = [[{ x: k.minx, y: k.miny }, { x: k.maxx, y: k.miny }, { x: k.maxx, y: k.maxy }, { x: k.minx, y: k.maxy }, { x: k.minx, y: k.miny }]];
+    const pls = e.type === 'TEXT' || e.type === 'MTEXT' ? corners : safe(() => tessellate(e, doc, 0), null) || corners;
+    const tp = pls.map((pl) => pl.map(T)).filter((pl) => pl.length);
+    if (tp.length && tp.every((pl) => pl.every(inside))) { out.push(e.id); continue; }
+    if (crossing && tp.some((pl) => (pl.length === 1 && inside(pl[0])) || pl.some((q, i) => i + 1 < pl.length && segmentHitsBox(q, pl[i + 1], b)))) out.push(e.id);
+  }
+  return out;
+}
+
 function perpendicularFeet(e, from) {
   if (isInfinite(e)) {
     const t = (from.x - e.p.x) * e.dir.x + (from.y - e.p.y) * e.dir.y;

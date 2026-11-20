@@ -31,7 +31,7 @@ test('save, restore and delete a named view, each save and delete one undo step'
   assert.equal(s.undoStack.length, 1);
   assert.equal(findView(s.doc, 'level 1 ahu').name, 'Level 1 AHU', 'names are found case-blind');
   const r = restoreView(s.doc, 'LEVEL 1 AHU', 1600, 600);
-  assert.deepEqual(r, { cx: 10, cy: 20, zoom: 2 }, 'the whole view fits the canvas: height governs');
+  assert.deepEqual(r, { cx: 10, cy: 20, zoom: 2, rot: 0 }, 'the whole view fits the canvas: height governs (an untwisted model view)');
   assert.equal(s.undoStack.length, 1, 'restoring is not an undo step');
   assert.ok(deleteView(s, 'level 1 ahu'));
   assert.equal(s.undoStack.length, 2);

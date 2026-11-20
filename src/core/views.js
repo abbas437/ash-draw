@@ -17,13 +17,15 @@ export const findView = (doc, name) => viewsOf(doc).get(viewKey(name)) ?? null;
 export const validViewName = (name) => { const s = String(name ?? '').trim(); return s.length > 0 && s.length <= 255 && !/[<>/\\":;?*|,=`]/.test(s); };
 
 /** the view shown by a viewport view { cx, cy, zoom, width, height } (pixels) as a view record */
-export const viewFromScreen = (name, v, space = 'model') => ({ name: String(name).trim(), center: { x: v.cx, y: v.cy }, width: v.width / v.zoom, height: v.height / v.zoom, twist: 0, space });
+/** a model view keeps the display's twist (view rot, radians -> degrees) */
+export const viewFromScreen = (name, v, space = 'model') => ({ name: String(name).trim(), center: { x: v.cx, y: v.cy }, width: v.width / v.zoom, height: v.height / v.zoom, twist: space === 'model' ? (v.rot || 0) * 180 / Math.PI : 0, space });
 /** the view of a world rectangle {minx, miny, maxx, maxy} */
 export const viewFromBox = (name, b, space = 'model') => ({ name: String(name).trim(), center: { x: (b.minx + b.maxx) / 2, y: (b.miny + b.maxy) / 2 }, width: Math.abs(b.maxx - b.minx), height: Math.abs(b.maxy - b.miny), twist: 0, space });
 /** the world rectangle a view shows (twist ignored) */
 export const viewBox = (v) => ({ minx: v.center.x - v.width / 2, maxx: v.center.x + v.width / 2, miny: v.center.y - v.height / 2, maxy: v.center.y + v.height / 2 });
-/** the viewport view { cx, cy, zoom } that shows view `v` whole in a canvas of width x height pixels */
-export const screenFromView = (v, width, height) => ({ cx: v.center.x, cy: v.center.y, zoom: Math.min(width / v.width, height / v.height) });
+/** the viewport view { cx, cy, zoom, rot } that shows view `v` whole in a canvas of width x height pixels; a model view
+ *  is turned by its own twist (rot, radians), a paper one is not */
+export const screenFromView = (v, width, height) => ({ cx: v.center.x, cy: v.center.y, zoom: Math.min(width / v.width, height / v.height), rot: v.space === 'model' ? (v.twist || 0) * Math.PI / 180 : 0 });
 
 /** save (create or replace) a named view: one undo step. Returns the stored view. */
 export function saveView(s, view) {
